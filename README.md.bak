@@ -1,0 +1,286 @@
+# 語音降噪系統 (Speech Denoising System)
+
+傳統信號處理方法的實時語音降噪系統，採用漸進式學習路徑。
+
+## 📋 項目概述
+
+本項目實現了 4 個版本的語音降噪算法，從基礎到先進：
+
+1. **V1: 頻譜減法 (Spectral Subtraction)** - 最經典的方法
+2. **V2: Wiener 濾波** - 基於 MMSE 的最優濾波
+3. **V3: SPP + MMSE** ⭐ - 概率軟判決方法
+4. **V4: IMCRA + OMLSA** - 產品級先進方案
+
+## 🎯 特點
+
+- ✅ 模塊化設計，易於理解和擴展
+- ✅ 完整的測試數據生成工具
+- ✅ 支持多種噪聲類型和 SNR 等級
+- ✅ 詳細的中文注釋
+- ✅ 漸進式學習路徑
+
+## 📦 安裝依賴
+
+```bash
+# 基礎依賴
+pip install numpy scipy
+
+# 音頻 I/O（推薦）
+pip install soundfile
+
+# 可視化（可選）
+pip install matplotlib
+
+# 評估指標（可選）
+pip install pesq pystoi
+```
+
+## 🚀 快速開始
+
+### 1. 生成測試數據
+
+```python
+from utils.test_data_generator import TestDataGenerator, generate_sample_speech
+from utils.audio_io import write_audio
+
+# 生成合成語音
+speech = generate_sample_speech(duration=2.0, sample_rate=16000)
+
+# 創建測試數據生成器
+generator = TestDataGenerator(sample_rate=16000)
+
+# 生成帶噪語音
+noisy, noise = generator.create_noisy_speech(
+    speech,
+    noise_type='white',
+    target_snr_db=5.0
+)
+
+# 保存
+write_audio('clean.wav', speech, 16000)
+write_audio('noisy.wav', noisy, 16000)
+```
+
+### 2. 使用基礎框架
+
+```python
+from core import FrameProcessor, Reconstructor
+from utils.audio_io import read_audio, write_audio
+import numpy as np
+
+# 讀取音頻
+audio, sr = read_audio('noisy.wav')
+
+# 創建處理器
+processor = FrameProcessor(sample_rate=sr)
+reconstructor = Reconstructor(
+    fft_size=processor.fft_size,
+    frame_shift=processor.frame_shift,
+    window=processor.window
+)
+
+# 分幀和 FFT
+magnitudes, phases, spectra = processor.process_signal(audio)
+
+# 這裡可以應用降噪算法處理 magnitudes
+# enhanced_magnitudes = denoise(magnitudes)
+
+# 重建信號
+output = reconstructor.reconstruct_signal(
+    magnitudes,  # 或 enhanced_magnitudes
+    phases,
+    original_length=len(audio)
+)
+
+# 保存
+write_audio('output.wav', output, sr)
+```
+
+## 📁 項目結構
+
+```
+speech_denoise/
+├── core/                          # 核心模塊
+│   ├── frame_processor.py         # 分幀、加窗、FFT
+│   ├── reconstructor.py           # 重建、IFFT、Overlap-Add
+│   ├── spp_estimator.py          # SPP 估計（V3/V4）
+│   ├── noise_estimators/         # 噪聲估計器
+│   │   ├── simple_average.py     # V1: 簡單平均
+│   │   ├── recursive_average.py  # V2: 遞歸平均
+│   │   └── imcra.py             # V4: IMCRA
+│   └── gain_calculators/         # 增益計算器
+│       ├── spectral_subtraction.py  # V1
+│       ├── wiener.py                # V2
+│       ├── spp_mmse.py              # V3
+│       └── omlsa.py                 # V4
+│
+├── denoisers/                    # 完整降噪器
+│   ├── base_denoiser.py         # 基類
+│   ├── v1_spectral_subtraction.py
+│   ├── v2_wiener.py
+│   ├── v3_spp_mmse.py
+│   └── v4_imcra_omlsa.py
+│
+├── utils/                        # 工具模塊
+│   ├── audio_io.py              # 音頻讀寫
+│   ├── test_data_generator.py   # 測試數據生成
+│   ├── metrics.py               # 評估指標
+│   └── visualization.py         # 可視化
+│
+├── config/                       # 配置文件
+│   ├── v1_config.yaml
+│   ├── v2_config.yaml
+│   ├── v3_config.yaml
+│   └── v4_config.yaml
+│
+├── examples/                     # 示例腳本
+│   ├── denoise_wav.py
+│   ├── compare_versions.py
+│   └── real_time_demo.py
+│
+└── tests/                        # 單元測試
+    └── test_*.py
+```
+
+## 🔬 算法版本對比
+
+| 版本 | 噪聲估計 | 增益計算 | 音樂噪聲 | 語音失真 | 複雜度 |
+|------|---------|---------|---------|---------|--------|
+| V1 頻譜減法 | 前幾幀平均 | 直接相減 | ⚠️⚠️⚠️ 嚴重 | ⚠️ 中等 | ✅ 低 |
+| V2 Wiener | 遞歸平均 | Wiener增益 | ⚠️⚠️ 中等 | ✅ 低 | ✅ 中 |
+| V3 SPP-MMSE | 遞歸平均 | SPP加權MMSE | ⚠️ 較少 | ✅✅ 很低 | ⚠️ 中高 |
+| V4 IMCRA-OMLSA | IMCRA | OMLSA | ✅✅ 極少 | ✅✅✅ 極低 | ⚠️⚠️ 高 |
+
+## 📚 核心概念
+
+### SPP (Speech Presence Probability)
+
+SPP 是語音存在機率，表示每個時頻點存在語音的機率（0-1之間）。
+
+**核心公式：**
+
+```
+# 1. 計算後驗 SNR
+γ(k,l) = |Y(k,l)|² / λ_d(k,l)
+
+# 2. 估計先驗 SNR (Decision Directed)
+ξ(k,l) = α·[G²(k,l-1)·γ(k,l-1)] + (1-α)·max(γ(k,l)-1, 0)
+
+# 3. 計算似然比
+Λ(k,l) = ξ/(1+ξ) · γ
+
+# 4. 計算 SPP
+p(k,l) = 1 / [1 + (q/(1-q))·exp(-Λ)]
+
+# 5. SPP 加權增益
+G(k,l) = p·G_MMSE + (1-p)·G_min
+```
+
+**優勢：**
+- 軟判決比硬判決（VAD）更平滑
+- 減少音樂噪聲
+- 更好地保留語音細節
+
+## 🎓 學習路徑
+
+1. **第1週：基礎框架**
+   - 理解分幀、加窗、FFT
+   - 實現 Overlap-Add 重建
+
+2. **第2週：V1 頻譜減法**
+   - 最簡單的降噪方法
+   - 觀察音樂噪聲問題
+
+3. **第3週：V2 Wiener 濾波**
+   - 最優濾波理論
+   - 對比 V1 的改進
+
+4. **第4週：V3 SPP-MMSE** ⭐
+   - 深入理解 SPP
+   - Decision Directed 方法
+   - 軟判決的優勢
+
+5. **第5-6週：V4 IMCRA-OMLSA**
+   - 最先進的噪聲估計
+   - 產品級效果
+
+## 📊 測試數據
+
+### 方案 1: 使用 NOIZEUS Corpus（推薦）
+
+```bash
+# 訪問並下載
+http://www.utdallas.edu/~loizou/speech/noizeus/
+
+# 包含：
+# - 30 個句子
+# - 8 種噪聲類型
+# - 4 個 SNR 等級 (0, 5, 10, 15 dB)
+```
+
+### 方案 2: 自己生成
+
+```python
+from utils.test_data_generator import TestDataGenerator
+
+generator = TestDataGenerator(sample_rate=16000)
+
+# 生成測試集
+test_set = generator.generate_test_set(
+    clean_speech,
+    noise_types=['white', 'pink', 'babble'],
+    snr_levels=[-5, 0, 5, 10, 15],
+    output_dir='./test_data'
+)
+```
+
+## 🔧 參數說明
+
+### 音頻參數
+- `sample_rate`: 16000 Hz（VoIP 標準）
+- `frame_size_ms`: 20 ms（320 samples @ 16kHz）
+- `frame_shift_ms`: 10 ms（50% overlap）
+- `fft_size`: 512 points
+
+### SPP 參數
+- `alpha_xi`: 0.98（先驗 SNR 平滑因子）
+- `q`: 0.5（語音先驗機率）
+- `xi_min_db`: -25 dB（先驗 SNR 下限）
+
+### 增益參數
+- `g_min_db`: -20 dB（最小增益）
+- `alpha_g`: 0.7（增益平滑因子）
+
+## 📖 參考文獻
+
+1. **頻譜減法**
+   - Boll (1979): "Suppression of Acoustic Noise in Speech Using Spectral Subtraction"
+
+2. **Wiener 濾波**
+   - Lim & Oppenheim (1979): "Enhancement and Bandwidth Compression of Noisy Speech"
+
+3. **SPP-MMSE**
+   - Ephraim & Malah (1984): "Speech Enhancement Using a Minimum Mean-Square Error STSA Estimator"
+   - Cohen & Berdugo (2001): "Speech Enhancement for Non-stationary Noise Environments"
+
+4. **IMCRA-OMLSA**
+   - Cohen & Berdugo (2001): "Noise Estimation by Minima Controlled Recursive Averaging"
+   - Cohen (2002): "Optimal Speech Enhancement Under Signal Presence Uncertainty"
+
+## 🤝 貢獻
+
+歡迎提交 Issue 和 Pull Request！
+
+## 📄 授權
+
+MIT License
+
+## 🎯 下一步計畫
+
+- [ ] 實現 V1: 頻譜減法
+- [ ] 實現 V2: Wiener 濾波
+- [ ] 實現 V3: SPP-MMSE ⭐
+- [ ] 實現 V4: IMCRA-OMLSA
+- [ ] 添加評估指標（PESQ, STOI）
+- [ ] 版本對比工具
+- [ ] C++ 移植

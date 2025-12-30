@@ -1,0 +1,29 @@
+# V1: Spectral Subtraction Configuration
+
+version: 1
+name: "Spectral Subtraction"
+
+# Audio Parameters
+audio:
+  sample_rate: 16000
+  frame_size_ms: 20       # 320 samples @ 16kHz
+  frame_shift_ms: 10      # 160 samples, 50% overlap
+  fft_size: 512
+  window_type: "hanning"
+
+# Noise Estimation
+noise_estimation:
+  method: "simple_average"
+  num_init_frames: 20     # Use first 20 frames (~0.2s) for noise estimation
+
+# Gain Calculation
+gain_calculation:
+  method: "spectral_subtraction"
+  alpha: 1.0              # Over-subtraction factor (降低以減少過度抑制)
+  beta: 0.02              # Spectral floor (降低以更徹底降噪，但可能增加音樂噪聲)
+  alpha_smooth: 0.8       # Temporal smoothing factor (0.7-0.9，減少 musical noise)
+
+# Notes:
+# - alpha 越大降噪越多，但音樂噪聲也越嚴重，語音也可能被過度抑制
+# - beta 防止增益過小導致失真，設為 0.1 表示至少保留 10% 的信號
+# - 對於 10dB SNR 的音頻，使用較保守的參數效果更好
