@@ -1,0 +1,68 @@
+# V4: IMCRA-OMLSA Configuration
+# ⭐ 產品級配置
+
+version: 4
+name: "IMCRA-OMLSA"
+
+# Audio Parameters
+audio:
+  sample_rate: 16000
+  frame_size_ms: 20
+  frame_shift_ms: 10
+  fft_size: 512
+  window_type: "hanning"
+
+# IMCRA Noise Estimation
+noise_estimation:
+  method: "imcra"
+  alpha_s: 0.9            # Spectrum smoothing factor (0.85-0.95)
+  alpha_d: 0.85           # Noise update rate (0.80-0.90)
+  L: 150                  # Minimum tracking window length (frames)
+  delta_db: 5.0           # Bias offset (dB)
+  num_init_frames: 20
+
+# SPP Estimation
+spp:
+  alpha_xi: 0.98
+  q: 0.5
+  xi_min_db: -25.0
+
+# OMLSA Gain Calculation
+gain_calculation:
+  method: "omlsa"
+  g_min_db: -20.0
+  alpha_g: 0.85           # Gain temporal smoothing factor (提高以減少 musical noise)
+  gamma_0: 4.6            # SPP threshold parameter
+
+# Notes:
+# IMCRA 參數:
+# - alpha_s: 頻譜平滑因子
+#   - 越大越平滑，但適應越慢
+#   - 建議: 0.85-0.95
+#
+# - alpha_d: 噪聲更新速率
+#   - 控制噪聲估計的更新速度
+#   - 越小更新越快，越大越保守
+#   - 建議: 0.80-0.90
+#
+# - L: 最小值追蹤窗口長度
+#   - 單位: 幀數
+#   - L=150 約 1.5 秒 @ 10ms 幀移
+#   - 太小: 追蹤不準確
+#   - 太大: 適應慢，佔用內存多
+#   - 建議: 100-200 幀
+#
+# - delta_db: 偏移補償
+#   - 補償最小值的偏差
+#   - 建議: 3-6 dB
+#
+# OMLSA 參數:
+# - gamma_0: SPP 閾值參數
+#   - 影響 SPP 的敏感度
+#   - 不建議修改除非非常了解算法
+#
+# 性能調優:
+# - 穩態噪聲: 增大 alpha_d (0.90)，減小 L (100)
+# - 非穩態噪聲: 減小 alpha_d (0.80)，增大 L (200)
+# - 實時性要求高: 減小 L
+# - 質量要求高: 增大 L，增大 alpha_g

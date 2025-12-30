@@ -1,0 +1,55 @@
+# V3: SPP-MMSE Configuration
+# ⭐ 推薦學習版本
+
+version: 3
+name: "SPP-MMSE"
+
+# Audio Parameters
+audio:
+  sample_rate: 16000
+  frame_size_ms: 20
+  frame_shift_ms: 10
+  fft_size: 512
+  window_type: "hanning"
+
+# Noise Estimation
+noise_estimation:
+  method: "recursive_average"
+  alpha: 0.95
+  num_init_frames: 20
+  update_during_speech: false
+
+# SPP (Speech Presence Probability) Estimation
+spp:
+  alpha_xi: 0.98          # A priori SNR smoothing factor (0.92-0.98)
+  q: 0.5                  # Speech prior probability
+  xi_min_db: -25.0        # Minimum a priori SNR (dB)
+
+# Gain Calculation
+gain_calculation:
+  method: "spp_mmse"
+  g_min_db: -20.0         # Minimum gain (dB), -15 to -25
+  alpha_g: 0.85           # Gain temporal smoothing factor (提高以減少 musical noise)
+
+# Notes:
+# - alpha_xi: 越接近 1 越平滑，但反應越慢
+#   - 建議範圍: 0.92-0.98
+#   - 語音變化快用 0.92-0.95，變化慢用 0.95-0.98
+#
+# - q: 語音先驗機率
+#   - 通常設為 0.5（假設語音和噪聲同樣可能）
+#   - 語音多的場景可調高（0.6-0.7）
+#   - 噪聲多的場景可調低（0.3-0.4）
+#
+# - xi_min_db: 先驗 SNR 下限
+#   - 防止除零和數值問題
+#   - 不要設得太高，會限制降噪能力
+#
+# - g_min_db: 最小增益
+#   - 越小降噪越多，但語音失真越大
+#   - 建議: -15dB（輕微降噪）到 -25dB（強力降噪）
+#
+# - alpha_g: 增益平滑
+#   - 減少音樂噪聲的關鍵參數
+#   - 越大越平滑，但可能模糊語音起始
+#   - 建議: 0.6-0.8
