@@ -40,6 +40,91 @@ pip install pyyaml
 pip install pesq pystoi
 ```
 
+## 📊 評估指標說明
+
+### 主要指標：segSNR（Segmental SNR）
+
+對於傳統降噪算法（V1-V4），我們使用 **segSNR (Segmental SNR)** 作為主要評估指標。
+
+#### 為什麼使用 segSNR？
+
+**PESQ/STOI 的局限性**：
+- PESQ 設計用於語音編碼器（codec）評估，對頻譜修改極度敏感
+- 傳統降噪算法固有的頻譜變化會被 PESQ 嚴厲懲罰
+- STOI 對語音能量損失敏感，傳統算法多少會削減語音
+- 結果：V1-V4 的 PESQ/STOI 得分都在 1.0-1.5 範圍，無法有效區分優劣
+
+**segSNR 的優勢**：
+- ✅ 逐幀計算 SNR，對頻譜修改更寬容
+- ✅ 更符合傳統降噪算法的評估需求
+- ✅ 能有效區分不同版本的降噪效果
+- ✅ 典型範圍：5-20 dB 表示良好降噪
+
+#### segSNR 計算方法
+
+```python
+from utils.metrics import evaluate_all_metrics, print_metrics
+
+# 計算所有指標（需要 clean reference）
+metrics = evaluate_all_metrics(noisy, clean, enhanced, fs=16000)
+
+# 顯示結果（segSNR 會被突出顯示 ★）
+print_metrics(metrics, "V3 SPP-MMSE")
+
+# 主要關注 segSNR 改善值
+print(f"segSNR Improvement: {metrics['segsnr_improvement_db']:.2f} dB")
+```
+
+輸出範例：
+```
+======================================================================
+Metrics for: V3 SPP-MMSE
+======================================================================
+
+[PRIMARY METRICS - Segmental SNR]
+  Input segSNR:         5.23 dB
+  Output segSNR:        15.67 dB
+  segSNR Improvement:   10.44 dB  ★
+
+[Global SNR Metrics]
+  Input SNR:            10.00 dB
+  Output SNR:           18.34 dB
+  SNR Improvement:      8.34 dB
+
+[Reference Metrics - For comparison only]
+  PESQ:                 1.45 (1.0-4.5)
+  STOI:                 0.756 (0-1)
+
+[Quality Metrics]
+  LSD:                  2.34 dB
+  Musical Noise:        1.23e-05
+
+======================================================================
+Note: For traditional denoising, focus on segSNR improvement (★)
+======================================================================
+```
+
+### 指標使用建議
+
+| 指標類型 | 用途 | 適用場景 |
+|---------|------|---------|
+| **segSNR** ⭐ | **主要評估** | **傳統降噪算法 (V1-V4)** |
+| Global SNR | 次要參考 | 全局能量評估 |
+| PESQ | 參考 | 語音編碼器、深度學習模型 |
+| STOI | 參考 | 可懂度評估、深度學習模型 |
+| LSD | 輔助 | 頻譜失真程度 |
+| Musical Noise | 診斷 | 檢測音樂噪聲偽影 |
+
+### segSNR 典型數值範圍
+
+| segSNR 改善 | 降噪效果 |
+|------------|---------|
+| < 3 dB | 效果不明顯 |
+| 3-6 dB | 輕微改善 |
+| 6-10 dB | 明顯改善 |
+| 10-15 dB | 顯著改善 ⭐ |
+| > 15 dB | 極佳效果 |
+
 ## 🚀 快速開始
 
 ### 方法1：使用 process_audio.py（推薦）
@@ -555,6 +640,11 @@ test_set = generator.generate_test_set(
 MIT License
 
 ## 🎯 更新日誌
+
+### v1.2.0 (2026-01) ✨ 最新
+- ✅ **添加 segSNR 評估指標**（主要指標）
+- ✅ 更新評估指標體系，PESQ/STOI 改為參考指標
+- ✅ 完善評估指標使用說明和文檔
 
 ### v1.1.0 (2024-12)
 - ✅ 修復所有版本的 Musical Noise 問題
