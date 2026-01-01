@@ -25,6 +25,11 @@ class ImcraNoiseEstimator:
         L: 最小值窗口長度（幀數），通常 150 幀 ≈ 1.5 秒
         delta_db: 偏移量（dB），補償最小值的偏差
         num_init_frames: 初始化幀數
+
+    v1.3.0 新增：
+        支持快速追蹤模式，用於噪聲場景快速適應
+        - 正常模式：alpha_s=0.9, alpha_d=0.85, L=150
+        - 快速模式：alpha_s=0.7, alpha_d=0.5, L=50（縮短窗口）
     """
 
     def __init__(
@@ -36,8 +41,11 @@ class ImcraNoiseEstimator:
         num_init_frames: int = 20
     ):
         self.alpha_s = alpha_s
+        self.alpha_s_normal = alpha_s  # 保存正常模式參數
         self.alpha_d = alpha_d
+        self.alpha_d_normal = alpha_d
         self.L = L
+        self.L_normal = L
         self.delta = 10 ** (delta_db / 10)
         self.num_init_frames = num_init_frames
 
@@ -47,6 +55,17 @@ class ImcraNoiseEstimator:
         self.min_buffer = None  # 最小值緩衝區
         self.is_initialized = False
         self.frame_count = 0
+
+        # v1.3.0: 快速追蹤狀態
+        self.current_alpha_s = alpha_s
+        self.current_alpha_d = alpha_d
+        self.current_L = L
+        self.is_fast_mode = False
+        self.fast_mode_frames = 0
+        self.fast_mode_duration = 100  # 快速模式持續幀數
+        self.alpha_s_fast = 0.7  # 快速模式參數
+        self.alpha_d_fast = 0.5
+        self.L_fast = 50
 
     def estimate(self, magnitude_spectrum: np.ndarray) -> np.ndarray:
         """
@@ -85,6 +104,8 @@ class ImcraNoiseEstimator:
         """
         IMCRA 更新噪聲估計
 
+        v1.3.0: 支持快速追蹤模式（動態參數）
+
         參數:
             magnitude: 當前幀的幅度譜 (n_freqs,)
             spp: 語音存在機率（可選）(n_freqs,)
@@ -95,19 +116,30 @@ class ImcraNoiseEstimator:
         if not self.is_initialized:
             raise RuntimeError("Noise estimator not initialized. Call estimate() first.")
 
+        # v1.3.0: 快速模式計時器
+        if self.is_fast_mode:
+            self.fast_mode_frames += 1
+            # 達到持續時間後恢復正常模式
+            if self.fast_mode_frames >= self.fast_mode_duration:
+                self.current_alpha_s = self.alpha_s_normal
+                self.current_alpha_d = self.alpha_d_normal
+                self.current_L = self.L_normal
+                self.is_fast_mode = False
+                self.fast_mode_frames = 0
+
         # 1. 計算當前功率譜
         current_psd = magnitude ** 2
 
-        # 2. 時間平滑
-        self.smoothed_psd = self.alpha_s * self.smoothed_psd + \
-                           (1 - self.alpha_s) * current_psd
+        # 2. 時間平滑（使用當前 alpha_s）
+        self.smoothed_psd = self.current_alpha_s * self.smoothed_psd + \
+                           (1 - self.current_alpha_s) * current_psd
 
         # 3. 更新最小值緩衝區（FIFO）
         self.min_buffer = np.roll(self.min_buffer, -1, axis=0)
         self.min_buffer[-1] = self.smoothed_psd
 
-        # 4. 計算最小值
-        min_psd = np.min(self.min_buffer, axis=0)
+        # 4. 計算最小值（使用當前窗口長度）
+        min_psd = np.min(self.min_buffer[-self.current_L:], axis=0)
 
         # 5. 計算 SPP 指示（如果沒有提供）
         if spp is None:
@@ -118,10 +150,10 @@ class ImcraNoiseEstimator:
             # 使用平均 SPP 作為指示
             spp = np.clip(spp, 0, 1)
 
-        # 6. SPP 引導的噪聲更新
+        # 6. SPP 引導的噪聲更新（使用當前 alpha_d）
         # 低 SPP 區域：更新噪聲估計
         # 高 SPP 區域：保持噪聲估計
-        update_factor = (1 - spp) * self.alpha_d
+        update_factor = (1 - spp) * self.current_alpha_d
 
         self.noise_psd = update_factor * self.noise_psd + \
                         (1 - update_factor) * min_psd * self.delta
@@ -130,6 +162,25 @@ class ImcraNoiseEstimator:
 
         return self.noise_psd
 
+    def trigger_fast_tracking(self):
+        """
+        觸發快速追蹤模式（v1.3.0 新增）
+
+        用於噪聲場景變化檢測後，快速適應新的噪聲特性
+        - 切換到快速模式參數（alpha_s=0.7, alpha_d=0.5, L=50）
+        - 縮短最小值緩衝區到 L_fast
+        - 持續 100 幀（1秒）後自動恢復正常
+        """
+        self.current_alpha_s = self.alpha_s_fast
+        self.current_alpha_d = self.alpha_d_fast
+        self.current_L = self.L_fast
+        self.is_fast_mode = True
+        self.fast_mode_frames = 0
+
+        # 縮短最小值緩衝區（保留最近的幀）
+        if self.min_buffer is not None and len(self.min_buffer) > self.L_fast:
+            self.min_buffer = self.min_buffer[-self.L_fast:]
+
     def reset(self):
         """重置估計器"""
         self.noise_psd = None
@@ -137,6 +188,11 @@ class ImcraNoiseEstimator:
         self.min_buffer = None
         self.is_initialized = False
         self.frame_count = 0
+        self.current_alpha_s = self.alpha_s_normal
+        self.current_alpha_d = self.alpha_d_normal
+        self.current_L = self.L_normal
+        self.is_fast_mode = False
+        self.fast_mode_frames = 0
 
     def __repr__(self):
         return (f"ImcraNoiseEstimator(alpha_s={self.alpha_s}, "

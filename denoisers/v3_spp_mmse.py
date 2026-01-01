@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from core import FrameProcessor, Reconstructor, SppEstimator
 from core.noise_estimators import RecursiveAverageNoiseEstimator
 from core.gain_calculators import SppMmseGainCalculator
+from core.noise_change_detector import NoiseChangeDetector  # v1.3.0 新增
 from .base_denoiser import BaseDenoiser
 from typing import Tuple
 
@@ -63,7 +64,8 @@ class SppMmseDenoiser(BaseDenoiser):
         xi_min_db: float = -25.0,
         g_min_db: float = -20.0,
         alpha_g: float = 0.7,
-        num_init_frames: int = 20
+        num_init_frames: int = 20,
+        enable_noise_tracking: bool = True  # v1.3.0 新增：是否啟用噪聲場景追蹤
     ):
         super().__init__(sample_rate)
 
@@ -104,6 +106,20 @@ class SppMmseDenoiser(BaseDenoiser):
 
         # 存儲上一幀的增益（用於 Decision Directed）
         self.gain_prev = None
+
+        # v1.3.0: 噪聲場景變化檢測器
+        self.enable_noise_tracking = enable_noise_tracking
+        if enable_noise_tracking:
+            self.noise_change_detector = NoiseChangeDetector(
+                history_length=20,
+                energy_ratio_high=2.0,
+                energy_ratio_low=0.5,
+                spp_threshold=0.3,
+                confirmation_frames=3,
+                cooldown_frames=50
+            )
+        else:
+            self.noise_change_detector = None
 
     def denoise(self, noisy_signal: np.ndarray) -> np.ndarray:
         """
@@ -169,6 +185,17 @@ class SppMmseDenoiser(BaseDenoiser):
                 self.gain_prev
             )
 
+            # v1.3.0: 噪聲場景變化檢測
+            if self.enable_noise_tracking and self.noise_change_detector is not None:
+                # 使用 posterior SNR (gamma) 檢測噪聲變化
+                if self.noise_change_detector.detect(gamma, spp):
+                    # 觸發快速適應
+                    self.noise_estimator.trigger_fast_adaptation()
+                    # 清除歷史狀態
+                    self.gain_calculator.reset()
+                    self.spp_estimator.reset()
+                    self.gain_prev = None
+
             # 2.3 計算 SPP 加權的 MMSE 增益 ⭐ 核心步驟
             gain = self.gain_calculator.calculate(spp, xi, gamma)
 
@@ -194,6 +221,9 @@ class SppMmseDenoiser(BaseDenoiser):
         self.spp_estimator.reset()
         self.gain_calculator.reset()
         self.gain_prev = None
+        # v1.3.0: 重置噪聲變化檢測器
+        if self.enable_noise_tracking and self.noise_change_detector is not None:
+            self.noise_change_detector.reset()
 
     def get_params(self) -> dict:
         """獲取參數"""
