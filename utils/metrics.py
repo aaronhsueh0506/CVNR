@@ -2,11 +2,18 @@
 Evaluation Metrics - 評估指標
 
 Provides comprehensive metrics for speech enhancement evaluation:
+- segSNR (Segmental SNR) - PRIMARY metric for traditional algorithms
 - SNR (Signal-to-Noise Ratio)
-- PESQ (Perceptual Evaluation of Speech Quality)
-- STOI (Short-Time Objective Intelligibility)
+- PESQ (Perceptual Evaluation of Speech Quality) - Reference only
+- STOI (Short-Time Objective Intelligibility) - Reference only
 - LSD (Log Spectral Distance)
 - Musical Noise Detection
+
+Note:
+    For traditional denoising algorithms (spectral subtraction, Wiener, etc.),
+    segSNR is the primary metric because it's more forgiving of spectral
+    modifications. PESQ/STOI are designed for codecs and penalize the kind
+    of spectral changes that traditional algorithms inherently make.
 """
 
 import numpy as np
@@ -174,6 +181,125 @@ def calculate_stoi(
         return None
 
 
+def calculate_segmental_snr(
+    clean: np.ndarray,
+    enhanced: np.ndarray,
+    frame_size: int = 256,
+    hop_size: int = 128
+) -> float:
+    """
+    Calculate Segmental Signal-to-Noise Ratio (segSNR).
+
+    This metric is more suitable for traditional denoising algorithms than PESQ/STOI
+    because it measures SNR frame-by-frame, avoiding the harsh penalties that
+    perceptual metrics impose on spectral modifications.
+
+    Args:
+        clean: Clean reference signal
+        enhanced: Enhanced signal
+        frame_size: Frame size in samples (default 256 = 16ms @ 16kHz)
+        hop_size: Hop size in samples (default 128 = 50% overlap)
+
+    Returns:
+        Segmental SNR in dB (higher is better)
+
+    Note:
+        - Frame-by-frame SNR calculation with outlier clipping
+        - Silent frames (power < 1e-10) are skipped
+        - Frame SNRs are clipped to [-10, 35] dB to avoid outliers
+        - Typical range: 5-20 dB for good denoising
+    """
+    # Ensure same length
+    min_len = min(len(clean), len(enhanced))
+    clean = clean[:min_len]
+    enhanced = enhanced[:min_len]
+
+    # Calculate number of frames
+    num_frames = (len(clean) - frame_size) // hop_size + 1
+
+    if num_frames < 1:
+        # Signal too short, fall back to global SNR
+        noise = enhanced - clean
+        return calculate_snr(clean, noise)
+
+    # Calculate frame-by-frame SNR
+    frame_snrs = []
+
+    for i in range(num_frames):
+        start = i * hop_size
+        end = start + frame_size
+
+        if end > len(clean):
+            break
+
+        clean_frame = clean[start:end]
+        enhanced_frame = enhanced[start:end]
+
+        # Calculate frame power
+        signal_power = np.mean(clean_frame ** 2)
+
+        # Skip silent frames
+        if signal_power < 1e-10:
+            continue
+
+        # Calculate noise for this frame
+        noise_frame = enhanced_frame - clean_frame
+        noise_power = np.mean(noise_frame ** 2)
+
+        # Calculate frame SNR
+        if noise_power < 1e-10:
+            frame_snr = 35.0  # Very high SNR (clipped)
+        else:
+            frame_snr = 10 * np.log10(signal_power / noise_power)
+
+        # Clip to avoid outliers
+        frame_snr = np.clip(frame_snr, -10.0, 35.0)
+
+        frame_snrs.append(frame_snr)
+
+    # Return mean of all frame SNRs
+    if len(frame_snrs) == 0:
+        return 0.0  # No valid frames
+
+    segmental_snr = np.mean(frame_snrs)
+    return float(segmental_snr)
+
+
+def calculate_segmental_snr_improvement(
+    noisy: np.ndarray,
+    clean: np.ndarray,
+    enhanced: np.ndarray,
+    frame_size: int = 256,
+    hop_size: int = 128
+) -> Tuple[float, float, float]:
+    """
+    Calculate input segSNR, output segSNR, and segSNR improvement.
+
+    This is the PRIMARY metric for evaluating traditional denoising algorithms,
+    as it's more forgiving of spectral modifications than PESQ/STOI.
+
+    Args:
+        noisy: Noisy signal
+        clean: Clean reference signal
+        enhanced: Enhanced signal
+        frame_size: Frame size in samples
+        hop_size: Hop size in samples
+
+    Returns:
+        (input_segsnr_db, output_segsnr_db, segsnr_improvement_db)
+    """
+    # Calculate input segSNR (noisy vs clean)
+    input_segsnr = calculate_segmental_snr(clean, noisy, frame_size, hop_size)
+
+    # Calculate output segSNR (enhanced vs clean)
+    output_segsnr = calculate_segmental_snr(clean, enhanced, frame_size, hop_size)
+
+    # Calculate improvement
+    segsnr_improvement = output_segsnr - input_segsnr
+
+    return input_segsnr, output_segsnr, segsnr_improvement
+
+
 def calculate_lsd(
     clean: np.ndarray,
     enhanced: np.ndarray,
@@ -310,10 +436,22 @@ def evaluate_all_metrics(
 
     Returns:
         Dictionary with all metric results
+
+    Note:
+        For traditional denoising algorithms, segSNR is the primary metric.
+        PESQ/STOI are provided for reference only.
     """
     results = {}
 
-    # SNR metrics
+    # Segmental SNR metrics (PRIMARY for traditional algorithms)
+    input_segsnr, output_segsnr, segsnr_improvement = calculate_segmental_snr_improvement(
+        noisy, clean, enhanced
+    )
+    results['input_segsnr_db'] = input_segsnr
+    results['output_segsnr_db'] = output_segsnr
+    results['segsnr_improvement_db'] = segsnr_improvement
+
+    # Global SNR metrics
     input_snr, output_snr, snr_improvement = calculate_snr_improvement(
         noisy, clean, enhanced
     )
@@ -321,11 +459,11 @@ def evaluate_all_metrics(
     results['output_snr_db'] = output_snr
     results['snr_improvement_db'] = snr_improvement
 
-    # PESQ
+    # PESQ (reference only for traditional algorithms)
     pesq_result = calculate_pesq(clean, enhanced, fs)
     results['pesq'] = pesq_result
 
-    # STOI
+    # STOI (reference only for traditional algorithms)
     stoi_result = calculate_stoi(clean, enhanced, fs)
     results['stoi'] = stoi_result
 
@@ -349,28 +487,42 @@ def print_metrics(metrics: dict, algorithm_name: str = ""):
         algorithm_name: Name of the algorithm
     """
     if algorithm_name:
-        print(f"\n{'='*60}")
+        print(f"\n{'='*70}")
         print(f"Metrics for: {algorithm_name}")
-        print(f"{'='*60}")
+        print(f"{'='*70}")
 
-    print(f"Input SNR:         {metrics['input_snr_db']:6.2f} dB")
-    print(f"Output SNR:        {metrics['output_snr_db']:6.2f} dB")
-    print(f"SNR Improvement:   {metrics['snr_improvement_db']:6.2f} dB")
+    # PRIMARY METRICS (Segmental SNR)
+    print("\n[PRIMARY METRICS - Segmental SNR]")
+    print(f"  Input segSNR:         {metrics['input_segsnr_db']:7.2f} dB")
+    print(f"  Output segSNR:        {metrics['output_segsnr_db']:7.2f} dB")
+    print(f"  segSNR Improvement:   {metrics['segsnr_improvement_db']:7.2f} dB  ★")
 
+    # SECONDARY METRICS (Global SNR)
+    print("\n[Global SNR Metrics]")
+    print(f"  Input SNR:            {metrics['input_snr_db']:7.2f} dB")
+    print(f"  Output SNR:           {metrics['output_snr_db']:7.2f} dB")
+    print(f"  SNR Improvement:      {metrics['snr_improvement_db']:7.2f} dB")
+
+    # REFERENCE METRICS (PESQ/STOI - not primary for traditional algorithms)
+    print("\n[Reference Metrics - For comparison only]")
     if metrics['pesq'] is not None:
-        print(f"PESQ:              {metrics['pesq']:6.2f} (1.0-4.5)")
+        print(f"  PESQ:                 {metrics['pesq']:7.2f} (1.0-4.5)")
     else:
-        print(f"PESQ:              N/A (install pesq)")
+        print(f"  PESQ:                 N/A (install: pip install pesq)")
 
     if metrics['stoi'] is not None:
-        print(f"STOI:              {metrics['stoi']:6.2f} (0-1)")
+        print(f"  STOI:                 {metrics['stoi']:7.3f} (0-1)")
     else:
-        print(f"STOI:              N/A (install pystoi)")
+        print(f"  STOI:                 N/A (install: pip install pystoi)")
 
-    print(f"LSD:               {metrics['lsd_db']:6.2f} dB")
-    print(f"Musical Noise:     {metrics['musical_noise']:6.2e}")
+    # QUALITY METRICS
+    print("\n[Quality Metrics]")
+    print(f"  LSD:                  {metrics['lsd_db']:7.2f} dB")
+    print(f"  Musical Noise:        {metrics['musical_noise']:7.2e}")
 
-    print(f"{'='*60}\n")
+    print(f"\n{'='*70}")
+    print("Note: For traditional denoising, focus on segSNR improvement (★)")
+    print(f"{'='*70}\n")
 
 
 if __name__ == "__main__":

@@ -4,6 +4,101 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [1.2.0] - 2026-01-01
+
+### 新增 (Added)
+- ✅ **添加 segSNR (Segmental SNR) 評估指標**
+  - 新增 `calculate_segmental_snr()` 函數
+  - 新增 `calculate_segmental_snr_improvement()` 函數
+  - segSNR 現在是**主要評估指標**（適用於傳統降噪算法）
+  - PESQ/STOI 改為**參考指標**
+
+### 改進 (Changed)
+- ⬆️ **評估指標體系調整**
+  - `evaluate_all_metrics()` 現在優先計算 segSNR
+  - `print_metrics()` 重新設計，突出顯示 segSNR 改善值（標註★）
+  - 更新模組文檔說明，明確指出 segSNR 是主要指標
+
+- 📝 **文檔更新**
+  - 更新 utils/metrics.py 模組說明
+  - 添加 segSNR 計算細節和適用場景說明
+  - 說明 PESQ/STOI 不適合傳統算法的原因
+
+### 技術細節 (Technical Details)
+
+#### 為什麼使用 segSNR 而非 PESQ/STOI？
+
+**PESQ/STOI 的問題**：
+- PESQ 設計用於語音編碼器（codec）評估
+- 對頻譜修改極度敏感，會嚴厲懲罰傳統算法固有的頻譜變化
+- STOI 對語音能量損失敏感，傳統算法多少會削減語音
+- 結果：所有版本 (V1-V4) 得分都在 1.0-1.5 範圍，無法區分優劣
+
+**segSNR 的優勢**：
+- 逐幀計算 SNR，對頻譜修改更寬容
+- 更符合傳統降噪算法的評估需求
+- 能有效區分不同版本的降噪效果
+- 典型範圍：5-20 dB 表示良好降噪
+
+#### segSNR 實現細節
+
+**算法**：
+```python
+# 1. 將信號分成短幀 (16ms, 50% overlap)
+frame_size = 256 samples (16ms @ 16kHz)
+hop_size = 128 samples (50% overlap)
+
+# 2. 對每一幀計算 SNR
+for each frame:
+    signal_power = mean(clean_frame^2)
+    noise_power = mean((enhanced_frame - clean_frame)^2)
+    frame_snr = 10 * log10(signal_power / noise_power)
+
+# 3. 裁剪異常值並平均
+clip frame_snr to [-10, 35] dB
+segSNR = mean(all valid frame_snrs)
+```
+
+**特點**：
+- 跳過靜音幀（signal_power < 1e-10）
+- 裁剪到 [-10, 35] dB 避免極值影響
+- 計算整段音頻（語音 + 噪聲），不分段
+
+**修改文件**：
+1. `utils/metrics.py`
+   - 行 5: 添加 segSNR 到模組說明（標註為主要指標）
+   - 行 177-258: 添加 `calculate_segmental_snr()` 函數
+   - 行 261-293: 添加 `calculate_segmental_snr_improvement()` 函數
+   - 行 446-452: 在 `evaluate_all_metrics()` 中優先計算 segSNR
+   - 行 494-498: 在 `print_metrics()` 中突出顯示 segSNR（標註★）
+
+#### 指標使用建議
+
+| 指標類型 | 用途 | 適用場景 |
+|---------|------|---------|
+| **segSNR** | **主要評估** | **傳統降噪算法 (V1-V4)** |
+| Global SNR | 次要參考 | 全局能量評估 |
+| PESQ | 參考 | 語音編碼器、深度學習模型 |
+| STOI | 參考 | 可懂度評估、深度學習模型 |
+| LSD | 輔助 | 頻譜失真程度 |
+| Musical Noise | 診斷 | 檢測音樂噪聲偽影 |
+
+**使用範例**：
+```python
+from utils.metrics import evaluate_all_metrics, print_metrics
+
+# 計算所有指標
+metrics = evaluate_all_metrics(noisy, clean, enhanced, fs=16000)
+
+# 顯示結果（segSNR 會被突出顯示）
+print_metrics(metrics, "V3 SPP-MMSE")
+
+# 主要關注
+print(f"segSNR Improvement: {metrics['segsnr_improvement_db']:.2f} dB")
+```
+
+---
+
 ## [1.1.0] - 2024-12-30
 
 ### 新增 (Added)
@@ -168,7 +263,7 @@ output[start:end] += frame  # 不重複加窗
 ## [1.3.0] - 擴展功能（未來）
 
 ### 計劃功能
-- ⚪ 評估指標（PESQ, STOI）
+- ✅ 評估指標（PESQ, STOI, segSNR）- 已完成於 v1.2.0
 - ⚪ 可視化工具（頻譜圖、SPP 熱圖）
 - ⚪ 實時音頻流處理
 - ⚪ C++ 移植
