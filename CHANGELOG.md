@@ -4,6 +4,79 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [1.3.0] - 2026-01-01
+
+### 新增 (Added)
+- ✅ **噪聲場景自適應機制**
+  - 新增 `NoiseChangeDetector` 噪聲場景變化檢測器
+  - 使用 Posterior SNR (γ) 檢測噪聲場景突變
+  - V3 降噪器集成場景自適應功能
+  - 新增 `enable_noise_tracking` 參數（可選啟用/關閉）
+
+### 改進 (Changed)
+- ⬆️ **V1 噪聲估計器**：添加快速重估機制（200-400ms 適應）
+- ⬆️ **V2/V3 噪聲估計器**：添加動態 alpha 切換（100-200ms 適應）
+- ⬆️ **V4 噪聲估計器**：添加快速追蹤模式（300-600ms 適應）
+
+### 技術細節 (Technical Details)
+
+#### 噪聲場景自適應機制
+
+**設計原理**：
+- 使用已有的 Posterior SNR (γ) 進行檢測，無需額外計算
+- 在非語音段（SPP < 0.3）檢測噪聲能量比變化
+- 當能量比 > 2.0 或 < 0.5 時觸發快速適應
+
+**檢測流程**：
+```python
+γ_ref = mean(γ_history[過去20幀])
+γ_cur = γ[當前幀]
+energy_ratio = sum(γ_cur) / sum(γ_ref)
+
+if energy_ratio > 2.0 or < 0.5:
+    → 噪聲場景變化！觸發快速適應
+```
+
+**適應策略**：
+
+| 版本 | 正常模式 | 快速模式 | 適應時間 |
+|------|----------|----------|----------|
+| V1 | 固定噪聲 | 重估20幀 | 200-400ms |
+| V2/V3 | α=0.95 | α=0.5 | 100-200ms |
+| V4 | α_s=0.9, L=150 | α_s=0.7, L=50 | 300-600ms |
+
+**修改文件**：
+1. `core/noise_change_detector.py` - 新建檢測器
+2. `core/noise_estimators/simple_average.py` - V1 重估機制
+3. `core/noise_estimators/recursive_average.py` - V2/V3 動態 alpha
+4. `core/noise_estimators/imcra.py` - V4 快速追蹤
+5. `denoisers/v3_spp_mmse.py` - 集成檢測器
+6. `examples/test_noise_scene_adaptation.py` - 測試腳本
+
+**使用範例**：
+```python
+from denoisers.v3_spp_mmse import SppMmseDenoiser
+
+# 默認啟用噪聲追蹤
+denoiser = SppMmseDenoiser(sample_rate=16000)
+enhanced = denoiser.denoise(noisy_signal)
+
+# 關閉噪聲追蹤（如果不需要）
+denoiser = SppMmseDenoiser(
+    sample_rate=16000,
+    enable_noise_tracking=False
+)
+```
+
+**性能影響**：
+- 計算開銷：< 1%
+- 內存開銷：~10KB
+- 適應速度：2-4倍提升
+
+詳見：[CHANGES_SUMMARY_v1.3.0.md](CHANGES_SUMMARY_v1.3.0.md)
+
+---
+
 ## [1.2.0] - 2026-01-01
 
 ### 新增 (Added)

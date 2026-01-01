@@ -15,12 +15,20 @@ class SimpleAverageNoiseEstimator:
 
     參數:
         num_init_frames: 用於估計噪聲的初始幀數（默認 20 幀 = 0.2 秒）
+
+    v1.3.0 新增：
+        支持噪聲場景變化時的快速重估機制
     """
 
     def __init__(self, num_init_frames: int = 20):
         self.num_init_frames = num_init_frames
         self.noise_psd = None
         self.is_initialized = False
+
+        # v1.3.0: 快速重估狀態
+        self.is_reestimating = False
+        self.noise_buffer = []
+        self.reestimate_frames = 20  # 重估需要的幀數
 
     def estimate(self, magnitude_spectrum: np.ndarray) -> np.ndarray:
         """
@@ -60,12 +68,17 @@ class SimpleAverageNoiseEstimator:
 
         return self.noise_psd
 
-    def update(self, magnitude: np.ndarray) -> np.ndarray:
+    def update(self, magnitude: np.ndarray, is_speech: bool = True) -> np.ndarray:
         """
-        更新噪聲估計（對於簡單平均，不更新）
+        更新噪聲估計
+
+        v1.3.0: 支持快速重估機制
+        - 正常模式：噪聲估計固定不變
+        - 重估模式：在非語音段收集幀並重新估計
 
         參數:
             magnitude: 當前幀的幅度譜 (n_freqs,)
+            is_speech: 是否為語音段（用於重估時跳過語音）
 
         返回:
             noise_psd: 噪聲功率譜密度 (n_freqs,)
@@ -73,13 +86,35 @@ class SimpleAverageNoiseEstimator:
         if not self.is_initialized:
             raise RuntimeError("Noise estimator not initialized. Call estimate() first.")
 
-        # 簡單平均方法：噪聲估計固定不變
+        # v1.3.0: 快速重估邏輯
+        if self.is_reestimating:
+            # 只在非語音段收集
+            if not is_speech:
+                self.noise_buffer.append(magnitude ** 2)
+
+                # 收集足夠幀數後完成重估
+                if len(self.noise_buffer) >= self.reestimate_frames:
+                    self.noise_psd = np.mean(self.noise_buffer, axis=0)
+                    self.is_reestimating = False
+                    self.noise_buffer = []
+
         return self.noise_psd
+
+    def start_reestimate(self):
+        """
+        觸發快速重估（v1.3.0 新增）
+
+        用於噪聲場景變化檢測後，重新估計噪聲特性
+        """
+        self.is_reestimating = True
+        self.noise_buffer = []
 
     def reset(self):
         """重置估計器"""
         self.noise_psd = None
         self.is_initialized = False
+        self.is_reestimating = False
+        self.noise_buffer = []
 
     def __repr__(self):
         return f"SimpleAverageNoiseEstimator(num_init_frames={self.num_init_frames})"
