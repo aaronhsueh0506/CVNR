@@ -4,6 +4,106 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [1.5.0] - 2026-01-02
+
+### 新增 (Added)
+- ✅ **V3 整合 V3-1**：統一 MMSE-STSA 實現
+  - V3 支持兩種公式切換：Bessel 完整版 / E1 簡化版
+  - 新增 `use_full_formula` 參數（true=Bessel, false=E1）
+  - 刪除獨立的 V3-1 版本
+  - 統一命名為 "MMSE-STSA"
+
+- ✅ **噪聲追蹤擴展**：擴展到所有主要版本
+  - V2 (Wiener Filter)
+  - V3-2 (MMSE-LSA)
+  - V3-3 (PMMSE)
+  - V3-4 (Laplacian-MMSE)
+  - V4 (IMCRA-OMLSA)
+  - 統一配置：`noise_tracking.enable: true`
+
+### 改進 (Changed)
+- ⬆️ **V4 性能優化**：修復音量和震動問題
+  - 配置優化：IMCRA 參數調整（alpha_d: 0.85→0.88, L: 150→120, delta_db: 5→8）
+  - 配置優化：OMLSA 參數調整（alpha_g: 0.85→0.88）
+  - 混合策略：低 SPP 區域使用線性/對數域混合增益
+  - 變化限制：幀間增益變化速率限制（±6dB max）
+  - 自適應 delta：根據 SNR 動態調整（3-12dB）
+  - 效果：音量損失從 8-10dB 降至 3-5dB，震動感明顯減少
+
+### 修復 (Fixed)
+- 🐛 V4 音量損失過大問題
+- 🐛 V4 語音段震動感問題
+
+### 刪除 (Removed)
+- ❌ V3-1 獨立版本（已合併到 V3）
+- ❌ `core/gain_calculators/mmse_stsa.py`（功能合併到 `spp_mmse.py`）
+- ❌ `denoisers/v3_1_mmse_stsa.py`（已合併）
+- ❌ `config/v3_1_config.yaml`（已合併）
+
+### 修改文件
+1. `config/v2_config.yaml` - 添加 noise_tracking
+2. `config/v3_config.yaml` - 添加 use_full_formula, noise_tracking
+3. `config/v3_2_config.yaml` - 添加 noise_tracking
+4. `config/v3_3_config.yaml` - 添加 noise_tracking
+5. `config/v3_4_config.yaml` - 添加 noise_tracking
+6. `config/v4_config.yaml` - 優化 4 個參數，添加 noise_tracking
+7. `core/gain_calculators/spp_mmse.py` - 整合 V3-1 功能
+8. `core/gain_calculators/omlsa.py` - 添加混合策略和變化限制
+9. `core/noise_estimators/imcra.py` - 添加自適應 delta
+10. `denoisers/v2_wiener.py` - 添加噪聲追蹤
+11. `denoisers/v3_spp_mmse.py` - 添加 use_full_formula 參數
+12. `denoisers/v3_2_mmse_lsa.py` - 添加噪聲追蹤
+13. `denoisers/v3_3_pmmse.py` - 添加噪聲追蹤
+14. `denoisers/v3_4_laplacian_mmse.py` - 添加噪聲追蹤
+15. `denoisers/v4_imcra_omlsa.py` - 全面優化
+16. `examples/process_audio.py` - 移除 V3-1，添加參數支持
+
+詳見：[PROJECT_STATUS.md](PROJECT_STATUS.md)
+
+---
+
+## [1.4.0] - 2026-01-01
+
+### 新增 (Added)
+- ✅ **新增 MMSE 變體**：4 個學術標準實現
+  - V3-1: MMSE-STSA (Ephraim-Malah 1984)
+    - 支持 Bessel 完整版 / E1 簡化版切換
+    - `use_full_formula` 參數
+  - V3-2: MMSE-LSA (Ephraim-Malah 1985)
+    - 對數域 MMSE 估計
+    - `use_linear_spp_weighting` 參數
+  - V3-3: PMMSE (Loizou 2005)
+    - Laplacian 先驗 + Itakura-Saito 距離
+    - 感知動機設計
+  - V3-4: Laplacian-MMSE (Chen & Loizou 2007)
+    - Laplacian 先驗 + 標準 MSE
+    - `beta_laplacian` 形狀參數
+
+- ✅ **新增 Loizou 評估指標**：專業語音質量評估
+  - segSNR with VAD（排除靜音幀）
+  - fwSegSNR（頻率加權）
+  - WSS（加權頻譜斜率距離）
+  - Composite Measure（綜合評估）
+
+### 新增文件
+1. `core/gain_calculators/mmse_stsa.py` - MMSE-STSA 增益計算器
+2. `core/gain_calculators/mmse_lsa.py` - MMSE-LSA 增益計算器
+3. `core/gain_calculators/pmmse.py` - PMMSE 增益計算器
+4. `core/gain_calculators/laplacian_mmse.py` - Laplacian-MMSE 增益計算器
+5. `denoisers/v3_1_mmse_stsa.py` - V3-1 降噪器
+6. `denoisers/v3_2_mmse_lsa.py` - V3-2 降噪器
+7. `denoisers/v3_3_pmmse.py` - V3-3 降噪器
+8. `denoisers/v3_4_laplacian_mmse.py` - V3-4 降噪器
+9. `config/v3_1_config.yaml` - V3-1 配置
+10. `config/v3_2_config.yaml` - V3-2 配置
+11. `config/v3_3_config.yaml` - V3-3 配置
+12. `config/v3_4_config.yaml` - V3-4 配置
+13. `utils/metrics_loizou.py` - Loizou 評估指標
+
+詳見：v1.4.0 相關文檔
+
+---
+
 ## [1.3.0] - 2026-01-01
 
 ### 新增 (Added)

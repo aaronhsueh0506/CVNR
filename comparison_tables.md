@@ -1,7 +1,8 @@
 # 語音降噪算法性能對比
 
 **生成時間：** 自動生成
-**對比算法：** V1 頻譜減法、V2 Wiener、V3 SPP-MMSE、V4 IMCRA-OMLSA、RNNoise
+**對比算法：** V1 頻譜減法、V2 Wiener、V3 MMSE-STSA、V4 IMCRA-OMLSA、RNNoise
+**版本：** v1.5.0
 
 ---
 
@@ -11,7 +12,7 @@
 |------|---------|---------|---------|----------|---------|------|
 | V1 頻譜減法 | 2 (FFT+IFFT) | 基礎減法 | 無 | ~47K | 低 | 最簡單 |
 | V2 Wiener | 2 (FFT+IFFT) | 除法、平方 | 無 | ~47K | 低 | 理論最優 |
-| V3 SPP-MMSE | 2 (FFT+IFFT) | SNR計算、指數 | exp1() | ~50K | 中 | 軟判決 |
+| V3 MMSE-STSA | 2 (FFT+IFFT) | SNR計算、指數 | exp1() | ~50K | 中 | 軟判決 |
 | V4 IMCRA-OMLSA | 2 (FFT+IFFT) | 最小值追蹤、平滑 | exp1(), log | ~53K | 中高 | 產品級 |
 | RNNoise | 無 | GRU 矩陣乘法 | tanh, sigmoid | ~33K | 高 | 深度學習 |
 
