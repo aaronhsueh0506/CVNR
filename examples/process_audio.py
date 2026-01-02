@@ -131,12 +131,22 @@ def create_denoiser_from_config(
     if 'audio' in config:
         frame_size_ms = config['audio'].get('frame_size_ms', 20)
         frame_shift_ms = config['audio'].get('frame_shift_ms', 10)
-        fft_size = config['audio'].get('fft_size', 512)
+        config_fft_size = config['audio'].get('fft_size', None)
     else:
         # 默認參數
         frame_size_ms = 20
         frame_shift_ms = 10
-        fft_size = 512
+        config_fft_size = None
+
+    # v1.5.1: 自動計算 FFT 大小（基於實際採樣率）
+    frame_samples = int(sample_rate * frame_size_ms / 1000)
+    fft_size = 2 ** int(np.ceil(np.log2(frame_samples)))
+
+    # 如果配置指定了 FFT 大小且合理，使用配置值
+    if config_fft_size is not None and config_fft_size >= frame_samples:
+        fft_size = config_fft_size
+    elif config_fft_size is not None:
+        print(f"  ⚠️  警告: {version} 配置的 FFT={config_fft_size} 太小（需要>={frame_samples}），自動調整為 {fft_size}")
 
     # 根據版本創建降噪器
     if version == 'V1':
@@ -451,6 +461,18 @@ def process_audio_file(
             start_time = time.time()
             enhanced = denoiser.denoise(audio)
             processing_time = time.time() - start_time
+
+            # v1.5.1: 確保輸出長度與輸入一致（修復繪圖維度不匹配問題）
+            if len(enhanced) != len(audio):
+                length_diff = len(enhanced) - len(audio)
+                if abs(length_diff) > 0:
+                    # 如果長度不一致，進行修正
+                    if len(enhanced) > len(audio):
+                        # 輸出過長，截斷
+                        enhanced = enhanced[:len(audio)]
+                    else:
+                        # 輸出過短，補零
+                        enhanced = np.pad(enhanced, (0, len(audio) - len(enhanced)), mode='constant')
 
             # 計算實時率
             rtf = processing_time / duration
