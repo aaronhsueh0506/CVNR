@@ -29,10 +29,10 @@ class LaplacianMmseDenoiser(BaseDenoiser):
         - 產生更少殘留噪聲
 
     與 V3-1/V3-2/V3-3 的區別:
-        - V3-1 (MMSE-STSA): Gaussian 先驗,線性域 MSE
-        - V3-2 (MMSE-LSA):  Gaussian 先驗,對數域 MSE
-        - V3-3 (PMMSE):     Laplacian 先驗,IS 距離
-        - V3-4 (Lap-MMSE):  Laplacian 先驗,標準 MSE
+        - V3 (MMSE-STSA):   Gaussian 先驗, 線性域 MSE
+        - V3-2 (MMSE-LSA):  Gaussian 先驗, 對數域 MSE
+        - V3-3 (PMMSE):     Gaussian 先驗, IS 距離
+        - V3-4 (Lap-MMSE):  Laplacian 先驗, 標準 MSE
 
     數學優勢:
         - Laplacian 峰態係數 = 6 (Gaussian 為 3)
