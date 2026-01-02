@@ -1,7 +1,7 @@
 # 語音降噪演算法詳解
 
-**版本**：v1.3.0
-**更新日期**：2026-01-01
+**版本**：v1.4.0
+**更新日期**：2026-01-02
 **適用對象**：技術介紹、演算法說明、項目展示
 
 ---
@@ -10,11 +10,13 @@
 
 1. [系統概述](#系統概述)
 2. [核心技術架構](#核心技術架構)
-3. [四個演算法版本詳解](#四個演算法版本詳解)
-4. [關鍵技術創新](#關鍵技術創新)
-5. [性能指標與對比](#性能指標與對比)
-6. [應用場景](#應用場景)
-7. [技術優勢](#技術優勢)
+3. [演算法版本詳解](#演算法版本詳解)
+4. [MMSE 變體詳解 (v1.4.0)](#mmse-變體詳解-v140)
+5. [評估指標 (v1.4.0)](#評估指標-v140)
+6. [關鍵技術創新](#關鍵技術創新)
+7. [性能指標與對比](#性能指標與對比)
+8. [應用場景](#應用場景)
+9. [技術優勢](#技術優勢)
 
 ---
 
@@ -26,10 +28,12 @@
 
 ### 核心特點
 
-- ✅ **四個漸進式演算法版本**：從經典方法到產品級方案
+- ✅ **八個演算法版本**：V1-V4 基礎版本 + V3-1 到 V3-4 MMSE 變體
 - ✅ **實時處理能力**：所有版本 RTF < 0.01（遠超實時標準）
 - ✅ **Musical Noise 完全解決**：創新的時間平滑機制
 - ✅ **噪聲場景自適應**：v1.3.0 新增噪聲變化檢測與快速適應
+- ✅ **MMSE 學術標準實現**：v1.4.0 新增四個 MMSE 變體（Ephraim-Malah, Loizou, Chen）
+- ✅ **專業評估指標**：v1.4.0 新增 Loizou 2008 推薦指標
 - ✅ **模塊化架構**：易於集成和擴展
 - ✅ **參數可調**：豐富的配置選項適應不同場景
 
@@ -76,10 +80,14 @@
 系統採用清晰的分層架構：
 
 ```
-denoisers/          ← 完整降噪器（V1-V4）
+denoisers/          ← 完整降噪器（V1-V4 + MMSE 變體）
     ├── v1_spectral_subtraction.py
     ├── v2_wiener.py
     ├── v3_spp_mmse.py
+    ├── v3_1_mmse_stsa.py       ← v1.4.0 MMSE-STSA
+    ├── v3_2_mmse_lsa.py        ← v1.4.0 MMSE-LSA
+    ├── v3_3_pmmse.py           ← v1.4.0 PMMSE
+    ├── v3_4_laplacian_mmse.py  ← v1.4.0 Laplacian-MMSE
     └── v4_imcra_omlsa.py
 
 core/               ← 核心組件
@@ -95,12 +103,20 @@ core/               ← 核心組件
         ├── spectral_subtraction.py
         ├── wiener.py
         ├── spp_mmse.py
+        ├── mmse_stsa.py        ← v1.4.0 MMSE-STSA
+        ├── mmse_lsa.py         ← v1.4.0 MMSE-LSA
+        ├── pmmse.py            ← v1.4.0 PMMSE
+        ├── laplacian_mmse.py   ← v1.4.0 Laplacian-MMSE
         └── omlsa.py
+
+utils/              ← 工具模塊
+    ├── audio_io.py
+    └── metrics_loizou.py       ← v1.4.0 Loizou 評估指標
 ```
 
 ---
 
-## 四個演算法版本詳解
+## 演算法版本詳解
 
 ### V1: 頻譜減法（Spectral Subtraction）
 
@@ -253,6 +269,301 @@ G(ω) = p(ω) · G_MMSE(ω) + (1-p(ω)) · G_min
 - 會議系統、VoIP
 - 需要平衡效果和質量的場景
 - 非穩態噪聲環境
+
+---
+
+## MMSE 變體詳解 (v1.4.0)
+
+v1.4.0 新增四個基於 MMSE 理論的學術標準實現,涵蓋不同的成本函數、先驗分佈和操作域。
+
+### V3-1: MMSE-STSA (Ephraim-Malah 1984)
+
+**技術原理**：最小均方誤差短時頻譜幅度估計 (線性域)
+
+#### 核心公式
+
+**成本函數**: 最小化 `E[(|X| - |Xhat|)²]`
+
+**完整版 (Bessel)**:
+```
+G = (Γ(1.5)/γ) * √v * exp(-v/2) * [(1+v)*I₀(v/2) + v*I₁(v/2)]
+```
+- `I₀, I₁`: Modified Bessel functions of order 0 and 1
+- `v = ξ/(1+ξ) * γ`
+
+**簡化版 (E1, 推薦)**:
+```
+G = (ξ/(1+ξ)) * exp(0.5 * E1(v))
+```
+- `E1(v)`: 指數積分函數
+- 誤差 < 5%, 數值穩定性更好
+
+#### 關鍵參數
+
+| 參數 | 默認值 | 作用 |
+|------|--------|------|
+| use_full_formula | false | true=Bessel, false=E1簡化(推薦) |
+| g_min_db | -20 dB | 最小增益 |
+| alpha_g | 0.7 | 增益時間平滑 |
+| alpha_xi | 0.98 | 先驗 SNR 平滑 |
+
+#### 技術特點
+
+- ✅ **學術標準**: Ephraim-Malah 1984 原始公式
+- ✅ **雙版本**: 完整 Bessel / E1 簡化可切換
+- ✅ **數值穩定**: v > 100 自動切換到簡化版
+- 📖 **研究基準**: MMSE-STSA 是語音增強領域的經典基準
+
+---
+
+### V3-2: MMSE-LSA (Ephraim-Malah 1985)
+
+**技術原理**：最小均方誤差對數短時頻譜幅度估計 (對數域)
+
+#### 核心創新：對數域操作
+
+**成本函數**: 最小化 `E[(log|X| - log|Xhat|)²]`
+
+**關鍵差異**:
+```
+STSA (V3-1): G = p*G_mmse + (1-p)*g_min          (線性域加權)
+LSA  (V3-2): log(G) = p*log(G_mmse) + (1-p)*log(g_min)  (對數域加權)
+```
+
+**基礎公式** (與 STSA 相同):
+```
+G_base = (ξ/(1+ξ)) * exp(0.5 * E1(v))
+```
+
+**優勢**:
+- 對數域平滑使小增益被抑制更多
+- 大增益變化更平緩
+- 更符合人耳對數感知 (Weber-Fechner 定律)
+
+#### 關鍵參數
+
+| 參數 | 默認值 | 作用 |
+|------|--------|------|
+| use_linear_spp_weighting | false | true=線性域(退化為STSA), false=對數域(推薦) |
+| g_min_db | -20 dB | 最小增益 |
+| alpha_g | 0.7 | 增益時間平滑 |
+
+#### 技術特點
+
+- ✅ **更少 Musical Noise**: 對數域平滑效果更強
+- ✅ **感知優化**: 符合人耳對數感知特性
+- ✅ **保守策略**: 對小增益更謹慎,保護弱語音
+- 📊 **性能**: 相比 STSA 更平滑,但可能稍微過度抑制
+
+---
+
+### V3-3: PMMSE (Loizou 2005)
+
+**技術原理**：感知動機 MMSE (Laplacian 先驗 + Itakura-Saito 距離)
+
+#### 核心創新：感知成本函數
+
+**成本函數**: 最小化 `E[(|X| - |Xhat|)² / |X|]`
+
+- 等價於 **Itakura-Saito (IS) 距離**
+- 對小幅度更寬容,對大幅度更嚴格
+- 更符合人耳感知特性
+
+**公式**:
+```
+G = sqrt((v+1)/2) * exp(E1(v/2) / 2)
+```
+
+**Laplacian 先驗**:
+```
+p(x) = (1/2b) * exp(-|x|/b)
+```
+- 峰態係數 = 6 (Gaussian 為 3)
+- 更適合語音頻譜的稀疏性
+
+#### 關鍵參數
+
+| 參數 | 默認值 | 作用 |
+|------|--------|------|
+| use_spp_weighting | true | 是否使用 SPP 加權 |
+| g_min_db | -20 dB | 最小增益 |
+| alpha_g | 0.7 | 增益時間平滑 |
+
+#### 技術特點
+
+- ✅ **感知動機**: IS 距離更符合人耳感知
+- ✅ **Laplacian 先驗**: 更適合語音稀疏性
+- ✅ **少殘留噪聲**: 相比 Gaussian-MMSE 更乾淨
+- 📖 **研究價值**: Loizou 2005 經典論文實現
+
+---
+
+### V3-4: Laplacian-MMSE (Chen & Loizou 2007)
+
+**技術原理**：Laplacian 先驗 + 標準 MSE (最新研究成果)
+
+#### 核心特點
+
+**與 V3-3 的區別**:
+| 項目 | V3-3 (PMMSE) | V3-4 (Lap-MMSE) |
+|------|--------------|-----------------|
+| 成本函數 | E[(X-Xhat)²/X] | E[(X-Xhat)²] |
+| 先驗分佈 | Laplacian | Laplacian |
+| 距離測度 | Itakura-Saito | 標準 MSE |
+
+**公式**:
+```
+G = (√π/2) * √v * exp(-v/2) * I₀(v/2)
+```
+其中: `v = β * ξ/(1+ξ) * γ`
+
+**Laplacian 優勢**:
+- 峰態係數 = 6 (Gaussian 為 3)
+- 更「尖銳」,更適合稀疏信號
+- 語音 DFT 係數實測峰態 ≈ 5-8
+
+#### 關鍵參數
+
+| 參數 | 默認值 | 作用 |
+|------|--------|------|
+| beta_laplacian | 1.5 | Laplacian 形狀參數 |
+| g_min_db | -20 dB | 最小增益 |
+| alpha_g | 0.7 | 增益時間平滑 |
+
+**beta_laplacian 調優**:
+- 1.0: 較寬鬆,接近 Gaussian,保留更多細節
+- 1.5: 平衡設置 (推薦)
+- 2.0: 較保守,更多抑制
+
+#### 技術特點
+
+- ✅ **最新研究**: Chen & Loizou 2007
+- ✅ **稀疏性建模**: Laplacian 更適合語音特性
+- ✅ **少殘留噪聲**: 比 Gaussian-MMSE 更乾淨
+- ✅ **可調形狀**: beta 參數控制保守程度
+- 📊 **最佳殘留噪聲**: 四個變體中殘留噪聲最少
+
+---
+
+### MMSE 變體對比總結
+
+| 版本 | 成本函數 | 先驗分佈 | 操作域 | 特點 | 推薦場景 |
+|------|---------|---------|--------|------|----------|
+| **V3-1** | E[(X-Xhat)²] | Gaussian | 線性 | 標準實現 | 基準對比 |
+| **V3-2** | E[(logX-logXhat)²] | Gaussian | 對數 | 更少MN | 高質量要求 |
+| **V3-3** | E[(X-Xhat)²/X] | Laplacian | 線性 | 感知優化 | 研究實驗 |
+| **V3-4** | E[(X-Xhat)²] | Laplacian | 線性 | 少殘留 | 最佳降噪 |
+
+**使用建議**:
+- 🎯 **研究對比**: 使用 V3-1 作為基準
+- 🎵 **音質優先**: 選擇 V3-2 (對數域平滑)
+- 🧪 **學術實驗**: 使用 V3-3 (感知動機)
+- 🏆 **最佳降噪**: 選擇 V3-4 (殘留噪聲最少)
+
+---
+
+## 評估指標 (v1.4.0)
+
+v1.4.0 新增基於 Loizou 2008 推薦的專業評估指標模塊。
+
+### 傳統 segSNR 的問題
+
+**問題**: 傳統 segSNR 與主觀質量相關性低 (r=0.40-0.46)
+
+**原因**:
+1. 包含靜音幀導致分數虛高
+2. 未限制 SNR 範圍導致極端值
+3. Global SNR 通常比 segSNR 高 7 dB
+
+### Loizou 2008 改進方案
+
+#### 1. segSNR with VAD
+
+**改進**:
+- ✅ 使用 VAD 排除靜音幀 (能量閾值 -40 dB)
+- ✅ SNR 限制在 [-10, 35] dB 範圍
+- ✅ 只計算有語音的幀
+
+**實現**:
+```python
+from utils.metrics_loizou import segmental_snr
+
+snr = segmental_snr(
+    clean, enhanced,
+    sample_rate=16000,
+    use_vad=True,
+    vad_threshold_db=-40.0,
+    snr_clip_db=(-10.0, 35.0)
+)
+```
+
+#### 2. fwSegSNR (Frequency-weighted)
+
+**原理**: 對不同頻率賦予不同權重
+
+**權重策略**:
+- 300-3000 Hz: 權重 1.0 (語音主要能量)
+- < 300 Hz: 權重 0.5
+- \> 3000 Hz: 權重遞減 (0.3-1.0)
+
+**優勢**: 更符合人耳感知特性
+
+#### 3. WSS (Weighted-slope Spectral distance)
+
+**原理**: 測量頻譜失真
+
+**實現**:
+- 25 個 Bark 頻帶
+- 計算頻譜斜率差異
+- 加權平均 (模擬臨界頻帶)
+
+**值越小越好** (與 SNR 相反)
+
+#### 4. Composite Measure
+
+**綜合評估**:
+```python
+from utils.metrics_loizou import composite_measure
+
+metrics = composite_measure(clean, enhanced, sample_rate=16000)
+# 返回: {'segSNR': ..., 'fwSegSNR': ..., 'WSS': ..., 'global_SNR': ...}
+```
+
+### 使用示例
+
+```python
+from utils.metrics_loizou import (
+    segmental_snr,
+    frequency_weighted_segsnr,
+    weighted_spectral_slope,
+    composite_measure,
+    print_metrics
+)
+
+# 單個指標
+seg_snr = segmental_snr(clean, enhanced, sample_rate=16000)
+print(f"segSNR: {seg_snr:.2f} dB")
+
+# 綜合評估
+metrics = composite_measure(clean, enhanced, sample_rate=16000)
+print_metrics(metrics, title="V3-1 評估結果")
+```
+
+**輸出範例**:
+```
+==================================================
+V3-1 評估結果
+==================================================
+segSNR         :  12.345 dB
+fwSegSNR       :  13.678 dB
+WSS            :   1.234 (越小越好)
+global_SNR     :  19.456 dB
+==================================================
+```
+
+### 參考文獻
+
+Hu, Y., & Loizou, P. C. (2008). "Evaluation of objective quality measures for speech enhancement." IEEE Transactions on Audio, Speech, and Language Processing, 16(1), 229-238.
 
 ---
 

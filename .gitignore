@@ -73,3 +73,8 @@ Desktop.ini
 
 # 計劃文件（由 Claude Code 自動生成）
 .claude/
+
+# 測試音頻文件 (opus)
+test_wav/**/*.opus
+test_wav/opus/
+*.opus

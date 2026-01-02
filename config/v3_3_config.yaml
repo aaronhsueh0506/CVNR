@@ -1,0 +1,86 @@
+# V3-3: PMMSE Configuration
+# 基於 Loizou 2005
+# 感知動機 MMSE (Perceptually Motivated MMSE)
+
+version: "3-3"
+name: "PMMSE"
+
+# Audio Parameters
+audio:
+  sample_rate: 16000
+  frame_size_ms: 20
+  frame_shift_ms: 10
+  fft_size: 512
+  window_type: "hanning"
+
+# Noise Estimation
+noise_estimation:
+  method: "recursive_average"
+  alpha: 0.95
+  num_init_frames: 20
+  update_during_speech: false
+
+# SPP (Speech Presence Probability) Estimation
+spp:
+  alpha_xi: 0.98          # A priori SNR smoothing factor (0.92-0.98)
+  q: 0.5                  # Speech prior probability
+  xi_min_db: -25.0        # Minimum a priori SNR (dB)
+
+# Gain Calculation - PMMSE
+gain_calculation:
+  method: "pmmse"
+  g_min_db: -20.0         # Minimum gain (dB), -15 to -25
+  alpha_g: 0.7            # Gain temporal smoothing factor
+  use_spp_weighting: true # 是否使用 SPP 加權 (推薦 true)
+
+# Noise Scene Tracking (v1.3.0)
+noise_tracking:
+  enable: true
+
+# Notes:
+#
+# PMMSE 特點:
+# - 成本函數: E[(|X| - |Xhat|)^2 / |X|] (Itakura-Saito 距離)
+# - 使用 Laplacian 先驗分佈 (非 Gaussian)
+# - 更符合人耳感知特性
+# - 產生更少 musical noise 和殘留噪聲
+#
+# 理論基礎:
+#   - Itakura-Saito (IS) 距離:
+#     * D_IS(X, Xhat) = X/Xhat - log(X/Xhat) - 1
+#     * 等價於最小化 E[(X - Xhat)^2 / X]
+#     * 對小幅度更寬容,對大幅度更嚴格
+#
+#   - Laplacian 先驗:
+#     * p(x) = (1/2b) * exp(-|x|/b)
+#     * 峰態係數 = 6 (Gaussian 為 3)
+#     * 更適合語音頻譜的稀疏性
+#
+# use_spp_weighting:
+#   - true (推薦): 使用 SPP 加權
+#     * G = p*G_pmmse + (1-p)*g_min
+#     * 更穩定,musical noise 更少
+#   - false: 不使用 SPP 加權
+#     * G = G_pmmse
+#     * 用於理論研究或對比實驗
+#
+# alpha_g: 增益平滑因子
+#   - PMMSE 本身已較保守,可使用較小 alpha_g
+#   - 0.6-0.7: 推薦範圍
+#   - 0.7-0.8: 強平滑
+#
+# 與其他版本的區別:
+#   - V3-1 (MMSE-STSA): 最小化 E[(|X| - |Xhat|)^2]
+#   - V3-2 (MMSE-LSA):  最小化 E[(log|X| - log|Xhat|)^2]
+#   - V3-3 (PMMSE):     最小化 E[(|X| - |Xhat|)^2 / |X|]
+#   - V3-4 (Lap-MMSE):  Laplacian + 標準 MSE
+#
+# 數學公式:
+#   G = sqrt((v+1)/2) * exp(E1(v/2) / 2)
+#   其中 v = ξ/(1+ξ) * γ
+#
+# 參考文獻:
+#   Loizou, P. C. (2005).
+#   "Speech enhancement based on perceptually motivated Bayesian estimators
+#   of the magnitude spectrum."
+#   IEEE Transactions on Speech and Audio Processing, 13(5), 857-869.

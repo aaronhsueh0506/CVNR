@@ -1,5 +1,6 @@
 """
-V2: Wiener Filter Denoiser - Wiener 濾波降噪器
+V3-4: Laplacian-MMSE Denoiser - Laplacian 先驗 MMSE 降噪器
+基於 Chen & Loizou 2007
 """
 
 import numpy as np
@@ -7,39 +8,51 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from core import FrameProcessor, Reconstructor
+from core import FrameProcessor, Reconstructor, SppEstimator
 from core.noise_estimators import RecursiveAverageNoiseEstimator
-from core.gain_calculators import WienerGainCalculator
-from core.noise_change_detector import NoiseChangeDetector  # v1.5.0 新增
+from core.gain_calculators import LaplacianMmseGainCalculator
+from core.noise_change_detector import NoiseChangeDetector
 from .base_denoiser import BaseDenoiser
 from typing import Tuple
 
 
-class WienerDenoiser(BaseDenoiser):
+class LaplacianMmseDenoiser(BaseDenoiser):
     """
-    版本 2: Wiener 濾波降噪器
+    版本 3-4: Laplacian-MMSE 降噪器
 
-    基於最小均方誤差 (MMSE) 準則的最優濾波器
+    基於 Chen & Loizou 2007 使用 Laplacian 先驗的 MMSE 估計器
 
-    優點:
-        - 理論最優（MMSE 意義下）
-        - 比頻譜減法音樂噪聲少
-        - 遞歸更新噪聲估計
+    核心特點:
+        - 假設乾淨語音 DFT 係數服從 Laplacian 分佈
+        - Laplacian 更適合語音頻譜的稀疏性和峰態特性
+        - 使用 Modified Bessel function I0
+        - 產生更少殘留噪聲
 
-    缺點:
-        - 仍有一定音樂噪聲
-        - 需要較準確的噪聲估計
+    與 V3-1/V3-2/V3-3 的區別:
+        - V3-1 (MMSE-STSA): Gaussian 先驗,線性域 MSE
+        - V3-2 (MMSE-LSA):  Gaussian 先驗,對數域 MSE
+        - V3-3 (PMMSE):     Laplacian 先驗,IS 距離
+        - V3-4 (Lap-MMSE):  Laplacian 先驗,標準 MSE
+
+    數學優勢:
+        - Laplacian 峰態係數 = 6 (Gaussian 為 3)
+        - 更適合建模語音頻譜的稀疏特性
+        - 對高頻微弱成分保護更好
 
     參數:
         sample_rate: 採樣率
         frame_size_ms: 幀長（毫秒）
         frame_shift_ms: 幀移（毫秒）
         fft_size: FFT 點數
-        alpha: 噪聲平滑因子（0.9-0.95）
-        min_gain: 最小增益
+        alpha_noise: 噪聲平滑因子
+        alpha_xi: 先驗 SNR 平滑因子（0.92-0.98）
+        q: 語音先驗機率（通常 0.5）
+        xi_min_db: 先驗 SNR 下限（dB）
+        g_min_db: 最小增益（dB）
+        alpha_g: 增益時間平滑因子
+        beta_laplacian: Laplacian 形狀參數（1.0-2.0,默認 1.5）
         num_init_frames: 初始噪聲估計幀數
-        update_during_speech: 是否在語音段更新噪聲
-        enable_noise_tracking: 是否啟用噪聲場景追蹤（v1.5.0）
+        enable_noise_tracking: 是否啟用噪聲場景追蹤
     """
 
     def __init__(
@@ -48,12 +61,15 @@ class WienerDenoiser(BaseDenoiser):
         frame_size_ms: int = 20,
         frame_shift_ms: int = 10,
         fft_size: int = 512,
-        alpha: float = 0.95,
-        min_gain: float = 0.01,
-        alpha_smooth: float = 0.8,
+        alpha_noise: float = 0.95,
+        alpha_xi: float = 0.98,
+        q: float = 0.5,
+        xi_min_db: float = -25.0,
+        g_min_db: float = -20.0,
+        alpha_g: float = 0.7,
+        beta_laplacian: float = 1.5,
         num_init_frames: int = 20,
-        update_during_speech: bool = False,
-        enable_noise_tracking: bool = True  # v1.5.0 新增
+        enable_noise_tracking: bool = True
     ):
         super().__init__(sample_rate)
 
@@ -74,18 +90,29 @@ class WienerDenoiser(BaseDenoiser):
 
         # 創建噪聲估計器
         self.noise_estimator = RecursiveAverageNoiseEstimator(
-            alpha=alpha,
+            alpha=alpha_noise,
             num_init_frames=num_init_frames,
-            update_during_speech=update_during_speech
+            update_during_speech=False
         )
 
-        # 創建增益計算器
-        self.gain_calculator = WienerGainCalculator(
-            min_gain=min_gain,
-            alpha_smooth=alpha_smooth
+        # 創建 SPP 估計器
+        self.spp_estimator = SppEstimator(
+            alpha=alpha_xi,
+            q=q,
+            xi_min_db=xi_min_db
         )
 
-        # v1.5.0: 噪聲場景變化檢測器
+        # 創建 Laplacian-MMSE 增益計算器
+        self.gain_calculator = LaplacianMmseGainCalculator(
+            g_min_db=g_min_db,
+            alpha_g=alpha_g,
+            beta_laplacian=beta_laplacian
+        )
+
+        # 存儲上一幀的增益（Decision Directed）
+        self.gain_prev = None
+
+        # 噪聲場景變化檢測器
         self.enable_noise_tracking = enable_noise_tracking
         if enable_noise_tracking:
             self.noise_change_detector = NoiseChangeDetector(
@@ -132,6 +159,12 @@ class WienerDenoiser(BaseDenoiser):
         """
         在頻域進行降噪
 
+        Laplacian-MMSE 核心流程:
+        1. 估計噪聲功率譜
+        2. 計算 SPP, 先驗/後驗 SNR
+        3. 使用 Laplacian 先驗計算 MMSE 增益
+        4. 應用增益到帶噪幅度譜
+
         參數:
             noisy_magnitude: 帶噪語音幅度譜 (n_frames, n_freqs)
             noisy_phase: 帶噪語音相位譜 (n_frames, n_freqs)
@@ -145,39 +178,44 @@ class WienerDenoiser(BaseDenoiser):
         # 初始化噪聲估計
         self.noise_estimator.estimate(noisy_magnitude)
 
-        # 對每一幀應用 Wiener 濾波
+        # 初始化輸出
         enhanced_magnitude = np.zeros_like(noisy_magnitude)
 
+        # 逐幀處理
         for i in range(n_frames):
-            # 計算當前幀的功率譜
-            noisy_psd = noisy_magnitude[i] ** 2
-
-            # 獲取噪聲估計
+            # 計算功率譜密度
+            Y_psd = noisy_magnitude[i] ** 2
             noise_psd = self.noise_estimator.noise_psd
 
-            # v1.5.0: 噪聲變化檢測（V2 使用後驗 SNR 近似 SPP）
-            if self.enable_noise_tracking and self.noise_change_detector is not None:
-                # 計算後驗 SNR
-                gamma = noisy_psd / (noise_psd + 1e-10)
-                # 使用 Sigmoid 近似 SPP: spp ≈ 1 / (1 + exp(-2*(gamma-1)))
-                spp_approx = 1.0 / (1.0 + np.exp(-2.0 * (gamma - 1.0)))
-                avg_spp = np.mean(spp_approx)
+            # 估計 SPP、先驗 SNR 和後驗 SNR
+            spp, xi, gamma = self.spp_estimator.estimate(
+                Y_psd,
+                noise_psd,
+                self.gain_prev
+            )
 
-                # 檢測噪聲變化
-                if self.noise_change_detector.detect(gamma, spp_approx):
+            # 噪聲場景變化檢測
+            if self.enable_noise_tracking and self.noise_change_detector is not None:
+                if self.noise_change_detector.detect(gamma, spp):
                     # 觸發快速適應
                     self.noise_estimator.trigger_fast_adaptation()
-                    # 清除增益歷史
+                    # 清除歷史狀態
                     self.gain_calculator.reset()
+                    self.spp_estimator.reset()
+                    self.gain_prev = None
 
-            # 計算 Wiener 增益
-            gain = self.gain_calculator.calculate(noisy_psd, noise_psd)
+            # 計算 Laplacian-MMSE 增益
+            gain = self.gain_calculator.calculate(spp, xi, gamma)
 
             # 應用增益
             enhanced_magnitude[i] = gain * noisy_magnitude[i]
 
-            # 更新噪聲估計（遞歸）
-            self.noise_estimator.update(noisy_magnitude[i])
+            # 保存增益供下一幀使用
+            self.gain_prev = gain.copy()
+
+            # 更新噪聲估計
+            is_speech = np.mean(spp) > 0.5
+            self.noise_estimator.update(noisy_magnitude[i], is_speech=is_speech)
 
         # 相位保持不變
         enhanced_phase = noisy_phase
@@ -187,27 +225,34 @@ class WienerDenoiser(BaseDenoiser):
     def reset(self):
         """重置降噪器狀態"""
         self.noise_estimator.reset()
+        self.spp_estimator.reset()
         self.gain_calculator.reset()
-        # v1.5.0: 重置噪聲變化檢測器
+        self.gain_prev = None
         if self.enable_noise_tracking and self.noise_change_detector is not None:
             self.noise_change_detector.reset()
 
     def get_params(self) -> dict:
         """獲取參數"""
         return {
-            'version': 'V2',
-            'name': 'Wiener Filter',
+            'version': 'V3-4',
+            'name': 'Laplacian-MMSE',
             'sample_rate': self.sample_rate,
             'frame_size_ms': self.processor.frame_size_ms,
             'frame_shift_ms': self.processor.frame_shift_ms,
             'fft_size': self.processor.fft_size,
-            'alpha': self.noise_estimator.alpha,
-            'min_gain': self.gain_calculator.min_gain,
-            'num_init_frames': self.noise_estimator.num_init_frames,
-            'enable_noise_tracking': self.enable_noise_tracking  # v1.5.0 新增
+            'alpha_noise': self.noise_estimator.alpha,
+            'alpha_xi': self.spp_estimator.alpha,
+            'q': self.spp_estimator.q,
+            'xi_min_db': 10 * np.log10(self.spp_estimator.xi_min),
+            'g_min_db': 10 * np.log10(self.gain_calculator.g_min),
+            'alpha_g': self.gain_calculator.alpha_g,
+            'beta_laplacian': self.gain_calculator.beta_laplacian,
+            'num_init_frames': self.noise_estimator.num_init_frames
         }
 
     def __repr__(self):
         params = self.get_params()
-        return (f"WienerDenoiser("
-                f"alpha={params['alpha']}, min_gain={params['min_gain']})")
+        return (f"LaplacianMmseDenoiser("
+                f"alpha_xi={params['alpha_xi']}, "
+                f"g_min={params['g_min_db']:.1f}dB, "
+                f"beta={params['beta_laplacian']})")

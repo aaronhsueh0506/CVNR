@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from core import FrameProcessor, Reconstructor, SppEstimator
 from core.noise_estimators.imcra import ImcraNoiseEstimator
 from core.gain_calculators.omlsa import OmlsaGainCalculator
+from core.noise_change_detector import NoiseChangeDetector  # v1.5.0 新增
 from .base_denoiser import BaseDenoiser
 from typing import Tuple
 
@@ -52,6 +53,7 @@ class ImcraOmlsaDenoiser(BaseDenoiser):
         g_min_db: 最小增益（dB）
         alpha_g: 增益平滑因子
         num_init_frames: 初始化幀數
+        enable_noise_tracking: 是否啟用噪聲場景追蹤（v1.5.0）
     """
 
     def __init__(
@@ -69,7 +71,8 @@ class ImcraOmlsaDenoiser(BaseDenoiser):
         xi_min_db: float = -25.0,
         g_min_db: float = -20.0,
         alpha_g: float = 0.7,
-        num_init_frames: int = 20
+        num_init_frames: int = 20,
+        enable_noise_tracking: bool = True  # v1.5.0 新增
     ):
         super().__init__(sample_rate)
 
@@ -112,6 +115,20 @@ class ImcraOmlsaDenoiser(BaseDenoiser):
 
         # 存儲上一幀的增益
         self.gain_prev = None
+
+        # v1.5.0: 噪聲場景變化檢測器
+        self.enable_noise_tracking = enable_noise_tracking
+        if enable_noise_tracking:
+            self.noise_change_detector = NoiseChangeDetector(
+                history_length=20,
+                energy_ratio_high=2.0,
+                energy_ratio_low=0.5,
+                spp_threshold=0.3,
+                confirmation_frames=3,
+                cooldown_frames=50
+            )
+        else:
+            self.noise_change_detector = None
 
     def denoise(self, noisy_signal: np.ndarray) -> np.ndarray:
         """
@@ -177,6 +194,16 @@ class ImcraOmlsaDenoiser(BaseDenoiser):
                 self.gain_prev
             )
 
+            # v1.5.0: 噪聲變化檢測
+            if self.enable_noise_tracking and self.noise_change_detector is not None:
+                if self.noise_change_detector.detect(gamma, spp):
+                    # 觸發快速追蹤模式
+                    self.noise_estimator.trigger_fast_tracking()
+                    # 清除歷史狀態
+                    self.gain_calculator.reset()
+                    self.spp_estimator.reset()
+                    self.gain_prev = None
+
             # 2.3 計算 OMLSA 增益 ⭐
             gain = self.gain_calculator.calculate(spp, xi, gamma)
 
@@ -201,6 +228,9 @@ class ImcraOmlsaDenoiser(BaseDenoiser):
         self.spp_estimator.reset()
         self.gain_calculator.reset()
         self.gain_prev = None
+        # v1.5.0: 重置噪聲變化檢測器
+        if self.enable_noise_tracking and self.noise_change_detector is not None:
+            self.noise_change_detector.reset()
 
     def get_params(self) -> dict:
         """獲取參數"""
@@ -220,7 +250,8 @@ class ImcraOmlsaDenoiser(BaseDenoiser):
             'xi_min_db': 10 * np.log10(self.spp_estimator.xi_min),
             'g_min_db': 10 * np.log10(self.gain_calculator.g_min),
             'alpha_g': self.gain_calculator.alpha_g,
-            'num_init_frames': self.noise_estimator.num_init_frames
+            'num_init_frames': self.noise_estimator.num_init_frames,
+            'enable_noise_tracking': self.enable_noise_tracking  # v1.5.0 新增
         }
 
     def __repr__(self):
