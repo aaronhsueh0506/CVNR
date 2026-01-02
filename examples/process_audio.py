@@ -115,15 +115,16 @@ def create_denoiser_from_config(
     根據配置文件創建降噪器
 
     Args:
-        version: 版本名稱 (V1, V2, V3, V4)
+        version: 版本名稱 (V1, V2, V3, V3-2, V3-3, V3-4, V4)
         config_dir: 配置文件目錄
         sample_rate: 採樣率
 
     Returns:
         降噪器實例
     """
-    # 加載配置文件
-    config_file = os.path.join(config_dir, f"{version.lower()}_config.yaml")
+    # 加載配置文件 (v1.5.0: 將 V3-2 轉換為 v3_2_config.yaml)
+    config_filename = version.lower().replace('-', '_') + "_config.yaml"
+    config_file = os.path.join(config_dir, config_filename)
     config = load_config(config_file)
 
     # 獲取音頻參數（如果配置文件中有的話）
@@ -339,7 +340,9 @@ def plot_waveforms(
         enhanced = result['enhanced']
         color = colors.get(version, '#95A5A6')
 
-        axes[idx].plot(time_axis, enhanced, linewidth=0.5, color=color)
+        # v1.5.0 修復: 為每個輸出動態生成 time_axis，防止維度不匹配
+        time_axis_enhanced = np.linspace(0, duration, len(enhanced))
+        axes[idx].plot(time_axis_enhanced, enhanced, linewidth=0.5, color=color)
 
         # 標題包含處理時間和實時率
         rtf = result['rtf']

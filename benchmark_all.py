@@ -29,7 +29,10 @@ from denoisers import (
     SpectralSubtractionDenoiser,
     WienerDenoiser,
     SppMmseDenoiser,
-    ImcraOmlsaDenoiser
+    ImcraOmlsaDenoiser,
+    MmseLsaDenoiser,
+    PmmseDenoiser,
+    LaplacianMmseDenoiser
 )
 
 
@@ -62,12 +65,15 @@ class BenchmarkRunner:
         )
 
     def create_denoisers(self) -> Dict[str, Any]:
-        """創建所有降噪器（使用默認參數）"""
+        """創建所有降噪器（v1.5.0: 包含 MMSE 變體）"""
         return {
             'V1': SpectralSubtractionDenoiser(sample_rate=self.sample_rate),
-            'V2': WienerDenoiser(sample_rate=self.sample_rate),
-            'V3': SppMmseDenoiser(sample_rate=self.sample_rate),
-            'V4': ImcraOmlsaDenoiser(sample_rate=self.sample_rate)
+            'V2': WienerDenoiser(sample_rate=self.sample_rate, enable_noise_tracking=True),
+            'V3': SppMmseDenoiser(sample_rate=self.sample_rate, enable_noise_tracking=True),
+            'V3-2': MmseLsaDenoiser(sample_rate=self.sample_rate, enable_noise_tracking=True),
+            'V3-3': PmmseDenoiser(sample_rate=self.sample_rate, enable_noise_tracking=True),
+            'V3-4': LaplacianMmseDenoiser(sample_rate=self.sample_rate, enable_noise_tracking=True),
+            'V4': ImcraOmlsaDenoiser(sample_rate=self.sample_rate, enable_noise_tracking=True)
         }
 
     def generate_test_cases(
