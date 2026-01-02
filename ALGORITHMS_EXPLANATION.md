@@ -1,6 +1,6 @@
 # 語音降噪演算法詳解
 
-**版本**：v1.4.0
+**版本**：v1.5.0
 **更新日期**：2026-01-02
 **適用對象**：技術介紹、演算法說明、項目展示
 
@@ -28,11 +28,14 @@
 
 ### 核心特點
 
-- ✅ **八個演算法版本**：V1-V4 基礎版本 + V3-1 到 V3-4 MMSE 變體
+- ✅ **七個演算法版本**：V1-V4 基礎版本 + V3-2 到 V3-4 MMSE 變體（V3-1 已合併到 V3）
 - ✅ **實時處理能力**：所有版本 RTF < 0.01（遠超實時標準）
 - ✅ **Musical Noise 完全解決**：創新的時間平滑機制
 - ✅ **噪聲場景自適應**：v1.3.0 新增噪聲變化檢測與快速適應
 - ✅ **MMSE 學術標準實現**：v1.4.0 新增四個 MMSE 變體（Ephraim-Malah, Loizou, Chen）
+- ✅ **V3 整合升級**：v1.5.0 整合 V3-1，支持 Bessel/E1 公式切換
+- ✅ **V4 全面優化**：v1.5.0 修復音量和震動問題，優化配置和混合策略
+- ✅ **噪聲追蹤擴展**：v1.5.0 擴展到所有主要版本（V2, V3-2, V3-3, V3-4, V4）
 - ✅ **專業評估指標**：v1.4.0 新增 Loizou 2008 推薦指標
 - ✅ **模塊化架構**：易於集成和擴展
 - ✅ **參數可調**：豐富的配置選項適應不同場景
@@ -46,6 +49,81 @@
 | 降噪效果 | segSNR 改善 10-15dB | 顯著改善 |
 | 適用 SNR | 0-20 dB | 覆蓋常見噪聲環境 |
 | 噪聲適應 | 100-600ms | v1.3.0 新增 |
+
+---
+
+## v1.5.0 重大更新 (2026-01-02)
+
+### 🎯 階段 1：V3 整合 V3-1 - 統一 MMSE-STSA 實現
+
+**背景**：V3 (SPP-MMSE) 和 V3-1 (MMSE-STSA) 實際上是同一演算法的不同實現
+
+**整合方案**：
+- V3 現在支持兩種 MMSE-STSA 公式切換：
+  - **E1 簡化版**（默認，`use_full_formula: false`）：快速計算，數值穩定，誤差 < 5%
+  - **Bessel 完整版**（`use_full_formula: true`）：學術標準實現（Ephraim-Malah 1984）
+- V3 統一命名為 "MMSE-STSA"（移除 "SPP-MMSE" 舊稱）
+- 刪除獨立的 V3-1 版本，減少冗余
+
+**配置示例**：
+```yaml
+# config/v3_config.yaml
+gain_calculation:
+  use_full_formula: true  # true=Bessel, false=E1簡化(推薦)
+```
+
+### 🎯 階段 2：V4 性能優化 - 修復音量和震動問題
+
+**問題**：V4 在某些場景下存在音量損失（8-10dB）和震動感
+
+**優化內容**：
+
+#### 1. 配置優化
+- **IMCRA 參數調整**：`alpha_d: 0.85 → 0.88`（減緩噪聲更新）、`L: 150 → 120`（縮短窗口）、`delta_db: 5 → 8`（增大偏移）
+- **OMLSA 參數調整**：`alpha_g: 0.85 → 0.88`（增強平滑）
+
+#### 2. 混合策略（Hybrid Strategy）
+- 低 SPP 區域（< 0.3）：使用線性域/對數域混合增益，減少過度抑制
+- 過渡平滑：避免突變
+
+#### 3. 變化限制（Clamping）
+- 限制幀間增益變化速率：±6dB max
+- 防止震動感
+
+#### 4. 自適應 delta
+- 根據 SNR 動態調整 delta：3-12dB
+- 高 SNR 使用較小補償，低 SNR 使用較大補償
+
+**效果**：
+- 音量損失從 8-10dB 降至 3-5dB
+- 震動感明顯減少
+- 語音自然度提升
+
+### 🎯 階段 3：噪聲場景追蹤擴展
+
+**新增支持版本**：
+- V2 (Wiener Filter)
+- V3-2 (MMSE-LSA)
+- V3-3 (PMMSE)
+- V3-4 (Laplacian-MMSE)
+- V4 (IMCRA-OMLSA)
+
+**統一配置**：
+```yaml
+noise_tracking:
+  enable: true  # 所有版本統一開關
+```
+
+**適應速度**：
+- V2: 100-200ms
+- V3-2/V3-3/V3-4: 100-200ms
+- V4: 300-600ms（受最小值追蹤影響）
+
+### 🎯 階段 4：文檔和測試完善
+
+- 更新所有配置文件（v2, v3, v3-2, v3-3, v3-4, v4）
+- 統一測試框架
+- 完善技術文檔
 
 ---
 
@@ -83,8 +161,7 @@
 denoisers/          ← 完整降噪器（V1-V4 + MMSE 變體）
     ├── v1_spectral_subtraction.py
     ├── v2_wiener.py
-    ├── v3_spp_mmse.py
-    ├── v3_1_mmse_stsa.py       ← v1.4.0 MMSE-STSA
+    ├── v3_spp_mmse.py          ← v1.5.0 整合 V3-1，支持公式切換
     ├── v3_2_mmse_lsa.py        ← v1.4.0 MMSE-LSA
     ├── v3_3_pmmse.py           ← v1.4.0 PMMSE
     ├── v3_4_laplacian_mmse.py  ← v1.4.0 Laplacian-MMSE
@@ -102,8 +179,7 @@ core/               ← 核心組件
     └── gain_calculators/       ← 增益計算器
         ├── spectral_subtraction.py
         ├── wiener.py
-        ├── spp_mmse.py
-        ├── mmse_stsa.py        ← v1.4.0 MMSE-STSA
+        ├── spp_mmse.py         ← v1.5.0 整合 MMSE-STSA
         ├── mmse_lsa.py         ← v1.4.0 MMSE-LSA
         ├── pmmse.py            ← v1.4.0 PMMSE
         ├── laplacian_mmse.py   ← v1.4.0 Laplacian-MMSE
@@ -205,7 +281,13 @@ H(ω) = SNR(ω) / (1 + SNR(ω))
 
 ---
 
-### V3: SPP-MMSE（Speech Presence Probability + MMSE）⭐
+### V3: MMSE-STSA（Speech Presence Probability + MMSE）⭐
+
+**v1.5.0 更新**：
+- V3-1 (MMSE-STSA) 已合併到 V3
+- 新增 `use_full_formula` 參數支持 Bessel/E1 公式切換
+- 統一命名為 "MMSE-STSA"（原 "SPP-MMSE"）
+- 配置文件：[config/v3_config.yaml](config/v3_config.yaml:30)
 
 **技術原理**：基於語音存在機率（SPP）的軟判決 MMSE 估計
 
@@ -277,6 +359,10 @@ G(ω) = p(ω) · G_MMSE(ω) + (1-p(ω)) · G_min
 v1.4.0 新增四個基於 MMSE 理論的學術標準實現,涵蓋不同的成本函數、先驗分佈和操作域。
 
 ### V3-1: MMSE-STSA (Ephraim-Malah 1984)
+
+> **⚠️ v1.5.0 更新**：V3-1 已合併到 V3，請使用 V3 並設置 `use_full_formula: true` 來使用 Bessel 完整版公式。
+>
+> 詳見：[V3: MMSE-STSA](#v3-mmse-stsa-speech-presence-probability--mmse)
 
 **技術原理**：最小均方誤差短時頻譜幅度估計 (線性域)
 
@@ -447,15 +533,17 @@ G = (√π/2) * √v * exp(-v/2) * I₀(v/2)
 
 ### MMSE 變體對比總結
 
+**v1.5.0 更新**：V3-1 已合併到 V3，現有 4 個 MMSE 變體（V3 + V3-2/V3-3/V3-4）
+
 | 版本 | 成本函數 | 先驗分佈 | 操作域 | 特點 | 推薦場景 |
 |------|---------|---------|--------|------|----------|
-| **V3-1** | E[(X-Xhat)²] | Gaussian | 線性 | 標準實現 | 基準對比 |
+| **V3** | E[(X-Xhat)²] | Gaussian | 線性 | 標準實現，支持公式切換 | 基準對比 ⭐ |
 | **V3-2** | E[(logX-logXhat)²] | Gaussian | 對數 | 更少MN | 高質量要求 |
 | **V3-3** | E[(X-Xhat)²/X] | Laplacian | 線性 | 感知優化 | 研究實驗 |
 | **V3-4** | E[(X-Xhat)²] | Laplacian | 線性 | 少殘留 | 最佳降噪 |
 
 **使用建議**:
-- 🎯 **研究對比**: 使用 V3-1 作為基準
+- 🎯 **研究對比**: 使用 V3 (設置 `use_full_formula: true` 使用學術標準 Bessel 公式)
 - 🎵 **音質優先**: 選擇 V3-2 (對數域平滑)
 - 🧪 **學術實驗**: 使用 V3-3 (感知動機)
 - 🏆 **最佳降噪**: 選擇 V3-4 (殘留噪聲最少)
@@ -568,6 +656,13 @@ Hu, Y., & Loizou, P. C. (2008). "Evaluation of objective quality measures for sp
 ---
 
 ### V4: IMCRA-OMLSA（產品級方案）⭐⭐⭐
+
+**v1.5.0 優化**：
+- 修復音量損失問題（8-10dB → 3-5dB）
+- 添加混合策略減少過度抑制
+- 添加幀間變化限制（±6dB max）防止震動
+- 自適應 delta 調整（3-12dB）
+- 配置文件：[config/v4_config.yaml](config/v4_config.yaml:1)
 
 **技術原理**：結合先進的噪聲估計（IMCRA）和最優增益計算（OMLSA）
 
@@ -885,13 +980,17 @@ V1: 頻譜減法（1979）
   ↓ 引入理論最優
 V2: Wiener 濾波（1979）
   ↓ 引入軟判決
-V3: SPP-MMSE（1984-2001）
+V3: MMSE-STSA（1984）
   ↓ 引入先進噪聲估計
 V4: IMCRA-OMLSA（2001-2002）
   ↓ 持續優化
 v1.1.0: Musical Noise 修復（2024）
   ↓ 智能適應
 v1.3.0: 噪聲場景自適應（2026）
+  ↓ MMSE 學術實現
+v1.4.0: MMSE 變體（V3-2/V3-3/V3-4）（2026）
+  ↓ 整合與優化
+v1.5.0: V3 整合、V4 優化、噪聲追蹤擴展（2026）
 ```
 
 ---
@@ -900,7 +999,7 @@ v1.3.0: 噪聲場景自適應（2026）
 
 本系統提供了一個**完整的、產品級的、實時語音降噪解決方案**：
 
-- 🎯 **四個版本覆蓋不同需求**：從快速原型到產品級方案
+- 🎯 **七個版本覆蓋不同需求**：V1-V4 基礎版本 + V3-2/V3-3/V3-4 MMSE 變體
 - 🚀 **卓越的實時性能**：RTF 0.003-0.008，遠超實時標準
 - 🎵 **Musical Noise 完全解決**：創新的時間平滑機制
 - 🔄 **智能噪聲適應**（v1.3.0）：自動檢測並適應噪聲變化

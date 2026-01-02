@@ -63,7 +63,7 @@ python process_audio.py input.wav --config-dir ./my_configs
 |------|------|------|---------|
 | V1 | 頻譜減法 | 最快，但有音樂噪聲 | 快速測試 |
 | V2 | Wiener 濾波 | 平衡效果和速度 | 一般應用 |
-| V3 | SPP-MMSE | 效果好，音樂噪聲少 | 推薦使用 |
+| V3 | MMSE-STSA | 效果好，音樂噪聲少 | 推薦使用 |
 | V4 | IMCRA-OMLSA | 最佳效果，產品級 | 高質量需求 |
 
 ### 配置文件
