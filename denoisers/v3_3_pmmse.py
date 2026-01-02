@@ -20,18 +20,18 @@ class PmmseDenoiser(BaseDenoiser):
     """
     版本 3-3: PMMSE 降噪器 (Perceptually Motivated MMSE with Gaussian Prior)
 
-    基於 Loizou 2005 的感知動機 Bayesian 估計器
+    基於 Loizou 2005 的感知動機 Bayesian 估計器 (Equation 12)
 
     核心特點:
         - 先驗分佈: Gaussian (complex Gaussian → Rayleigh 幅度分佈)
         - 成本函數: E[(|X| - |Xhat|)^2 / |X|] (Itakura-Saito 距離)
         - 感知動機的 IS 距離，更符合人耳感知特性
-        - v1.5.1: 修復公式並添加完整/簡化公式選項
+        - 特殊函數: Modified Bessel function I0
 
-    與 V3-1/V3-2 的區別:
-        - V3-1: 最小化 E[(|X| - |Xhat|)^2] (線性域)
-        - V3-2: 最小化 E[(log|X| - log|Xhat|)^2] (對數域)
-        - V3-3: 最小化 E[(|X| - |Xhat|)^2 / |X|] (感知加權)
+    與 V3/V3-2 的區別:
+        - V3 (MMSE-STSA): 最小化 E[(|X| - |Xhat|)^2] (線性域)
+        - V3-2 (MMSE-LSA): 最小化 E[(log|X| - log|Xhat|)^2] (對數域)
+        - V3-3 (PMMSE): 最小化 E[(|X| - |Xhat|)^2 / |X|] (感知加權 IS 距離)
 
     參數:
         sample_rate: 採樣率
@@ -45,7 +45,6 @@ class PmmseDenoiser(BaseDenoiser):
         g_min_db: 最小增益（dB）
         alpha_g: 增益時間平滑因子
         use_spp_weighting: 是否使用 SPP 加權（推薦 True）
-        use_full_formula: True=完整公式, False=簡化版（推薦，數值穩定）
         num_init_frames: 初始噪聲估計幀數
         enable_noise_tracking: 是否啟用噪聲場景追蹤
     """
@@ -63,7 +62,6 @@ class PmmseDenoiser(BaseDenoiser):
         g_min_db: float = -20.0,
         alpha_g: float = 0.7,
         use_spp_weighting: bool = True,
-        use_full_formula: bool = False,
         num_init_frames: int = 20,
         enable_noise_tracking: bool = True
     ):
@@ -102,8 +100,7 @@ class PmmseDenoiser(BaseDenoiser):
         self.gain_calculator = PmmseGainCalculator(
             g_min_db=g_min_db,
             alpha_g=alpha_g,
-            use_spp_weighting=use_spp_weighting,
-            use_full_formula=use_full_formula
+            use_spp_weighting=use_spp_weighting
         )
 
         # 存儲上一幀的增益（Decision Directed）

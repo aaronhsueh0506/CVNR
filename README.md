@@ -240,7 +240,7 @@ write_audio('enhanced.wav', enhanced, sr)
 
 #### V3-3: PMMSE (Perceptually Motivated MMSE)
 - **成本函數**: E[(X-X̂)²/X] (IS 距離)
-- **先驗分佈**: Laplacian
+- **先驗分佈**: Gaussian (complex Gaussian → Rayleigh 幅度分佈)
 - **計算複雜度**: 較高
 - **音質特點**: 感知優化，實驗性質
 - **適用場景**:
@@ -294,8 +294,9 @@ python examples/process_audio.py input.wav --versions V3 V3-2 V3-3 V3-4
 - `alpha_g`: 0.7 (平滑度，減少 Musical Noise)
 
 **V3-3 (PMMSE)**:
-- `g_min_db`: -25 dB (需要更低以發揮效果)
-- `beta`: 0.5 (Laplacian 形狀參數)
+- `g_min_db`: -20 dB (建議範圍: -15 到 -25)
+- `alpha_g`: 0.7 (增益時間平滑因子)
+- `use_full_formula`: false (推薦數值穩定簡化版)
 
 **V3-4 (Laplacian-MMSE)**:
 - `g_min_db`: -20 dB (允許強抑制)
