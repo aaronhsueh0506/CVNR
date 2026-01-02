@@ -24,6 +24,10 @@ gain_calculation:
   min_gain: 0.1           # Minimum gain (提高以保留更多語音)
   alpha_smooth: 0.8       # Temporal smoothing factor (0.7-0.9，減少 musical noise)
 
+# Noise Scene Tracking (v1.5.0)
+noise_tracking:
+  enable: true
+
 # Notes:
 # - alpha 越大噪聲估計越平滑，但適應速度越慢
 # - update_during_speech=false 避免在語音段錯誤更新噪聲估計

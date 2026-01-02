@@ -1,10 +1,10 @@
 """
 音頻文件降噪處理工具
 
-使用 V1-V4 四個版本的降噪算法處理真實音頻文件。
+使用多個版本的降噪算法處理真實音頻文件。
 
 用法：
-    # 基本用法
+    # 基本用法（使用 V1-V4）
     python process_audio.py input.wav
 
     # 指定輸出目錄
@@ -12,6 +12,9 @@
 
     # 只處理特定版本
     python process_audio.py input.wav --versions V3 V4
+
+    # 測試 MMSE 變體
+    python process_audio.py input.wav --versions V3-2 V3-3 V3-4
 
     # 指定配置文件目錄
     python process_audio.py input.wav --config-dir ./my_configs
@@ -21,19 +24,19 @@
     - 採樣率：任意（推薦 16kHz）
     - 聲道：單聲道或立體聲（會自動轉為單聲道）
 
-輸出：
-    在輸出目錄下生成：
-    - input_v1.wav（頻譜減法）
-    - input_v2.wav（Wiener 濾波）
-    - input_v3.wav（SPP-MMSE）
-    - input_v4.wav（IMCRA-OMLSA）
+可用版本：
+    - V1:   頻譜減法 (Spectral Subtraction)
+    - V2:   Wiener 濾波 (Wiener Filter)
+    - V3:   MMSE-STSA (Ephraim-Malah 1984, 支持 Bessel/E1 公式切換)
+    - V3-2: MMSE-LSA (Ephraim-Malah 1985)
+    - V3-3: PMMSE (Loizou 2005)
+    - V3-4: Laplacian-MMSE (Chen & Loizou 2007)
+    - V4:   IMCRA-OMLSA
 
 配置文件：
-    從 config/ 目錄讀取：
-    - v1_config.yaml
-    - v2_config.yaml
-    - v3_config.yaml
-    - v4_config.yaml
+    從 config/ 目錄讀取對應的 YAML 配置：
+    - v1_config.yaml, v2_config.yaml, v3_config.yaml, v4_config.yaml
+    - v3_1_config.yaml, v3_2_config.yaml, v3_3_config.yaml, v3_4_config.yaml
 
     可以修改這些文件來調整降噪參數。
 """
@@ -70,6 +73,9 @@ from denoisers import (
     SpectralSubtractionDenoiser,
     WienerDenoiser,
     SppMmseDenoiser,
+    MmseLsaDenoiser,
+    PmmseDenoiser,
+    LaplacianMmseDenoiser,
     ImcraOmlsaDenoiser
 )
 
@@ -152,6 +158,7 @@ def create_denoiser_from_config(
         # V2: Wiener Filter
         gain_config = config.get('gain_calculation', {})
         noise_config = config.get('noise_estimation', {})
+        tracking_config = config.get('noise_tracking', {})  # v1.5.0 新增
 
         return WienerDenoiser(
             sample_rate=sample_rate,
@@ -162,14 +169,16 @@ def create_denoiser_from_config(
             min_gain=gain_config.get('min_gain', 0.01),
             alpha_smooth=gain_config.get('alpha_smooth', 0.8),
             num_init_frames=noise_config.get('num_init_frames', 20),
-            update_during_speech=noise_config.get('update_during_speech', False)
+            update_during_speech=noise_config.get('update_during_speech', False),
+            enable_noise_tracking=tracking_config.get('enable', True)  # v1.5.0 新增
         )
 
     elif version == 'V3':
-        # V3: SPP-MMSE
+        # V3: MMSE-STSA (Ephraim-Malah 1984, 整合 V3-1)
         spp_config = config.get('spp', {})
         gain_config = config.get('gain_calculation', {})
         noise_config = config.get('noise_estimation', {})
+        tracking_config = config.get('noise_tracking', {})
 
         return SppMmseDenoiser(
             sample_rate=sample_rate,
@@ -181,6 +190,71 @@ def create_denoiser_from_config(
             xi_min_db=spp_config.get('xi_min_db', -25.0),
             g_min_db=gain_config.get('g_min_db', -20.0),
             alpha_g=gain_config.get('alpha_g', 0.7),
+            use_full_formula=gain_config.get('use_full_formula', False),
+            alpha_noise=noise_config.get('alpha', 0.95),
+            num_init_frames=noise_config.get('num_init_frames', 20),
+            enable_noise_tracking=tracking_config.get('enable', True)
+        )
+
+    elif version == 'V3-2':
+        # V3-2: MMSE-LSA (Ephraim-Malah 1985)
+        spp_config = config.get('spp', {})
+        gain_config = config.get('gain_calculation', {})
+        noise_config = config.get('noise_estimation', {})
+
+        return MmseLsaDenoiser(
+            sample_rate=sample_rate,
+            frame_size_ms=frame_size_ms,
+            frame_shift_ms=frame_shift_ms,
+            fft_size=fft_size,
+            alpha_xi=spp_config.get('alpha_xi', 0.98),
+            q=spp_config.get('q', 0.5),
+            xi_min_db=spp_config.get('xi_min_db', -25.0),
+            g_min_db=gain_config.get('g_min_db', -20.0),
+            alpha_g=gain_config.get('alpha_g', 0.7),
+            use_linear_spp_weighting=gain_config.get('use_linear_spp_weighting', False),
+            alpha_noise=noise_config.get('alpha', 0.95),
+            num_init_frames=noise_config.get('num_init_frames', 20)
+        )
+
+    elif version == 'V3-3':
+        # V3-3: PMMSE (Loizou 2005)
+        spp_config = config.get('spp', {})
+        gain_config = config.get('gain_calculation', {})
+        noise_config = config.get('noise_estimation', {})
+
+        return PmmseDenoiser(
+            sample_rate=sample_rate,
+            frame_size_ms=frame_size_ms,
+            frame_shift_ms=frame_shift_ms,
+            fft_size=fft_size,
+            alpha_xi=spp_config.get('alpha_xi', 0.98),
+            q=spp_config.get('q', 0.5),
+            xi_min_db=spp_config.get('xi_min_db', -25.0),
+            g_min_db=gain_config.get('g_min_db', -20.0),
+            alpha_g=gain_config.get('alpha_g', 0.7),
+            use_spp_weighting=gain_config.get('use_spp_weighting', True),
+            alpha_noise=noise_config.get('alpha', 0.95),
+            num_init_frames=noise_config.get('num_init_frames', 20)
+        )
+
+    elif version == 'V3-4':
+        # V3-4: Laplacian-MMSE (Chen & Loizou 2007)
+        spp_config = config.get('spp', {})
+        gain_config = config.get('gain_calculation', {})
+        noise_config = config.get('noise_estimation', {})
+
+        return LaplacianMmseDenoiser(
+            sample_rate=sample_rate,
+            frame_size_ms=frame_size_ms,
+            frame_shift_ms=frame_shift_ms,
+            fft_size=fft_size,
+            alpha_xi=spp_config.get('alpha_xi', 0.98),
+            q=spp_config.get('q', 0.5),
+            xi_min_db=spp_config.get('xi_min_db', -25.0),
+            g_min_db=gain_config.get('g_min_db', -20.0),
+            alpha_g=gain_config.get('alpha_g', 0.7),
+            beta_laplacian=gain_config.get('beta_laplacian', 1.5),
             alpha_noise=noise_config.get('alpha', 0.95),
             num_init_frames=noise_config.get('num_init_frames', 20)
         )
@@ -190,6 +264,7 @@ def create_denoiser_from_config(
         noise_config = config.get('noise_estimation', {})
         spp_config = config.get('spp', {})
         gain_config = config.get('gain_calculation', {})
+        tracking_config = config.get('noise_tracking', {})  # v1.5.0 新增
 
         return ImcraOmlsaDenoiser(
             sample_rate=sample_rate,
@@ -205,7 +280,8 @@ def create_denoiser_from_config(
             xi_min_db=spp_config.get('xi_min_db', -25.0),
             g_min_db=gain_config.get('g_min_db', -20.0),
             alpha_g=gain_config.get('alpha_g', 0.7),
-            num_init_frames=noise_config.get('num_init_frames', 20)
+            num_init_frames=noise_config.get('num_init_frames', 20),
+            enable_noise_tracking=tracking_config.get('enable', True)  # v1.5.0 新增
         )
 
     else:
@@ -459,7 +535,7 @@ def main():
         '--versions',
         nargs='+',
         default=['V1', 'V2', 'V3', 'V4'],
-        choices=['V1', 'V2', 'V3', 'V4'],
+        choices=['V1', 'V2', 'V3', 'V3-2', 'V3-3', 'V3-4', 'V4'],
         help='要使用的版本（默認: V1 V2 V3 V4）'
     )
 

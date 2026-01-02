@@ -1,6 +1,7 @@
 """
-V3: SPP-MMSE Denoiser - SPP 加權 MMSE 降噪器
+V3: MMSE-STSA Denoiser - MMSE 短時頻譜幅度估計降噪器
 ⭐ 重點版本：引入概率軟判決
+v1.5.0: 整合 V3-1，支持 Bessel/E1 公式切換
 """
 
 import numpy as np
@@ -18,9 +19,10 @@ from typing import Tuple
 
 class SppMmseDenoiser(BaseDenoiser):
     """
-    版本 3: SPP-MMSE 降噪器
+    版本 3: MMSE-STSA 降噪器 (Ephraim-Malah 1984)
 
     基於語音存在機率 (Speech Presence Probability) 的軟判決降噪
+    v1.5.0: 整合 V3-1，支持 Bessel 完整版和 E1 簡化版切換
 
     核心創新:
         - 使用 SPP 取代硬判決 VAD
@@ -49,7 +51,9 @@ class SppMmseDenoiser(BaseDenoiser):
         xi_min_db: 先驗 SNR 下限（dB）
         g_min_db: 最小增益（dB）
         alpha_g: 增益時間平滑因子
+        use_full_formula: True=Bessel完整版, False=E1簡化版（默認，推薦）
         num_init_frames: 初始噪聲估計幀數
+        enable_noise_tracking: 是否啟用噪聲場景追蹤（v1.3.0）
     """
 
     def __init__(
@@ -64,6 +68,7 @@ class SppMmseDenoiser(BaseDenoiser):
         xi_min_db: float = -25.0,
         g_min_db: float = -20.0,
         alpha_g: float = 0.7,
+        use_full_formula: bool = False,  # v1.5.0 新增：True=Bessel完整版, False=E1簡化版
         num_init_frames: int = 20,
         enable_noise_tracking: bool = True  # v1.3.0 新增：是否啟用噪聲場景追蹤
     ):
@@ -101,7 +106,8 @@ class SppMmseDenoiser(BaseDenoiser):
         # 創建增益計算器
         self.gain_calculator = SppMmseGainCalculator(
             g_min_db=g_min_db,
-            alpha_g=alpha_g
+            alpha_g=alpha_g,
+            use_full_formula=use_full_formula  # v1.5.0 新增
         )
 
         # 存儲上一幀的增益（用於 Decision Directed）
@@ -229,7 +235,7 @@ class SppMmseDenoiser(BaseDenoiser):
         """獲取參數"""
         return {
             'version': 'V3',
-            'name': 'SPP-MMSE',
+            'name': 'MMSE-STSA',
             'sample_rate': self.sample_rate,
             'frame_size_ms': self.processor.frame_size_ms,
             'frame_shift_ms': self.processor.frame_shift_ms,
@@ -240,7 +246,9 @@ class SppMmseDenoiser(BaseDenoiser):
             'xi_min_db': 10 * np.log10(self.spp_estimator.xi_min),
             'g_min_db': 10 * np.log10(self.gain_calculator.g_min),
             'alpha_g': self.gain_calculator.alpha_g,
-            'num_init_frames': self.noise_estimator.num_init_frames
+            'use_full_formula': self.gain_calculator.use_full_formula,
+            'num_init_frames': self.noise_estimator.num_init_frames,
+            'enable_noise_tracking': self.enable_noise_tracking
         }
 
     def get_spp_statistics(self) -> dict:

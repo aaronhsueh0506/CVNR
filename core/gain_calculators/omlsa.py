@@ -53,6 +53,10 @@ class OmlsaGainCalculator:
         """
         計算 OMLSA 增益
 
+        v1.5.0 改進：
+        1. 低 SPP 區域使用混合策略（線性+對數）
+        2. 限制幀間變化速率（防止震動）
+
         參數:
             spp: 語音存在機率 (n_freqs,)
             xi: 先驗 SNR (n_freqs,)
@@ -68,8 +72,34 @@ class OmlsaGainCalculator:
         log_gain_h1 = np.log(gain_h1 + 1e-10)
         log_g_min = np.log(self.g_min)
 
-        # 3. SPP 加權（對數域）
-        log_gain = spp * log_gain_h1 + (1 - spp) * log_g_min
+        # v1.5.0: 混合策略（低 SPP 使用線性/對數混合）
+        hybrid_threshold = 0.3
+
+        # 計算線性域增益（作為參考）
+        gain_linear = spp * gain_h1 + (1 - spp) * self.g_min
+
+        # 計算對數域增益
+        log_gain_log = spp * log_gain_h1 + (1 - spp) * log_g_min
+        gain_log = np.exp(log_gain_log)
+
+        # 低 SPP：50% 線性 + 50% 對數
+        # 高 SPP：100% 對數（保留原有優勢）
+        log_gain = np.where(
+            spp < hybrid_threshold,
+            np.log(0.5 * gain_linear + 0.5 * gain_log + 1e-10),  # 混合
+            log_gain_log  # 純對數
+        )
+
+        # v1.5.0: 限制幀間變化速率（防止震動）
+        if self.log_gain_prev is not None:
+            log_gain_diff = log_gain - self.log_gain_prev
+            max_change_db = 6.0  # 最大變化 6dB/幀
+            log_gain_diff = np.clip(
+                log_gain_diff,
+                -max_change_db / 10,
+                max_change_db / 10
+            )
+            log_gain = self.log_gain_prev + log_gain_diff
 
         # 4. 時間平滑（對數域）
         if self.log_gain_prev is not None:

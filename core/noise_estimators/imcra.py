@@ -105,6 +105,7 @@ class ImcraNoiseEstimator:
         IMCRA 更新噪聲估計
 
         v1.3.0: 支持快速追蹤模式（動態參數）
+        v1.5.0: 自適應 delta（根據當前 SNR 動態調整）
 
         參數:
             magnitude: 當前幀的幅度譜 (n_freqs,)
@@ -141,22 +142,35 @@ class ImcraNoiseEstimator:
         # 4. 計算最小值（使用當前窗口長度）
         min_psd = np.min(self.min_buffer[-self.current_L:], axis=0)
 
+        # v1.5.0: 自適應 delta（根據當前 SNR）
+        snr_db = 10 * np.log10(self.smoothed_psd / (self.noise_psd + 1e-10))
+        avg_snr = np.mean(snr_db)
+
+        # 高 SNR（語音清晰）：使用較大 delta → 減少誤判
+        # 低 SNR（噪聲段）：使用較小 delta → 保持降噪能力
+        adaptive_delta = np.clip(
+            5.0 + 0.3 * avg_snr,  # 基礎 5dB + SNR 調整
+            3.0,   # 最小 3dB（強噪聲環境）
+            12.0   # 最大 12dB（清晰語音）
+        )
+        adaptive_delta_linear = 10 ** (adaptive_delta / 10)
+
         # 5. 計算 SPP 指示（如果沒有提供）
         if spp is None:
-            # 簡單的 SPP 估計：比較當前值和最小值
-            spp_indicator = self.smoothed_psd / (min_psd * self.delta + 1e-10)
+            # 簡單的 SPP 估計：比較當前值和最小值（使用自適應 delta）
+            spp_indicator = self.smoothed_psd / (min_psd * adaptive_delta_linear + 1e-10)
             spp = 1.0 / (1.0 + np.exp(-10 * (spp_indicator - 1.0)))
         else:
             # 使用平均 SPP 作為指示
             spp = np.clip(spp, 0, 1)
 
-        # 6. SPP 引導的噪聲更新（使用當前 alpha_d）
+        # 6. SPP 引導的噪聲更新（使用當前 alpha_d 和自適應 delta）
         # 低 SPP 區域：更新噪聲估計
         # 高 SPP 區域：保持噪聲估計
         update_factor = (1 - spp) * self.current_alpha_d
 
         self.noise_psd = update_factor * self.noise_psd + \
-                        (1 - update_factor) * min_psd * self.delta
+                        (1 - update_factor) * min_psd * adaptive_delta_linear
 
         self.frame_count += 1
 

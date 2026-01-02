@@ -1,0 +1,77 @@
+# V3-2: MMSE-LSA Configuration
+# 基於 Ephraim-Malah 1985
+# 最小均方誤差對數短時頻譜幅度估計
+
+version: "3-2"
+name: "MMSE-LSA"
+
+# Audio Parameters
+audio:
+  sample_rate: 16000
+  frame_size_ms: 20
+  frame_shift_ms: 10
+  fft_size: 512
+  window_type: "hanning"
+
+# Noise Estimation
+noise_estimation:
+  method: "recursive_average"
+  alpha: 0.95
+  num_init_frames: 20
+  update_during_speech: false
+
+# SPP (Speech Presence Probability) Estimation
+spp:
+  alpha_xi: 0.98          # A priori SNR smoothing factor (0.92-0.98)
+  q: 0.5                  # Speech prior probability
+  xi_min_db: -25.0        # Minimum a priori SNR (dB)
+
+# Gain Calculation - MMSE-LSA
+gain_calculation:
+  method: "mmse_lsa"
+  g_min_db: -20.0                # Minimum gain (dB), -15 to -25
+  alpha_g: 0.7                   # Gain temporal smoothing factor
+  use_linear_spp_weighting: false # True=線性域(退化為STSA), False=對數域(推薦)
+
+# Noise Scene Tracking (v1.3.0)
+noise_tracking:
+  enable: true
+
+# Notes:
+#
+# MMSE-LSA 特點:
+# - 最小化 E[(log|X| - log|Xhat|)^2] (對數域)
+# - 在對數域進行 SPP 加權和時間平滑
+# - 更符合人耳對數感知特性 (Weber-Fechner 定律)
+# - 相比 STSA 產生更少 musical noise
+#
+# use_linear_spp_weighting:
+#   - false (推薦): 對數域加權
+#     * log(G) = p*log(G_mmse) + (1-p)*log(g_min)
+#     * log(G_t) = α*log(G_{t-1}) + (1-α)*log(G_t)
+#     * 小增益被抑制更多,增益變化更平緩
+#     * musical noise 更少
+#   - true: 線性域加權
+#     * G = p*G_mmse + (1-p)*g_min (退化為 MMSE-STSA 行為)
+#     * 用於對比實驗
+#
+# alpha_g: 增益平滑因子
+#   - 在對數域平滑,效果比線性域更強
+#   - 0.6-0.7: 標準平滑
+#   - 0.7-0.8: 推薦範圍
+#   - 0.8-0.9: 強平滑,musical noise 極少
+#
+# 與 V3-1 (MMSE-STSA) 的區別:
+#   - STSA: 線性域操作
+#   - LSA:  對數域操作
+#   - LSA 對小增益更保守,大增益變化更平緩
+#
+# 數學原理:
+#   - E1 公式是 MMSE-LSA 的精確解 (不是近似)
+#   - 關鍵差異在於 SPP 加權和時間平滑的域
+#
+# 參考文獻:
+#   Ephraim, Y., & Malah, D. (1985).
+#   "Speech enhancement using a minimum mean-square error log-spectral
+#   amplitude estimator."
+#   IEEE Trans. ASSP, 33(2), 443-445.
