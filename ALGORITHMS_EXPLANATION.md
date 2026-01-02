@@ -445,7 +445,7 @@ G_base = (ξ/(1+ξ)) * exp(0.5 * E1(v))
 
 ### V3-3: PMMSE (Loizou 2005)
 
-**技術原理**：感知動機 MMSE (Laplacian 先驗 + Itakura-Saito 距離)
+**技術原理**：感知動機 MMSE (Gaussian 先驗 + Itakura-Saito 距離)
 
 #### 核心創新：感知成本函數
 
@@ -494,7 +494,7 @@ p(x) = (1/2b) * exp(-|x|/b)
 | 項目 | V3-3 (PMMSE) | V3-4 (Lap-MMSE) |
 |------|--------------|-----------------|
 | 成本函數 | E[(X-Xhat)²/X] | E[(X-Xhat)²] |
-| 先驗分佈 | Laplacian | Laplacian |
+| 先驗分佈 | Gaussian | Laplacian |
 | 距離測度 | Itakura-Saito | 標準 MSE |
 
 **公式**:

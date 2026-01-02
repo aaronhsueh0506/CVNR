@@ -19,7 +19,8 @@ PMMSE Gain Calculator (Perceptually Motivated MMSE)
 
 實現特點:
     - 使用 Gaussian 先驗 (complex Gaussian → Rayleigh 幅度分佈)
-    - 閉式解: G = sqrt((v+1)/2) * exp(E1(v/2)/2) [數值穩定版]
+    - 閉式解 (Equation 12): G = {sqrt(Vk) / [sqrt(pi) * gamma]} * [exp(Vk/2) / I0(Vk/2)]
+    - 特殊函數: Modified Bessel function I0
     - IS 距離成本函數，更符合人耳感知特性
 """
 
@@ -27,7 +28,7 @@ import numpy as np
 from typing import Optional
 
 try:
-    from scipy.special import exp1
+    from scipy.special import i0
     SCIPY_AVAILABLE = True
 except ImportError:
     SCIPY_AVAILABLE = False
@@ -36,31 +37,29 @@ except ImportError:
 
 class PmmseGainCalculator:
     """
-    感知動機 MMSE 增益估計器
+    感知動機 MMSE 增益估計器 (Loizou 2005 Equation 12)
 
     基於 Itakura-Saito 距離的 MMSE 估計:
     - 成本函數: E[(|X| - |Xhat|)^2 / |X|]
     - 假設: Gaussian 語音先驗分佈 (complex Gaussian → Rayleigh 幅度)
     - 優勢: 感知動機的成本函數，更符合人耳感知特性
+    - 特殊函數: Modified Bessel function I0
 
     參數:
         g_min_db: 最小增益 (dB), -15 到 -25
         alpha_g: 增益時間平滑因子, 0.6-0.8
         use_spp_weighting: 是否使用 SPP 加權 (推薦 True)
-        use_full_formula: True=完整公式, False=數值穩定簡化版(推薦)
     """
 
     def __init__(
         self,
         g_min_db: float = -20.0,
         alpha_g: float = 0.7,
-        use_spp_weighting: bool = True,
-        use_full_formula: bool = False
+        use_spp_weighting: bool = True
     ):
         self.g_min = 10 ** (g_min_db / 10)
         self.alpha_g = alpha_g
         self.use_spp_weighting = use_spp_weighting
-        self.use_full_formula = use_full_formula
         self.gain_prev = None
 
     def calculate(
@@ -72,11 +71,10 @@ class PmmseGainCalculator:
         """
         計算 PMMSE 增益
 
-        Loizou 2005 公式 (Equation 27):
-        - 完整版: G = sqrt((v+1)/2 * exp(E1(v/2)))
-        - 簡化版: G = sqrt((v+1)/2) * exp(E1(v/2)/2)  [默認，數值穩定]
+        Loizou 2005 Equation 12:
+        G = {sqrt(Vk) / [sqrt(pi) * gamma]} * [exp(Vk/2) / I0(Vk/2)]
 
-        其中 v = ξ/(1+ξ) * γ
+        其中 Vk = ξ/(1+ξ) * γ
 
         參數:
             spp: 語音存在機率 (n_freqs,)
@@ -87,10 +85,7 @@ class PmmseGainCalculator:
             gain: 增益 (n_freqs,)
         """
         # PMMSE 基礎增益 (Gaussian 先驗)
-        if self.use_full_formula:
-            gain_pmmse = self._pmmse_gain_gaussian_full(xi, gamma)
-        else:
-            gain_pmmse = self._pmmse_gain_gaussian(xi, gamma)
+        gain_pmmse = self._pmmse_gain_gaussian(xi, gamma)
 
         # SPP 加權 (線性域)
         if self.use_spp_weighting:
@@ -113,14 +108,19 @@ class PmmseGainCalculator:
         gamma: np.ndarray
     ) -> np.ndarray:
         """
-        PMMSE 增益簡化版 (Gaussian 先驗) - 數值穩定版本
+        PMMSE 增益計算 (Loizou 2005 Equation 12)
 
-        Loizou 2005, Equation 27 數值穩定實現:
-        G_PMMSE = sqrt((v+1)/2) * exp(E1(v/2)/2)
+        使用 Gaussian 先驗分佈 (complex Gaussian → Rayleigh magnitude)
 
-        其中:
-            v = ξ/(1+ξ) * γ
-            E1(v) = ∫[v to ∞] (e^(-t)/t) dt (指數積分)
+        公式: G = {sqrt(Vk) / [sqrt(pi) * gamma]} * [exp(Vk/2) / I0(Vk/2)]
+        其中 Vk = ξ/(1+ξ) * γ
+
+        參數:
+            xi: 先驗 SNR (a priori SNR)
+            gamma: 後驗 SNR (posterior SNR)
+
+        返回:
+            gain: PMMSE 增益
 
         推導:
         - 假設語音 DFT 係數服從 complex Gaussian 分佈
@@ -128,99 +128,49 @@ class PmmseGainCalculator:
         - 成本函數: E[(|X| - |Xhat|)^2 / |X|] (Itakura-Saito 距離)
         - 閉式解基於 Gaussian 先驗的 Bayesian 估計
 
-        注意: 此版本為數值穩定實現，exp(E1/2) 避免了過大數值
+        特殊函數:
+        - I0(x): Modified Bessel function of the first kind, order 0
         """
-        # 計算 v
+        # 計算 Vk
         v = (xi / (1 + xi)) * gamma
-        v = np.clip(v, 1e-10, 700)  # 防止溢出
+        v = np.clip(v, 1e-10, 700)  # 防止數值溢出
 
         v_half = v / 2.0
 
-        # 計算 E1(v/2)
+        # 使用修正貝塞爾函數 I0
         if SCIPY_AVAILABLE:
-            exp1_v_half = exp1(v_half)
+            i0_v_half = i0(v_half)  # Modified Bessel function
         else:
-            exp1_v_half = self._exp1_approx(v_half)
+            i0_v_half = self._i0_approx(v_half)
 
-        # PMMSE 公式 (數值穩定版)
-        # G = sqrt((v+1)/2) * exp(E1(v/2) / 2)
-        sqrt_term = np.sqrt((v + 1) / 2.0)
-        exp_term = np.exp(exp1_v_half / 2.0)
+        # Equation 12: G = sqrt(v) / [sqrt(pi) * gamma] * exp(v/2) / I0(v/2)
+        sqrt_v = np.sqrt(v)
+        sqrt_pi = np.sqrt(np.pi)
+        exp_v_half = np.exp(v_half)
 
-        gain = sqrt_term * exp_term
+        # 防止除以零
+        gamma_safe = np.maximum(gamma, 1e-10)
+        i0_v_half = np.maximum(i0_v_half, 1e-10)
+
+        gain = (sqrt_v / (sqrt_pi * gamma_safe)) * (exp_v_half / i0_v_half)
 
         return gain
 
-    def _pmmse_gain_gaussian_full(
-        self,
-        xi: np.ndarray,
-        gamma: np.ndarray
-    ) -> np.ndarray:
+    def _i0_approx(self, x: np.ndarray) -> np.ndarray:
         """
-        PMMSE 完整公式 (Gaussian 先驗) - Loizou 2005 原始公式
+        修正貝塞爾函數 I0(x) 的近似
 
-        Loizou 2005, Equation 27 原始公式:
-        G_PMMSE = sqrt((v+1)/2 * exp(E1(v/2)))
+        I0(x) = Σ_{k=0}^∞ [(x/2)^(2k) / (k!)^2]
 
-        其中:
-            v = ξ/(1+ξ) * γ
-            E1(v) = ∫[v to ∞] (e^(-t)/t) dt (指數積分)
-
-        數學等價性:
-            sqrt((v+1)/2 * exp(E1(v/2)))
-            = sqrt((v+1)/2) * sqrt(exp(E1(v/2)))
-            = sqrt((v+1)/2) * exp(E1(v/2)/2)  [簡化版]
-
-        注意: 當 E1(v/2) 較大時，exp(E1(v/2)) 可能導致數值溢出
-        實際使用推薦簡化版 (_pmmse_gain_gaussian)
+        使用級數展開（前 20 項）
         """
-        # 計算 v
-        v = (xi / (1 + xi)) * gamma
-        v = np.clip(v, 1e-10, 700)  # 防止溢出
+        result = np.ones_like(x)
+        term = np.ones_like(x)
+        x_half = x / 2.0
 
-        v_half = v / 2.0
-
-        # 計算 E1(v/2)
-        if SCIPY_AVAILABLE:
-            exp1_v_half = exp1(v_half)
-        else:
-            exp1_v_half = self._exp1_approx(v_half)
-
-        # PMMSE 完整公式 - 兩種數值穩定實現
-        # 方法 1: 直接計算 (可能溢出)
-        # exp_e1 = np.exp(np.clip(exp1_v_half, -700, 700))
-        # gain = np.sqrt((v + 1) / 2.0 * exp_e1)
-
-        # 方法 2: 數學等價變換 (推薦，數值穩定)
-        # sqrt((v+1)/2 * exp(E1)) = sqrt((v+1)/2) * exp(E1/2)
-        gain = np.sqrt((v + 1) / 2.0) * np.exp(exp1_v_half / 2.0)
-
-        return gain
-
-    def _exp1_approx(self, v: np.ndarray) -> np.ndarray:
-        """
-        指數積分 E1(v) 的近似
-
-        E1(v) = ∫[v to ∞] (e^(-t)/t) dt
-
-        使用不同範圍的近似:
-        - v >= 1.0: 漸近展開
-        - v < 1.0: 級數展開
-        """
-        result = np.zeros_like(v)
-
-        # 大 v: 漸近展開
-        mask_large = v >= 1.0
-        if np.any(mask_large):
-            v_large = v[mask_large]
-            result[mask_large] = np.exp(-v_large) / v_large
-
-        # 小 v: 級數展開
-        mask_small = ~mask_large
-        if np.any(mask_small):
-            v_small = v[mask_small]
-            gamma_euler = 0.5772156649  # Euler-Mascheroni 常數
-            result[mask_small] = -gamma_euler - np.log(v_small + 1e-10) - v_small
+        for k in range(1, 20):
+            term = term * (x_half / k) ** 2
+            result += term
 
         return result
 
@@ -230,12 +180,10 @@ class PmmseGainCalculator:
 
     def __repr__(self):
         spp_mode = "with SPP" if self.use_spp_weighting else "no SPP"
-        formula_mode = "full" if self.use_full_formula else "simplified"
         return (f"PmmseGainCalculator("
                 f"g_min={10*np.log10(self.g_min):.1f} dB, "
                 f"alpha_g={self.alpha_g}, "
-                f"{spp_mode}, "
-                f"formula={formula_mode})")
+                f"{spp_mode})")
 
 
 if __name__ == "__main__":
