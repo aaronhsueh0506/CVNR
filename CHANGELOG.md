@@ -4,6 +4,50 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [1.5.1] - 2026-01-02
+
+### 🔴 緊急修復 (Critical Fixes)
+- 🐛 **V3-3 (PMMSE) 先驗分佈文檔錯誤修正**
+  - **問題**: 所有文檔錯誤標記 V3-3 使用 Laplacian 先驗
+  - **實際**: Loizou 2005 論文使用 **Gaussian 先驗** (complex Gaussian → Rayleigh 幅度分佈)
+  - **修正**: 修正所有代碼、配置和文檔中的錯誤描述
+  - **影響**: 文檔準確性，不影響實際計算（代碼實現本身是正確的）
+
+- 🐛 **V3-3 (PMMSE) 公式說明不一致修正**
+  - **問題**: 文檔聲稱公式與實際實現不一致
+  - **修正**: 澄清兩種數學等價的實現方式
+  - **完整版**: `G = sqrt((v+1)/2 * exp(E1(v/2)))`
+  - **簡化版**: `G = sqrt((v+1)/2) * exp(E1(v/2)/2)` [數學等價，數值穩定]
+
+### 新增 (Added)
+- ✨ **V3-3 (PMMSE) 公式選項**
+  - 新增 `use_full_formula` 參數（與 V3, V3-4 一致）
+  - `false` (默認): 數值穩定版本
+  - `true`: 完整公式（數學等價，使用相同實現）
+  - 配置文件: `config/v3_3_config.yaml` 新增參數說明
+
+### 改進 (Changed)
+- 📝 **文檔大規模修正**
+  - `core/gain_calculators/pmmse.py`: 修正先驗分佈說明，添加公式選項
+  - `denoisers/v3_3_pmmse.py`: 修正類別文檔
+  - `README.md`: 修正 3 處 V3-3 先驗分佈描述
+  - `ALGORITHMS_EXPLANATION.md`: 修正 MMSE 變體對比表格
+  - `docs/V3_VARIANTS_COMPARISON.md`: 修正理論基礎表格
+  - `config/v3_3_config.yaml`: 修正註釋，添加公式選項說明
+  - `config/v3_4_config.yaml`: 修正版本對比說明
+  - `core/gain_calculators/laplacian_mmse.py`: 修正與其他版本對比說明
+  - `denoisers/v3_4_laplacian_mmse.py`: 修正 V3-3 描述
+
+### 正確的四個 MMSE 變體
+| 版本 | 先驗分佈 | 成本函數 | 論文 |
+|------|---------|---------|------|
+| V3 (MMSE-STSA) | **Gaussian** | E[(X-X̂)²] | Ephraim & Malah 1984 |
+| V3-2 (MMSE-LSA) | **Gaussian** | E[(log X - log X̂)²] | Ephraim & Malah 1985 |
+| V3-3 (PMMSE) | **Gaussian** ✅ | E[(X-X̂)²/X] (IS距離) | Loizou 2005 |
+| V3-4 (Laplacian-MMSE) | **Laplacian** | E[(X-X̂)²] | Chen & Loizou 2007 |
+
+---
+
 ## [1.5.0] - 2026-01-02
 
 ### 新增 (Added)

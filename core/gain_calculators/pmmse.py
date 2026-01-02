@@ -18,9 +18,9 @@ PMMSE Gain Calculator (Perceptually Motivated MMSE)
     - 對小幅度分量更寬容,對大幅度分量更嚴格
 
 實現特點:
-    - 使用 Laplacian 先驗 (非 Gaussian)
-    - 閉式解: G = sqrt((v+1)/2 * exp(E1(v/2)))
-    - 相比 Gaussian-MMSE 產生更少殘留噪聲
+    - 使用 Gaussian 先驗 (complex Gaussian → Rayleigh 幅度分佈)
+    - 閉式解: G = sqrt((v+1)/2) * exp(E1(v/2)/2) [數值穩定版]
+    - IS 距離成本函數，更符合人耳感知特性
 """
 
 import numpy as np
@@ -40,24 +40,27 @@ class PmmseGainCalculator:
 
     基於 Itakura-Saito 距離的 MMSE 估計:
     - 成本函數: E[(|X| - |Xhat|)^2 / |X|]
-    - 假設: Laplacian 語音先驗分佈
-    - 優勢: 更少的 musical noise,更自然的語音質量
+    - 假設: Gaussian 語音先驗分佈 (complex Gaussian → Rayleigh 幅度)
+    - 優勢: 感知動機的成本函數，更符合人耳感知特性
 
     參數:
         g_min_db: 最小增益 (dB), -15 到 -25
         alpha_g: 增益時間平滑因子, 0.6-0.8
         use_spp_weighting: 是否使用 SPP 加權 (推薦 True)
+        use_full_formula: True=完整公式, False=數值穩定簡化版(推薦)
     """
 
     def __init__(
         self,
         g_min_db: float = -20.0,
         alpha_g: float = 0.7,
-        use_spp_weighting: bool = True
+        use_spp_weighting: bool = True,
+        use_full_formula: bool = False
     ):
         self.g_min = 10 ** (g_min_db / 10)
         self.alpha_g = alpha_g
         self.use_spp_weighting = use_spp_weighting
+        self.use_full_formula = use_full_formula
         self.gain_prev = None
 
     def calculate(
@@ -70,7 +73,8 @@ class PmmseGainCalculator:
         計算 PMMSE 增益
 
         Loizou 2005 公式 (Equation 27):
-        G = sqrt((v+1)/2 * exp(E1(v/2)))
+        - 完整版: G = sqrt((v+1)/2 * exp(E1(v/2)))
+        - 簡化版: G = sqrt((v+1)/2) * exp(E1(v/2)/2)  [默認，數值穩定]
 
         其中 v = ξ/(1+ξ) * γ
 
@@ -82,8 +86,11 @@ class PmmseGainCalculator:
         返回:
             gain: 增益 (n_freqs,)
         """
-        # PMMSE 基礎增益 (Laplacian 先驗)
-        gain_pmmse = self._pmmse_gain_laplacian(xi, gamma)
+        # PMMSE 基礎增益 (Gaussian 先驗)
+        if self.use_full_formula:
+            gain_pmmse = self._pmmse_gain_gaussian_full(xi, gamma)
+        else:
+            gain_pmmse = self._pmmse_gain_gaussian(xi, gamma)
 
         # SPP 加權 (線性域)
         if self.use_spp_weighting:
@@ -100,25 +107,28 @@ class PmmseGainCalculator:
 
         return gain
 
-    def _pmmse_gain_laplacian(
+    def _pmmse_gain_gaussian(
         self,
         xi: np.ndarray,
         gamma: np.ndarray
     ) -> np.ndarray:
         """
-        PMMSE 增益 (Laplacian 先驗)
+        PMMSE 增益簡化版 (Gaussian 先驗) - 數值穩定版本
 
-        Loizou 2005, Equation 27:
-        G_PMMSE = sqrt((v+1)/2 * exp(E1(v/2)))
+        Loizou 2005, Equation 27 數值穩定實現:
+        G_PMMSE = sqrt((v+1)/2) * exp(E1(v/2)/2)
 
         其中:
             v = ξ/(1+ξ) * γ
-            E1(v) = ∫[v to ∞] (e^(-t)/t) dt
+            E1(v) = ∫[v to ∞] (e^(-t)/t) dt (指數積分)
 
         推導:
-        - 假設語音 DFT 係數服從 Laplacian 分佈
-        - 成本函數: E[(|X| - |Xhat|)^2 / |X|] (Itakura-Saito)
-        - 閉式解基於 Laplacian 先驗的 Bayesian 估計
+        - 假設語音 DFT 係數服從 complex Gaussian 分佈
+        - 幅度譜服從 Rayleigh 分佈
+        - 成本函數: E[(|X| - |Xhat|)^2 / |X|] (Itakura-Saito 距離)
+        - 閉式解基於 Gaussian 先驗的 Bayesian 估計
+
+        注意: 此版本為數值穩定實現，exp(E1/2) 避免了過大數值
         """
         # 計算 v
         v = (xi / (1 + xi)) * gamma
@@ -132,15 +142,58 @@ class PmmseGainCalculator:
         else:
             exp1_v_half = self._exp1_approx(v_half)
 
-        # PMMSE 公式
-        # 數值穩定性: 分為兩步計算
-        # G = sqrt((v+1)/2) * sqrt(exp(E1(v/2)))
-        #   = sqrt((v+1)/2) * exp(E1(v/2) / 2)
-
+        # PMMSE 公式 (數值穩定版)
+        # G = sqrt((v+1)/2) * exp(E1(v/2) / 2)
         sqrt_term = np.sqrt((v + 1) / 2.0)
         exp_term = np.exp(exp1_v_half / 2.0)
 
         gain = sqrt_term * exp_term
+
+        return gain
+
+    def _pmmse_gain_gaussian_full(
+        self,
+        xi: np.ndarray,
+        gamma: np.ndarray
+    ) -> np.ndarray:
+        """
+        PMMSE 完整公式 (Gaussian 先驗) - Loizou 2005 原始公式
+
+        Loizou 2005, Equation 27 原始公式:
+        G_PMMSE = sqrt((v+1)/2 * exp(E1(v/2)))
+
+        其中:
+            v = ξ/(1+ξ) * γ
+            E1(v) = ∫[v to ∞] (e^(-t)/t) dt (指數積分)
+
+        數學等價性:
+            sqrt((v+1)/2 * exp(E1(v/2)))
+            = sqrt((v+1)/2) * sqrt(exp(E1(v/2)))
+            = sqrt((v+1)/2) * exp(E1(v/2)/2)  [簡化版]
+
+        注意: 當 E1(v/2) 較大時，exp(E1(v/2)) 可能導致數值溢出
+        實際使用推薦簡化版 (_pmmse_gain_gaussian)
+        """
+        # 計算 v
+        v = (xi / (1 + xi)) * gamma
+        v = np.clip(v, 1e-10, 700)  # 防止溢出
+
+        v_half = v / 2.0
+
+        # 計算 E1(v/2)
+        if SCIPY_AVAILABLE:
+            exp1_v_half = exp1(v_half)
+        else:
+            exp1_v_half = self._exp1_approx(v_half)
+
+        # PMMSE 完整公式 - 兩種數值穩定實現
+        # 方法 1: 直接計算 (可能溢出)
+        # exp_e1 = np.exp(np.clip(exp1_v_half, -700, 700))
+        # gain = np.sqrt((v + 1) / 2.0 * exp_e1)
+
+        # 方法 2: 數學等價變換 (推薦，數值穩定)
+        # sqrt((v+1)/2 * exp(E1)) = sqrt((v+1)/2) * exp(E1/2)
+        gain = np.sqrt((v + 1) / 2.0) * np.exp(exp1_v_half / 2.0)
 
         return gain
 
@@ -177,10 +230,12 @@ class PmmseGainCalculator:
 
     def __repr__(self):
         spp_mode = "with SPP" if self.use_spp_weighting else "no SPP"
+        formula_mode = "full" if self.use_full_formula else "simplified"
         return (f"PmmseGainCalculator("
                 f"g_min={10*np.log10(self.g_min):.1f} dB, "
                 f"alpha_g={self.alpha_g}, "
-                f"{spp_mode})")
+                f"{spp_mode}, "
+                f"formula={formula_mode})")
 
 
 if __name__ == "__main__":
@@ -224,7 +279,7 @@ if __name__ == "__main__":
 
         print("\n觀察:")
         print("- PMMSE 通常比 MMSE-STSA 更保守 (增益更小)")
-        print("- PMMSE 基於 Laplacian 先驗,更適合語音稀疏性")
+        print("- PMMSE 基於 Gaussian 先驗 + IS 距離成本函數")
         print("- PMMSE 的 IS 距離成本函數對小幅度更寬容")
     else:
         print("\nPMMSE 增益:")
@@ -256,6 +311,6 @@ if __name__ == "__main__":
 
     print("\n結論:")
     print("1. PMMSE 使用 Itakura-Saito 距離,更符合感知特性")
-    print("2. Laplacian 先驗比 Gaussian 更適合語音稀疏性")
+    print("2. Gaussian 先驗假設語音 DFT 係數為 complex Gaussian")
     print("3. SPP 加權使低語音機率時增益更小 (更多抑制)")
-    print("4. PMMSE 理論上產生更少 musical noise")
+    print("4. PMMSE 的 IS 距離對小幅度分量更寬容")

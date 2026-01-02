@@ -15,9 +15,9 @@ Laplacian-MMSE Gain Calculator
     - 產生更少的殘留噪聲和 musical noise
 
 與其他方法對比:
-    - MMSE-STSA/LSA: 假設 Gaussian 先驗
-    - PMMSE: 使用 Laplacian 但成本函數不同 (IS 距離)
-    - Laplacian-MMSE: Laplacian 先驗 + 標準 MSE 成本函數
+    - MMSE-STSA/LSA: 假設 Gaussian 先驗 + MSE 成本
+    - PMMSE (V3-3): Gaussian 先驗 + IS 距離成本函數
+    - Laplacian-MMSE (V3-4): Laplacian 先驗 + 標準 MSE 成本函數
 
 實現:
     - 閉式解基於 Laplacian 統計特性
