@@ -1,5 +1,25 @@
 """
 Reconstructor - 頻譜重建、IFFT、Overlap-Add
+
+Overlap-Add (OLA) 正確實現說明:
+
+1. 分析階段 (FrameProcessor):
+   - 加分析窗: x_windowed = x * w_a
+   - FFT: X = FFT(x_windowed)
+
+2. 處理階段 (GainCalculator):
+   - 應用增益: Y = G * X
+
+3. 合成階段 (Reconstructor):
+   - IFFT: y = IFFT(Y)
+   - 加合成窗: y_windowed = y * w_s  (必須！)
+   - OLA 疊加: output[start:end] += y_windowed
+   - COLA 歸一化: output / Σ(w_s^2)  (必須！)
+
+對於 COLA 條件 (Constant Overlap-Add):
+- 50% overlap + Hanning 窗
+- Σ(w^2) = 常數
+- 這是窗函數平方和，不是窗函數和！
 """
 
 import numpy as np
@@ -56,13 +76,19 @@ class Reconstructor:
             phase: 相位譜 (fft_size//2 + 1,)
 
         返回:
-            frame: 時域信號 (fft_size,)
+            frame: 時域信號 (frame_size,) or (fft_size,)
         """
         # 重建複數頻譜
         spectrum = magnitude * np.exp(1j * phase)
 
-        # IFFT
-        frame = np.fft.irfft(spectrum, n=self.fft_size)
+        # IFFT 512 點，然後取前 320 點（用戶要求）
+        # 320 點信號 → 512 點 FFT → 512 點 IFFT → 取前 320 點
+        frame_full = np.fft.irfft(spectrum, n=self.fft_size)
+
+        if self.window is not None:
+            frame = frame_full[:len(self.window)]  # 取前 320 點
+        else:
+            frame = frame_full
 
         return frame
 
@@ -77,10 +103,15 @@ class Reconstructor:
             spectrum: 複數頻譜 (fft_size//2 + 1,)
 
         返回:
-            frame: 時域信號 (fft_size,)
+            frame: 時域信號 (frame_size,) or (fft_size,)
         """
-        # IFFT
-        frame = np.fft.irfft(spectrum, n=self.fft_size)
+        # IFFT 512 點，然後取前 320 點（用戶要求）
+        frame_full = np.fft.irfft(spectrum, n=self.fft_size)
+
+        if self.window is not None:
+            frame = frame_full[:len(self.window)]  # 取前 320 點
+        else:
+            frame = frame_full
 
         return frame
 
@@ -91,6 +122,12 @@ class Reconstructor:
     ) -> np.ndarray:
         """
         使用 Overlap-Add 方法重建完整信號
+
+        OLA 正確流程:
+        1. IFFT 得到時域幀
+        2. 應用合成窗（與分析窗相同）
+        3. Overlap-Add 疊加
+        4. 窗函數平方和歸一化（COLA）
 
         參數:
             frames: 時域幀 (n_frames, frame_size)
@@ -107,30 +144,24 @@ class Reconstructor:
         # 初始化輸出
         output = np.zeros(output_length)
 
-        # Overlap-Add
-        # 注意：這裡不應該再次加窗，因為分析階段已經加過窗了
-        # 直接疊加 IFFT 結果，然後用窗函數平方和歸一化
+        # Overlap-Add with sqrt(Hann) synthesis window
+        # sqrt(Hann) × sqrt(Hann) + 50% overlap = 自動能量守恆
+        # 不需要手動歸一化！
         for i, frame in enumerate(frames):
             start = i * self.frame_shift
             end = start + frame_size
-            output[start:end] += frame
 
-        # 窗函數能量補償（Overlap-Add 方法需要）
-        # 注意：對於 COLA（Constant Overlap-Add）兼容的窗函數（如 50% overlap 的 Hanning），
-        # 窗函數和已經約等於 1，不需要額外歸一化
-        # 只有在窗函數和不為常數時才需要歸一化
-        #
-        # 這裡我們假設使用的是 COLA 兼容的參數，所以註釋掉歸一化
-        # if self.window is not None:
-        #     window_sum = np.zeros(output_length)
-        #     window_len = min(len(self.window), frame_size)
-        #     for i in range(n_frames):
-        #         start = i * self.frame_shift
-        #         end = min(start + window_len, output_length)
-        #         actual_len = end - start
-        #         window_sum[start:end] += self.window[:actual_len]
-        #     window_sum = np.maximum(window_sum, 1e-10)
-        #     output = output / window_sum
+            # 應用 sqrt(Hann) 合成窗
+            if self.window is not None:
+                windowed_frame = frame * self.window
+            else:
+                windowed_frame = frame
+
+            output[start:end] += windowed_frame
+
+        # ✓ 移除 COLA 歸一化代碼
+        # sqrt(w) × sqrt(w) + 50% overlap 已經滿足 COLA 條件
+        # 能量自動守恆，不需要手動除以 window_sum
 
         # 裁剪到原始長度
         if original_length is not None:
@@ -157,8 +188,11 @@ class Reconstructor:
         """
         n_frames = magnitudes.shape[0]
 
+        # 確定幀長度（如果有窗函數則使用窗函數長度，否則使用 FFT size）
+        frame_length = len(self.window) if self.window is not None else self.fft_size
+
         # 重建每一幀
-        frames = np.zeros((n_frames, self.fft_size))
+        frames = np.zeros((n_frames, frame_length))
         for i in range(n_frames):
             frames[i] = self.reconstruct_frame(magnitudes[i], phases[i])
 
@@ -184,8 +218,11 @@ class Reconstructor:
         """
         n_frames = spectra.shape[0]
 
+        # 確定幀長度（如果有窗函數則使用窗函數長度，否則使用 FFT size）
+        frame_length = len(self.window) if self.window is not None else self.fft_size
+
         # 重建每一幀
-        frames = np.zeros((n_frames, self.fft_size))
+        frames = np.zeros((n_frames, frame_length))
         for i in range(n_frames):
             frames[i] = self.reconstruct_from_spectrum(spectra[i])
 

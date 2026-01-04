@@ -42,13 +42,15 @@ class FrameProcessor:
         self.buffer = np.zeros(self.frame_size)
 
     def _create_window(self, window_type: str, size: int) -> np.ndarray:
-        """創建窗函數"""
+        """創建窗函數（sqrt(Hann) for COLA）"""
         if window_type == 'hanning':
-            return np.hanning(size)
+            # 使用 sqrt(Hann) 窗以滿足 COLA 條件
+            # sqrt(w) × sqrt(w) + 50% overlap = 能量守恆
+            return np.sqrt(np.hanning(size))
         elif window_type == 'hamming':
-            return np.hamming(size)
+            return np.sqrt(np.hamming(size))
         elif window_type == 'blackman':
-            return np.blackman(size)
+            return np.sqrt(np.blackman(size))
         else:
             raise ValueError(f"Unknown window type: {window_type}")
 

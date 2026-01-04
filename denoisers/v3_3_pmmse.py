@@ -201,6 +201,13 @@ class PmmseDenoiser(BaseDenoiser):
             # 計算 PMMSE 增益 (Gaussian 先驗 + IS 距離)
             gain = self.gain_calculator.calculate(spp, xi, gamma)
 
+            # 增益變化率限制（防止 Musical Noise）
+            # 限制幀間增益變化 ±6dB (ratio: 0.5~2.0)
+            if self.gain_prev is not None:
+                gain_ratio = gain / (self.gain_prev + 1e-10)
+                gain_ratio = np.clip(gain_ratio, 0.5, 2.0)
+                gain = self.gain_prev * gain_ratio
+
             # 應用增益
             enhanced_magnitude[i] = gain * noisy_magnitude[i]
 

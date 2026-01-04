@@ -19,9 +19,9 @@ noise_estimation:
 # Gain Calculation
 gain_calculation:
   method: "spectral_subtraction"
-  alpha: 1.0              # Over-subtraction factor (降低以減少過度抑制)
-  beta: 0.02              # Spectral floor (降低以更徹底降噪，但可能增加音樂噪聲)
-  alpha_smooth: 0.8       # Temporal smoothing factor (0.7-0.9，減少 musical noise)
+  alpha: 2.5              # Over-subtraction factor (提高以增強降噪)
+  beta: 0.01              # Spectral floor (降低以更徹底降噪)
+  alpha_smooth: 0.75      # Temporal smoothing factor (適度平滑減少 musical noise)
 
 # Notes:
 # - alpha 越大降噪越多，但音樂噪聲也越嚴重，語音也可能被過度抑制
