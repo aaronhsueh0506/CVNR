@@ -29,8 +29,8 @@ spp:
 # Gain Calculation - PMMSE
 gain_calculation:
   method: "pmmse"
-  g_min_db: -20.0         # Minimum gain (dB), -15 to -25
-  alpha_g: 0.7            # Gain temporal smoothing factor
+  g_min_db: -15.0         # Minimum gain (dB), 與 V3 一致，減少過度抑制
+  alpha_g: 0.85           # Gain temporal smoothing factor, 與 V3 一致，減少 Musical Noise
   use_spp_weighting: true # 是否使用 SPP 加權 (推薦 true)
 
 # Noise Scene Tracking (v1.3.0)

@@ -133,7 +133,7 @@ class PmmseGainCalculator:
         """
         # 計算 Vk
         v = (xi / (1 + xi)) * gamma
-        v = np.clip(v, 1e-10, 700)  # 防止數值溢出
+        v = np.clip(v, 1e-10, 50)  # 防止 I0 數值溢出 (降低上限 700→50)
 
         v_half = v / 2.0
 

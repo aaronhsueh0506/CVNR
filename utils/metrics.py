@@ -300,6 +300,227 @@ def calculate_segmental_snr_improvement(
     return input_segsnr, output_segsnr, segsnr_improvement
 
 
+def calculate_fw_segsnr(
+    clean: np.ndarray,
+    enhanced: np.ndarray,
+    sample_rate: int = 16000,
+    frame_size: int = 256,
+    hop_size: int = 128
+) -> float:
+    """
+    Calculate Frequency-Weighted Segmental SNR (fwSegSNR).
+
+    This metric applies perceptual weighting to different frequency bands,
+    giving more weight to frequencies important for speech intelligibility (1-4 kHz).
+
+    Args:
+        clean: Clean reference signal
+        enhanced: Enhanced signal
+        sample_rate: Sampling rate
+        frame_size: Frame size in samples
+        hop_size: Hop size in samples
+
+    Returns:
+        fwSegSNR in dB (higher is better)
+
+    Note:
+        - Typical range: 5-25 dB for good denoising
+        - More perceptually relevant than plain segSNR
+    """
+    # Ensure same length
+    min_len = min(len(clean), len(enhanced))
+    clean = clean[:min_len]
+    enhanced = enhanced[:min_len]
+
+    # Calculate number of frames
+    num_frames = (len(clean) - frame_size) // hop_size + 1
+
+    if num_frames < 1:
+        # Fall back to regular segSNR
+        return calculate_segmental_snr(clean, enhanced, frame_size, hop_size)
+
+    # FFT size
+    nfft = frame_size
+    num_freqs = nfft // 2 + 1
+
+    # Frequency weighting based on critical bands
+    # Give more weight to 1-4 kHz (important for speech)
+    freqs = np.fft.rfftfreq(nfft, 1.0 / sample_rate)
+    weights = np.ones(num_freqs)
+
+    # Apply frequency weighting
+    for i, f in enumerate(freqs):
+        if 1000 <= f <= 4000:
+            weights[i] = 2.0  # Double weight for critical band
+        elif 500 <= f < 1000 or 4000 < f <= 6000:
+            weights[i] = 1.5  # Moderate weight
+        else:
+            weights[i] = 1.0  # Normal weight
+
+    # Normalize weights
+    weights = weights / np.sum(weights)
+
+    # Calculate frame-by-frame weighted SNR
+    frame_snrs = []
+    window = np.hanning(frame_size)
+
+    for i in range(num_frames):
+        start = i * hop_size
+        end = start + frame_size
+
+        if end > len(clean):
+            break
+
+        clean_frame = clean[start:end] * window
+        enhanced_frame = enhanced[start:end] * window
+
+        # Calculate frame power
+        signal_power_time = np.mean(clean_frame ** 2)
+
+        # Skip silent frames
+        if signal_power_time < 1e-10:
+            continue
+
+        # FFT
+        clean_fft = np.fft.rfft(clean_frame, n=nfft)
+        enhanced_fft = np.fft.rfft(enhanced_frame, n=nfft)
+
+        # Power spectra
+        clean_psd = np.abs(clean_fft) ** 2
+        noise_psd = np.abs(enhanced_fft - clean_fft) ** 2
+
+        # Apply frequency weighting
+        clean_psd_weighted = clean_psd * weights
+        noise_psd_weighted = noise_psd * weights
+
+        # Calculate weighted SNR
+        total_signal_power = np.sum(clean_psd_weighted)
+        total_noise_power = np.sum(noise_psd_weighted)
+
+        if total_noise_power < 1e-10:
+            frame_snr = 35.0  # Very high SNR
+        else:
+            frame_snr = 10 * np.log10(total_signal_power / total_noise_power)
+
+        # Clip to avoid outliers
+        frame_snr = np.clip(frame_snr, -10.0, 35.0)
+
+        frame_snrs.append(frame_snr)
+
+    # Return mean of all frame SNRs
+    if len(frame_snrs) == 0:
+        return 0.0
+
+    fw_segsnr = np.mean(frame_snrs)
+    return float(fw_segsnr)
+
+
+def calculate_wss(
+    clean: np.ndarray,
+    enhanced: np.ndarray,
+    sample_rate: int = 16000,
+    frame_size: int = 256,
+    hop_size: int = 128
+) -> float:
+    """
+    Calculate Weighted Spectral Slope (WSS) distance.
+
+    WSS measures the difference in spectral slopes between clean and enhanced signals.
+    Lower values indicate better quality.
+
+    Args:
+        clean: Clean reference signal
+        enhanced: Enhanced signal
+        sample_rate: Sampling rate
+        frame_size: Frame size in samples
+        hop_size: Hop size in samples
+
+    Returns:
+        WSS distance (lower is better)
+
+    Note:
+        - < 40: Excellent
+        - 40-60: Good
+        - 60-80: Fair
+        - > 80: Poor
+    """
+    # Ensure same length
+    min_len = min(len(clean), len(enhanced))
+    clean = clean[:min_len]
+    enhanced = enhanced[:min_len]
+
+    # Calculate number of frames
+    num_frames = (len(clean) - frame_size) // hop_size + 1
+
+    if num_frames < 1:
+        return 100.0  # Poor quality indicator
+
+    # FFT size
+    nfft = frame_size
+    num_freqs = nfft // 2 + 1
+
+    # Bark scale weights (perceptual frequency scale)
+    # Approximate Bark scale weighting
+    freqs = np.fft.rfftfreq(nfft, 1.0 / sample_rate)
+    bark_weights = np.ones(num_freqs)
+
+    for i, f in enumerate(freqs):
+        # Bark scale approximation
+        if f > 0:
+            bark = 13 * np.arctan(0.00076 * f) + 3.5 * np.arctan((f / 7500.0) ** 2)
+            # Weight based on perceptual importance
+            if 300 <= f <= 3000:
+                bark_weights[i] = 1.0  # Critical band for speech
+            else:
+                bark_weights[i] = 0.5  # Less important
+
+    # Normalize
+    bark_weights = bark_weights / np.sum(bark_weights)
+
+    # Calculate frame-by-frame WSS
+    frame_wss = []
+    window = np.hanning(frame_size)
+
+    for i in range(num_frames):
+        start = i * hop_size
+        end = start + frame_size
+
+        if end > len(clean):
+            break
+
+        clean_frame = clean[start:end] * window
+        enhanced_frame = enhanced[start:end] * window
+
+        # Skip silent frames
+        if np.mean(clean_frame ** 2) < 1e-10:
+            continue
+
+        # FFT
+        clean_fft = np.fft.rfft(clean_frame, n=nfft)
+        enhanced_fft = np.fft.rfft(enhanced_frame, n=nfft)
+
+        # Power spectra (in dB)
+        clean_psd_db = 10 * np.log10(np.abs(clean_fft) ** 2 + 1e-10)
+        enhanced_psd_db = 10 * np.log10(np.abs(enhanced_fft) ** 2 + 1e-10)
+
+        # Calculate spectral slopes (differences between adjacent bins)
+        clean_slope = np.diff(clean_psd_db)
+        enhanced_slope = np.diff(enhanced_psd_db)
+
+        # Weighted spectral slope distance
+        slope_diff = (clean_slope - enhanced_slope) ** 2
+        weighted_diff = slope_diff * bark_weights[:-1]  # Weights for N-1 bins
+
+        frame_wss.append(np.sum(weighted_diff))
+
+    # Return mean WSS
+    if len(frame_wss) == 0:
+        return 100.0
+
+    wss = np.mean(frame_wss)
+    return float(wss)
+
+
 def calculate_lsd(
     clean: np.ndarray,
     enhanced: np.ndarray,

@@ -22,16 +22,16 @@ noise_estimation:
 
 # SPP (Speech Presence Probability) Estimation
 spp:
-  alpha_xi: 0.98          # A priori SNR smoothing factor (0.92-0.98)
-  q: 0.5                  # Speech prior probability
+  alpha_xi: 0.95          # A priori SNR smoothing factor (提高平滑度)
+  q: 0.6                  # Speech prior probability (提高語音優先權)
   xi_min_db: -25.0        # Minimum a priori SNR (dB)
 
 # Gain Calculation
 gain_calculation:
   method: "spp_mmse"
-  g_min_db: -20.0         # Minimum gain (dB), -15 to -25
-  alpha_g: 0.85           # Gain temporal smoothing factor (提高以減少 musical noise)
-  use_full_formula: false # v1.5.0: true=Bessel完整版, false=E1簡化版(推薦)
+  g_min_db: -12.0         # Minimum gain (dB), 進一步提高以減少失真
+  alpha_g: 0.75           # Gain temporal smoothing factor (適度平滑)
+  use_full_formula: false # v1.5.0: E1 簡化版性能更好
 
 # Noise Scene Tracking (v1.3.0)
 noise_tracking:
