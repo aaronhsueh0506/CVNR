@@ -143,21 +143,27 @@ class PmmseDenoiser(BaseDenoiser):
             self.clean_detector = None
             self.base_g_min_db = None
 
-    def denoise(self, noisy_signal: np.ndarray) -> np.ndarray:
+    def denoise(self, noisy_signal: np.ndarray, return_spp: bool = False):
         """
         對帶噪信號進行降噪
 
         參數:
             noisy_signal: 帶噪音頻信號 (n_samples,)
+            return_spp: 是否返回 SPP 歷史數據 (用於可視化)
 
         返回:
             enhanced_signal: 降噪後的信號 (n_samples,)
+            spp_history: SPP 歷史數據 (n_frames, n_freqs) - 僅當 return_spp=True
         """
         # 1. 分幀和 FFT
         magnitudes, phases, spectra = self.processor.process_signal(noisy_signal)
 
         # 2. 降噪
-        enhanced_magnitudes, enhanced_phases = self.denoise_spectrum(magnitudes, phases)
+        result = self.denoise_spectrum(magnitudes, phases, return_spp=return_spp)
+        if return_spp:
+            enhanced_magnitudes, enhanced_phases, spp_history = result
+        else:
+            enhanced_magnitudes, enhanced_phases = result
 
         # 3. 重建信號
         enhanced_signal = self.reconstructor.reconstruct_signal(
@@ -166,13 +172,17 @@ class PmmseDenoiser(BaseDenoiser):
             original_length=len(noisy_signal)
         )
 
-        return enhanced_signal
+        if return_spp:
+            return enhanced_signal, spp_history
+        else:
+            return enhanced_signal
 
     def denoise_spectrum(
         self,
         noisy_magnitude: np.ndarray,
-        noisy_phase: np.ndarray
-    ) -> Tuple[np.ndarray, np.ndarray]:
+        noisy_phase: np.ndarray,
+        return_spp: bool = False
+    ):
         """
         在頻域進行降噪
 
@@ -185,10 +195,12 @@ class PmmseDenoiser(BaseDenoiser):
         參數:
             noisy_magnitude: 帶噪語音幅度譜 (n_frames, n_freqs)
             noisy_phase: 帶噪語音相位譜 (n_frames, n_freqs)
+            return_spp: 是否返回 SPP 歷史數據
 
         返回:
             enhanced_magnitude: 降噪後的幅度譜 (n_frames, n_freqs)
             enhanced_phase: 相位譜（不變）(n_frames, n_freqs)
+            spp_history: SPP 歷史數據 (n_frames, n_freqs) - 僅當 return_spp=True
         """
         n_frames = noisy_magnitude.shape[0]
 
@@ -197,6 +209,9 @@ class PmmseDenoiser(BaseDenoiser):
 
         # 初始化輸出
         enhanced_magnitude = np.zeros_like(noisy_magnitude)
+
+        # 初始化 SPP 歷史記錄
+        spp_history = [] if return_spp else None
 
         # 逐幀處理
         for i in range(n_frames):
@@ -210,6 +225,10 @@ class PmmseDenoiser(BaseDenoiser):
                 noise_psd,
                 self.gain_prev
             )
+
+            # 保存 SPP 數據 (用於可視化)
+            if return_spp:
+                spp_history.append(spp.copy())
 
             # 噪聲場景變化檢測
             if self.enable_noise_tracking and self.noise_change_detector is not None:
@@ -257,7 +276,10 @@ class PmmseDenoiser(BaseDenoiser):
         # 相位保持不變
         enhanced_phase = noisy_phase
 
-        return enhanced_magnitude, enhanced_phase
+        if return_spp:
+            return enhanced_magnitude, enhanced_phase, np.array(spp_history)
+        else:
+            return enhanced_magnitude, enhanced_phase
 
     def reset(self):
         """重置降噪器狀態"""
