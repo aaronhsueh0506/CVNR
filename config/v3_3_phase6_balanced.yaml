@@ -1,0 +1,58 @@
+version: 3-3-phase6-balanced
+name: PMMSE-Phase6-Balanced
+# Phase 6: 啟用快速啟動 + 過渡檢測（Method A + B）
+# 推薦配置，最佳平衡
+
+audio:
+  sample_rate: 16000
+  frame_size_ms: 20
+  frame_shift_ms: 10
+  fft_size: 512
+  window_type: hanning
+
+noise_estimation:
+  method: recursive_average
+  alpha: 0.95
+  num_init_frames: 20
+  update_during_speech: false
+
+spp:
+  alpha_xi: 0.95
+  q: 0.6
+  xi_min_db: -25.0
+
+gain_calculation:
+  method: pmmse
+  g_min_db: -20.0
+  alpha_g: 0.5
+  use_spp_weighting: true
+
+noise_tracking:
+  enable: true
+
+snr_adaptive:
+  enable: true
+  base_g_min_db: -12.0
+  snr_smoothing: 0.9
+  clean_detection: true
+  clean_bypass: false
+
+# Phase 6: Fast Startup Mode
+fast_startup:
+  enable: true
+  startup_frames: 50
+  alpha_noise_startup: 0.7
+  alpha_xi_startup: 0.7
+  alpha_g_startup: 0.4
+  num_init_frames_fast: 10
+
+# Phase 6: Transition Detection
+transition_detection:
+  enable: true
+  spp_jump_threshold: 0.2
+  confirm_frames: 2
+  boost_duration: 20
+  cooldown_frames: 30
+  avg_window: 5
+  alpha_xi_boost: 0.4
+  alpha_g_boost: 0.4

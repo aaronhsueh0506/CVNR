@@ -8,7 +8,7 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from core import FrameProcessor, Reconstructor, SppEstimator
+from core import FrameProcessor, Reconstructor, SppEstimator, TransitionDetector
 from core.noise_estimators import RecursiveAverageNoiseEstimator
 from core.gain_calculators import PmmseGainCalculator
 from core.noise_change_detector import NoiseChangeDetector
@@ -66,7 +66,16 @@ class PmmseDenoiser(BaseDenoiser):
         use_spp_weighting: bool = True,
         num_init_frames: int = 20,
         enable_noise_tracking: bool = True,
-        snr_adaptive_config: Optional[dict] = None
+        snr_adaptive_config: Optional[dict] = None,
+        # Phase 6: 快速啟動和過渡檢測
+        enable_fast_startup: bool = False,
+        startup_frames: int = 50,
+        alpha_noise_startup: float = 0.7,
+        alpha_xi_startup: float = 0.7,
+        alpha_g_startup: float = 0.4,
+        num_init_frames_fast: int = 10,
+        enable_transition_detection: bool = False,
+        transition_config: Optional[dict] = None
     ):
         super().__init__(sample_rate)
 
@@ -85,25 +94,37 @@ class PmmseDenoiser(BaseDenoiser):
             window=self.processor.window
         )
 
-        # 創建噪聲估計器
+        # 創建噪聲估計器 (Phase 6: 添加快速啟動)
         self.noise_estimator = RecursiveAverageNoiseEstimator(
             alpha=alpha_noise,
             num_init_frames=num_init_frames,
-            update_during_speech=False
+            update_during_speech=False,
+            enable_fast_startup=enable_fast_startup,
+            startup_frames=startup_frames,
+            alpha_startup=alpha_noise_startup,
+            num_init_frames_fast=num_init_frames_fast
         )
 
-        # 創建 SPP 估計器
+        # 創建 SPP 估計器 (Phase 6: 添加快速啟動)
         self.spp_estimator = SppEstimator(
             alpha=alpha_xi,
             q=q,
-            xi_min_db=xi_min_db
+            xi_min_db=xi_min_db,
+            enable_fast_startup=enable_fast_startup,
+            startup_frames=startup_frames,
+            alpha_startup=alpha_xi_startup
         )
 
-        # 創建 PMMSE 增益計算器
+        # 創建 PMMSE 增益計算器 (Phase 6: 添加快速啟動和 boost 模式)
+        transition_cfg = transition_config or {}
         self.gain_calculator = PmmseGainCalculator(
             g_min_db=g_min_db,
             alpha_g=alpha_g,
-            use_spp_weighting=use_spp_weighting
+            use_spp_weighting=use_spp_weighting,
+            enable_fast_startup=enable_fast_startup,
+            startup_frames=startup_frames,
+            alpha_g_startup=alpha_g_startup,
+            alpha_g_boost=transition_cfg.get('alpha_g_boost', 0.4)
         )
 
         # 存儲上一幀的增益（Decision Directed）
@@ -122,6 +143,21 @@ class PmmseDenoiser(BaseDenoiser):
             )
         else:
             self.noise_change_detector = None
+
+        # Phase 6: Transition Detection
+        self.enable_transition_detection = enable_transition_detection
+        if enable_transition_detection:
+            transition_cfg = transition_config or {}
+            self.transition_detector = TransitionDetector(
+                spp_jump_threshold=transition_cfg.get('spp_jump_threshold', 0.2),
+                confirm_frames=transition_cfg.get('confirm_frames', 2),
+                boost_duration=transition_cfg.get('boost_duration', 20),
+                cooldown_frames=transition_cfg.get('cooldown_frames', 30),
+                avg_window=transition_cfg.get('avg_window', 5)
+            )
+            self.alpha_xi_boost = transition_cfg.get('alpha_xi_boost', 0.4)
+        else:
+            self.transition_detector = None
 
         # SNR Adaptive Processing (Phase 3)
         self.snr_adaptive_config = snr_adaptive_config or {}
@@ -230,6 +266,15 @@ class PmmseDenoiser(BaseDenoiser):
             if return_spp:
                 spp_history.append(spp.copy())
 
+            # Phase 6: Transition Detection
+            in_boost_mode = False
+            if self.enable_transition_detection and self.transition_detector is not None:
+                in_boost_mode, state_name = self.transition_detector.detect(spp)
+
+                # 如果剛進入 BOOSTING 狀態，觸發 SPP 快速過渡
+                if in_boost_mode and state_name == "BOOSTING":
+                    self.spp_estimator.trigger_fast_transition(boost_alpha=self.alpha_xi_boost)
+
             # 噪聲場景變化檢測
             if self.enable_noise_tracking and self.noise_change_detector is not None:
                 if self.noise_change_detector.detect(gamma, spp):
@@ -254,7 +299,8 @@ class PmmseDenoiser(BaseDenoiser):
                 g_min = self.snr_detector.get_adaptive_g_min(snr_db, self.base_g_min_db)
 
             # 計算 PMMSE 增益 (Gaussian 先驗 + IS 距離)
-            gain = self.gain_calculator.calculate(spp, xi, gamma, g_min=g_min)
+            # Phase 6: 傳遞 in_boost_mode 參數
+            gain = self.gain_calculator.calculate(spp, xi, gamma, g_min=g_min, in_boost_mode=in_boost_mode)
 
             # 增益變化率限制（防止 Musical Noise）
             # 限制幀間增益變化 ±6dB (ratio: 0.5~2.0)
@@ -289,6 +335,10 @@ class PmmseDenoiser(BaseDenoiser):
         self.gain_prev = None
         if self.enable_noise_tracking and self.noise_change_detector is not None:
             self.noise_change_detector.reset()
+
+        # Phase 6: Reset transition detector
+        if self.enable_transition_detection and self.transition_detector is not None:
+            self.transition_detector.reset()
 
         # Reset SNR adaptive detectors (Phase 3)
         if self.snr_detector is not None:
