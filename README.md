@@ -1176,8 +1176,8 @@ MIT License
 
 ## 🚀 Phase 6: 快速收斂與過渡優化 (Fast Startup + Transition Detection)
 
-> **狀態**: ✅ 已實現並驗證 (V3-3 PMMSE)  
-> **版本**: v1.6.0  
+> **狀態**: ✅ 已實現並驗證 (V3-3 PMMSE)
+> **版本**: v2.1.0
 > **日期**: 2026-01-05
 
 ### 功能概述
@@ -1554,18 +1554,19 @@ V2 修正後:
 
 ## 📜 版本歷史
 
-### v1.6.0 (2026-01-05) ✨ 最新
+### v2.1.0 (2026-01-05) ✨ 最新
 - ✅ **Phase 6 V2 修正**: 解決 Balanced V1 過度抑制問題
   - 更新 Natural, Balanced, Aggressive 配置
   - base_g_min_db: -12.0 → -10.0
   - alpha_g_startup/boost: 0.4 → 0.5 (Balanced)
   - 振幅比改善: 0.893 → 1.017 ✅
-- ✅ 添加 Phase 6 完整文檔
-- ✅ 添加參數調適指南
-- ✅ 添加常見問題 FAQ
+- ✅ 添加 Phase 6 完整文檔 (README + docs/phase6_tuning_guide.md)
+- ✅ 添加參數調適指南 (診斷流程圖 + 解決方案)
+- ✅ 添加常見問題 FAQ (8個常見問題)
 - ✅ 清理 phase5/phase6 測試目錄
+- ✅ 更新測試腳本支持 3 個 Phase 6 配置驗證
 
-### v1.5.0 (2026-01-02)
+### v2.0.0 (2026-01)
 - ✅ **V3 整合 V3-1**：統一 MMSE-STSA 實現
   - 支持 Bessel/E1 公式切換（`use_full_formula` 參數）
   - 統一命名為 "MMSE-STSA"
