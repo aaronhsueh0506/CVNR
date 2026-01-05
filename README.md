@@ -181,29 +181,38 @@ Note: For traditional denoising, focus on segSNR improvement (★)
 
 ## 🚀 快速開始
 
-### 方法1：使用 process_audio.py（推薦）
+### 方法 1: 處理單個音頻文件
 
 ```bash
-# 處理您的音頻文件（默認使用 V1-V4 所有版本）
-python3 examples/process_audio.py your_audio.wav
+# 使用推薦的 V3 和 V4 處理音頻
+python3 process_audio.py your_audio.wav --versions V3 V4
 
-# 只使用推薦的 V3 和 V4
-python3 examples/process_audio.py your_audio.wav --versions V3 V4
-
-# 指定輸出目錄
-python3 examples/process_audio.py your_audio.wav --output-dir ./my_output
+# 輸出:
+# - your_audio_v3.wav
+# - your_audio_v4.wav
+# - your_audio_waveforms.png（波形對比圖）
 ```
 
-輸出：
-- `your_audio_v1.wav` - V1 頻譜減法處理結果
-- `your_audio_v2.wav` - V2 Wiener 濾波處理結果
-- `your_audio_v3.wav` - V3 SPP-MMSE 處理結果
-- `your_audio_v4.wav` - V4 IMCRA-OMLSA 處理結果
-- `your_audio_waveforms.png` - 波形對比圖（input + V1-V4）
+### 方法 2: 完整評估工作流程（v2.0）
 
-詳細說明請參考：[process_audio.py 使用說明](examples/PROCESS_AUDIO_USAGE.md)
+如果您想複現 v2.0 的評估結果：
 
-### 方法2：使用 Python API
+```bash
+# 1. 準備測試音檔
+# 將您的測試檔案放在 test_wav/wav/append_silence/ 目錄
+# 格式: {noise_type}_{snr}dB_prepend.wav
+# 例如: babble_10dB_prepend.wav
+
+# 2. 重新生成所有降噪輸出（使用優化配置）
+python3 regenerate_all_outputs.py
+# 輸出: denoised_original/ 目錄中的 84 個 .wav 文件
+
+# 3. 計算 Improvement 指標並生成報告
+python3 compute_improvement.py
+# 輸出: results/improvement_report.md
+```
+
+### 方法 3: Python API（推薦用於集成）
 
 ```python
 from denoisers import SppMmseDenoiser  # 使用 V3（推薦）
@@ -222,12 +231,58 @@ enhanced = denoiser.denoise(audio)
 write_audio('enhanced.wav', enhanced, sr)
 ```
 
+## 📂 測試音檔放置說明
+
+### 目錄結構
+```
+test_wav/
+└── wav/
+    ├── clean.wav                    # 乾淨參考音檔（必須）
+    ├── append_silence/              # ⭐ 測試檔案放這裡
+    │   ├── babble_0dB_prepend.wav   # 前面添加了 0.5s 靜音
+    │   ├── babble_5dB_prepend.wav
+    │   └── ...
+    └── benchmark_wav/               # 基準方法輸出（對標用）
+        ├── speex/
+        └── rnnoise/
+```
+
+### 為什麼需要 0.5s prepend？
+我們的降噪算法需要初始化幀來估計噪聲特徵。測試檔案前添加 0.5s 靜音：
+- 確保算法有足夠的噪聲樣本進行初始化
+- 評估時會自動 trim 掉這 0.5s，確保與 clean.wav 對齊
+
+### 如何準備測試檔案？
+如果您有自己的音頻文件，需要：
+1. 準備 clean.wav（乾淨音檔）
+2. 添加噪聲並在前面 prepend 0.5s
+3. 放在 `test_wav/wav/append_silence/` 目錄
+
+**或者** 使用工具生成（如果您有 clean speech 和 noise）：
+```python
+from utils.test_data_generator import TestDataGenerator
+import soundfile as sf
+import librosa
+
+# 加載音頻
+clean, sr = librosa.load('your_clean.wav', sr=None)
+noise, _ = librosa.load('your_noise.wav', sr=None)
+
+# 生成測試集
+generator = TestDataGenerator(sample_rate=sr)
+test_set = generator.generate_test_set(
+    clean,
+    noise_types=['babble', 'car'],
+    snr_levels=[0, 5, 10, 15],
+    output_dir='test_wav/wav/append_silence'
+)
+```
+
 ## 📖 詳細文檔
 
 - **[評估指標使用指南](docs/METRICS_USAGE.md)** - 評估指標詳細說明和使用範例
 - **[V3 變體詳細對比](docs/V3_VARIANTS_COMPARISON.md)** - MMSE 變體技術對比和選擇建議
 - **[演算法詳解](ALGORITHMS_EXPLANATION.md)** - 技術原理和公式推導
-- **[工具使用指南](examples/PROCESS_AUDIO_USAGE.md)** - process_audio.py 完整使用指南
 - **[更新日誌](CHANGELOG.md)** - 版本歷史和變更記錄
 
 ## 📊 V3 變體選擇指南
@@ -306,13 +361,13 @@ write_audio('enhanced.wav', enhanced, sr)
 
 ```bash
 # V3-2: 高音質降噪
-python examples/process_audio.py input.wav --versions V3-2 --config-dir config
+python3 process_audio.py input.wav --versions V3-2 --config-dir config
 
 # V3-4: 最強降噪
-python examples/process_audio.py input.wav --versions V3-4 --config-dir config
+python3 process_audio.py input.wav --versions V3-4 --config-dir config
 
 # 對比所有 MMSE 變體
-python examples/process_audio.py input.wav --versions V3 V3-2 V3-3 V3-4
+python3 process_audio.py input.wav --versions V3 V3-2 V3-3 V3-4
 ```
 
 ### 參數調整建議
@@ -357,51 +412,96 @@ python examples/process_audio.py input.wav --versions V3 V3-2 V3-3 V3-4
 **測試檔案**：
 使用前 2 秒為純噪聲的測試音頻驗證（`*_2s_silence.wav`），修復後純噪聲段平穩無震動。
 
-## 📁 項目結構
+## 📁 項目結構（v2.0）
 
 ```
 speech_denoise/
-├── core/                          # 核心模塊
-│   ├── frame_processor.py         # 分幀、加窗、FFT
-│   ├── reconstructor.py           # 重建、IFFT、Overlap-Add
-│   ├── spp_estimator.py          # SPP 估計（V3/V4）
-│   ├── noise_estimators/         # 噪聲估計器
-│   │   ├── simple_average.py     # V1: 簡單平均
-│   │   ├── recursive_average.py  # V2/V3: 遞歸平均
-│   │   └── imcra.py             # V4: IMCRA
-│   └── gain_calculators/         # 增益計算器
-│       ├── spectral_subtraction.py  # V1 (含時間平滑)
-│       ├── wiener.py                # V2 (含時間平滑)
-│       ├── spp_mmse.py              # V3
-│       └── omlsa.py                 # V4
-│
-├── denoisers/                    # 完整降噪器
-│   ├── base_denoiser.py         # 基類
+├── denoisers/                     # 降噪算法實現（7個算法）
+│   ├── base_denoiser.py
 │   ├── v1_spectral_subtraction.py
 │   ├── v2_wiener.py
 │   ├── v3_spp_mmse.py
+│   ├── v3_2_mmse_lsa.py
+│   ├── v3_3_pmmse.py
+│   ├── v3_4_laplacian_mmse.py
 │   └── v4_imcra_omlsa.py
 │
-├── utils/                        # 工具模塊
-│   ├── audio_io.py              # 音頻讀寫
-│   ├── test_data_generator.py   # 測試數據生成
-│   └── visualization.py         # 可視化
+├── core/                          # 核心模塊
+│   ├── frame_processor.py
+│   ├── reconstructor.py
+│   ├── spp_estimator.py
+│   ├── noise_change_detector.py
+│   ├── noise_estimators/
+│   │   ├── simple_average.py
+│   │   ├── recursive_average.py
+│   │   └── imcra.py
+│   └── gain_calculators/
+│       ├── spectral_subtraction.py
+│       ├── wiener.py
+│       ├── spp_mmse.py
+│       ├── mmse_lsa.py
+│       ├── pmmse.py
+│       ├── laplacian_mmse.py
+│       └── omlsa.py
 │
-├── config/                       # 配置文件
-│   ├── v1_config.yaml           # V1 配置
-│   ├── v2_config.yaml           # V2 配置
-│   ├── v3_config.yaml           # V3 配置 (alpha_g=0.85)
-│   └── v4_config.yaml           # V4 配置 (alpha_g=0.85)
+├── utils/                         # 工具模塊
+│   ├── audio_io.py
+│   ├── metrics.py                 # PESQ, STOI
+│   ├── metrics_loizou.py          # Loizou 2008 專業指標
+│   ├── test_data_generator.py
+│   └── visualization.py
 │
-├── examples/                     # 示例腳本
-│   ├── process_audio.py         # 主處理工具 ⭐
-│   ├── compare_all_versions.py  # 版本對比
-│   └── quick_start.py           # 快速開始
+├── config/                        # ⭐ 配置文件（v2.0 優化後）
+│   ├── v1_config.yaml             # V1 優化配置
+│   ├── v2_config.yaml
+│   ├── v3_config.yaml             # V3 優化配置（35% 提升）
+│   ├── v3_2_config.yaml
+│   ├── v3_3_config.yaml
+│   ├── v3_4_config.yaml
+│   └── v4_config.yaml
 │
-└── docs/                         # 文檔
-    ├── CHANGELOG.md             # 變更記錄
-    └── parameter_tuning.md      # 參數調整指南
+├── test_wav/                      # ⭐ 測試音檔目錄
+│   └── wav/
+│       ├── clean.wav
+│       ├── append_silence/        # 測試檔案（含 0.5s prepend）
+│       └── benchmark_wav/         # Speex/RNNoise 輸出
+│
+├── denoised_original/             # ⭐ v2.0 生成的降噪輸出（84個文件）
+│   ├── V1_*.wav
+│   ├── V2_*.wav
+│   ├── V3_*.wav
+│   ├── V3-2_*.wav
+│   ├── V3-3_*.wav
+│   ├── V3-4_*.wav
+│   └── V4_*.wav
+│
+├── results/                       # ⭐ 評估結果
+│   ├── improvement_report.md
+│   └── improvement_report_final.md
+│
+├── tools/                         # ⭐ 工具腳本（v2.0 整理後）
+│   ├── benchmark_all.py           # 性能基準測試
+│   ├── benchmark_comparison.py    # 對標評估
+│   ├── comprehensive_evaluation.py
+│   ├── diagnose_algorithm.py
+│   ├── validate_best_config.py
+│   └── generate_comparison_tables.py
+│
+├── process_audio.py               # ⭐ 單文件處理工具
+├── regenerate_all_outputs.py      # ⭐ 重新生成所有測試輸出
+├── compute_improvement.py         # ⭐ 計算 Improvement 指標
+├── benchmark.py                   # ⭐ 統一 benchmark 入口
+│
+├── CHANGELOG.md
+├── README.md
+├── PROJECT_STATUS.md
+└── ALGORITHMS_EXPLANATION.md
 ```
+
+**⭐ v2.0 整理後的根目錄（清爽簡潔）**:
+- 只保留 4 個核心 .py 文件（處理音檔 + 評估）
+- 工具腳本統一放在 `tools/` 目錄
+- 文檔文件保持在根目錄
 
 ## 🔬 算法版本對比
 
@@ -644,7 +744,7 @@ gain_calculation:
 grep -r "alpha_smooth\|alpha_g" config/
 
 # 重新處理
-python3 examples/process_audio.py your_audio.wav --versions V2 V3 V4
+python3 process_audio.py your_audio.wav --versions V2 V3 V4
 ```
 
 ### 語音起始模糊
@@ -687,7 +787,7 @@ g_min_db: -15.0  # 原 -20.0
 1. **第1週：基礎框架**
    - 理解分幀、加窗、FFT
    - 實現 Overlap-Add 重建
-   - 使用 `examples/process_audio.py` 處理音頻
+   - 使用 `process_audio.py` 處理音頻
 
 2. **第2週：V1 頻譜減法**
    - 最簡單的降噪方法
@@ -731,7 +831,7 @@ g_min_db: -15.0  # 原 -20.0
 2. **對比不同參數**：
    ```bash
    # 修改配置文件後重新處理
-   python3 examples/process_audio.py test_snr5dB.wav --versions V3
+   python3 process_audio.py test_snr5dB.wav --versions V3
    ```
 
 3. **可視化效果**：

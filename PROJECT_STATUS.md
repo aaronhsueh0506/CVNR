@@ -445,18 +445,15 @@ noise_tracking:
 
 ---
 
-### 📝 示例和文檔
+### 📝 示例和文檔 (⚠️ v1.5.0 歷史記錄 - examples/ 已在 v2.0 刪除)
 
-#### ✅ 示例腳本
-- [examples/process_audio.py](examples/process_audio.py) - ⭐ 主處理工具
-  - 支持批量處理 V1-V4
-  - 自動生成波形對比圖
-  - 詳細的處理日誌
-- [examples/compare_all_versions.py](examples/compare_all_versions.py) - 版本對比工具
-- [examples/quick_start.py](examples/quick_start.py) - 快速開始
-- [examples/test_noise_scene_adaptation.py](examples/test_noise_scene_adaptation.py) - 噪聲場景追蹤測試
+#### ❌ 示例腳本 (已刪除，見 v2.0 更新)
+- ~~[examples/process_audio.py]~~ → 已移至根目錄 `process_audio.py`
+- ~~[examples/compare_all_versions.py]~~ → v2.0 已刪除
+- ~~[examples/quick_start.py]~~ → v2.0 已刪除
+- ~~[examples/test_noise_scene_adaptation.py]~~ → v2.0 已刪除
 
-#### ✅ 配置文件
+#### ✅ 配置文件 (仍然有效)
 所有配置文件都已更新至 v1.5.0：
 - [config/v1_config.yaml](config/v1_config.yaml) - V1 配置
 - [config/v2_config.yaml](config/v2_config.yaml) - V2 配置（新增 noise_tracking）
@@ -466,10 +463,10 @@ noise_tracking:
 - [config/v3_4_config.yaml](config/v3_4_config.yaml) - V3-4 配置（含 noise_tracking）
 - [config/v4_config.yaml](config/v4_config.yaml) - V4 配置（v1.5.0 全面優化）
 
-#### ✅ 文檔
-- [README.md](README.md) - 完整的項目文檔
+#### ✅ 文檔 (部分已更新至 v2.0)
+- [README.md](README.md) - 完整的項目文檔 (v2.0 已更新)
 - [CHANGELOG.md](CHANGELOG.md) - 變更記錄
-- [examples/PROCESS_AUDIO_USAGE.md](examples/PROCESS_AUDIO_USAGE.md) - process_audio.py 使用說明
+- ~~[examples/PROCESS_AUDIO_USAGE.md]~~ - v2.0 已刪除
 - [requirements.txt](requirements.txt) - 依賴列表
 
 ---
@@ -556,11 +553,18 @@ speech_denoise/
 │   ├── v3_4_config.yaml         ✓ V3-4（noise_tracking）
 │   └── v4_config.yaml           ✓ V4（全面優化）
 │
-├── examples/                     ✓ 示例腳本
-│   ├── process_audio.py         ✓ 主處理工具
-│   ├── compare_all_versions.py  ✓ 版本對比
-│   ├── quick_start.py           ✓ 快速開始
-│   └── test_noise_scene_adaptation.py  ✓ 噪聲追蹤測試
+├── tools/                        ✓ 工具腳本 (v2.0 整理後)
+│   ├── benchmark_all.py         ✓ 性能基準測試
+│   ├── benchmark_comparison.py  ✓ 對標評估
+│   ├── comprehensive_evaluation.py  ✓ 完整評估
+│   ├── diagnose_algorithm.py    ✓ 算法診斷
+│   ├── validate_best_config.py  ✓ 配置驗證
+│   └── generate_comparison_tables.py  ✓ 生成對比表格
+│
+├── process_audio.py              ✓ 單文件處理工具 (v2.0 移至根目錄)
+├── regenerate_all_outputs.py     ✓ 重新生成所有測試輸出 (v2.0)
+├── compute_improvement.py        ✓ 計算 Improvement 指標 (v2.0)
+├── benchmark.py                  ✓ 統一 benchmark 入口 (v2.0)
 │
 ├── README.md                     ✓ 項目文檔
 ├── CHANGELOG.md                  ✓ 變更記錄
@@ -570,25 +574,27 @@ speech_denoise/
 
 ---
 
-## 🚀 快速開始
+## 🚀 快速開始 (⚠️ v1.5.0 歷史記錄 - 已更新至 v2.0)
 
-### 運行主處理工具
+### v2.0 運行主處理工具
 ```bash
-# 處理您的音頻文件（默認使用 V1-V4 所有版本）
-python3 examples/process_audio.py your_audio.wav
-
-# 只使用推薦的 V3 和 V4
-python3 examples/process_audio.py your_audio.wav --versions V3 V4
+# 處理您的音頻文件（使用推薦的 V3 和 V4）
+python3 process_audio.py your_audio.wav --versions V3 V4
 
 # 測試所有版本（包括 V3 變體）
-python3 examples/process_audio.py your_audio.wav --versions V1 V2 V3 V3-2 V3-3 V3-4 V4
+python3 process_audio.py your_audio.wav --versions V1 V2 V3 V3-2 V3-3 V3-4 V4
+
+# v2.0 評估工作流程
+python3 regenerate_all_outputs.py    # 重新生成所有降噪輸出
+python3 compute_improvement.py       # 計算 Improvement 指標
 ```
 
 輸出：
-- 降噪結果（v1-v4.wav）
+- 降噪結果（*_v1.wav, *_v3.wav, 等）
 - 波形對比圖（*_waveforms.png）
+- 評估報告（results/improvement_report.md）
 
-詳見：[process_audio.py 使用說明](examples/PROCESS_AUDIO_USAGE.md)
+詳見：[README.md](README.md) - v2.0 完整使用說明
 
 ---
 
