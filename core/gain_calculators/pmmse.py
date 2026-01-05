@@ -49,25 +49,48 @@ class PmmseGainCalculator:
         g_min_db: 最小增益 (dB), -15 到 -25
         alpha_g: 增益時間平滑因子, 0.6-0.8
         use_spp_weighting: 是否使用 SPP 加權 (推薦 True)
+
+    v1.4.0 新增 (Phase 6):
+        enable_fast_startup: 啟用快速啟動模式
+        startup_frames: 快速啟動持續幀數
+        alpha_g_startup: 快速啟動時的 alpha_g 值
+        alpha_g_boost: 過渡加速時的 alpha_g 值
     """
 
     def __init__(
         self,
         g_min_db: float = -20.0,
         alpha_g: float = 0.7,
-        use_spp_weighting: bool = True
+        use_spp_weighting: bool = True,
+        enable_fast_startup: bool = False,
+        startup_frames: int = 50,
+        alpha_g_startup: float = 0.4,
+        alpha_g_boost: float = 0.4
     ):
         self.g_min = 10 ** (g_min_db / 10)
         self.alpha_g = alpha_g
+        self.alpha_g_normal = alpha_g  # 保存正常模式的 alpha_g
         self.use_spp_weighting = use_spp_weighting
         self.gain_prev = None
+
+        # v1.4.0: 快速啟動狀態
+        self.enable_fast_startup = enable_fast_startup
+        self.startup_frames = startup_frames
+        self.alpha_g_startup = alpha_g_startup
+        self.alpha_g_boost = alpha_g_boost
+        self.frame_count = 0
+        self.in_startup_mode = enable_fast_startup
+
+        # 當前使用的 alpha_g
+        self.current_alpha_g = alpha_g_startup if enable_fast_startup else alpha_g
 
     def calculate(
         self,
         spp: np.ndarray,
         xi: np.ndarray,
         gamma: np.ndarray,
-        g_min: float = None
+        g_min: float = None,
+        in_boost_mode: bool = False
     ) -> np.ndarray:
         """
         計算 PMMSE 增益
@@ -77,15 +100,32 @@ class PmmseGainCalculator:
 
         其中 Vk = ξ/(1+ξ) * γ
 
+        v1.4.0: 支持快速啟動和過渡加速模式
+
         參數:
             spp: 語音存在機率 (n_freqs,)
             xi: 先驗 SNR (n_freqs,)
             gamma: 後驗 SNR (n_freqs,)
             g_min: SNR adaptive 最小增益（可選，用於動態調整）
+            in_boost_mode: 是否處於過渡加速模式（Phase 6）
 
         返回:
             gain: 增益 (n_freqs,)
         """
+        # v1.4.0: 選擇當前 alpha_g（三層優先級）
+        if in_boost_mode:
+            # 最高優先級：過渡加速模式
+            alpha_g_current = self.alpha_g_boost
+        elif self.in_startup_mode:
+            # 第二優先級：快速啟動模式
+            if self.frame_count >= self.startup_frames:
+                self.in_startup_mode = False
+                self.current_alpha_g = self.alpha_g_normal
+            alpha_g_current = self.alpha_g_startup
+        else:
+            # 正常模式
+            alpha_g_current = self.alpha_g_normal
+
         # 使用 SNR adaptive g_min (如果提供) 或默認值
         g_min_effective = g_min if g_min is not None else self.g_min
 
@@ -98,12 +138,15 @@ class PmmseGainCalculator:
         else:
             gain = gain_pmmse
 
-        # 時間平滑
+        # 時間平滑（使用當前 alpha_g）
         if self.gain_prev is not None:
-            gain = self.alpha_g * self.gain_prev + (1 - self.alpha_g) * gain
+            gain = alpha_g_current * self.gain_prev + (1 - alpha_g_current) * gain
 
         self.gain_prev = gain.copy()
         gain = np.clip(gain, g_min_effective, 1.0)
+
+        # v1.4.0: 更新幀計數
+        self.frame_count += 1
 
         return gain
 
@@ -180,8 +223,13 @@ class PmmseGainCalculator:
         return result
 
     def reset(self):
-        """重置增益歷史"""
+        """重置增益歷史（v1.4.0: 包含快速啟動狀態）"""
         self.gain_prev = None
+
+        # v1.4.0: 重置快速啟動狀態
+        self.frame_count = 0
+        self.in_startup_mode = self.enable_fast_startup
+        self.current_alpha_g = self.alpha_g_startup if self.enable_fast_startup else self.alpha_g_normal
 
     def __repr__(self):
         spp_mode = "with SPP" if self.use_spp_weighting else "no SPP"
