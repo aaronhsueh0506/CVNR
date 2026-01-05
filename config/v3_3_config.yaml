@@ -22,15 +22,15 @@ noise_estimation:
 
 # SPP (Speech Presence Probability) Estimation
 spp:
-  alpha_xi: 0.98          # A priori SNR smoothing factor (0.92-0.98)
-  q: 0.5                  # Speech prior probability
+  alpha_xi: 0.95          # A priori SNR smoothing factor (降低平滑度，提高反應速度)
+  q: 0.6                  # Speech prior probability (提高語音優先權，與 V3 一致)
   xi_min_db: -25.0        # Minimum a priori SNR (dB)
 
 # Gain Calculation - PMMSE
 gain_calculation:
   method: "pmmse"
-  g_min_db: -15.0         # Minimum gain (dB), 與 V3 一致，減少過度抑制
-  alpha_g: 0.85           # Gain temporal smoothing factor, 與 V3 一致，減少 Musical Noise
+  g_min_db: -20.0         # Minimum gain (dB), 提供標準降噪能力（與 V3-2/V3-4 一致）
+  alpha_g: 0.7            # Gain temporal smoothing factor, 平衡平滑度和反應速度（與 V3-2/V3-4 一致）
   use_spp_weighting: true # 是否使用 SPP 加權 (推薦 true)
 
 # Noise Scene Tracking (v1.3.0)
@@ -65,9 +65,20 @@ noise_tracking:
 #     * G = G_pmmse
 #     * 用於理論研究或對比實驗
 #
+# 參數優化 (2026-01-05):
+#   - g_min_db: -15 → -20 dB
+#     * 提升約 5dB 降噪能力（與 V3-2/V3-4 一致）
+#   - alpha_g: 0.85 → 0.7
+#     * 提高增益反應靈敏度，減少語音起始模糊
+#   - q: 0.5 → 0.6
+#     * 提高語音優先權（與 V3 一致）
+#   - alpha_xi: 0.98 → 0.95
+#     * 提高 SPP 反應速度
+#
 # alpha_g: 增益平滑因子
-#   - 0.6-0.7: 推薦範圍
+#   - 0.6-0.7: 推薦範圍（當前使用 0.7）
 #   - 0.7-0.8: 強平滑
+#   - 0.85: 過度平滑（舊值，已廢棄）
 #
 # 與其他版本的區別:
 #   - V3 (MMSE-STSA):   Gaussian + E[(|X| - |Xhat|)^2]

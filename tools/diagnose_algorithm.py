@@ -165,24 +165,145 @@ if output_volume_ratio < 0.5:
 elif output_volume_ratio > 1.5:
     issues.append(f"⚠️  輸出音量過高 ({output_volume_ratio:.2%})")
 
-# 檢查頻譜
+# 檢查頻譜（使用 librosa 風格的時頻譜圖）
 import matplotlib
 matplotlib.use('Agg')  # 非交互式後端
 import matplotlib.pyplot as plt
 
-plt.figure(figsize=(12, 4))
-plt.subplot(131)
-plt.magnitude_spectrum(clean_16k_full[:16000], Fs=16000)
-plt.title('Clean')
-plt.subplot(132)
-plt.magnitude_spectrum(noisy_16k_full[:16000], Fs=16000)
-plt.title('Noisy')
-plt.subplot(133)
-plt.magnitude_spectrum(enhanced_16k[:16000], Fs=16000)
-plt.title('Enhanced')
-plt.tight_layout()
-plt.savefig('diagnosis_spectrum.png', dpi=100)
-print("\n✅ 頻譜圖已保存: diagnosis_spectrum.png")
+try:
+    # 嘗試使用 librosa（紫色/magma 配色）
+    import librosa
+    import librosa.display
+
+    # 使用 librosa.display.specshow
+    plt.figure(figsize=(15, 10))
+
+    # Clean 頻譜圖
+    plt.subplot(3, 1, 1)
+    D_clean = librosa.stft(clean_16k_full[:16000], n_fft=512, hop_length=256)
+    D_clean_db = librosa.amplitude_to_db(np.abs(D_clean), ref=np.max)
+    librosa.display.specshow(D_clean_db, sr=16000, hop_length=256, x_axis='time', y_axis='hz', cmap='magma')
+    plt.title('Clean Spectrogram', fontsize=12, fontweight='bold')
+    plt.ylabel('Frequency (Hz)')
+    plt.colorbar(label='Intensity (dB)', format='%+2.0f dB')
+
+    # Noisy 頻譜圖
+    plt.subplot(3, 1, 2)
+    D_noisy = librosa.stft(noisy_16k_full[:16000], n_fft=512, hop_length=256)
+    D_noisy_db = librosa.amplitude_to_db(np.abs(D_noisy), ref=np.max)
+    librosa.display.specshow(D_noisy_db, sr=16000, hop_length=256, x_axis='time', y_axis='hz', cmap='magma')
+    plt.title('Noisy Spectrogram', fontsize=12, fontweight='bold')
+    plt.ylabel('Frequency (Hz)')
+    plt.colorbar(label='Intensity (dB)', format='%+2.0f dB')
+
+    # Enhanced 頻譜圖
+    plt.subplot(3, 1, 3)
+    D_enhanced = librosa.stft(enhanced_16k[:16000], n_fft=512, hop_length=256)
+    D_enhanced_db = librosa.amplitude_to_db(np.abs(D_enhanced), ref=np.max)
+    librosa.display.specshow(D_enhanced_db, sr=16000, hop_length=256, x_axis='time', y_axis='hz', cmap='magma')
+    plt.title('Enhanced Spectrogram', fontsize=12, fontweight='bold')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Frequency (Hz)')
+    plt.colorbar(label='Intensity (dB)', format='%+2.0f dB')
+
+    plt.tight_layout()
+    plt.savefig('diagnosis_spectrum.png', dpi=150)
+    print("\n✅ 頻譜圖（Spectrogram，librosa 風格）已保存: diagnosis_spectrum.png")
+
+    # 創建對比圖：librosa vs 手動 STFT
+    print("\n檢查 librosa.display.specshow 與手動 STFT 的一致性...")
+    from scipy.signal import stft as scipy_stft
+
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    # 左邊：librosa.display.specshow
+    axes[0].clear()
+    librosa.display.specshow(D_clean_db, sr=16000, hop_length=256, x_axis='time', y_axis='hz',
+                            cmap='magma', ax=axes[0])
+    axes[0].set_title('librosa.display.specshow (紫色)', fontsize=12, fontweight='bold')
+    axes[0].set_ylabel('Frequency (Hz)')
+    axes[0].set_xlabel('Time (s)')
+
+    # 右邊：手動 STFT + amp_to_dB
+    f_scipy, t_scipy, Zxx_scipy = scipy_stft(clean_16k_full[:16000], fs=16000, nperseg=512, noverlap=256)
+    magnitude = np.abs(Zxx_scipy)
+    magnitude_db = 20 * np.log10(magnitude / np.max(magnitude) + 1e-10)  # amp_to_dB
+    im = axes[1].pcolormesh(t_scipy, f_scipy, magnitude_db, cmap='magma', shading='gouraud')
+    axes[1].set_title('amp_to_dB(abs(stft(X))) (手動)', fontsize=12, fontweight='bold')
+    axes[1].set_ylabel('Frequency (Hz)')
+    axes[1].set_xlabel('Time (s)')
+    plt.colorbar(im, ax=axes[1], label='Intensity (dB)', format='%+2.0f dB')
+
+    plt.tight_layout()
+    plt.savefig('diagnosis_specgram_comparison.png', dpi=150)
+    print("✅ 對比圖已保存: diagnosis_specgram_comparison.png")
+    print("   (librosa.display.specshow 與手動 STFT+amp_to_dB 應該視覺上一致)")
+
+except ImportError:
+    # 如果沒有 librosa，回退到 plt.specgram（但使用 magma 配色）
+    print("\n⚠️  librosa 未安裝，使用 plt.specgram（magma 配色）")
+
+    plt.figure(figsize=(15, 10))
+
+    # Clean 頻譜圖
+    plt.subplot(3, 1, 1)
+    plt.specgram(clean_16k_full[:16000], Fs=16000, NFFT=512, noverlap=256, cmap='magma')
+    plt.title('Clean Spectrogram', fontsize=12, fontweight='bold')
+    plt.ylabel('Frequency (Hz)')
+    plt.colorbar(label='Intensity (dB)')
+
+    # Noisy 頻譜圖
+    plt.subplot(3, 1, 2)
+    plt.specgram(noisy_16k_full[:16000], Fs=16000, NFFT=512, noverlap=256, cmap='magma')
+    plt.title('Noisy Spectrogram', fontsize=12, fontweight='bold')
+    plt.ylabel('Frequency (Hz)')
+    plt.colorbar(label='Intensity (dB)')
+
+    # Enhanced 頻譜圖
+    plt.subplot(3, 1, 3)
+    plt.specgram(enhanced_16k[:16000], Fs=16000, NFFT=512, noverlap=256, cmap='magma')
+    plt.title('Enhanced Spectrogram', fontsize=12, fontweight='bold')
+    plt.xlabel('Time (s)')
+    plt.ylabel('Frequency (Hz)')
+    plt.colorbar(label='Intensity (dB)')
+
+    plt.tight_layout()
+    plt.savefig('diagnosis_spectrum.png', dpi=150)
+    print("\n✅ 頻譜圖（Spectrogram，magma 配色）已保存: diagnosis_spectrum.png")
+
+    # 創建對比圖：plt.specgram vs 手動 STFT
+    print("\n檢查 plt.specgram 與手動 STFT 的一致性...")
+    try:
+        from scipy.signal import stft as scipy_stft
+
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+        # 左邊：plt.specgram
+        axes[0].specgram(clean_16k_full[:16000], Fs=16000, NFFT=512, noverlap=256, cmap='magma')
+        axes[0].set_title('plt.specgram (紫色)', fontsize=12, fontweight='bold')
+        axes[0].set_ylabel('Frequency (Hz)')
+        axes[0].set_xlabel('Time (s)')
+
+        # 右邊：手動 STFT + amp_to_dB
+        f_scipy, t_scipy, Zxx_scipy = scipy_stft(clean_16k_full[:16000], fs=16000, nperseg=512, noverlap=256)
+        magnitude = np.abs(Zxx_scipy)
+        magnitude_db = 20 * np.log10(magnitude + 1e-10)  # amp_to_dB
+        im = axes[1].pcolormesh(t_scipy, f_scipy, magnitude_db, cmap='magma', shading='gouraud')
+        axes[1].set_title('amp_to_dB(abs(stft(X))) (手動)', fontsize=12, fontweight='bold')
+        axes[1].set_ylabel('Frequency (Hz)')
+        axes[1].set_xlabel('Time (s)')
+        plt.colorbar(im, ax=axes[1], label='Intensity (dB)')
+
+        plt.tight_layout()
+        plt.savefig('diagnosis_specgram_comparison.png', dpi=150)
+        print("✅ 對比圖已保存: diagnosis_specgram_comparison.png")
+        print("   (plt.specgram 與手動 STFT+amp_to_dB 應該視覺上一致)")
+
+    except Exception as e:
+        print(f"⚠️  對比圖生成失敗: {e}")
+
+except Exception as e:
+    print(f"⚠️  頻譜圖生成失敗: {e}")
 
 if issues:
     print("\n發現的問題:")
