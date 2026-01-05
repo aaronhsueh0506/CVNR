@@ -31,7 +31,8 @@ class WienerGainCalculator:
     def calculate(
         self,
         noisy_psd: np.ndarray,
-        noise_psd: np.ndarray
+        noise_psd: np.ndarray,
+        g_min: float = None
     ) -> np.ndarray:
         """
         計算 Wiener 濾波增益
@@ -39,10 +40,14 @@ class WienerGainCalculator:
         參數:
             noisy_psd: 帶噪語音功率譜密度 (n_freqs,)
             noise_psd: 噪聲功率譜密度 (n_freqs,)
+            g_min: SNR adaptive 最小增益（可選，用於動態調整）
 
         返回:
             gain: Wiener 增益 (n_freqs,)
         """
+        # 使用 SNR adaptive g_min (如果提供) 或默認 min_gain
+        min_gain_effective = g_min if g_min is not None else self.min_gain
+
         # 估計語音功率譜
         # S_psd = Y_psd - N_psd
         speech_psd = np.maximum(noisy_psd - noise_psd, 0)
@@ -60,7 +65,7 @@ class WienerGainCalculator:
         # gain = speech_psd / noisy_psd
 
         # 應用最小增益
-        gain = np.maximum(gain, self.min_gain)
+        gain = np.maximum(gain, min_gain_effective)
 
         # 限制增益範圍 [0, 1]
         gain = np.clip(gain, 0.0, 1.0)

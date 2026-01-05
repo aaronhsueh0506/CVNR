@@ -53,7 +53,8 @@ class SppMmseGainCalculator:
         self,
         spp: np.ndarray,
         xi: np.ndarray,
-        gamma: np.ndarray
+        gamma: np.ndarray,
+        g_min: float = None
     ) -> np.ndarray:
         """
         計算 SPP 加權的 MMSE 增益
@@ -62,10 +63,14 @@ class SppMmseGainCalculator:
             spp: 語音存在機率 (n_freqs,)
             xi: 先驗 SNR (n_freqs,)
             gamma: 後驗 SNR (n_freqs,)
+            g_min: SNR adaptive 最小增益（可選，用於動態調整）
 
         返回:
             gain: 增益 (n_freqs,)
         """
+        # 使用 SNR adaptive g_min (如果提供) 或默認值
+        g_min_effective = g_min if g_min is not None else self.g_min
+
         # 計算 MMSE-STSA 增益 (在 H1 假設下)
         # v1.5.0: 支持切換完整版/簡化版
         if self.use_full_formula:
@@ -75,7 +80,7 @@ class SppMmseGainCalculator:
 
         # SPP 加權
         # G = p * G_MMSE + (1-p) * G_min
-        gain = spp * gain_mmse + (1 - spp) * self.g_min
+        gain = spp * gain_mmse + (1 - spp) * g_min_effective
 
         # 時間平滑（減少音樂噪聲）
         if self.gain_prev is not None:
@@ -85,7 +90,7 @@ class SppMmseGainCalculator:
         self.gain_prev = gain.copy()
 
         # 限制增益範圍
-        gain = np.clip(gain, self.g_min, 1.0)
+        gain = np.clip(gain, g_min_effective, 1.0)
 
         return gain
 

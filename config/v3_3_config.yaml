@@ -1,99 +1,30 @@
-# V3-3: PMMSE Configuration
-# 基於 Loizou 2005
-# 感知動機 MMSE (Perceptually Motivated MMSE)
-
-version: "3-3"
-name: "PMMSE"
-
-# Audio Parameters
+version: 3-3
+name: PMMSE
 audio:
   sample_rate: 16000
   frame_size_ms: 20
   frame_shift_ms: 10
   fft_size: 512
-  window_type: "hanning"
-
-# Noise Estimation
+  window_type: hanning
 noise_estimation:
-  method: "recursive_average"
+  method: recursive_average
   alpha: 0.95
   num_init_frames: 20
   update_during_speech: false
-
-# SPP (Speech Presence Probability) Estimation
 spp:
-  alpha_xi: 0.95          # A priori SNR smoothing factor (降低平滑度，提高反應速度)
-  q: 0.6                  # Speech prior probability (提高語音優先權，與 V3 一致)
-  xi_min_db: -25.0        # Minimum a priori SNR (dB)
-
-# Gain Calculation - PMMSE
+  alpha_xi: 0.98
+  q: 0.5
+  xi_min_db: -25.0
 gain_calculation:
-  method: "pmmse"
-  g_min_db: -20.0         # Minimum gain (dB), 提供標準降噪能力（與 V3-2/V3-4 一致）
-  alpha_g: 0.7            # Gain temporal smoothing factor, 平衡平滑度和反應速度（與 V3-2/V3-4 一致）
-  use_spp_weighting: true # 是否使用 SPP 加權 (推薦 true)
-
-# Noise Scene Tracking (v1.3.0)
+  method: pmmse
+  g_min_db: -20.0
+  alpha_g: 0.7
+  use_spp_weighting: true
 noise_tracking:
   enable: true
-
-# Notes:
-#
-# PMMSE 特點 (Loizou 2005 Equation 12):
-# - 成本函數: E[(|X| - |Xhat|)^2 / |X|] (Itakura-Saito 距離)
-# - 先驗分佈: Gaussian (complex Gaussian → Rayleigh 幅度分佈)
-# - 感知動機的 IS 距離，更符合人耳感知特性
-# - 特殊函數: Modified Bessel function I0
-#
-# 理論基礎:
-#   - Itakura-Saito (IS) 距離:
-#     * D_IS(X, Xhat) = X/Xhat - log(X/Xhat) - 1
-#     * 等價於最小化 E[(X - Xhat)^2 / X]
-#     * 對小幅度更寬容,對大幅度更嚴格
-#     * 更符合人耳對數感知特性
-#
-#   - Gaussian 先驗:
-#     * 假設 DFT 係數服從 complex Gaussian 分佈
-#     * 幅度譜服從 Rayleigh 分佈
-#     * p(|X|) = (|X|/σ²) * exp(-|X|²/(2σ²))
-#
-# use_spp_weighting:
-#   - true (推薦): 使用 SPP 加權
-#     * G = p*G_pmmse + (1-p)*g_min
-#     * 更穩定,musical noise 更少
-#   - false: 不使用 SPP 加權
-#     * G = G_pmmse
-#     * 用於理論研究或對比實驗
-#
-# 參數優化 (2026-01-05):
-#   - g_min_db: -15 → -20 dB
-#     * 提升約 5dB 降噪能力（與 V3-2/V3-4 一致）
-#   - alpha_g: 0.85 → 0.7
-#     * 提高增益反應靈敏度，減少語音起始模糊
-#   - q: 0.5 → 0.6
-#     * 提高語音優先權（與 V3 一致）
-#   - alpha_xi: 0.98 → 0.95
-#     * 提高 SPP 反應速度
-#
-# alpha_g: 增益平滑因子
-#   - 0.6-0.7: 推薦範圍（當前使用 0.7）
-#   - 0.7-0.8: 強平滑
-#   - 0.85: 過度平滑（舊值，已廢棄）
-#
-# 與其他版本的區別:
-#   - V3 (MMSE-STSA):   Gaussian + E[(|X| - |Xhat|)^2]
-#   - V3-2 (MMSE-LSA):  Gaussian + E[(log|X| - log|Xhat|)^2]
-#   - V3-3 (PMMSE):     Gaussian + E[(|X| - |Xhat|)^2 / |X|] (IS 距離)
-#   - V3-4 (Lap-MMSE):  Laplacian + E[(|X| - |Xhat|)^2]
-#
-# 數學公式 (Equation 12):
-#   G = {sqrt(Vk) / [sqrt(pi) * gamma]} * [exp(Vk/2) / I0(Vk/2)]
-#   其中 Vk = ξ/(1+ξ) * γ
-#   I0(x) = Σ[(x/2)^(2k) / (k!)^2] (Modified Bessel function of the first kind, order 0)
-#
-# 參考文獻:
-#   Loizou, P. C. (2005).
-#   "Speech enhancement based on perceptually motivated Bayesian estimators
-#   of the magnitude spectrum."
-#   IEEE Transactions on Speech and Audio Processing, 13(5), 857-869.
-#   DOI: 10.1109/TSA.2005.851929
+snr_adaptive:
+  enable: false
+  base_g_min_db: -15.0
+  snr_smoothing: 0.9
+  clean_detection: true
+  clean_bypass: false

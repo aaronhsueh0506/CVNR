@@ -1,5 +1,5 @@
-version: 3-2
-name: MMSE-LSA
+version: 3-3
+name: PMMSE-Conservative
 audio:
   sample_rate: 16000
   frame_size_ms: 20
@@ -12,14 +12,14 @@ noise_estimation:
   num_init_frames: 20
   update_during_speech: false
 spp:
-  alpha_xi: 0.92
+  alpha_xi: 0.98
   q: 0.5
   xi_min_db: -25.0
 gain_calculation:
-  method: mmse_lsa
+  method: pmmse
   g_min_db: -20.0
   alpha_g: 0.7
-  use_linear_spp_weighting: true
+  use_spp_weighting: true
 noise_tracking:
   enable: true
 snr_adaptive:

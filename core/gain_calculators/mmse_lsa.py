@@ -61,7 +61,8 @@ class MmseLsaGainCalculator:
         self,
         spp: np.ndarray,
         xi: np.ndarray,
-        gamma: np.ndarray
+        gamma: np.ndarray,
+        g_min: float = None
     ) -> np.ndarray:
         """
         計算 SPP 加權的 MMSE-LSA 增益
@@ -70,22 +71,27 @@ class MmseLsaGainCalculator:
             spp: 語音存在機率 (n_freqs,)
             xi: 先驗 SNR (n_freqs,)
             gamma: 後驗 SNR (n_freqs,)
+            g_min: SNR adaptive 最小增益（可選，用於動態調整）
 
         返回:
             gain: 增益 (n_freqs,)
         """
+        # 使用 SNR adaptive g_min (如果提供) 或默認值
+        g_min_effective = g_min if g_min is not None else self.g_min
+        log_g_min_effective = np.log(g_min_effective + 1e-10)
+
         # 基礎 MMSE 增益 (與 MMSE-STSA 簡化版相同公式)
         gain_mmse = self._mmse_gain_base(xi, gamma)
 
         # 關鍵差異: 對數域 vs 線性域加權
         if self.use_linear_spp_weighting:
             # 線性域加權 (退化為 MMSE-STSA 行為)
-            gain = spp * gain_mmse + (1 - spp) * self.g_min
+            gain = spp * gain_mmse + (1 - spp) * g_min_effective
             log_gain = np.log(gain + 1e-10)
         else:
             # 對數域加權 (真正的 MMSE-LSA)
             log_gain_mmse = np.log(gain_mmse + 1e-10)
-            log_gain = spp * log_gain_mmse + (1 - spp) * self.log_g_min
+            log_gain = spp * log_gain_mmse + (1 - spp) * log_g_min_effective
 
         # 對數域時間平滑 (LSA 的核心特徵)
         if self.log_gain_prev is not None:
@@ -95,7 +101,7 @@ class MmseLsaGainCalculator:
         gain = np.exp(log_gain)
 
         # 限制範圍
-        gain = np.clip(gain, self.g_min, 1.0)
+        gain = np.clip(gain, g_min_effective, 1.0)
 
         # 保存對數域增益
         self.log_gain_prev = np.log(gain + 1e-10)

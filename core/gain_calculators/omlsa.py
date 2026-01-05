@@ -48,7 +48,8 @@ class OmlsaGainCalculator:
         self,
         spp: np.ndarray,
         xi: np.ndarray,
-        gamma: np.ndarray
+        gamma: np.ndarray,
+        g_min: float = None
     ) -> np.ndarray:
         """
         計算 OMLSA 增益
@@ -61,25 +62,29 @@ class OmlsaGainCalculator:
             spp: 語音存在機率 (n_freqs,)
             xi: 先驗 SNR (n_freqs,)
             gamma: 後驗 SNR (n_freqs,)
+            g_min: SNR adaptive 最小增益（可選，用於動態調整）
 
         返回:
             gain: OMLSA 增益 (n_freqs,)
         """
+        # 使用 SNR adaptive g_min (如果提供) 或默認值
+        g_min_effective = g_min if g_min is not None else self.g_min
+
         # 1. 計算 MMSE-LSA 增益（在 H1 假設下）
         gain_h1 = self._mmse_lsa_gain(xi, gamma)
 
         # 2. 對數域處理
         log_gain_h1 = np.log(gain_h1 + 1e-10)
-        log_g_min = np.log(self.g_min)
+        log_g_min_effective = np.log(g_min_effective + 1e-10)
 
         # v1.5.0: 混合策略（低 SPP 使用線性/對數混合）
         hybrid_threshold = 0.3
 
         # 計算線性域增益（作為參考）
-        gain_linear = spp * gain_h1 + (1 - spp) * self.g_min
+        gain_linear = spp * gain_h1 + (1 - spp) * g_min_effective
 
         # 計算對數域增益
-        log_gain_log = spp * log_gain_h1 + (1 - spp) * log_g_min
+        log_gain_log = spp * log_gain_h1 + (1 - spp) * log_g_min_effective
         gain_log = np.exp(log_gain_log)
 
         # 低 SPP：50% 線性 + 50% 對數
@@ -113,7 +118,7 @@ class OmlsaGainCalculator:
         gain = np.exp(log_gain)
 
         # 限制增益範圍
-        gain = np.clip(gain, self.g_min, 1.0)
+        gain = np.clip(gain, g_min_effective, 1.0)
 
         # 保存線性增益
         self.gain_prev = gain.copy()
