@@ -25,7 +25,7 @@ EVAL_SR = 16000
 # 測試用例
 noise_types = ['babble', 'car', 'street']
 snr_levels = [0, 5, 10, 15]
-test_cases = [f"{n}_{s}dB" for n in noise_types for s in snr_levels]
+test_cases = ['clean'] + [f"{n}_{s}dB" for n in noise_types for s in snr_levels]  # 加入 clean.wav 高 SNR 測試
 
 # 我們的方法（需要 trim）
 our_methods = ['V1', 'V2', 'V3', 'V3-2', 'V3-3', 'V3-4', 'V4']
@@ -207,8 +207,13 @@ def main():
         clean_path = "test_wav/wav/clean.wav"
 
         # Noisy 輸入（V1-V4 使用 prepend 文件，Speex/RNNoise 使用原始文件）
-        noisy_path_v1_v4 = f"test_wav/wav/append_silence/{test_id}_prepend.wav"
-        noisy_path_benchmark = f"test_wav/wav/{test_id}.wav"
+        # Clean 測試特殊處理
+        if test_id == 'clean':
+            noisy_path_v1_v4 = "test_wav/wav/append_silence/clean_prepend.wav"
+            noisy_path_benchmark = "test_wav/wav/clean.wav"
+        else:
+            noisy_path_v1_v4 = f"test_wav/wav/append_silence/{test_id}_prepend.wav"
+            noisy_path_benchmark = f"test_wav/wav/{test_id}.wav"
 
         if not os.path.exists(clean_path):
             print(f"  ⚠️  找不到 clean 文件: {clean_path}")

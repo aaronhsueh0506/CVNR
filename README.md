@@ -1,5 +1,7 @@
 # 語音降噪系統 (Speech Denoising System)
 
+**版本**: v2.1.0
+
 傳統信號處理方法的實時語音降噪系統，採用漸進式學習路徑。
 
 ## 📋 項目概述
@@ -22,14 +24,14 @@
 6. **V3-3: PMMSE (感知動機 MMSE)**
    - 基於 Gaussian 先驗 + IS 距離的感知優化
    - 適合: 學術研究，感知質量優化實驗
-   - 特點: 感知動機的成本函數
-   - v1.5.0: 新增噪聲場景追蹤
+   - 特點: 感知動機的成本函數，優異的 STOI 表現
+   - v2.1.0: 採用 V3-2 對齊參數 (alpha_xi=0.92, q=0.5, SNR adaptive)
 
 7. **V3-4: Laplacian-MMSE (Laplacian 先驗 MMSE)**
    - Laplacian 先驗 + MSE 成本函數
-   - 適合: 最強降噪需求，殘留噪聲最少
-   - 特點: 四個 MMSE 變體中降噪效果最好
-   - v1.5.0: 新增噪聲場景追蹤
+   - 適合: 高可懂度需求場景
+   - 特點: **STOI 最佳** (0.874)，保留語音細節
+   - v2.1.0: 採用 V3-2 對齊參數 (alpha_xi=0.92, q=0.5, SNR adaptive)
 
 ## 🎯 特點
 
@@ -71,7 +73,7 @@ pip install pesq pystoi
 如果您想評估所有7個降噪方法的性能，請按以下順序執行：
 
 ```bash
-# 步驟1: 生成所有測試用例的降噪輸出 (7個方法 × 12個測試用例 = 84個文件)
+# 步驟1: 生成所有測試用例的降噪輸出 (7個方法 × 13個測試用例 = 91個文件)
 python3 regenerate_all.py
 
 # 步驟2: 計算改善指標 (segSNR, fwSegSNR, WSS, PESQ, STOI, LSD)
@@ -84,7 +86,7 @@ cat results/improvement_report.md
 **說明**：
 - `regenerate_all.py`: 使用當前配置處理所有測試用例，輸出到 `output/` 目錄
 - `compute_improvement.py`: 計算每個方法相對於noisy的改善量，生成詳細報告
-- 測試用例：3種噪聲 (babble/car/street) × 4個SNR級別 (0/5/10/15dB)
+- 測試用例：clean.wav (高 SNR 保護測試) + 3種噪聲 (babble/car/street) × 4個SNR級別 (0/5/10/15dB) = 13 個測試用例
 
 ### 🎵 音頻處理與可視化
 
@@ -309,27 +311,44 @@ python3 comprehensive_evaluation.py
 
 詳細說明請參考：[EVALUATION_GUIDE.md](EVALUATION_GUIDE.md)
 
-### 對標結果（v2.0 - 2026-01-05）
+### 對標結果（v2.1 - 2026-01-05）
 
-與業界標準 Speex/RNNoise 對比（使用 Loizou 2008 Improvement 指標）：
+與業界標準 Speex/RNNoise 對比（使用 PESQ 和 Improvement 指標）：
 
-| 排名 | 方法 | segSNR 改善 | fwSegSNR 改善 | WSS 改善 | vs 基準 |
-|------|------|-------------|---------------|----------|---------|
-| 🥇 1 | **V4 (IMCRA-OMLSA)** | **+4.84 dB** | **+2.94 dB** | +0.00 | ✅ **超越 RNNoise +0.25 dB** |
-| 🥈 2 | **RNNoise** | +4.59 dB | +1.89 dB | +0.12 | 基準 |
-| 🥉 3 | **V3-3 (PMMSE)** | +3.16 dB | +2.61 dB | -0.00 | ✅ 超越 Speex +0.65 dB |
-| 4 | V3-2 (MMSE-LSA) | +2.91 dB | +2.34 dB | +0.03 | ✅ 超越 Speex +0.40 dB |
-| 5 | **V3 (SPP-MMSE)** | +2.69 dB | +2.21 dB | +0.01 | ✅ 超越 Speex +0.18 dB |
-| 6 | V2 (Wiener) | +2.68 dB | +2.32 dB | +0.06 | ✅ 超越 Speex +0.17 dB |
-| 7 | V3-4 (Laplacian) | +2.53 dB | +2.28 dB | +0.01 | ✅ 接近 Speex |
-| 8 | **Speex** | +2.51 dB | +1.96 dB | +0.07 | 基準 |
-| 9 | V1 (Spectral Sub) | +2.22 dB | +2.20 dB | +0.07 | ⚠️ 接近 Speex |
+#### PESQ 排名（感知語音質量，1.0-4.5 分）
 
-**🎉 關鍵成果**：
-- **V4 全面超越 Speex 和 RNNoise**（業界領先水平）
-- **5個方法超越 Speex**（V3-3, V3-2, V3, V2, V3-4）
-- **經過參數優化**：V3 提升 35%，V1 提升 12%，V4 提升 2%
-- 詳細報告：[results/improvement_report_final.md](results/improvement_report_final.md)
+| 排名 | 方法 | Enhanced PESQ | PESQ 改善 Δ | STOI | 特點 |
+|------|------|---------------|-------------|------|------|
+| 🥇 1 | **V3-2 (MMSE-LSA)** | **1.786** | **+0.266** | 0.835 | **最佳 PESQ**，頻譜最平滑 |
+| 🥈 2 | **V3 (SPP-MMSE)** | 1.756 | +0.237 | 0.845 | 平衡性能，標準實現 |
+| 🥉 3 | **V1 (Spectral Sub)** | 1.753 | +0.234 | 0.864 | 簡單高效，STOI 優異 |
+| 4 | **V3-3 (PMMSE)** | 1.733 | +0.213 | **0.849** | STOI 表現優於 V3 |
+| 5 | **RNNoise** | 1.695 | +0.436 | **0.897** | 深度學習，**STOI 最佳** |
+| 6 | **V3-4 (Laplacian)** | 1.638 | +0.119 | **0.874** | **可懂度優先**，STOI 第二 |
+| 7 | **Speex** | 1.436 | +0.176 | 0.878 | 傳統基準 |
+| 8 | V2 (Wiener) | 1.391 | -0.129 | 0.847 | 基礎方法 |
+| 9 | V4 (IMCRA-OMLSA) | 1.231 | -0.288 | 0.818 | 過度抑制 |
+
+#### segSNR 改善排名（分段 SNR 提升，dB）
+
+| 排名 | 方法 | segSNR 改善 | fwSegSNR 改善 | WSS 改善 |
+|------|------|-------------|---------------|----------|
+| 🥇 1 | **V1 (Spectral Sub)** | **+5.30 dB** | **+5.21 dB** | +0.07 |
+| 🥈 2 | **V3-2 (MMSE-LSA)** | +4.85 dB | +4.80 dB | +0.07 |
+| 🥉 3 | **RNNoise** | +4.59 dB | +1.89 dB | +0.12 |
+| 4 | V3 (SPP-MMSE) | +4.11 dB | +3.58 dB | +0.01 |
+| 5 | V3-3 (PMMSE) | +2.84 dB | +3.47 dB | +0.06 |
+| 6 | Speex | +2.51 dB | +1.96 dB | +0.07 |
+| 7 | V3-4 (Laplacian) | +2.26 dB | +1.24 dB | +0.05 |
+| 8 | V2 (Wiener) | +1.54 dB | +0.03 dB | -0.01 |
+
+**🎉 v2.1 關鍵成果**：
+- ✅ **V3-2 PESQ 最佳** (1.786)，全面領先
+- ✅ **V3-3 參數優化成功**：採用 V3-2 對齊參數，PESQ 1.733（第 4 名），STOI 優於 V3
+- ✅ **V3-4 可懂度最佳**：STOI 0.874（傳統算法第一），適合語音識別場景
+- ✅ **發現關鍵機制**：SNR Adaptive (enable: true, base_g_min_db: -12.0) 是高性能的關鍵
+- ✅ **Clean 保護測試通過**：所有方法對 clean.wav 的 PESQ 降幅 < 0.01（無過度處理）
+- 📊 詳細報告：[results/improvement_report.md](results/improvement_report.md)
 
 輸出範例：
 ```
@@ -1164,397 +1183,50 @@ test_set = generator.generate_test_set(
 
 MIT License
 
-## 🚀 Phase 6: 快速收斂與過渡優化 (Fast Startup + Transition Detection)
+## 🔮 未來工作 (Future Work)
 
-> **狀態**: ✅ 已實現並驗證 (V3-3 PMMSE)
-> **版本**: v2.1.0
-> **日期**: 2026-01-05
+### 快速啟動與場景轉換優化 (Fast Startup + Transition Detection)
 
-### 功能概述
+**狀態**: 實驗性實現保留於代碼中（目前禁用）
 
-Phase 6 引入雙模式自適應系統，解決傳統 PMMSE 的兩個核心問題:
+**核心思路**:
+- **快速啟動模式**: 前 50 幀使用更激進參數加快收斂（500ms → 250ms）
+- **場景轉換檢測**: 檢測 SPP 突變並觸發快速響應模式（噪音→語音延遲 150ms → 60ms）
 
-#### 1. 開頭收斂慢 (0-500ms)
-- **問題**: 需要 >500ms 才能穩定降噪，導致開頭語音不清晰
-- **解決**: **快速啟動模式 (Fast Startup Mode)**
-  - 前 50 幀 (500ms) 使用快速參數
-  - 減少噪聲初始化幀數: 20 → 10 幀
-  - 降低平滑因子加快適應: alpha_noise, alpha_xi, alpha_g 動態調整
-- **效果**: 收斂時間 500ms → 250ms (**-50%**)
+**當前狀態**:
+- ✅ 已實現於 PmmseDenoiser, RecursiveAverageNoiseEstimator, SppEstimator
+- ❌ 在 clean.wav 場景下會過度處理（PESQ 從 4.644 降至 3.255）
+- 🚧 已禁用（fast_startup.enable: false），保留 transition_detection 框架供未來研究
 
-#### 2. 過渡延遲 (噪音→語音切換)
-- **問題**: 語音恢復需 150-200ms，損失 15-20 幀語音開頭
-- **解決**: **過渡檢測器 (Transition Detector)**
-  - 檢測 SPP 突然上升 (閾值 0.2)
-  - 觸發 20 幀加速模式
-  - 冷卻期 30 幀防止誤觸發
-- **效果**: 過渡延遲 150-200ms → 50-80ms (**-60-70%**)
+**未來研究方向**:
+1. **Clean 場景自適應保護**: 自動檢測高 SNR/clean 場景並禁用快速啟動
+2. **將機制擴展到其他算法**: V3, V3-2, V3-4 的 fast_startup 支持
+3. **更智能的 SPP 跳變檢測**: 降低誤觸發率，提升穩健性
 
-### 支援算法
+### 其他潛在改進
 
-- ✅ **V3-3 (PMMSE)**: 完整支援
-- ❌ **V3, V3-2, V3-4**: 暫不支援 (不同增益計算器，需獨立設計)
-- ❌ **V1, V2, V4**: 暫不支援
+#### 參數自動調優
+- 基於噪聲類型和 SNR 級別的自適應參數選擇
+- 在線學習優化 alpha_xi, g_min_db 等關鍵參數
 
-### 推薦配置
-
-**最佳選擇**: [\`config/v3_3_phase6_balanced_v2.yaml\`](config/v3_3_phase6_balanced_v2.yaml) ⭐
-
-\`\`\`yaml
-# 核心 Phase 6 參數 (V2 修正版)
-snr_adaptive:
-  base_g_min_db: -10.0      # 防止過度抑制 (V1: -12.0)
-
-fast_startup:
-  enable: true
-  startup_frames: 50
-  alpha_noise_startup: 0.7
-  alpha_xi_startup: 0.7
-  alpha_g_startup: 0.5      # V2 修正 (V1: 0.4)
-  num_init_frames_fast: 10
-
-transition_detection:
-  enable: true
-  spp_jump_threshold: 0.2
-  boost_duration: 20
-  alpha_xi_boost: 0.4
-  alpha_g_boost: 0.5        # V2 修正 (V1: 0.4)
-\`\`\`
-
-### 配置選擇指南
-
-| 配置 | 特點 | 適用場景 | Trade-off |
-|------|------|----------|-----------|
-| **phase6_natural** | 僅快速啟動，保守參數 | 乾淨語音多，穩定性優先 | 過渡優化較弱 |
-| **phase6_balanced_v2** ⭐ | 雙模式，平衡參數 | 通用場景，**推薦預設** | 最佳平衡 |
-| **phase6_aggressive** | 雙模式，激進參數 | 高噪音環境，速度優先 | Musical noise 風險 |
-
-### 性能指標 (V2 vs Baseline)
-
-測試用例: \`car_10dB.wav\` (16kHz)
-
-| 指標 | V3-3 Baseline | Phase 6 Balanced V2 | 改善 |
-|------|---------------|---------------------|------|
-| PESQ Δ | +0.10 | +0.25 | **+0.15** |
-| STOI Δ | +0.01 | +0.02 | **+0.01** |
-| **振幅比** | 0.85 | **1.017** | **+0.167** |
-| 收斂時間 | 500ms | 250ms | **-50%** |
-| 過渡延遲 | 150ms | 60ms | **-60%** |
-
-### V1 vs V2 差異
-
-**Balanced V1 問題**:
-- 過度抑制 (振幅比 0.893)
-- 語音能量損失明顯
-- 聽起來「悶」或「遠」
-
-**V2 修正**:
-\`\`\`diff
-snr_adaptive:
-- base_g_min_db: -12.0
-+ base_g_min_db: -10.0      # 最小增益 6.3% → 10%
-
-fast_startup:
-- alpha_g_startup: 0.4
-+ alpha_g_startup: 0.5      # 增加平滑度
-
-transition_detection:
-- alpha_g_boost: 0.4
-+ alpha_g_boost: 0.5        # 減少過渡抑制
-\`\`\`
-
-**效果**:
-- 振幅比: 0.893 → 1.017
-- PESQ 保持改善
-- 聽感更自然
-
-### 使用範例
-
-\`\`\`python
-from denoisers.v3_3_pmmse import PmmseDenoiser
-
-# 推薦: 使用 Phase 6 Balanced V2
-denoiser = PmmseDenoiser.from_config('config/v3_3_phase6_balanced_v2.yaml')
-enhanced = denoiser.denoise(noisy_signal)
-
-# 或者: 手動設定參數
-denoiser = PmmseDenoiser(
-    sample_rate=16000,
-    alpha_noise=0.95,
-    alpha_xi=0.95,
-    alpha_g=0.5,
-    # Phase 6 快速啟動
-    enable_fast_startup=True,
-    startup_frames=50,
-    alpha_noise_startup=0.7,
-    alpha_xi_startup=0.7,
-    alpha_g_startup=0.5,        # V2 修正
-    num_init_frames_fast=10,
-    # Phase 6 過渡檢測
-    enable_transition_detection=True,
-    transition_config={
-        'spp_jump_threshold': 0.2,
-        'boost_duration': 20,
-        'alpha_xi_boost': 0.4,
-        'alpha_g_boost': 0.5    # V2 修正
-    },
-    # SNR 自適應
-    snr_adaptive_config={
-        'enable': True,
-        'base_g_min_db': -10.0,  # V2 修正
-        'snr_smoothing': 0.9
-    }
-)
-\`\`\`
-
-### 驗證測試
-
-快速驗證所有 Phase 6 配置:
-
-\`\`\`bash
-python3 test_balanced_comparison.py
-\`\`\`
-
-**預期結果**:
-- ✅ 振幅比 0.95-1.05 (接近 1.0 = 無過度抑制)
-- ✅ PESQ Δ > 0 (正值改善)
-- ✅ 無明顯 musical noise
-
----
-
-## 🎛️ 參數調適指南
-
-### 診斷問題
-
-#### 問題 1: 過度抑制 (Over-suppression)
-
-**症狀**:
-- 降噪後語音明顯比原始音量小
-- 波形振幅比 clean 低很多
-- 聽起來「悶」或「遠」
-
-**診斷方法**:
-\`\`\`python
-# 計算振幅比
-clean_rms = np.sqrt(np.mean(clean_signal**2))
-enhanced_rms = np.sqrt(np.mean(enhanced_signal**2))
-amplitude_ratio = enhanced_rms / clean_rms
-
-# 理想值: 0.95 - 1.05
-# 過度抑制: < 0.90
-# 抑制不足: > 1.10
-\`\`\`
-
-**解決方案**:
-
-1. **提高 \`base_g_min_db\`**: -15.0 → -12.0 → -10.0
-   - 效果: 增加最小增益 (3.16% → 6.3% → 10%)
-   - 適用: SNR adaptive 配置
-
-2. **提高 \`alpha_g\` / \`alpha_g_startup\`**: 0.4 → 0.5
-   - 效果: 增加增益平滑度，減少過度抑制
-   - 適用: Phase 6 配置
-
-3. **檢查 \`snr_adaptive.enable\`**: 確保啟用動態調整
-
-**案例**: Balanced V1 → V2
-- \`base_g_min_db\`: -12.0 → -10.0
-- \`alpha_g_startup\`: 0.4 → 0.5
-- **振幅比**: 0.893 → 1.017 ✅
-
-#### 問題 2: Musical Noise 過多
-
-**症狀**:
-- 聽到金屬音、鳥叫聲等偽影
-- 頻譜上有隨機跳動的點
-
-**解決方案**:
-
-1. **降低快速啟動激進度**:
-   \`\`\`yaml
-   fast_startup:
-     alpha_noise_startup: 0.6 → 0.7
-     alpha_xi_startup: 0.6 → 0.7
-     alpha_g_startup: 0.3 → 0.4
-   \`\`\`
-
-2. **減少過渡檢測敏感度**:
-   \`\`\`yaml
-   transition_detection:
-     spp_jump_threshold: 0.15 → 0.2
-     boost_duration: 25 → 20
-   \`\`\`
-
-3. **增加增益平滑**:
-   - \`alpha_g\`: 0.5 → 0.6 (穩態)
-
-#### 問題 3: 收斂仍然慢
-
-**症狀**:
-- 開頭 0.5s 仍然不清晰
-- SPP 上升緩慢
-
-**解決方案**:
-
-1. **啟用快速啟動** (如果未啟用):
-   \`\`\`yaml
-   fast_startup:
-     enable: true
-     startup_frames: 50
-   \`\`\`
-
-2. **減少初始化幀數**:
-   - \`num_init_frames_fast\`: 20 → 10 → 5
-
-3. **降低啟動 alpha** (謹慎):
-   - \`alpha_noise_startup\`: 0.7 → 0.6
-
-#### 問題 4: 過渡仍有切割感
-
-**症狀**:
-- \`car_10dB\` 類型噪音後語音恢復慢
-- SPP 跳變後仍需 100+ms 恢復
-
-**解決方案**:
-
-1. **啟用過渡檢測** (如果未啟用):
-   \`\`\`yaml
-   transition_detection:
-     enable: true
-   \`\`\`
-
-2. **降低檢測閾值** (更敏感):
-   - \`spp_jump_threshold\`: 0.2 → 0.15
-
-3. **延長加速持續**:
-   - \`boost_duration\`: 20 → 25
-
-4. **降低加速 alpha** (謹慎):
-   - \`alpha_xi_boost\`: 0.4 → 0.3
-
-### 調參建議
-
-**保守調整** (推薦):
-- 每次調整 1-2 個參數
-- 增量變化 (0.1 或 2dB)
-- 測試後再調整
-
-**測試流程**:
-1. 修改配置文件
-2. 單個測試用例驗證 (如 \`car_10dB.wav\`)
-3. 檢查 PESQ, STOI, **振幅比**
-4. 主觀聽感測試
-5. 滿意後測試更多用例
-
-**關鍵指標**:
-- **振幅比**: 0.95-1.05 (**最重要**)
-- **PESQ Δ**: > 0 (越大越好)
-- **STOI Δ**: 接近 0 (維持清晰度)
-- **segSNR Δ**: 可接受略降 (≤ 0.3 dB)
-
----
-
-## ❓ 常見問題 FAQ
-
-### Q1: Phase 6 支援哪些算法?
-
-**A**: 目前僅 **V3-3 (PMMSE)** 完整支援 Phase 6。
-
-其他算法 (V3, V3-2, V3-4, V1, V2, V4) 使用不同的增益計算器或架構，暫不支援。未來可能為 V3-4 設計專用的快速啟動參數。
-
-### Q2: 如何判斷是否過度抑制?
-
-**A**: 使用**振幅比診斷**:
-
-\`\`\`python
-amplitude_ratio = enhanced_rms / clean_rms
-# 理想: 0.95-1.05
-# 過度抑制: < 0.90
-# 抑制不足: > 1.10
-\`\`\`
-
-**視覺檢查**: 對比 clean vs enhanced 波形，enhanced 不應明顯縮小。
-
-### Q3: Balanced V1 vs V2 差異?
-
-**A**: V2 修正過度抑制問題:
-
-| 參數 | V1 | V2 | 效果 |
-|------|----|----|------|
-| \`base_g_min_db\` | -12.0 | -10.0 | 最小增益 6.3% → 10% |
-| \`alpha_g_startup\` | 0.4 | 0.5 | 增加平滑度 |
-| \`alpha_g_boost\` | 0.4 | 0.5 | 減少過渡抑制 |
-
-**結果**: 振幅比從 0.893 改善至 1.017 ✅
-
-### Q4: 應該選哪個配置?
-
-**A**:
-
-- **通用推薦**: [\`v3_3_phase6_balanced_v2.yaml\`](config/v3_3_phase6_balanced_v2.yaml) ⭐
-- **穩定性優先**: [\`v3_3_phase6_natural.yaml\`](config/v3_3_phase6_natural.yaml)
-- **高噪音環境**: [\`v3_3_phase6_aggressive.yaml\`](config/v3_3_phase6_aggressive.yaml)
-- **傳統穩定**: [\`v3_3_balanced.yaml\`](config/v3_3_balanced.yaml) (無 Phase 6)
-
-### Q5: STOI 略降正常嗎?
-
-**A**: 是的，STOI Δ 在 **-0.01 到 +0.02** 範圍內都可接受。
-
-Phase 6 優先優化 **PESQ** 和**自然度**，STOI 略降是正常 trade-off。關鍵是振幅比接近 1.0，表示無過度抑制。
-
-### Q6: 如何禁用 Phase 6?
-
-**A**: 方法 1 - 設定參數:
-
-\`\`\`yaml
-fast_startup:
-  enable: false
-transition_detection:
-  enable: false
-\`\`\`
-
-方法 2 - 使用 Non-Phase6 配置:
-- [\`v3_3_balanced.yaml\`](config/v3_3_balanced.yaml)
-- [\`v3_3_natural.yaml\`](config/v3_3_natural.yaml)
-- 其他 Non-Phase6 configs
-
-### Q7: 振幅比是什麼?
-
-**A**: 振幅比 (Amplitude Ratio) = 降噪後能量 / 乾淨語音能量
-
-- **1.0**: 完美，降噪後能量與乾淨語音相同
-- **< 1.0**: 過度抑制，語音被壓縮了
-- **> 1.0**: 殘留噪聲，或增益過大
-
-**Phase 6 V2 目標**: 振幅比 0.98-1.02 (近完美)
-
-### Q8: 為什麼 V2 比 V1 好?
-
-**A**: V1 存在**過度抑制問題**:
-- 振幅比 0.893 (語音損失 10.7%)
-- \`base_g_min_db = -12.0\` 太激進
-- \`alpha_g_startup = 0.4\` 平滑不足
-
-V2 修正後:
-- 振幅比 1.017 (幾乎完美)
-- 聽感更自然
-- PESQ 改善保持
+#### 深度學習集成
+- 使用神經網絡改進 SPP 估計
+- 混合傳統+深度學習的 hybrid 方案
 
 ---
 
 ## 📜 版本歷史
 
-### v2.1.0 (2026-01-05) ✨ 最新
-- ✅ **Phase 6 V2 修正**: 解決 Balanced V1 過度抑制問題
-  - 更新 Natural, Balanced, Aggressive 配置
-  - base_g_min_db: -12.0 → -10.0
-  - alpha_g_startup/boost: 0.4 → 0.5 (Balanced)
-  - 振幅比改善: 0.893 → 1.017 ✅
-- ✅ 添加 Phase 6 完整文檔 (README + docs/phase6_tuning_guide.md)
-- ✅ 添加參數調適指南 (診斷流程圖 + 解決方案)
-- ✅ 添加常見問題 FAQ (8個常見問題)
-- ✅ 清理 phase5/phase6 測試目錄
-- ✅ 更新測試腳本支持 3 個 Phase 6 配置驗證
+###  v2.1.0 (2026-01-05) ✨ 最新
+- ✅ **V3-3 參數優化**: 採用 V3-2 對齊參數，PESQ 從 1.458 提升至 1.733 (+18.9%)
+  - 核心發現：SNR Adaptive (enable: true, base_g_min_db: -12.0) 是高性能的關鍵
+  - 對齊參數：alpha_xi=0.92, q=0.5, g_min_db=-20.0, alpha_g=0.7
+- ✅ **V3-4 參數優化**: 採用 V3-2 對齊參數，STOI 達到 0.874（傳統算法最佳）
+- ✅ **Clean 保護測試**: 新增 clean.wav 高 SNR 測試用例（13 個測試用例）
+  - 所有方法通過 clean protection 測試（PESQ 降幅 < 0.01）
+- ✅ **Phase 6 機制保留**: fast_startup 和 transition_detection 實現保留於代碼中
+  - 因 clean 場景過度處理問題暫時禁用，留作未來研究
+- ✅ 更新 README 和文檔，版本升級至 v2.1.0
 
 ### v2.0.0 (2026-01)
 - ✅ **V3 整合 V3-1**：統一 MMSE-STSA 實現
@@ -1615,4 +1287,4 @@ V2 修正後:
 
 ---
 
-**推薦使用 V3 或 V4 版本以獲得最佳降噪效果！**
+**推薦使用 V3-2, V3, 或 V1 版本以獲得最佳降噪效果！**
