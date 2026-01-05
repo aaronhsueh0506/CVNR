@@ -32,7 +32,7 @@ def load_config(config_path):
 # 測試用例
 noise_types = ['babble', 'car', 'street']
 snr_levels = [0, 5, 10, 15]
-test_cases = [f"{n}_{s}dB" for n in noise_types for s in snr_levels]
+test_cases = ['clean'] + [f"{n}_{s}dB" for n in noise_types for s in snr_levels]  # 加入 clean.wav 高 SNR 測試
 
 # 輸出目錄（統一到 output/）
 output_dir = 'output'
@@ -41,9 +41,9 @@ os.makedirs(output_dir, exist_ok=True)
 print("=" * 100)
 print("重新生成所有降噪方法的原始降噪輸出")
 print("=" * 100)
-print(f"測試用例: {len(test_cases)} 個")
+print(f"測試用例: {len(test_cases)} 個 (含 clean.wav 高 SNR 測試)")
 print(f"方法: V1, V2, V3, V3-2, V3-3, V3-4, V4")
-print(f"預期輸出: {len(test_cases) * 7} 個文件")
+print(f"預期輸出: {len(test_cases) * 7} 個文件")  # 13 * 7 = 91
 print(f"輸出目錄: {output_dir}/")
 print("=" * 100)
 
@@ -67,11 +67,11 @@ methods = {
     },
     'V3-3': {
         'class': PmmseDenoiser,
-        'config': 'config/v3_3_phase6_balanced_v2.yaml'  # Phase 6 V3 (V3 參數對齊)
+        'config': 'config/v3_3_config.yaml'  # V3-2 參數對齊
     },
     'V3-4': {
         'class': LaplacianMmseDenoiser,
-        'config': 'config/v3_4_balanced.yaml'  # 使用 balanced 配置
+        'config': 'config/v3_4_config.yaml'  # V3-2 參數對齊
     },
     'V4': {
         'class': ImcraOmlsaDenoiser,
@@ -140,6 +140,30 @@ def get_denoiser_params_from_config(config, sr, fft_size):
             'delta_db': ne.get('delta_db', 5.0)
         })
 
+    # SNR Adaptive 參數
+    if 'snr_adaptive' in config:
+        params['snr_adaptive_config'] = config['snr_adaptive']
+
+    # Fast Startup 參數（Phase 6）
+    if 'fast_startup' in config:
+        fs = config['fast_startup']
+        if fs.get('enable', False):
+            params.update({
+                'enable_fast_startup': True,
+                'startup_frames': fs.get('startup_frames', 50),
+                'alpha_noise_startup': fs.get('alpha_noise_startup', 0.7),
+                'alpha_xi_startup': fs.get('alpha_xi_startup', 0.7),
+                'alpha_g_startup': fs.get('alpha_g_startup', 0.4),
+                'num_init_frames_fast': fs.get('num_init_frames_fast', 10)
+            })
+
+    # Transition Detection 參數（Phase 6）
+    if 'transition_detection' in config:
+        td = config['transition_detection']
+        if td.get('enable', False):
+            params['enable_transition_detection'] = True
+            params['transition_config'] = td
+
     return params
 
 # 生成
@@ -155,7 +179,11 @@ for method_name, method_config in methods.items():
 
     for test_id in test_cases:
         # ✅ 使用正確的輸入文件：append_silence 目錄下的 prepend 文件
-        input_file = f"test_wav/wav/append_silence/{test_id}_prepend.wav"
+        # Clean 測試使用特殊路徑
+        if test_id == 'clean':
+            input_file = "test_wav/wav/append_silence/clean_prepend.wav"
+        else:
+            input_file = f"test_wav/wav/append_silence/{test_id}_prepend.wav"
         output_file = f"{output_dir}/{method_name}_{test_id}.wav"
 
         if not os.path.exists(input_file):
