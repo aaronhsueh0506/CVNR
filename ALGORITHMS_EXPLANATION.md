@@ -1113,5 +1113,4 @@ v1.5.0: V3 整合、V4 優化、噪聲追蹤擴展（2026）
 **如需更多技術細節，請參考**：
 - [README.md](README.md) - 完整項目文檔
 - [CHANGELOG.md](CHANGELOG.md) - 版本更新記錄
-- [examples/PROCESS_AUDIO_USAGE.md](examples/PROCESS_AUDIO_USAGE.md) - 使用說明
 - 代碼註釋 - 詳細的實現說明
