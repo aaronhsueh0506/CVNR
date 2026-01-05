@@ -64,6 +64,218 @@ pip install pyyaml
 pip install pesq pystoi
 ```
 
+## 🎯 快速指令參考（常用工具）
+
+### 🎵 音頻處理與可視化
+
+#### 1. 處理音頻並生成波形對比圖
+```bash
+# 使用推薦版本 (V3 和 V4)
+python3 process_audio.py your_audio.wav --versions V3 V4
+
+# 輸出:
+# - your_audio_v3.wav          # V3 降噪結果
+# - your_audio_v4.wav          # V4 降噪結果
+# - your_audio_waveforms.png   # 波形對比圖 ⭐
+
+# 測試所有版本
+python3 process_audio.py your_audio.wav --versions V1 V2 V3 V3-2 V3-3 V3-4 V4
+```
+
+**波形圖說明**：
+- 自動生成 `*_waveforms.png` 包含所有版本的時域波形對比
+- 可視化內容：原始帶噪音頻 + 各版本降噪結果
+- 顯示 RTF（實時率）和處理時間
+
+#### 2. 算法診斷與頻譜可視化
+```bash
+# 生成頻譜對比圖（Clean / Noisy / Enhanced）
+python3 tools/diagnose_algorithm.py
+
+# 輸出:
+# - diagnosis_spectrum.png  # 頻譜對比圖（前1秒音頻）
+# - 終端顯示詳細診斷訊息
+
+# 診斷內容:
+# ✓ 測試數據結構檢查（長度、能量）
+# ✓ 0.5s trimming 邏輯驗證
+# ✓ 降噪器處理檢查
+# ✓ 評估指標計算驗證
+# ✓ 問題診斷（輸出音量、頻譜異常）
+```
+
+**頻譜圖說明**：
+- 使用 `plt.magnitude_spectrum()` 繪製頻譜
+- 對比 Clean、Noisy、Enhanced 三者的頻譜差異
+- 用於診斷降噪器是否過度抑制高頻或引入失真
+
+### 📊 評估指標計算
+
+#### 3. 計算 Improvement 指標（推薦）
+```bash
+# 計算所有方法的改善量（segSNR, fwSegSNR, WSS, PESQ, STOI, LSD）
+python3 compute_improvement.py
+
+# 輸出:
+# - results/improvement_report.md  # 平均改善量統計表
+# - 終端顯示每個測試用例的詳細結果
+
+# 顯示指標:
+# ✓ segSNR 改善 (dB)      - 分段 SNR 改善
+# ✓ fwSegSNR 改善 (dB)    - 頻率加權 SNR 改善
+# ✓ WSS 改善              - 頻譜失真減少量
+# ✓ PESQ                  - 感知語音質量
+# ✓ STOI                  - 短時客觀可懂度
+# ✓ LSD                   - 對數頻譜距離
+```
+
+**參數說明**：
+- `TRIM_SECONDS = 0.5`：移除音頻前 0.5 秒（處理 prepend 文件）
+- `EVAL_SR = 16000`：評估時統一重採樣到 16kHz（Loizou 標準）
+- 自動處理兩類文件：
+  - V1-V4：從 `denoised_original/` 讀取（有 prepend）
+  - Speex/RNNoise：從 `test_wav/wav/benchmark_wav/` 讀取（無 prepend）
+
+#### 4. Benchmark 測試（性能 + 對標評估）
+```bash
+# 快速性能測試（跳過 PESQ/STOI）
+python3 benchmark.py --mode performance --quick
+
+# 完整性能測試（包含 PESQ/STOI）
+python3 benchmark.py --mode performance --full
+
+# 對標評估（與 Speex/RNNoise 對比）
+python3 benchmark.py --mode comparison
+
+# 兩者都執行
+python3 benchmark.py --mode all
+
+# 自定義噪聲類型
+python3 benchmark.py --mode performance --noise-types babble,car,street
+```
+
+**benchmark.py 模式說明**：
+- `performance`：性能基準測試（RTF, 處理時間, CPU, 內存, SNR, PESQ, STOI）
+- `comparison`：對標評估（與 Speex/RNNoise 使用相同流程評估）
+- `all`：兩者都執行
+
+**參數**：
+- `--quick`：跳過 PESQ/STOI（僅測 SNR + 性能）
+- `--full`：完整測試（包含 PESQ/STOI）
+- `--skip-seconds 0.5`：移除音頻前 N 秒（默認 0.5）
+- `--noise-types`：逗號分隔的噪聲類型（默認: babble,car,street）
+- `--output`：輸出文件路徑（默認: benchmark_results.json）
+
+#### 5. 綜合評估（Loizou 2008 專業指標）
+```bash
+# 完整評估所有方法（V1-V4 + Speex/RNNoise）
+python3 tools/comprehensive_evaluation.py
+
+# 輸出:
+# - results/loizou_evaluation.json  # JSON 格式詳細數據
+# - results/loizou_evaluation.csv   # CSV 表格
+# - results/loizou_evaluation.md    # Markdown 報告
+```
+
+### 🔧 工具腳本
+
+#### 6. 重新生成所有降噪輸出
+```bash
+# 使用當前配置重新處理所有測試音檔
+python3 regenerate_all_outputs.py
+
+# 輸出:
+# - denoised_original/ 目錄中的 84 個 .wav 文件
+# - 格式: {VERSION}_{noise_type}_{snr}dB.wav
+# - 例如: V3_babble_10dB.wav, V4_car_5dB.wav
+```
+
+#### 7. 驗證最佳配置
+```bash
+# 驗證當前配置參數是否正確
+python3 tools/validate_best_config.py
+
+# 檢查:
+# ✓ V1 配置參數
+# ✓ V2 配置參數（含噪聲追蹤）
+# ✓ V3 配置參數（SPP + 增益參數）
+# ✓ V4 配置參數（IMCRA + OMLSA）
+```
+
+### 📈 可視化 SPP（語音存在機率）
+
+SPP (Speech Presence Probability) 是 V3/V4 的核心中間量，表示每個時頻點存在語音的機率。
+
+#### 如何可視化 SPP
+
+當前代碼中，SPP 在 `core/spp_estimator.py` 中計算，但沒有內建可視化工具。如需可視化，可以手動添加：
+
+```python
+# 示例：在處理音頻時保存 SPP
+from denoisers import SppMmseDenoiser
+import librosa
+import numpy as np
+import matplotlib.pyplot as plt
+
+# 讀取音頻
+audio, sr = librosa.load('your_audio.wav', sr=None)
+
+# 創建降噪器
+denoiser = SppMmseDenoiser(sample_rate=sr)
+
+# 修改 denoise 方法以返回 SPP（需要修改源碼）
+# 或直接在 denoisers/v3_spp_mmse.py 中添加 debug 模式
+
+# 可視化 SPP（假設已獲取 SPP 矩陣）
+# spp.shape = (n_frames, n_freqs)
+plt.figure(figsize=(12, 6))
+plt.imshow(spp.T, aspect='auto', origin='lower', cmap='viridis')
+plt.colorbar(label='SPP (0-1)')
+plt.xlabel('Frame Index')
+plt.ylabel('Frequency Bin')
+plt.title('Speech Presence Probability (SPP)')
+plt.savefig('spp_visualization.png', dpi=150)
+```
+
+**SPP 特性**：
+- 取值範圍：[0, 1]（0=純噪聲，1=純語音）
+- 時間維度：每幀計算一次（通常 10ms 間隔）
+- 頻率維度：每個 FFT bin 獨立計算
+- 用於軟判決：比 VAD 硬判決更平滑
+
+**關鍵參數**（在 `config/v3_config.yaml` 中調整）：
+- `alpha_xi`：先驗 SNR 平滑因子（0.92-0.98），越大越平滑
+- `q`：語音先驗機率（通常 0.5），語音多可調高到 0.6-0.7
+- `xi_min_db`：先驗 SNR 下限（-25 dB），防止數值問題
+
+### 🎨 可視化最佳實踐
+
+#### 判讀波形圖（`*_waveforms.png`）
+
+**好的降噪結果**：
+- ✅ 靜音段接近 0（噪聲被充分抑制）
+- ✅ 語音段清晰可見（沒有過度抑制）
+- ✅ 波形平滑（無 musical noise 閃爍）
+
+**需要調整的情況**：
+- ❌ 靜音段仍有明顯噪聲 → 增加降噪強度（降低 `g_min_db`）
+- ❌ 語音段模糊不清 → 減少降噪強度（提高 `g_min_db`）
+- ❌ 波形有閃爍偽影 → 增加平滑因子（提高 `alpha_g`）
+
+#### 判讀頻譜圖（`diagnosis_spectrum.png`）
+
+**好的降噪結果**：
+- ✅ Enhanced 頻譜接近 Clean
+- ✅ 高頻保留良好（無過度抑制）
+- ✅ 低頻噪聲被有效抑制
+
+**需要調整的情況**：
+- ❌ 高頻完全消失 → 降低降噪強度
+- ❌ 低頻噪聲殘留明顯 → 增加降噪強度
+- ❌ 頻譜有鋸齒狀波動 → 增加平滑（檢查 musical noise）
+
+---
+
 ## 📊 評估指標說明
 
 ### 專業評估標準：Loizou 2008
@@ -865,80 +1077,6 @@ test_set = generator.generate_test_set(
     snr_levels=[-5, 0, 5, 10, 15],
     output_dir='./test_data'
 )
-```
-
-## 📊 可視化結果
-
-### 自動生成波形對比圖
-
-使用 `process_audio.py` 處理音頻時，會自動生成波形對比圖：
-
-```bash
-python3 process_audio.py your_audio.wav --versions V3 V4
-
-# 輸出:
-# - your_audio_v3.wav          # V3 降噪結果
-# - your_audio_v4.wav          # V4 降噪結果
-# - your_audio_waveforms.png   # 波形對比圖 ⭐
-```
-
-### 波形對比圖說明
-
-生成的 `*_waveforms.png` 包含：
-
-1. **原始帶噪音頻** (Input)
-   - 顯示完整的噪聲波形
-   - 可以看出噪聲的分布和強度
-
-2. **降噪後音頻** (V3, V4 等)
-   - 每個選擇的版本一個子圖
-   - 可以直觀對比不同版本的降噪效果
-
-3. **關鍵觀察點**:
-   - ✅ 靜音段是否平滑（無噪聲殘留）
-   - ✅ 語音段是否保持清晰（無過度抑制）
-   - ✅ 是否有 musical noise（閃爍狀偽影）
-
-### 使用 Python API 生成可視化
-
-如果需要更靈活的可視化：
-
-```python
-from utils.visualization import plot_waveforms
-import librosa
-
-# 加載音頻
-noisy, sr = librosa.load('noisy.wav', sr=None)
-enhanced_v3, _ = librosa.load('enhanced_v3.wav', sr=None)
-enhanced_v4, _ = librosa.load('enhanced_v4.wav', sr=None)
-
-# 生成對比圖
-plot_waveforms(
-    [noisy, enhanced_v3, enhanced_v4],
-    labels=['Input', 'V3 (SPP-MMSE)', 'V4 (IMCRA-OMLSA)'],
-    title='降噪效果對比',
-    save_path='comparison.png'
-)
-```
-
-### 可視化最佳實踐
-
-1. **對比多個版本**: 使用 `--versions V1 V2 V3 V4` 一次對比所有版本
-2. **關注細節**: 放大語音起始段，檢查是否有模糊現象
-3. **檢查靜音段**: 確認噪聲是否被充分抑制
-
-### 示例：判讀波形圖
-
-```
-好的降噪結果：
-✓ 靜音段接近 0（噪聲被充分抑制）
-✓ 語音段清晰可見（沒有過度抑制）
-✓ 波形平滑（無 musical noise）
-
-需要調整的情況：
-✗ 靜音段仍有明顯噪聲 → 增加降噪強度（降低 g_min_db）
-✗ 語音段模糊不清 → 減少降噪強度（提高 g_min_db）
-✗ 波形有閃爍偽影 → 增加平滑因子（提高 alpha_g）
 ```
 
 ---
