@@ -45,12 +45,8 @@ ENV/
 !*_2s_silence.wav
 
 # 輸出文件
-denoised/
-denoised_phase5/
+output/
 visualizations/
-output/*.wav
-output/*.png
-output/*.pdf
 
 # 測試結果
 benchmark_results/

@@ -34,12 +34,12 @@ noise_types = ['babble', 'car', 'street']
 snr_levels = [0, 5, 10, 15]
 test_cases = [f"{n}_{s}dB" for n in noise_types for s in snr_levels]
 
-# 輸出目錄（原始輸出，未 resample）
-output_dir = 'denoised_original'
+# 輸出目錄（統一到 output/）
+output_dir = 'output'
 os.makedirs(output_dir, exist_ok=True)
 
 print("=" * 100)
-print("重新生成所有 7 種方法的原始降噪輸出")
+print("重新生成所有降噪方法的原始降噪輸出")
 print("=" * 100)
 print(f"測試用例: {len(test_cases)} 個")
 print(f"方法: V1, V2, V3, V3-2, V3-3, V3-4, V4")
@@ -67,11 +67,11 @@ methods = {
     },
     'V3-3': {
         'class': PmmseDenoiser,
-        'config': 'config/v3_3_config.yaml'
+        'config': 'config/v3_3_phase6_balanced_v2.yaml'  # Phase 6 V3 (V3 參數對齊)
     },
     'V3-4': {
         'class': LaplacianMmseDenoiser,
-        'config': 'config/v3_4_config.yaml'
+        'config': 'config/v3_4_balanced.yaml'  # 使用 balanced 配置
     },
     'V4': {
         'class': ImcraOmlsaDenoiser,

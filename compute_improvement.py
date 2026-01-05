@@ -222,9 +222,9 @@ def main():
             print(f"  ⚠️  找不到 benchmark noisy 文件: {noisy_path_benchmark}")
             continue
 
-        # 評估我們的方法（使用新生成的原始輸出）
+        # 評估我們的方法（使用新生成的輸出）
         for method in our_methods:
-            enhanced_path = f"denoised_original/{method}_{test_id}.wav"
+            enhanced_path = f"output/{method}_{test_id}.wav"
 
             if not os.path.exists(enhanced_path):
                 print(f"  ⚠️  {method:8s} - 找不到文件")
@@ -236,7 +236,7 @@ def main():
                     noisy_path_v1_v4,  # ✅ V1-V4 使用 prepend 的 noisy（與降噪器輸入一致）
                     enhanced_path,
                     enhanced_needs_trim=True,  # ✅ V1-V4 輸出需要 trim（處理時有 prepend）
-                    original_sr=48000,  # denoised_original/ 目錄是 48kHz 文件
+                    original_sr=16000,  # output/ 目錄統一為 16kHz 文件
                     noisy_needs_trim=True  # ✅ V1-V4 的 noisy 也需要 trim（與 enhanced 對齊）
                 )
                 all_results[method].append(result)

@@ -8,7 +8,7 @@
     python process_audio.py input.wav
 
     # 指定輸出目錄
-    python process_audio.py input.wav --output-dir ./output
+    python process_audio.py input.wav --output-dir ./custom_output
 
     # 只處理特定版本
     python process_audio.py input.wav --versions V3 V4
@@ -547,7 +547,7 @@ def main():
   python process_audio.py input.wav
 
   # 指定輸出目錄
-  python process_audio.py input.wav --output-dir ./denoised
+  python process_audio.py input.wav --output-dir ./output
 
   # 只使用 V3 和 V4
   python process_audio.py input.wav --versions V3 V4
@@ -564,8 +564,8 @@ def main():
 
     parser.add_argument(
         '--output-dir',
-        default='./denoised',
-        help='輸出目錄（默認: ./denoised）'
+        default='./output',
+        help='輸出目錄（默認: ./output）'
     )
 
     parser.add_argument(
