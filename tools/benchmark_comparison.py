@@ -183,29 +183,31 @@ class BenchmarkComparison:
         print(f"{'='*80}\n")
 
         for test_id in test_cases:
-            noisy_path = f"test_wav/wav/{test_id}.wav"
-
-            if not os.path.exists(noisy_path):
-                print(f"⚠️  Noisy file not found: {noisy_path}")
-                continue
-
             print(f"\n測試用例: {test_id}")
             print(f"-" * 60)
 
             for method in methods:
                 current_test += 1
 
-                # 確定降噪音頻路徑
+                # 確定降噪音頻路徑和對應的 noisy 路徑
                 if method == 'Speex':
-                    enhanced_path = f"test_wav/benchmark_wav/speex/speexdsp_{test_id}.wav"
+                    enhanced_path = f"test_wav/wav/benchmark_wav/speex/speexdsp_{test_id}.wav"
+                    noisy_path = f"test_wav/wav/{test_id}.wav"  # Speex 使用無 prepend 的 noisy
                 elif method == 'RNNoise':
-                    enhanced_path = f"test_wav/benchmark_wav/rnnoise/rnnoise_{test_id}.wav"
+                    enhanced_path = f"test_wav/wav/benchmark_wav/rnnoise/rnnoise_{test_id}.wav"
+                    noisy_path = f"test_wav/wav/{test_id}.wav"  # RNNoise 使用無 prepend 的 noisy
                 else:
-                    enhanced_path = f"denoised/{method}_{test_id}.wav"
+                    # V1-V4 使用 denoised_original 目錄，對應有 prepend 的 noisy
+                    enhanced_path = f"denoised_original/{method}_{test_id}.wav"
+                    noisy_path = f"test_wav/wav/append_silence/{test_id}_prepend.wav"
 
                 # 檢查文件是否存在
                 if not os.path.exists(enhanced_path):
-                    print(f"  [{current_test}/{total_tests}] ⚠️  {method:8s} - 文件不存在")
+                    print(f"  [{current_test}/{total_tests}] ⚠️  {method:8s} - Enhanced 文件不存在: {enhanced_path}")
+                    continue
+
+                if not os.path.exists(noisy_path):
+                    print(f"  [{current_test}/{total_tests}] ⚠️  {method:8s} - Noisy 文件不存在: {noisy_path}")
                     continue
 
                 # 評估
