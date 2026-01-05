@@ -53,7 +53,7 @@ def run_performance_benchmark(args):
     )
 
     # 運行測試
-    noise_types = args.noise_types.split(',') if args.noise_types else ['white', 'babble']
+    noise_types = args.noise_types.split(',') if args.noise_types else ['babble', 'car', 'street']
     snr_levels = [0, 5, 10, 15]
 
     runner.run_benchmark(noise_types=noise_types, snr_levels=snr_levels)
@@ -88,12 +88,17 @@ def run_comparison_benchmark(args):
     )
 
     # 運行對標評估
-    # Note: The comparison class uses its own internal logic
-    print("⚠️  Note: 對標評估功能請直接使用:")
-    print(f"    python3 tools/benchmark_comparison.py --skip-seconds {args.skip_seconds}")
-    print(f"\n   或參考 tools/benchmark_comparison.py 的完整功能")
+    print("開始運行對標評估...")
 
-    print(f"\n✅ 對標評估入口已準備就緒")
+    # 運行評估
+    methods = ['Speex', 'RNNoise', 'V1', 'V2', 'V3', 'V3-2', 'V3-3', 'V3-4', 'V4']
+    results = comparison.run_full_comparison(methods=methods)
+
+    # 保存結果
+    output_dir = 'results'
+    comparison.save_results(results, output_dir=output_dir)
+
+    print(f"\n✅ 對標評估完成! 結果保存到: {output_dir}/")
 
 
 def main():
@@ -146,7 +151,7 @@ Examples:
 
     parser.add_argument(
         '--noise-types',
-        help='噪聲類型（逗號分隔，例如: white,babble,car）'
+        help='噪聲類型（逗號分隔，默認: babble,car,street）'
     )
 
     # 對標評估專用參數
