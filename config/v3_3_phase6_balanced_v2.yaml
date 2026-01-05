@@ -1,7 +1,6 @@
-version: 3-3-phase6-natural
-name: PMMSE-Phase6-Natural
-# Phase 6: 僅啟用快速啟動模式（Method A）
-# 保守參數，適合追求自然度
+version: 3-3-phase6-balanced-v2
+name: PMMSE-Phase6-Balanced-V2
+# Phase 6 Balanced 修正版 - 減少過度抑制
 
 audio:
   sample_rate: 16000
@@ -30,22 +29,30 @@ gain_calculation:
 noise_tracking:
   enable: true
 
+# ✅ 調整 1: 減少過度抑制
 snr_adaptive:
   enable: true
-  base_g_min_db: -10.0
+  base_g_min_db: -10.0      # -12.0 → -10.0 (提高最小增益)
   snr_smoothing: 0.9
   clean_detection: true
   clean_bypass: false
 
-# Phase 6: Fast Startup Mode
+# ✅ 調整 2: 增加啟動平滑度
 fast_startup:
   enable: true
   startup_frames: 50
   alpha_noise_startup: 0.7
   alpha_xi_startup: 0.7
-  alpha_g_startup: 0.4
+  alpha_g_startup: 0.5      # 0.4 → 0.5 (更平滑)
   num_init_frames_fast: 10
 
-# Phase 6: Transition Detection (禁用)
+# ✅ 調整 3: 減少 boost 抑制
 transition_detection:
-  enable: false
+  enable: true
+  spp_jump_threshold: 0.2
+  confirm_frames: 2
+  boost_duration: 20
+  cooldown_frames: 30
+  avg_window: 5
+  alpha_xi_boost: 0.4
+  alpha_g_boost: 0.5        # 0.4 → 0.5 (減少抑制)
