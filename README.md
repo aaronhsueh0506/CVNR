@@ -867,6 +867,82 @@ test_set = generator.generate_test_set(
 )
 ```
 
+## 📊 可視化結果
+
+### 自動生成波形對比圖
+
+使用 `process_audio.py` 處理音頻時，會自動生成波形對比圖：
+
+```bash
+python3 process_audio.py your_audio.wav --versions V3 V4
+
+# 輸出:
+# - your_audio_v3.wav          # V3 降噪結果
+# - your_audio_v4.wav          # V4 降噪結果
+# - your_audio_waveforms.png   # 波形對比圖 ⭐
+```
+
+### 波形對比圖說明
+
+生成的 `*_waveforms.png` 包含：
+
+1. **原始帶噪音頻** (Input)
+   - 顯示完整的噪聲波形
+   - 可以看出噪聲的分布和強度
+
+2. **降噪後音頻** (V3, V4 等)
+   - 每個選擇的版本一個子圖
+   - 可以直觀對比不同版本的降噪效果
+
+3. **關鍵觀察點**:
+   - ✅ 靜音段是否平滑（無噪聲殘留）
+   - ✅ 語音段是否保持清晰（無過度抑制）
+   - ✅ 是否有 musical noise（閃爍狀偽影）
+
+### 使用 Python API 生成可視化
+
+如果需要更靈活的可視化：
+
+```python
+from utils.visualization import plot_waveforms
+import librosa
+
+# 加載音頻
+noisy, sr = librosa.load('noisy.wav', sr=None)
+enhanced_v3, _ = librosa.load('enhanced_v3.wav', sr=None)
+enhanced_v4, _ = librosa.load('enhanced_v4.wav', sr=None)
+
+# 生成對比圖
+plot_waveforms(
+    [noisy, enhanced_v3, enhanced_v4],
+    labels=['Input', 'V3 (SPP-MMSE)', 'V4 (IMCRA-OMLSA)'],
+    title='降噪效果對比',
+    save_path='comparison.png'
+)
+```
+
+### 可視化最佳實踐
+
+1. **對比多個版本**: 使用 `--versions V1 V2 V3 V4` 一次對比所有版本
+2. **關注細節**: 放大語音起始段，檢查是否有模糊現象
+3. **檢查靜音段**: 確認噪聲是否被充分抑制
+
+### 示例：判讀波形圖
+
+```
+好的降噪結果：
+✓ 靜音段接近 0（噪聲被充分抑制）
+✓ 語音段清晰可見（沒有過度抑制）
+✓ 波形平滑（無 musical noise）
+
+需要調整的情況：
+✗ 靜音段仍有明顯噪聲 → 增加降噪強度（降低 g_min_db）
+✗ 語音段模糊不清 → 減少降噪強度（提高 g_min_db）
+✗ 波形有閃爍偽影 → 增加平滑因子（提高 alpha_g）
+```
+
+---
+
 ## 📖 參考文獻
 
 ### 基礎算法

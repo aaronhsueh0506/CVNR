@@ -19,9 +19,14 @@
 - Speex/RNNoise: 不 trim (沒有添加噪聲)
 """
 
+import sys
+import os
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import numpy as np
 import librosa
-import os
 import json
 import csv
 from pathlib import Path

@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """
 Benchmark Comparison - 公平對標評估系統
 
@@ -13,12 +14,16 @@ Benchmark Comparison - 公平對標評估系統
     python benchmark_comparison.py --skip-seconds 0.5 --output results/comparison.json
 """
 
+import sys
+import os
+
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import numpy as np
 import librosa
 import soundfile as sf
-import os
 import json
-import sys
 from pathlib import Path
 from typing import Dict, Tuple, Optional
 import warnings
