@@ -32,7 +32,7 @@ noise_tracking:
 
 snr_adaptive:
   enable: true
-  base_g_min_db: -12.0
+  base_g_min_db: -10.0
   snr_smoothing: 0.9
   clean_detection: true
   clean_bypass: false
@@ -43,7 +43,7 @@ fast_startup:
   startup_frames: 50
   alpha_noise_startup: 0.7
   alpha_xi_startup: 0.7
-  alpha_g_startup: 0.4
+  alpha_g_startup: 0.5
   num_init_frames_fast: 10
 
 # Phase 6: Transition Detection
@@ -55,4 +55,4 @@ transition_detection:
   cooldown_frames: 30
   avg_window: 5
   alpha_xi_boost: 0.4
-  alpha_g_boost: 0.4
+  alpha_g_boost: 0.5
