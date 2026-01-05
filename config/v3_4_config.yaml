@@ -1,102 +1,30 @@
-# V3-4: Laplacian-MMSE Configuration
-# 基於 Chen & Loizou 2007
-# Laplacian 先驗 MMSE 估計器
-
-version: "3-4"
-name: "Laplacian-MMSE"
-
-# Audio Parameters
+version: 3-4
+name: Laplacian-MMSE
 audio:
   sample_rate: 16000
   frame_size_ms: 20
   frame_shift_ms: 10
   fft_size: 512
-  window_type: "hanning"
-
-# Noise Estimation
+  window_type: hanning
 noise_estimation:
-  method: "recursive_average"
+  method: recursive_average
   alpha: 0.95
   num_init_frames: 20
   update_during_speech: false
-
-# SPP (Speech Presence Probability) Estimation
 spp:
-  alpha_xi: 0.98          # A priori SNR smoothing factor (0.92-0.98)
-  q: 0.5                  # Speech prior probability
-  xi_min_db: -25.0        # Minimum a priori SNR (dB)
-
-# Gain Calculation - Laplacian-MMSE
+  alpha_xi: 0.98
+  q: 0.5
+  xi_min_db: -25.0
 gain_calculation:
-  method: "laplacian_mmse"
-  g_min_db: -20.0         # Minimum gain (dB), -15 to -25
-  alpha_g: 0.7            # Gain temporal smoothing factor
-  beta_laplacian: 1.5     # Laplacian shape parameter (1.0-2.0)
-
-# Noise Scene Tracking (v1.3.0)
+  method: laplacian_mmse
+  g_min_db: -20.0
+  alpha_g: 0.7
+  beta_laplacian: 1.5
 noise_tracking:
   enable: true
-
-# Notes:
-#
-# Laplacian-MMSE 特點:
-# - 假設乾淨語音 DFT 係數服從 Laplacian 分佈
-# - 使用標準 MSE 成本函數 (非 IS 距離)
-# - 更適合語音頻譜的稀疏性和峰態特性
-# - 產生更少殘留噪聲
-#
-# 理論基礎:
-#   - Laplacian 分佈:
-#     * p(x) = (1/2b) * exp(-|x|/b)
-#     * 峰態係數 = 6 (Gaussian 為 3)
-#     * 更「尖銳」,更適合稀疏信號
-#
-#   - 與 Gaussian 對比:
-#     * Gaussian 峰態 = 3 (正態分佈)
-#     * Laplacian 峰態 = 6 (雙指數)
-#     * 語音 DFT 係數實測峰態 ≈ 5-8
-#
-# beta_laplacian: Laplacian 形狀參數
-#   - 控制 Laplacian 分佈的「尖銳度」
-#   - 1.0: 較寬鬆,接近 Gaussian 行為
-#     * 增益較大,保留更多語音細節
-#     * 可能殘留較多噪聲
-#   - 1.5 (推薦): 平衡設置
-#     * 在降噪和語音保真之間取得平衡
-#     * 適合大多數場景
-#   - 2.0: 較保守,更多抑制
-#     * 增益較小,降噪更強
-#     * 語音可能稍微過度抑制
-#
-# alpha_g: 增益平滑因子
-#   - Laplacian 先驗已較保守,可使用標準 alpha_g
-#   - 0.6-0.7: 推薦範圍
-#   - 0.7-0.8: 強平滑
-#
-# 與其他版本的區別:
-#   - V3 (MMSE-STSA):   Gaussian 先驗 + 線性域 MSE
-#   - V3-2 (MMSE-LSA):  Gaussian 先驗 + 對數域 MSE
-#   - V3-3 (PMMSE):     Gaussian 先驗 + IS 距離
-#   - V3-4 (Lap-MMSE):  Laplacian 先驗 + 標準 MSE ⭐
-#
-# 數學公式:
-#   G = (sqrt(π)/2) * sqrt(v) * exp(-v/2) * I0(v/2)
-#   其中:
-#     v = β * ξ/(1+ξ) * γ
-#     β = beta_laplacian
-#     I0 = Modified Bessel function of order 0
-#
-# 數值穩定性:
-#   - v > 100 時使用漸近近似: G ≈ 0.5
-#   - 防止 exp(-v/2) * I0(v/2) 溢出
-#
-# 調參建議:
-#   - 強降噪場景: beta = 2.0, g_min_db = -25
-#   - 平衡場景:   beta = 1.5, g_min_db = -20 (默認)
-#   - 保真場景:   beta = 1.0, g_min_db = -15
-#
-# 參考文獻:
-#   Chen, J., & Loizou, P. C. (2007).
-#   "Speech enhancement using a new Bayesian estimator with symmetrized
-#   gamma distribution for speech presence uncertainty."
-#   IEEE ICASSP.
+snr_adaptive:
+  enable: false
+  base_g_min_db: -15.0
+  snr_smoothing: 0.9
+  clean_detection: true
+  clean_bypass: false

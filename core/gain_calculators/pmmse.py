@@ -66,7 +66,8 @@ class PmmseGainCalculator:
         self,
         spp: np.ndarray,
         xi: np.ndarray,
-        gamma: np.ndarray
+        gamma: np.ndarray,
+        g_min: float = None
     ) -> np.ndarray:
         """
         計算 PMMSE 增益
@@ -80,16 +81,20 @@ class PmmseGainCalculator:
             spp: 語音存在機率 (n_freqs,)
             xi: 先驗 SNR (n_freqs,)
             gamma: 後驗 SNR (n_freqs,)
+            g_min: SNR adaptive 最小增益（可選，用於動態調整）
 
         返回:
             gain: 增益 (n_freqs,)
         """
+        # 使用 SNR adaptive g_min (如果提供) 或默認值
+        g_min_effective = g_min if g_min is not None else self.g_min
+
         # PMMSE 基礎增益 (Gaussian 先驗)
         gain_pmmse = self._pmmse_gain_gaussian(xi, gamma)
 
         # SPP 加權 (線性域)
         if self.use_spp_weighting:
-            gain = spp * gain_pmmse + (1 - spp) * self.g_min
+            gain = spp * gain_pmmse + (1 - spp) * g_min_effective
         else:
             gain = gain_pmmse
 
@@ -98,7 +103,7 @@ class PmmseGainCalculator:
             gain = self.alpha_g * self.gain_prev + (1 - self.alpha_g) * gain
 
         self.gain_prev = gain.copy()
-        gain = np.clip(gain, self.g_min, 1.0)
+        gain = np.clip(gain, g_min_effective, 1.0)
 
         return gain
 

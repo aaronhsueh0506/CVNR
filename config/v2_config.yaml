@@ -1,34 +1,25 @@
-# V2: Wiener Filter Configuration
-
 version: 2
-name: "Wiener Filter"
-
-# Audio Parameters
+name: Wiener Filter
 audio:
   sample_rate: 16000
   frame_size_ms: 20
   frame_shift_ms: 10
   fft_size: 512
-  window_type: "hanning"
-
-# Noise Estimation
+  window_type: hanning
 noise_estimation:
-  method: "recursive_average"
-  alpha: 0.95             # Noise smoothing factor (0.9-0.95)
+  method: recursive_average
+  alpha: 0.95
   num_init_frames: 20
-  update_during_speech: false  # Don't update noise during speech
-
-# Gain Calculation
+  update_during_speech: false
 gain_calculation:
-  method: "wiener"
-  min_gain: 0.1           # Minimum gain (提高以保留更多語音)
-  alpha_smooth: 0.8       # Temporal smoothing factor (0.7-0.9，減少 musical noise)
-
-# Noise Scene Tracking (v1.5.0)
+  method: wiener
+  min_gain: 0.1
+  alpha_smooth: 0.8
 noise_tracking:
   enable: true
-
-# Notes:
-# - alpha 越大噪聲估計越平滑，但適應速度越慢
-# - update_during_speech=false 避免在語音段錯誤更新噪聲估計
-# - min_gain 提高到 0.1 以在強噪聲環境下保留語音
+snr_adaptive:
+  enable: true
+  base_g_min_db: -15.0
+  snr_smoothing: 0.9
+  clean_detection: true
+  clean_bypass: false

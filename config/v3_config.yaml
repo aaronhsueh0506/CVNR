@@ -1,71 +1,30 @@
-# V3: MMSE-STSA Configuration
-# ⭐ 推薦學習版本
-# 整合 V3-1：支持 Bessel 完整版和 E1 簡化版切換
-
 version: 3
-name: "MMSE-STSA"
-
-# Audio Parameters
+name: MMSE-STSA
 audio:
   sample_rate: 16000
   frame_size_ms: 20
   frame_shift_ms: 10
   fft_size: 512
-  window_type: "hanning"
-
-# Noise Estimation
+  window_type: hanning
 noise_estimation:
-  method: "recursive_average"
+  method: recursive_average
   alpha: 0.95
   num_init_frames: 20
   update_during_speech: false
-
-# SPP (Speech Presence Probability) Estimation
 spp:
-  alpha_xi: 0.95          # A priori SNR smoothing factor (提高平滑度)
-  q: 0.6                  # Speech prior probability (提高語音優先權)
-  xi_min_db: -25.0        # Minimum a priori SNR (dB)
-
-# Gain Calculation
+  alpha_xi: 0.95
+  q: 0.6
+  xi_min_db: -25.0
 gain_calculation:
-  method: "spp_mmse"
-  g_min_db: -12.0         # Minimum gain (dB), 進一步提高以減少失真
-  alpha_g: 0.75           # Gain temporal smoothing factor (適度平滑)
-  use_full_formula: false # v1.5.0: E1 簡化版性能更好
-
-# Noise Scene Tracking (v1.3.0)
+  method: spp_mmse
+  g_min_db: -12.0
+  alpha_g: 0.75
+  use_full_formula: false
 noise_tracking:
   enable: true
-
-# Notes:
-# - alpha_xi: 越接近 1 越平滑，但反應越慢
-#   - 建議範圍: 0.92-0.98
-#   - 語音變化快用 0.92-0.95，變化慢用 0.95-0.98
-#
-# - q: 語音先驗機率
-#   - 通常設為 0.5（假設語音和噪聲同樣可能）
-#   - 語音多的場景可調高（0.6-0.7）
-#   - 噪聲多的場景可調低（0.3-0.4）
-#
-# - xi_min_db: 先驗 SNR 下限
-#   - 防止除零和數值問題
-#   - 不要設得太高，會限制降噪能力
-#
-# - g_min_db: 最小增益
-#   - 越小降噪越多，但語音失真越大
-#   - 建議: -15dB（輕微降噪）到 -25dB（強力降噪）
-#
-# - alpha_g: 增益平滑
-#   - 減少音樂噪聲的關鍵參數
-#   - 越大越平滑，但可能模糊語音起始
-#   - 建議: 0.6-0.8
-#
-# - use_full_formula: MMSE-STSA 公式選擇 (v1.5.0)
-#   - false (推薦): E1 簡化版
-#     * 使用指數積分 E1 函數
-#     * 計算速度快，數值穩定性好
-#     * 誤差 < 5%（與完整版幾乎相同）
-#   - true: Bessel I0+I1 完整版
-#     * 學術標準實現（Ephraim-Malah 1984）
-#     * 使用 Modified Bessel 函數 I0 和 I1
-#     * 用於理論研究或對比實驗
+snr_adaptive:
+  enable: true
+  base_g_min_db: -12.0
+  snr_smoothing: 0.9
+  clean_detection: true
+  clean_bypass: false

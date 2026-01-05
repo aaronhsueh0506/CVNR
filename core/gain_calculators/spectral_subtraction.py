@@ -33,7 +33,8 @@ class SpectralSubtractionGainCalculator:
     def calculate(
         self,
         noisy_magnitude: np.ndarray,
-        noise_magnitude: np.ndarray
+        noise_magnitude: np.ndarray,
+        g_min: float = None
     ) -> np.ndarray:
         """
         計算頻譜減法增益
@@ -41,10 +42,14 @@ class SpectralSubtractionGainCalculator:
         參數:
             noisy_magnitude: 帶噪語音幅度譜 (n_freqs,)
             noise_magnitude: 噪聲幅度譜 (n_freqs,)
+            g_min: SNR adaptive 最小增益（可選，用於動態調整）
 
         返回:
             gain: 增益 (n_freqs,)
         """
+        # 使用 SNR adaptive g_min (如果提供) 或默認 beta
+        beta_effective = g_min if g_min is not None else self.beta
+
         # 頻譜減法
         # S_est = |Y| - alpha * |N|
         estimated_magnitude = noisy_magnitude - self.alpha * noise_magnitude
@@ -53,7 +58,7 @@ class SpectralSubtractionGainCalculator:
         # S_est = max(S_est, beta * |Y|)
         estimated_magnitude = np.maximum(
             estimated_magnitude,
-            self.beta * noisy_magnitude
+            beta_effective * noisy_magnitude
         )
 
         # 計算增益

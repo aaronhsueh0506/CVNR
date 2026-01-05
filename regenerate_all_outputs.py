@@ -164,12 +164,17 @@ for method_name, method_config in methods.items():
             continue
 
         try:
-            # 加載（保持原始採樣率）
-            noisy, sr = librosa.load(input_file, sr=None)
+            # 加載並統一重採樣到 16kHz
+            noisy, original_sr = librosa.load(input_file, sr=None)
 
-            # 動態計算 FFT size（保持 32ms 窗長）
-            fft_size = int(sr * 0.032)
-            fft_size = 2 ** int(np.ceil(np.log2(fft_size)))
+            # 強制重採樣到 16kHz
+            target_sr = 16000
+            if original_sr != target_sr:
+                noisy = librosa.resample(noisy, orig_sr=original_sr, target_sr=target_sr)
+            sr = target_sr
+
+            # 使用配置文件的 FFT size（統一為 512）
+            fft_size = config['audio']['fft_size']
 
             # 從配置文件獲取參數
             denoiser_params = get_denoiser_params_from_config(config, sr, fft_size)
