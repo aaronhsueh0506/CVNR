@@ -46,6 +46,8 @@ ENV/
 
 # 輸出文件
 denoised/
+denoised_phase5/
+visualizations/
 output/*.wav
 output/*.png
 output/*.pdf
