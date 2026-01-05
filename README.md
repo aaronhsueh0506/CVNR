@@ -66,6 +66,26 @@ pip install pesq pystoi
 
 ## 🎯 快速指令參考（常用工具）
 
+### 🧪 完整測試與評估流程（推薦）
+
+如果您想評估所有7個降噪方法的性能，請按以下順序執行：
+
+```bash
+# 步驟1: 生成所有測試用例的降噪輸出 (7個方法 × 12個測試用例 = 84個文件)
+python3 regenerate_all.py
+
+# 步驟2: 計算改善指標 (segSNR, fwSegSNR, WSS, PESQ, STOI, LSD)
+python3 compute_improvement.py
+
+# 查看結果報告
+cat results/improvement_report.md
+```
+
+**說明**：
+- `regenerate_all.py`: 使用當前配置處理所有測試用例，輸出到 `output/` 目錄
+- `compute_improvement.py`: 計算每個方法相對於noisy的改善量，生成詳細報告
+- 測試用例：3種噪聲 (babble/car/street) × 4個SNR級別 (0/5/10/15dB)
+
 ### 🎵 音頻處理與可視化
 
 #### 1. 處理音頻並生成波形對比圖
@@ -133,40 +153,10 @@ python3 compute_improvement.py
 - `TRIM_SECONDS = 0.5`：移除音頻前 0.5 秒（處理 prepend 文件）
 - `EVAL_SR = 16000`：評估時統一重採樣到 16kHz（Loizou 標準）
 - 自動處理兩類文件：
-  - V1-V4：從 `denoised_original/` 讀取（有 prepend）
+  - V1-V4：從 `output/` 讀取（有 prepend）
   - Speex/RNNoise：從 `test_wav/wav/benchmark_wav/` 讀取（無 prepend）
 
-#### 4. Benchmark 測試（性能 + 對標評估）
-```bash
-# 快速性能測試（跳過 PESQ/STOI）
-python3 benchmark.py --mode performance --quick
-
-# 完整性能測試（包含 PESQ/STOI）
-python3 benchmark.py --mode performance --full
-
-# 對標評估（與 Speex/RNNoise 對比）
-python3 benchmark.py --mode comparison
-
-# 兩者都執行
-python3 benchmark.py --mode all
-
-# 自定義噪聲類型
-python3 benchmark.py --mode performance --noise-types babble,car,street
-```
-
-**benchmark.py 模式說明**：
-- `performance`：性能基準測試（RTF, 處理時間, CPU, 內存, SNR, PESQ, STOI）
-- `comparison`：對標評估（與 Speex/RNNoise 使用相同流程評估）
-- `all`：兩者都執行
-
-**參數**：
-- `--quick`：跳過 PESQ/STOI（僅測 SNR + 性能）
-- `--full`：完整測試（包含 PESQ/STOI）
-- `--skip-seconds 0.5`：移除音頻前 N 秒（默認 0.5）
-- `--noise-types`：逗號分隔的噪聲類型（默認: babble,car,street）
-- `--output`：輸出文件路徑（默認: benchmark_results.json）
-
-#### 5. 綜合評估（Loizou 2008 專業指標）
+#### 4. 綜合評估（Loizou 2008 專業指標）
 ```bash
 # 完整評估所有方法（V1-V4 + Speex/RNNoise）
 python3 tools/comprehensive_evaluation.py
@@ -181,11 +171,11 @@ python3 tools/comprehensive_evaluation.py
 
 #### 6. 重新生成所有降噪輸出
 ```bash
-# 使用當前配置重新處理所有測試音檔
-python3 regenerate_all_outputs.py
+# 使用當前配置重新處理所有測試音檔 (7個方法 × 12個測試用例 = 84個文件)
+python3 regenerate_all.py
 
 # 輸出:
-# - denoised_original/ 目錄中的 84 個 .wav 文件
+# - output/ 目錄中的 84 個 .wav 文件 (統一16kHz)
 # - 格式: {VERSION}_{noise_type}_{snr}dB.wav
 # - 例如: V3_babble_10dB.wav, V4_car_5dB.wav
 ```
