@@ -77,39 +77,19 @@ class OmlsaGainCalculator:
         log_gain_h1 = np.log(gain_h1 + 1e-10)
         log_g_min_effective = np.log(g_min_effective + 1e-10)
 
-        # v1.5.0: 混合策略（低 SPP 使用線性/對數混合）
-        hybrid_threshold = 0.3
+        # v1.6.0: 使用標準 Cohen OMLSA 幾何平均公式
+        # G = G_H1^p × G_min^(1-p) 在對數域實現為：
+        # log(G) = p * log(G_H1) + (1-p) * log(G_min)
+        log_gain = spp * log_gain_h1 + (1 - spp) * log_g_min_effective
 
-        # 計算線性域增益（作為參考）
-        gain_linear = spp * gain_h1 + (1 - spp) * g_min_effective
-
-        # 計算對數域增益
-        log_gain_log = spp * log_gain_h1 + (1 - spp) * log_g_min_effective
-        gain_log = np.exp(log_gain_log)
-
-        # 低 SPP：50% 線性 + 50% 對數
-        # 高 SPP：100% 對數（保留原有優勢）
-        log_gain = np.where(
-            spp < hybrid_threshold,
-            np.log(0.5 * gain_linear + 0.5 * gain_log + 1e-10),  # 混合
-            log_gain_log  # 純對數
-        )
-
-        # v1.5.0: 限制幀間變化速率（防止震動）
-        if self.log_gain_prev is not None:
-            log_gain_diff = log_gain - self.log_gain_prev
-            max_change_db = 6.0  # 最大變化 6dB/幀
-            log_gain_diff = np.clip(
-                log_gain_diff,
-                -max_change_db / 10,
-                max_change_db / 10
-            )
-            log_gain = self.log_gain_prev + log_gain_diff
-
-        # 4. 時間平滑（對數域）
-        if self.log_gain_prev is not None:
-            log_gain = self.alpha_g * self.log_gain_prev + \
-                      (1 - self.alpha_g) * log_gain
+        # v1.6.0: 移除雙重增益平滑（標準 Cohen 不使用顯式增益平滑）
+        # 平滑效果已通過 SPP 估計器中的 xi (先驗 SNR) 實現
+        # 保留輕微平滑以減少音樂噪聲（可選，使用較小的 alpha_g）
+        if self.log_gain_prev is not None and self.alpha_g > 0:
+            # 使用較小的平滑係數（0.3 而非 0.7）
+            effective_alpha = min(self.alpha_g, 0.3)
+            log_gain = effective_alpha * self.log_gain_prev + \
+                      (1 - effective_alpha) * log_gain
 
         # 保存當前對數增益
         self.log_gain_prev = log_gain.copy()
