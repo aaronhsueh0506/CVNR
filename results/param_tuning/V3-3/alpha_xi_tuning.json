@@ -1,0 +1,61 @@
+{
+  "param_name": "alpha_xi",
+  "current_value": 0.92,
+  "results": [
+    {
+      "param_name": "alpha_xi",
+      "param_value": 0.88,
+      "is_current": false,
+      "metrics": {
+        "pesq": 0.207,
+        "stoi": -0.033,
+        "segsnr": 2.76
+      },
+      "weighted_score": 0.1488
+    },
+    {
+      "param_name": "alpha_xi",
+      "param_value": 0.9,
+      "is_current": false,
+      "metrics": {
+        "pesq": 0.207,
+        "stoi": -0.033,
+        "segsnr": 2.76
+      },
+      "weighted_score": 0.1488
+    },
+    {
+      "param_name": "alpha_xi",
+      "param_value": 0.92,
+      "is_current": true,
+      "metrics": {
+        "pesq": 0.21,
+        "stoi": -0.035,
+        "segsnr": 2.8
+      },
+      "weighted_score": 0.1505
+    },
+    {
+      "param_name": "alpha_xi",
+      "param_value": 0.94,
+      "is_current": false,
+      "metrics": {
+        "pesq": 0.213,
+        "stoi": -0.038,
+        "segsnr": 2.84
+      },
+      "weighted_score": 0.1519
+    },
+    {
+      "param_name": "alpha_xi",
+      "param_value": 0.96,
+      "is_current": false,
+      "metrics": {
+        "pesq": 0.214,
+        "stoi": -0.042,
+        "segsnr": 2.88
+      },
+      "weighted_score": 0.152
+    }
+  ]
+}

@@ -4,6 +4,42 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [2.1.2] - 2026-01-06
+
+### 修復 (Fixed)
+- 🐛 **segSNR 計算 bug 修復**
+  - **問題**: `tools/benchmark_comparison.py` 錯誤地將 `sample_rate` (16000) 傳遞給 `calculate_segmental_snr()` 的 `frame_size` 參數
+  - **影響**: 之前的 segSNR 排名數據不準確
+  - **修復**: 使用正確的 `frame_size=256` (16ms @ 16kHz), `hop_size=128` (50% overlap)
+
+### 發現 (Discovered)
+- ⚠️ **V4 (IMCRA-OMLSA) 過度抑制問題**
+  - **症狀**: 輸出能量僅保留輸入的 ~1%（正常應為 20-70%）
+  - **原因**: OMLSA 增益計算中的幀間限制和時間平滑導致增益惡性循環下降
+  - **影響**: 雖然 segSNR 數值看起來不錯 (+4.60 dB)，但 PESQ 最低 (1.19)，實際語音被嚴重削弱
+  - **建議**: 使用 V3 替代 V4
+
+### 修正後性能結果（benchmark_comparison.py）
+
+| 排名 | 方法 | segSNR 改善 (dB) | PESQ | STOI | 備註 |
+|------|------|------------------|------|------|------|
+| 🥇 1 | **RNNoise** | **+4.72** | 1.69 | **0.90** | 深度學習，綜合最佳 |
+| 🥈 2 | V4 (IMCRA-OMLSA) | +4.60 | 1.19 | 0.20 | ⚠️ 過度抑制 |
+| 🥉 3 | **V3 (SPP-MMSE)** | +2.65 | **1.52** | 0.17 | **推薦：傳統算法最佳** |
+| 4 | V3-2 (MMSE-LSA) | +2.56 | 1.43 | 0.14 | |
+| 5 | V2 (Wiener) | +2.54 | 1.27 | 0.14 | |
+| 6 | Speex | +2.40 | 1.44 | 0.88 | |
+| 7 | V3-4 (Laplacian) | +2.33 | 1.43 | 0.17 | |
+| 8 | V1 (Spectral Sub) | +2.11 | 1.44 | 0.13 | |
+| 9 | V3-3 (PMMSE) | +2.08 | 1.43 | 0.15 | |
+
+### 修改文件
+1. `tools/benchmark_comparison.py` - 修復 segSNR 計算的 frame_size 參數
+2. `README.md` - 更新排名和推薦
+3. `CHANGELOG.md` - 新增此版本記錄
+
+---
+
 ## [2.1.1] - 2026-01-06
 
 ### 改進 (Changed)
@@ -12,30 +48,11 @@
   - 來源：V3-3 參數調優實驗結果
   - 影響：提升所有 V3 系列的 SNR 平滑效果
 
-- ⬆️ **V4 (IMCRA-OMLSA) 配置修復**
-  - 修復錯誤參數導致的性能下降問題
-  - `alpha_d`: 0.92 → **0.88**（噪聲估計更新速率）
-  - `L`: 100 → **120**（最小值追蹤窗口）
-  - `alpha_g`: 0.7 → **0.88**（增益平滑因子）
-  - 暫時禁用 `noise_tracking` 和 `snr_adaptive` 以提升穩定性
-  - 效果：V4 恢復最佳性能，segSNR 改善達 +4.84 dB
-
 ### 修改文件
 1. `config/v3_config.yaml` - alpha_xi: 0.95 → 0.96
 2. `config/v3_2_config.yaml` - alpha_xi: 0.92 → 0.96
 3. `config/v3_3_config.yaml` - alpha_xi: 0.90 → 0.96
 4. `config/v3_4_config.yaml` - alpha_xi: 0.92 → 0.96
-5. `config/v4_config.yaml` - 修復 alpha_d, L, alpha_g 參數
-
-### 性能結果（benchmark_comparison.py）
-
-| 排名 | 方法 | segSNR 改善 (dB) |
-|------|------|------------------|
-| 🥇 1 | **V4 (IMCRA-OMLSA)** | **+5.68** |
-| 🥈 2 | RNNoise | +3.97 |
-| 🥉 3 | V3 (SPP-MMSE) | +3.96 |
-| 4 | V3-4 (Laplacian) | +3.79 |
-| 5 | V3-2 (MMSE-LSA) | +3.42 |
 
 ---
 

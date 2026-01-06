@@ -60,8 +60,9 @@ class BenchmarkComparison:
         self.clean_path = clean_path
         self.sample_rate = sample_rate
 
-        # 加載 clean 音頻（移除 0.5s）
-        self.clean_audio, _ = self.load_and_trim_audio(clean_path)
+        # 加載 clean 音頻（不跳過！clean.wav 沒有 prepend 噪聲段）
+        # v1.6.0 修復：之前錯誤地對 clean 也跳過 0.5s，導致對齊錯誤
+        self.clean_audio, _ = librosa.load(clean_path, sr=self.sample_rate)
 
     def load_and_trim_audio(self, filepath: str) -> Tuple[np.ndarray, int]:
         """
@@ -89,7 +90,8 @@ class BenchmarkComparison:
     def evaluate_single_case(
         self,
         enhanced_path: str,
-        noisy_path: str
+        noisy_path: str,
+        has_prepend: bool = True
     ) -> Dict[str, float]:
         """
         評估單個測試用例
@@ -97,13 +99,20 @@ class BenchmarkComparison:
         參數:
             enhanced_path: 降噪後音頻路徑
             noisy_path: 帶噪音頻路徑
+            has_prepend: 音頻是否有 prepend 噪聲段（V1-V4 有，Speex/RNNoise 沒有）
 
         返回:
             metrics: 各項指標的字典
         """
-        # 加載音頻（移除 0.5s）
-        enhanced, _ = self.load_and_trim_audio(enhanced_path)
-        noisy, _ = self.load_and_trim_audio(noisy_path)
+        # v1.6.0 修復：根據是否有 prepend 決定是否跳過 0.5s
+        if has_prepend:
+            # V1-V4：有 prepend，需要跳過
+            enhanced, _ = self.load_and_trim_audio(enhanced_path)
+            noisy, _ = self.load_and_trim_audio(noisy_path)
+        else:
+            # Speex/RNNoise：沒有 prepend，不跳過
+            enhanced, _ = librosa.load(enhanced_path, sr=self.sample_rate)
+            noisy, _ = librosa.load(noisy_path, sr=self.sample_rate)
 
         # 對齊長度（取最短）
         min_len = min(len(enhanced), len(self.clean_audio), len(noisy))
@@ -190,16 +199,20 @@ class BenchmarkComparison:
                 current_test += 1
 
                 # 確定降噪音頻路徑和對應的 noisy 路徑
+                # v1.6.0 修復：區分有/無 prepend 的情況
                 if method == 'Speex':
                     enhanced_path = f"test_wav/wav/benchmark_wav/speex/speexdsp_{test_id}.wav"
                     noisy_path = f"test_wav/wav/{test_id}.wav"  # Speex 使用無 prepend 的 noisy
+                    has_prepend = False
                 elif method == 'RNNoise':
                     enhanced_path = f"test_wav/wav/benchmark_wav/rnnoise/rnnoise_{test_id}.wav"
                     noisy_path = f"test_wav/wav/{test_id}.wav"  # RNNoise 使用無 prepend 的 noisy
+                    has_prepend = False
                 else:
-                    # V1-V4 使用 denoised_original 目錄，對應有 prepend 的 noisy
-                    enhanced_path = f"denoised_original/{method}_{test_id}.wav"
+                    # V1-V4 使用 output 目錄，對應有 prepend 的 noisy
+                    enhanced_path = f"output/{method}_{test_id}.wav"
                     noisy_path = f"test_wav/wav/append_silence/{test_id}_prepend.wav"
+                    has_prepend = True
 
                 # 檢查文件是否存在
                 if not os.path.exists(enhanced_path):
@@ -212,7 +225,7 @@ class BenchmarkComparison:
 
                 # 評估
                 result_key = f"{method}_{test_id}"
-                metrics = self.evaluate_single_case(enhanced_path, noisy_path)
+                metrics = self.evaluate_single_case(enhanced_path, noisy_path, has_prepend=has_prepend)
 
                 if metrics is not None:
                     results[result_key] = metrics

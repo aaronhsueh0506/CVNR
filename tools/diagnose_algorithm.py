@@ -33,25 +33,27 @@ print("\n【1】測試數據結構檢查")
 print("-" * 100)
 
 # 加載文件
+# ✅ 修正：使用 prepend 版本的 noisy，與 benchmark 一致
 clean, sr_clean = librosa.load('test_wav/wav/clean.wav', sr=None)
-noisy_0db, sr_noisy = librosa.load('test_wav/wav/babble_0dB.wav', sr=None)
-noisy_15db, _ = librosa.load('test_wav/wav/babble_15dB.wav', sr=None)
+noisy_0db_prepend, sr_noisy = librosa.load('test_wav/wav/append_silence/babble_0dB_prepend.wav', sr=None)
+noisy_15db_prepend, _ = librosa.load('test_wav/wav/append_silence/babble_15dB_prepend.wav', sr=None)
 
 print(f"Clean:      sr={sr_clean:5d}Hz, len={len(clean):7d}, duration={len(clean)/sr_clean:.2f}s")
-print(f"Noisy 0dB:  sr={sr_noisy:5d}Hz, len={len(noisy_0db):7d}, duration={len(noisy_0db)/sr_noisy:.2f}s")
-print(f"Noisy 15dB: sr={sr_noisy:5d}Hz, len={len(noisy_15db):7d}, duration={len(noisy_15db)/sr_noisy:.2f}s")
+print(f"Noisy 0dB (prepend):  sr={sr_noisy:5d}Hz, len={len(noisy_0db_prepend):7d}, duration={len(noisy_0db_prepend)/sr_noisy:.2f}s")
+print(f"Noisy 15dB (prepend): sr={sr_noisy:5d}Hz, len={len(noisy_15db_prepend):7d}, duration={len(noisy_15db_prepend)/sr_noisy:.2f}s")
 
-# 長度差異
-len_diff = len(noisy_0db) - len(clean)
+# 長度差異（prepend 版本應該比 clean 長 0.5s）
+len_diff = len(noisy_0db_prepend) - len(clean)
 time_diff = len_diff / sr_noisy
-print(f"\n長度差異: {len_diff} samples = {time_diff:.3f}s")
+print(f"\n長度差異 (noisy_prepend - clean): {len_diff} samples = {time_diff:.3f}s")
+print(f"  -> 應該約為 0.5s（prepend 噪聲段）")
 
 # 檢查前段能量
 skip_samples = int(0.5 * sr_noisy)
 print(f"\n前 0.5s ({skip_samples} samples) 能量分析:")
-print(f"  Noisy 0dB  前段 RMS: {np.sqrt(np.mean(noisy_0db[:skip_samples]**2)):.6f}")
-print(f"  Noisy 0dB  後段 RMS: {np.sqrt(np.mean(noisy_0db[skip_samples:skip_samples+skip_samples]**2)):.6f}")
-print(f"  Clean      前段 RMS: {np.sqrt(np.mean(clean[:skip_samples]**2)):.6f}")
+print(f"  Noisy 0dB prepend 前段 RMS: {np.sqrt(np.mean(noisy_0db_prepend[:skip_samples]**2)):.6f}")
+print(f"  Noisy 0dB prepend 後段 RMS: {np.sqrt(np.mean(noisy_0db_prepend[skip_samples:skip_samples+skip_samples]**2)):.6f}")
+print(f"  Clean 前段 RMS:             {np.sqrt(np.mean(clean[:skip_samples]**2)):.6f}")
 
 # ============================================================================
 # 2. 驗證 0.5s Trimming 的必要性
@@ -59,8 +61,8 @@ print(f"  Clean      前段 RMS: {np.sqrt(np.mean(clean[:skip_samples]**2)):.6f}
 print("\n【2】0.5s Trimming 邏輯驗證")
 print("-" * 100)
 
-# 對比 trim 前後的 noisy 與 clean 的相關性
-noisy_trimmed = noisy_0db[skip_samples:]
+# ✅ 修正：對 prepend 版本做 trim，使其與 clean 對齊
+noisy_trimmed = noisy_0db_prepend[skip_samples:]
 
 # Resample 到相同長度進行對比
 min_len = min(len(clean), len(noisy_trimmed))
@@ -94,8 +96,8 @@ v1 = SpectralSubtractionDenoiser(
 
 print(f"配置: sr={sr_noisy}Hz, fft_size={fft_size}")
 
-# 處理短片段
-test_segment = noisy_0db[:sr_noisy * 5]  # 前 5 秒
+# 處理短片段（使用 prepend 版本）
+test_segment = noisy_0db_prepend[:sr_noisy * 5]  # 前 5 秒
 enhanced_segment = v1.denoise(test_segment)
 
 print(f"\n輸入片段:  len={len(test_segment)}, RMS={np.sqrt(np.mean(test_segment**2)):.6f}")
@@ -108,16 +110,25 @@ print(f"RMS 變化:  {np.sqrt(np.mean(enhanced_segment**2)) / np.sqrt(np.mean(te
 print("\n【4】評估指標計算驗證")
 print("-" * 100)
 
-# 加載完整的 enhanced 文件
-enhanced_v1, _ = librosa.load('denoised_original/V1_babble_0dB.wav', sr=None)
+# ✅ 修正：從 output/ 目錄加載 enhanced 文件（與 benchmark 一致）
+enhanced_v1, sr_enhanced = librosa.load('output/V1_babble_0dB.wav', sr=None)
 
-print(f"Enhanced V1: len={len(enhanced_v1)}, RMS={np.sqrt(np.mean(enhanced_v1**2)):.6f}")
+print(f"Enhanced V1: len={len(enhanced_v1)}, sr={sr_enhanced}Hz, RMS={np.sqrt(np.mean(enhanced_v1**2)):.6f}")
 
-# Trim 並 resample 到 16kHz
-enhanced_trimmed = enhanced_v1[skip_samples:]
+# ✅ 修正對齊邏輯：
+# - clean: 無 prepend，不需要 trim
+# - noisy_prepend: 有 prepend，需要 trim 0.5s
+# - enhanced: 由 prepend 版本處理得到，也需要 trim 0.5s
+skip_samples_16k = int(0.5 * 16000)  # 16kHz 下的 0.5s
+
+# 先 resample 到 16kHz
 clean_16k_full = librosa.resample(clean, orig_sr=sr_clean, target_sr=16000)
-noisy_16k_full = librosa.resample(noisy_trimmed, orig_sr=sr_noisy, target_sr=16000)
-enhanced_16k = librosa.resample(enhanced_trimmed, orig_sr=sr_noisy, target_sr=16000)
+noisy_16k_prepend = librosa.resample(noisy_0db_prepend, orig_sr=sr_noisy, target_sr=16000)
+enhanced_16k_full = librosa.resample(enhanced_v1, orig_sr=sr_enhanced, target_sr=16000)
+
+# 對 prepend 版本做 trim
+noisy_16k_full = noisy_16k_prepend[skip_samples_16k:]
+enhanced_16k = enhanced_16k_full[skip_samples_16k:]
 
 # 確保長度一致
 min_len = min(len(clean_16k_full), len(noisy_16k_full), len(enhanced_16k))
@@ -169,138 +180,88 @@ elif output_volume_ratio > 1.5:
 import matplotlib
 matplotlib.use('Agg')  # 非交互式後端
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 
 try:
     # 嘗試使用 librosa（紫色/magma 配色）
     import librosa
     import librosa.display
 
-    # 使用 librosa.display.specshow
-    plt.figure(figsize=(15, 10))
+    # 準備數據（取前 1 秒用於顯示）
+    display_samples = 16000  # 1 秒 @ 16kHz
+    hop_length = 256
+    n_fft = 512
 
-    # Clean 頻譜圖
-    plt.subplot(3, 1, 1)
-    D_clean = librosa.stft(clean_16k_full[:16000], n_fft=512, hop_length=256)
+    # 計算 STFT
+    D_clean = librosa.stft(clean_16k_full[:display_samples], n_fft=n_fft, hop_length=hop_length)
+    D_noisy = librosa.stft(noisy_16k_full[:display_samples], n_fft=n_fft, hop_length=hop_length)
+    D_enhanced = librosa.stft(enhanced_16k[:display_samples], n_fft=n_fft, hop_length=hop_length)
+
     D_clean_db = librosa.amplitude_to_db(np.abs(D_clean), ref=np.max)
-    librosa.display.specshow(D_clean_db, sr=16000, hop_length=256, x_axis='time', y_axis='hz', cmap='magma')
-    plt.title('Clean Spectrogram', fontsize=12, fontweight='bold')
-    plt.ylabel('Frequency (Hz)')
-    plt.colorbar(label='Intensity (dB)', format='%+2.0f dB')
-
-    # Noisy 頻譜圖
-    plt.subplot(3, 1, 2)
-    D_noisy = librosa.stft(noisy_16k_full[:16000], n_fft=512, hop_length=256)
     D_noisy_db = librosa.amplitude_to_db(np.abs(D_noisy), ref=np.max)
-    librosa.display.specshow(D_noisy_db, sr=16000, hop_length=256, x_axis='time', y_axis='hz', cmap='magma')
-    plt.title('Noisy Spectrogram', fontsize=12, fontweight='bold')
-    plt.ylabel('Frequency (Hz)')
-    plt.colorbar(label='Intensity (dB)', format='%+2.0f dB')
-
-    # Enhanced 頻譜圖
-    plt.subplot(3, 1, 3)
-    D_enhanced = librosa.stft(enhanced_16k[:16000], n_fft=512, hop_length=256)
     D_enhanced_db = librosa.amplitude_to_db(np.abs(D_enhanced), ref=np.max)
-    librosa.display.specshow(D_enhanced_db, sr=16000, hop_length=256, x_axis='time', y_axis='hz', cmap='magma')
-    plt.title('Enhanced Spectrogram', fontsize=12, fontweight='bold')
-    plt.xlabel('Time (s)')
-    plt.ylabel('Frequency (Hz)')
-    plt.colorbar(label='Intensity (dB)', format='%+2.0f dB')
 
-    plt.tight_layout()
-    plt.savefig('diagnosis_spectrum.png', dpi=150)
-    print("\n✅ 頻譜圖（Spectrogram，librosa 風格）已保存: diagnosis_spectrum.png")
+    # 計算時間軸（確保波形和頻譜圖對齊）
+    duration = display_samples / 16000
+    time_axis = np.linspace(0, duration, display_samples)
 
-    # 創建對比圖：librosa vs 手動 STFT
-    print("\n檢查 librosa.display.specshow 與手動 STFT 的一致性...")
-    from scipy.signal import stft as scipy_stft
+    # 使用 GridSpec 創建對齊的圖表（含 colorbar 列）
+    # 時域波形在上方，頻譜圖在下方
+    fig = plt.figure(figsize=(14, 12))
+    # 創建 4 行 2 列的 GridSpec，第二列用於 colorbar
+    gs = GridSpec(4, 2, width_ratios=[1, 0.03], height_ratios=[1, 1, 1, 1], hspace=0.3, wspace=0.02)
 
-    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    # ========== 時域波形疊圖 ==========
+    ax_waveform = fig.add_subplot(gs[0, 0])
+    ax_waveform.plot(time_axis, noisy_16k_full[:display_samples], alpha=0.7, label='Noisy', color='#E74C3C', linewidth=0.5)
+    ax_waveform.plot(time_axis, enhanced_16k[:display_samples], alpha=0.8, label='Enhanced', color='#3498DB', linewidth=0.5)
+    ax_waveform.plot(time_axis, clean_16k_full[:display_samples], alpha=0.6, label='Clean', color='#2ECC71', linewidth=0.5)
+    ax_waveform.set_ylabel('Amplitude')
+    ax_waveform.set_title('Waveform Comparison (Noisy / Enhanced / Clean)', fontsize=12, fontweight='bold')
+    ax_waveform.legend(loc='upper right', fontsize=9)
+    ax_waveform.set_xlim(0, duration)
+    ax_waveform.grid(True, alpha=0.3)
+    ax_waveform.set_xticklabels([])
+    # 波形圖右側留空白區域（與 colorbar 對齊）
+    ax_waveform_cbar = fig.add_subplot(gs[0, 1])
+    ax_waveform_cbar.axis('off')
 
-    # 左邊：librosa.display.specshow
-    axes[0].clear()
-    librosa.display.specshow(D_clean_db, sr=16000, hop_length=256, x_axis='time', y_axis='hz',
-                            cmap='magma', ax=axes[0])
-    axes[0].set_title('librosa.display.specshow (紫色)', fontsize=12, fontweight='bold')
-    axes[0].set_ylabel('Frequency (Hz)')
-    axes[0].set_xlabel('Time (s)')
+    # ========== Clean 頻譜圖 ==========
+    ax_clean = fig.add_subplot(gs[1, 0], sharex=ax_waveform)
+    img_clean = librosa.display.specshow(D_clean_db, sr=16000, hop_length=hop_length,
+                                          x_axis='time', y_axis='hz', cmap='magma', ax=ax_clean)
+    ax_clean.set_title('Clean Spectrogram', fontsize=12, fontweight='bold')
+    ax_clean.set_ylabel('Frequency (Hz)')
+    ax_clean.set_xlabel('')
+    ax_clean_cbar = fig.add_subplot(gs[1, 1])
+    fig.colorbar(img_clean, cax=ax_clean_cbar, format='%+2.0f dB')
 
-    # 右邊：手動 STFT + amp_to_dB
-    f_scipy, t_scipy, Zxx_scipy = scipy_stft(clean_16k_full[:16000], fs=16000, nperseg=512, noverlap=256)
-    magnitude = np.abs(Zxx_scipy)
-    magnitude_db = 20 * np.log10(magnitude / np.max(magnitude) + 1e-10)  # amp_to_dB
-    im = axes[1].pcolormesh(t_scipy, f_scipy, magnitude_db, cmap='magma', shading='gouraud')
-    axes[1].set_title('amp_to_dB(abs(stft(X))) (手動)', fontsize=12, fontweight='bold')
-    axes[1].set_ylabel('Frequency (Hz)')
-    axes[1].set_xlabel('Time (s)')
-    plt.colorbar(im, ax=axes[1], label='Intensity (dB)', format='%+2.0f dB')
+    # ========== Noisy 頻譜圖 ==========
+    ax_noisy = fig.add_subplot(gs[2, 0], sharex=ax_waveform)
+    img_noisy = librosa.display.specshow(D_noisy_db, sr=16000, hop_length=hop_length,
+                                          x_axis='time', y_axis='hz', cmap='magma', ax=ax_noisy)
+    ax_noisy.set_title('Noisy Spectrogram', fontsize=12, fontweight='bold')
+    ax_noisy.set_ylabel('Frequency (Hz)')
+    ax_noisy.set_xlabel('')
+    ax_noisy_cbar = fig.add_subplot(gs[2, 1])
+    fig.colorbar(img_noisy, cax=ax_noisy_cbar, format='%+2.0f dB')
 
-    plt.tight_layout()
-    plt.savefig('diagnosis_specgram_comparison.png', dpi=150)
-    print("✅ 對比圖已保存: diagnosis_specgram_comparison.png")
-    print("   (librosa.display.specshow 與手動 STFT+amp_to_dB 應該視覺上一致)")
+    # ========== Enhanced 頻譜圖 ==========
+    ax_enhanced = fig.add_subplot(gs[3, 0], sharex=ax_waveform)
+    img_enhanced = librosa.display.specshow(D_enhanced_db, sr=16000, hop_length=hop_length,
+                                             x_axis='time', y_axis='hz', cmap='magma', ax=ax_enhanced)
+    ax_enhanced.set_title('Enhanced Spectrogram', fontsize=12, fontweight='bold')
+    ax_enhanced.set_ylabel('Frequency (Hz)')
+    ax_enhanced.set_xlabel('Time (s)')
+    ax_enhanced_cbar = fig.add_subplot(gs[3, 1])
+    fig.colorbar(img_enhanced, cax=ax_enhanced_cbar, format='%+2.0f dB')
+
+    plt.savefig('diagnosis_spectrum.png', dpi=150, bbox_inches='tight')
+    print("\n✅ 診斷圖（波形 + 頻譜圖）已保存: diagnosis_spectrum.png")
+    print("   時域波形和頻譜圖時間軸已對齊")
 
 except ImportError:
-    # 如果沒有 librosa，回退到 plt.specgram（但使用 magma 配色）
-    print("\n⚠️  librosa 未安裝，使用 plt.specgram（magma 配色）")
-
-    plt.figure(figsize=(15, 10))
-
-    # Clean 頻譜圖
-    plt.subplot(3, 1, 1)
-    plt.specgram(clean_16k_full[:16000], Fs=16000, NFFT=512, noverlap=256, cmap='magma')
-    plt.title('Clean Spectrogram', fontsize=12, fontweight='bold')
-    plt.ylabel('Frequency (Hz)')
-    plt.colorbar(label='Intensity (dB)')
-
-    # Noisy 頻譜圖
-    plt.subplot(3, 1, 2)
-    plt.specgram(noisy_16k_full[:16000], Fs=16000, NFFT=512, noverlap=256, cmap='magma')
-    plt.title('Noisy Spectrogram', fontsize=12, fontweight='bold')
-    plt.ylabel('Frequency (Hz)')
-    plt.colorbar(label='Intensity (dB)')
-
-    # Enhanced 頻譜圖
-    plt.subplot(3, 1, 3)
-    plt.specgram(enhanced_16k[:16000], Fs=16000, NFFT=512, noverlap=256, cmap='magma')
-    plt.title('Enhanced Spectrogram', fontsize=12, fontweight='bold')
-    plt.xlabel('Time (s)')
-    plt.ylabel('Frequency (Hz)')
-    plt.colorbar(label='Intensity (dB)')
-
-    plt.tight_layout()
-    plt.savefig('diagnosis_spectrum.png', dpi=150)
-    print("\n✅ 頻譜圖（Spectrogram，magma 配色）已保存: diagnosis_spectrum.png")
-
-    # 創建對比圖：plt.specgram vs 手動 STFT
-    print("\n檢查 plt.specgram 與手動 STFT 的一致性...")
-    try:
-        from scipy.signal import stft as scipy_stft
-
-        fig, axes = plt.subplots(1, 2, figsize=(14, 5))
-
-        # 左邊：plt.specgram
-        axes[0].specgram(clean_16k_full[:16000], Fs=16000, NFFT=512, noverlap=256, cmap='magma')
-        axes[0].set_title('plt.specgram (紫色)', fontsize=12, fontweight='bold')
-        axes[0].set_ylabel('Frequency (Hz)')
-        axes[0].set_xlabel('Time (s)')
-
-        # 右邊：手動 STFT + amp_to_dB
-        f_scipy, t_scipy, Zxx_scipy = scipy_stft(clean_16k_full[:16000], fs=16000, nperseg=512, noverlap=256)
-        magnitude = np.abs(Zxx_scipy)
-        magnitude_db = 20 * np.log10(magnitude + 1e-10)  # amp_to_dB
-        im = axes[1].pcolormesh(t_scipy, f_scipy, magnitude_db, cmap='magma', shading='gouraud')
-        axes[1].set_title('amp_to_dB(abs(stft(X))) (手動)', fontsize=12, fontweight='bold')
-        axes[1].set_ylabel('Frequency (Hz)')
-        axes[1].set_xlabel('Time (s)')
-        plt.colorbar(im, ax=axes[1], label='Intensity (dB)')
-
-        plt.tight_layout()
-        plt.savefig('diagnosis_specgram_comparison.png', dpi=150)
-        print("✅ 對比圖已保存: diagnosis_specgram_comparison.png")
-        print("   (plt.specgram 與手動 STFT+amp_to_dB 應該視覺上一致)")
-
-    except Exception as e:
-        print(f"⚠️  對比圖生成失敗: {e}")
+    print("\n⚠️  librosa 未安裝，無法生成頻譜圖")
 
 except Exception as e:
     print(f"⚠️  頻譜圖生成失敗: {e}")
