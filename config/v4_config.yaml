@@ -15,24 +15,25 @@ audio:
 # IMCRA Noise Estimation
 noise_estimation:
   method: "imcra"
-  alpha_s: 0.9            # Spectrum smoothing factor (0.85-0.95)
-  alpha_d: 0.92           # Noise update rate (v1.5.0: 0.85→0.92, 加快噪聲更新)
-  L: 100                  # Minimum tracking window length (v1.5.0: 150→100, 縮短到1秒)
-  delta_db: 8.0           # Bias offset (v1.5.0: 5.0→8.0, 更激進的噪聲判定)
+  alpha_s: 0.85           # v2.11: 優化後參數
+  alpha_d: 0.80           # v2.11: 優化後參數
+  L: 100                  # Minimum tracking window length
+  delta_db: 2.2           # v2.11: 對齊 B_min=1.66 (PMC 文獻)
   num_init_frames: 20
 
 # SPP Estimation
 spp:
-  alpha_xi: 0.98
+  alpha_xi: 0.96          # v2.11: 優化後參數
   q: 0.5
   xi_min_db: -25.0
 
 # OMLSA Gain Calculation
 gain_calculation:
   method: "omlsa"
-  g_min_db: -15.0         # v1.6.0: -20→-15，避免過度抑制 (標準 Cohen 使用 -17 ~ -15 dB)
-  alpha_g: 0.0            # v1.6.0: 完全移除增益平滑（標準 Cohen 無顯式平滑）
+  g_min_db: -9.0          # v2.11: 對齊 PMC 文獻 Gmin=0.1259 ≈ -9dB
+  alpha_g: 0.3            # v2.11: 優化後參數
   gamma_0: 4.6            # SPP threshold parameter
+  use_linear_spp_weighting: false
 
 # Noise Scene Tracking (v1.5.0)
 noise_tracking:

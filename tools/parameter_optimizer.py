@@ -122,13 +122,11 @@ class SpeechDenoiseOptimizationProblem(Problem):
                     current = current[part]
                 current[parts[-1]] = value
             else:
-                # 簡化：假設所有參數在 spp 或 gain_calculation 或 snr_adaptive 中
+                # 簡化：假設所有參數在 spp 或 gain_calculation 中
                 if param_name in ['alpha_xi', 'q', 'xi_min_db']:
                     config['spp'][param_name] = value
                 elif param_name in ['g_min_db', 'alpha_g', 'use_spp_weighting']:
                     config['gain_calculation'][param_name] = value
-                elif param_name in ['base_g_min_db', 'snr_smoothing']:
-                    config['snr_adaptive'][param_name] = value
 
         # 保存臨時配置
         temp_config_path = self.results_dir / f"temp_config_{self.eval_count}.yaml"
@@ -191,10 +189,6 @@ class SpeechDenoiseOptimizationProblem(Problem):
                 'xi_min_db': spp.get('xi_min_db', -25.0)
             })
 
-        # SNR Adaptive 參數
-        if 'snr_adaptive' in config:
-            params['snr_adaptive_config'] = config['snr_adaptive']
-
         return params
 
     def _evaluate_single(self, params: np.ndarray) -> Dict[str, float]:
@@ -225,8 +219,6 @@ class SpeechDenoiseOptimizationProblem(Problem):
                 config['spp'][param_name] = value
             elif param_name in ['g_min_db', 'alpha_g', 'use_spp_weighting']:
                 config['gain_calculation'][param_name] = value
-            elif param_name in ['base_g_min_db', 'snr_smoothing']:
-                config['snr_adaptive'][param_name] = value
 
         print(f"\n[評估 #{self.eval_count}] 參數: {dict(zip(self.param_names, params))}")
 
@@ -407,7 +399,6 @@ def define_search_space(version: str) -> Dict:
             'q': (0.4, 0.8, 'float'),
             'g_min_db': (-18.0, -8.0, 'float'),
             'alpha_g': (0.65, 0.90, 'float'),
-            'base_g_min_db': (-15.0, -8.0, 'float'),
         }
 
     elif version == 'V3-2':
@@ -417,7 +408,6 @@ def define_search_space(version: str) -> Dict:
             'q': (0.4, 0.7, 'float'),
             'g_min_db': (-25.0, -15.0, 'float'),
             'alpha_g': (0.60, 0.85, 'float'),
-            'base_g_min_db': (-15.0, -8.0, 'float'),
         }
 
     elif version == 'V3-3':
@@ -427,7 +417,6 @@ def define_search_space(version: str) -> Dict:
             'q': (0.4, 0.7, 'float'),
             'g_min_db': (-25.0, -15.0, 'float'),
             'alpha_g': (0.60, 0.85, 'float'),
-            'base_g_min_db': (-15.0, -8.0, 'float'),
             # 'use_spp_weighting': (0, 1, 'bool'),  # 簡化：暫不搜索布爾參數
         }
 
@@ -438,7 +427,6 @@ def define_search_space(version: str) -> Dict:
             'q': (0.4, 0.7, 'float'),
             'g_min_db': (-25.0, -12.0, 'float'),
             'alpha_g': (0.60, 0.85, 'float'),
-            'base_g_min_db': (-15.0, -8.0, 'float'),
         }
 
     else:

@@ -22,9 +22,3 @@ gain_calculation:
   use_full_formula: false
 noise_tracking:
   enable: true
-snr_adaptive:
-  enable: true
-  base_g_min_db: -12.0
-  snr_smoothing: 0.9
-  clean_detection: true
-  clean_bypass: false

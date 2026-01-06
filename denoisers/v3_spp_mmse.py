@@ -13,10 +13,8 @@ from core import FrameProcessor, Reconstructor, SppEstimator
 from core.noise_estimators import RecursiveAverageNoiseEstimator
 from core.gain_calculators import SppMmseGainCalculator
 from core.noise_change_detector import NoiseChangeDetector  # v1.3.0 新增
-from core.snr_detector import SnrDetector
-from core.clean_detector import CleanDetector
 from .base_denoiser import BaseDenoiser
-from typing import Tuple, Optional
+from typing import Tuple
 
 
 class SppMmseDenoiser(BaseDenoiser):
@@ -72,8 +70,7 @@ class SppMmseDenoiser(BaseDenoiser):
         alpha_g: float = 0.7,
         use_full_formula: bool = False,  # v1.5.0 新增：True=Bessel完整版, False=E1簡化版
         num_init_frames: int = 20,
-        enable_noise_tracking: bool = True,  # v1.3.0 新增：是否啟用噪聲場景追蹤
-        snr_adaptive_config: Optional[dict] = None
+        enable_noise_tracking: bool = True  # v1.3.0 新增：是否啟用噪聲場景追蹤
     ):
         super().__init__(sample_rate)
 
@@ -129,26 +126,6 @@ class SppMmseDenoiser(BaseDenoiser):
             )
         else:
             self.noise_change_detector = None
-
-        # SNR Adaptive Processing (Phase 3)
-        self.snr_adaptive_config = snr_adaptive_config or {}
-        if self.snr_adaptive_config.get('enable', False):
-            self.snr_detector = SnrDetector(
-                smoothing_factor=self.snr_adaptive_config.get('snr_smoothing', 0.9)
-            )
-            self.base_g_min_db = self.snr_adaptive_config.get('base_g_min_db', -15.0)
-
-            if self.snr_adaptive_config.get('clean_detection', False):
-                self.clean_detector = CleanDetector(
-                    snr_threshold=25.0,
-                    confirm_frames=50
-                )
-            else:
-                self.clean_detector = None
-        else:
-            self.snr_detector = None
-            self.clean_detector = None
-            self.base_g_min_db = None
 
     def denoise(self, noisy_signal: np.ndarray) -> np.ndarray:
         """
@@ -225,21 +202,8 @@ class SppMmseDenoiser(BaseDenoiser):
                     self.spp_estimator.reset()
                     self.gain_prev = None
 
-            # SNR Adaptive Processing (Phase 3)
-            g_min = None
-            if self.snr_detector is not None:
-                # 估計 SNR
-                snr_db = self.snr_detector.estimate_frame_snr(Y_psd, noise_psd)
-
-                # Clean detection (if enabled)
-                if self.clean_detector is not None:
-                    is_clean = self.clean_detector.update(snr_db, noise_psd, spp)
-
-                # 獲取 adaptive g_min
-                g_min = self.snr_detector.get_adaptive_g_min(snr_db, self.base_g_min_db)
-
             # 2.3 計算 SPP 加權的 MMSE 增益 ⭐ 核心步驟
-            gain = self.gain_calculator.calculate(spp, xi, gamma, g_min=g_min)
+            gain = self.gain_calculator.calculate(spp, xi, gamma)
 
             # 2.4 應用增益
             enhanced_magnitude[i] = gain * noisy_magnitude[i]
@@ -266,12 +230,6 @@ class SppMmseDenoiser(BaseDenoiser):
         # v1.3.0: 重置噪聲變化檢測器
         if self.enable_noise_tracking and self.noise_change_detector is not None:
             self.noise_change_detector.reset()
-
-        # Reset SNR adaptive detectors (Phase 3)
-        if self.snr_detector is not None:
-            self.snr_detector.snr_history = []
-        if self.clean_detector is not None:
-            self.clean_detector.reset()
 
     def get_params(self) -> dict:
         """獲取參數"""

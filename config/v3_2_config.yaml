@@ -1,30 +1,24 @@
-version: 3-2
-name: MMSE-LSA
 audio:
-  sample_rate: 16000
-  frame_size_ms: 20
-  frame_shift_ms: 10
   fft_size: 512
+  frame_shift_ms: 10
+  frame_size_ms: 20
+  sample_rate: 16000
   window_type: hanning
+gain_calculation:
+  alpha_g: 0.7
+  g_min_db: -12.0
+  method: mmse_lsa
+  use_linear_spp_weighting: false
+name: MMSE-LSA
 noise_estimation:
-  method: recursive_average
   alpha: 0.95
+  method: recursive_average
   num_init_frames: 20
   update_during_speech: false
+noise_tracking:
+  enable: true
 spp:
   alpha_xi: 0.96
   q: 0.5
   xi_min_db: -25.0
-gain_calculation:
-  method: mmse_lsa
-  g_min_db: -20.0
-  alpha_g: 0.7
-  use_linear_spp_weighting: true
-noise_tracking:
-  enable: true
-snr_adaptive:
-  enable: true
-  base_g_min_db: -12.0
-  snr_smoothing: 0.9
-  clean_detection: true
-  clean_bypass: false
+version: 3-2
