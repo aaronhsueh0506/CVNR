@@ -106,8 +106,6 @@ def generate_optimized_config(version: str, best_params: Dict, base_config_path:
             config['spp'][param_name] = float(value)
         elif param_name in ['g_min_db', 'alpha_g', 'use_spp_weighting']:
             config['gain_calculation'][param_name] = float(value)
-        elif param_name in ['base_g_min_db', 'snr_smoothing']:
-            config['snr_adaptive'][param_name] = float(value)
 
     # 添加優化標記
     config['version'] = f"{config.get('version', version)}-optimized"

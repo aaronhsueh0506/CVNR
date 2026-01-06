@@ -41,10 +41,6 @@ class SingleParamTuner:
             'g_min_db': [-25, -20, -18, -15, -12],  # 5個值
             'alpha_g': [0.6, 0.7, 0.75, 0.8],  # 4個值，間隔0.05或0.1
 
-            # SNR Adaptive 參數
-            'base_g_min_db': [-15, -12, -10, -8],  # 4個值，間隔2-3
-            'snr_smoothing': [0.85, 0.9, 0.95],  # 3個值，間隔0.05
-
             # PMMSE 專用
             'use_spp_weighting': [False, True],  # 2個值
         }
@@ -57,8 +53,6 @@ class SingleParamTuner:
             return self.base_config['spp'][param_name]
         elif param_name in ['g_min_db', 'alpha_g', 'use_spp_weighting']:
             return self.base_config['gain_calculation'][param_name]
-        elif param_name in ['base_g_min_db', 'snr_smoothing']:
-            return self.base_config['snr_adaptive'][param_name]
         return None
 
     def set_param_value(self, config: Dict, param_name: str, value):
@@ -69,8 +63,6 @@ class SingleParamTuner:
             config_copy['spp'][param_name] = value
         elif param_name in ['g_min_db', 'alpha_g', 'use_spp_weighting']:
             config_copy['gain_calculation'][param_name] = value
-        elif param_name in ['base_g_min_db', 'snr_smoothing']:
-            config_copy['snr_adaptive'][param_name] = value
 
         return config_copy
 
@@ -290,7 +282,6 @@ class SingleParamTuner:
         # 按類別分組
         spp_params = [r for r in tuning_results if r['param_name'] in ['alpha_xi', 'q', 'xi_min_db']]
         gain_params = [r for r in tuning_results if r['param_name'] in ['g_min_db', 'alpha_g', 'use_spp_weighting']]
-        snr_params = [r for r in tuning_results if r['param_name'] in ['base_g_min_db', 'snr_smoothing']]
 
         if spp_params:
             report.append("spp:\n")
@@ -300,11 +291,6 @@ class SingleParamTuner:
         if gain_params:
             report.append("\ngain_calculation:\n")
             for r in gain_params:
-                report.append(f"  {r['param_name']}: {r['best_value']}\n")
-
-        if snr_params:
-            report.append("\nsnr_adaptive:\n")
-            for r in snr_params:
                 report.append(f"  {r['param_name']}: {r['best_value']}\n")
 
         report.append("```\n")
@@ -350,7 +336,7 @@ def main():
     tuner = SingleParamTuner(args.version, config_path)
 
     # 確定要調整的參數
-    all_params = ['alpha_xi', 'q', 'g_min_db', 'alpha_g', 'base_g_min_db']
+    all_params = ['alpha_xi', 'q', 'g_min_db', 'alpha_g']
 
     if args.all:
         params_to_tune = all_params

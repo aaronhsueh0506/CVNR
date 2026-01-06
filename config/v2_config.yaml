@@ -1,25 +1,19 @@
-version: 2
-name: Wiener Filter
 audio:
-  sample_rate: 16000
-  frame_size_ms: 20
-  frame_shift_ms: 10
   fft_size: 512
+  frame_shift_ms: 10
+  frame_size_ms: 20
+  sample_rate: 16000
   window_type: hanning
-noise_estimation:
-  method: recursive_average
-  alpha: 0.95
-  num_init_frames: 20
-  update_during_speech: false
 gain_calculation:
+  alpha_smooth: 0.8
   method: wiener
   min_gain: 0.1
-  alpha_smooth: 0.8
+name: Wiener Filter
+noise_estimation:
+  alpha: 0.95
+  method: recursive_average
+  num_init_frames: 20
+  update_during_speech: false
 noise_tracking:
   enable: true
-snr_adaptive:
-  enable: true
-  base_g_min_db: -15.0
-  snr_smoothing: 0.9
-  clean_detection: true
-  clean_bypass: false
+version: 2

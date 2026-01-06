@@ -118,7 +118,8 @@ def get_denoiser_params_from_config(config, sr, fft_size):
         elif gc.get('method') == 'omlsa':
             params.update({
                 'g_min_db': gc.get('g_min_db', -20.0),
-                'alpha_g': gc.get('alpha_g', 0.7)
+                'alpha_g': gc.get('alpha_g', 0.7),
+                'use_linear_spp_weighting': gc.get('use_linear_spp_weighting', False)  # v2.1
             })
 
     # SPP 參數
@@ -139,10 +140,6 @@ def get_denoiser_params_from_config(config, sr, fft_size):
             'L': ne.get('L', 150),
             'delta_db': ne.get('delta_db', 5.0)
         })
-
-    # SNR Adaptive 參數
-    if 'snr_adaptive' in config:
-        params['snr_adaptive_config'] = config['snr_adaptive']
 
     # Fast Startup 參數（Phase 6）
     if 'fast_startup' in config:

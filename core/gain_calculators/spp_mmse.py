@@ -275,10 +275,14 @@ class SppMmseGainCalculator:
 
     def _exp1_approx(self, v: np.ndarray) -> np.ndarray:
         """
-        指數積分 E1(v) 的近似
+        指數積分 E1(v) 的三段近似（v2.1 更新）
 
-        對於 v > 1，使用漸近展開：
-        E1(v) ≈ exp(-v)/v * (1 - 1/v + 2/v² - ...)
+        參考: https://bobondemon.github.io/2019/03/20/MMSE-STSA-and-LSA/
+
+        三段近似公式:
+        - v < 0.1:   E1(v) ≈ -2.31 * log10(v) - 0.6
+        - 0.1 ≤ v ≤ 1.0: E1(v) ≈ -1.544 * log10(v) + 0.166
+        - v > 1.0:   E1(v) ≈ 10^(-0.52*v - 0.26)
 
         參數:
             v: 輸入值
@@ -286,24 +290,23 @@ class SppMmseGainCalculator:
         返回:
             exp1_v: E1(v) 的近似值
         """
-        # 簡單近似（對於大的 v）
-        # E1(v) ≈ exp(-v) / v
         result = np.zeros_like(v)
 
-        # 對於 v >= 1，使用漸近展開
-        mask_large = v >= 1.0
-        if np.any(mask_large):
-            v_large = v[mask_large]
-            result[mask_large] = np.exp(-v_large) / v_large
+        # v < 0.1
+        mask1 = v < 0.1
+        if np.any(mask1):
+            v1 = np.maximum(v[mask1], 1e-10)  # 避免 log(0)
+            result[mask1] = -2.31 * np.log10(v1) - 0.6
 
-        # 對於 v < 1，使用更精確的近似
-        mask_small = ~mask_large
-        if np.any(mask_small):
-            v_small = v[mask_small]
-            # E1(v) ≈ -γ - log(v) - v + v²/4 - v³/18 + ...
-            # 其中 γ ≈ 0.5772 (Euler-Mascheroni 常數)
-            gamma_const = 0.5772156649
-            result[mask_small] = -gamma_const - np.log(v_small + 1e-10) - v_small
+        # 0.1 <= v <= 1.0
+        mask2 = (v >= 0.1) & (v <= 1.0)
+        if np.any(mask2):
+            result[mask2] = -1.544 * np.log10(v[mask2]) + 0.166
+
+        # v > 1.0
+        mask3 = v > 1.0
+        if np.any(mask3):
+            result[mask3] = 10 ** (-0.52 * v[mask3] - 0.26)
 
         return result
 

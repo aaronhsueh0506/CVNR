@@ -72,7 +72,8 @@ class ImcraOmlsaDenoiser(BaseDenoiser):
         g_min_db: float = -20.0,
         alpha_g: float = 0.7,
         num_init_frames: int = 20,
-        enable_noise_tracking: bool = True  # v1.5.0 新增
+        enable_noise_tracking: bool = True,  # v1.5.0 新增
+        use_linear_spp_weighting: bool = False  # v2.1: 對齊 V3-2
     ):
         super().__init__(sample_rate)
 
@@ -110,7 +111,8 @@ class ImcraOmlsaDenoiser(BaseDenoiser):
         # 創建 OMLSA 增益計算器 ⭐ 核心組件 3
         self.gain_calculator = OmlsaGainCalculator(
             g_min_db=g_min_db,
-            alpha_g=alpha_g
+            alpha_g=alpha_g,
+            use_linear_spp_weighting=use_linear_spp_weighting  # v2.1
         )
 
         # 存儲上一幀的增益

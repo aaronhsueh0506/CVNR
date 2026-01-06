@@ -150,7 +150,6 @@ def create_denoiser_from_config(
         # V1: Spectral Subtraction
         gain_config = config.get('gain_calculation', {})
         noise_config = config.get('noise_estimation', {})
-        snr_adaptive_config = config.get('snr_adaptive', {})
 
         return SpectralSubtractionDenoiser(
             sample_rate=sample_rate,
@@ -160,8 +159,7 @@ def create_denoiser_from_config(
             alpha=gain_config.get('alpha', 2.0),
             beta=gain_config.get('beta', 0.01),
             alpha_smooth=gain_config.get('alpha_smooth', 0.8),
-            num_init_frames=noise_config.get('num_init_frames', 20),
-            snr_adaptive_config=snr_adaptive_config
+            num_init_frames=noise_config.get('num_init_frames', 20)
         )
 
     elif version == 'V2':
@@ -169,7 +167,6 @@ def create_denoiser_from_config(
         gain_config = config.get('gain_calculation', {})
         noise_config = config.get('noise_estimation', {})
         tracking_config = config.get('noise_tracking', {})
-        snr_adaptive_config = config.get('snr_adaptive', {})
 
         return WienerDenoiser(
             sample_rate=sample_rate,
@@ -181,8 +178,7 @@ def create_denoiser_from_config(
             alpha_smooth=gain_config.get('alpha_smooth', 0.8),
             num_init_frames=noise_config.get('num_init_frames', 20),
             update_during_speech=noise_config.get('update_during_speech', False),
-            enable_noise_tracking=tracking_config.get('enable', True),
-            snr_adaptive_config=snr_adaptive_config
+            enable_noise_tracking=tracking_config.get('enable', True)
         )
 
     elif version == 'V3':
@@ -190,7 +186,6 @@ def create_denoiser_from_config(
         spp_config = config.get('spp', {})
         gain_config = config.get('gain_calculation', {})
         noise_config = config.get('noise_estimation', {})
-        snr_adaptive_config = config.get('snr_adaptive', {})
 
         return SppMmseDenoiser(
             sample_rate=sample_rate,
@@ -203,8 +198,7 @@ def create_denoiser_from_config(
             g_min_db=gain_config.get('g_min_db', -20.0),
             alpha_g=gain_config.get('alpha_g', 0.7),
             alpha_noise=noise_config.get('alpha', 0.95),
-            num_init_frames=noise_config.get('num_init_frames', 20),
-            snr_adaptive_config=snr_adaptive_config
+            num_init_frames=noise_config.get('num_init_frames', 20)
         )
 
     elif version == 'V3-2':
@@ -213,7 +207,6 @@ def create_denoiser_from_config(
         gain_config = config.get('gain_calculation', {})
         noise_config = config.get('noise_estimation', {})
         tracking_config = config.get('noise_tracking', {})
-        snr_adaptive_config = config.get('snr_adaptive', {})
 
         return MmseLsaDenoiser(
             sample_rate=sample_rate,
@@ -228,8 +221,7 @@ def create_denoiser_from_config(
             use_linear_spp_weighting=gain_config.get('use_linear_spp_weighting', False),
             alpha_noise=noise_config.get('alpha', 0.95),
             num_init_frames=noise_config.get('num_init_frames', 20),
-            enable_noise_tracking=tracking_config.get('enable', True),
-            snr_adaptive_config=snr_adaptive_config
+            enable_noise_tracking=tracking_config.get('enable', True)
         )
 
     elif version == 'V3-3':
@@ -238,7 +230,6 @@ def create_denoiser_from_config(
         gain_config = config.get('gain_calculation', {})
         noise_config = config.get('noise_estimation', {})
         tracking_config = config.get('noise_tracking', {})
-        snr_adaptive_config = config.get('snr_adaptive', {})
 
         return PmmseDenoiser(
             sample_rate=sample_rate,
@@ -253,8 +244,7 @@ def create_denoiser_from_config(
             use_spp_weighting=gain_config.get('use_spp_weighting', True),
             alpha_noise=noise_config.get('alpha', 0.95),
             num_init_frames=noise_config.get('num_init_frames', 20),
-            enable_noise_tracking=tracking_config.get('enable', True),
-            snr_adaptive_config=snr_adaptive_config
+            enable_noise_tracking=tracking_config.get('enable', True)
         )
 
     elif version == 'V3-4':
@@ -263,7 +253,6 @@ def create_denoiser_from_config(
         gain_config = config.get('gain_calculation', {})
         noise_config = config.get('noise_estimation', {})
         tracking_config = config.get('noise_tracking', {})
-        snr_adaptive_config = config.get('snr_adaptive', {})
 
         return LaplacianMmseDenoiser(
             sample_rate=sample_rate,
@@ -278,8 +267,7 @@ def create_denoiser_from_config(
             beta_laplacian=gain_config.get('beta_laplacian', 1.5),
             alpha_noise=noise_config.get('alpha', 0.95),
             num_init_frames=noise_config.get('num_init_frames', 20),
-            enable_noise_tracking=tracking_config.get('enable', True),
-            snr_adaptive_config=snr_adaptive_config
+            enable_noise_tracking=tracking_config.get('enable', True)
         )
 
     elif version == 'V4':
@@ -287,7 +275,6 @@ def create_denoiser_from_config(
         noise_config = config.get('noise_estimation', {})
         spp_config = config.get('spp', {})
         gain_config = config.get('gain_calculation', {})
-        snr_adaptive_config = config.get('snr_adaptive', {})
 
         return ImcraOmlsaDenoiser(
             sample_rate=sample_rate,
@@ -303,8 +290,7 @@ def create_denoiser_from_config(
             xi_min_db=spp_config.get('xi_min_db', -25.0),
             g_min_db=gain_config.get('g_min_db', -20.0),
             alpha_g=gain_config.get('alpha_g', 0.7),
-            num_init_frames=noise_config.get('num_init_frames', 20),
-            snr_adaptive_config=snr_adaptive_config
+            num_init_frames=noise_config.get('num_init_frames', 20)
         )
 
     else:

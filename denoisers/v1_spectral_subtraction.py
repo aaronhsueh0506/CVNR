@@ -10,10 +10,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from core import FrameProcessor, Reconstructor
 from core.noise_estimators import SimpleAverageNoiseEstimator
 from core.gain_calculators import SpectralSubtractionGainCalculator
-from core.snr_detector import SnrDetector
-from core.clean_detector import CleanDetector
 from .base_denoiser import BaseDenoiser
-from typing import Tuple, Optional
+from typing import Tuple
 
 
 class SpectralSubtractionDenoiser(BaseDenoiser):
@@ -49,8 +47,7 @@ class SpectralSubtractionDenoiser(BaseDenoiser):
         alpha: float = 2.0,
         beta: float = 0.01,
         alpha_smooth: float = 0.8,
-        num_init_frames: int = 20,
-        snr_adaptive_config: Optional[dict] = None
+        num_init_frames: int = 20
     ):
         super().__init__(sample_rate)
 
@@ -80,26 +77,6 @@ class SpectralSubtractionDenoiser(BaseDenoiser):
             beta=beta,
             alpha_smooth=alpha_smooth
         )
-
-        # SNR Adaptive Processing (Phase 3)
-        self.snr_adaptive_config = snr_adaptive_config or {}
-        if self.snr_adaptive_config.get('enable', False):
-            self.snr_detector = SnrDetector(
-                smoothing_factor=self.snr_adaptive_config.get('snr_smoothing', 0.9)
-            )
-            self.base_g_min_db = self.snr_adaptive_config.get('base_g_min_db', -12.0)
-
-            if self.snr_adaptive_config.get('clean_detection', False):
-                self.clean_detector = CleanDetector(
-                    snr_threshold=25.0,
-                    confirm_frames=50
-                )
-            else:
-                self.clean_detector = None
-        else:
-            self.snr_detector = None
-            self.clean_detector = None
-            self.base_g_min_db = None
 
         self.noise_magnitude = None
 
@@ -154,28 +131,10 @@ class SpectralSubtractionDenoiser(BaseDenoiser):
         enhanced_magnitude = np.zeros_like(noisy_magnitude)
 
         for i in range(n_frames):
-            # SNR Adaptive Processing (Phase 3)
-            g_min = None
-            if self.snr_detector is not None:
-                # 計算功率譜密度
-                Y_psd = noisy_magnitude[i] ** 2
-                noise_psd = self.noise_magnitude ** 2
-
-                # 估計 SNR
-                snr_db = self.snr_detector.estimate_frame_snr(Y_psd, noise_psd)
-
-                # Clean detection (if enabled)
-                if self.clean_detector is not None:
-                    is_clean = self.clean_detector.update(snr_db, noise_psd)
-
-                # 獲取 adaptive g_min
-                g_min = self.snr_detector.get_adaptive_g_min(snr_db, self.base_g_min_db)
-
             # 計算增益
             gain = self.gain_calculator.calculate(
                 noisy_magnitude[i],
-                self.noise_magnitude,
-                g_min=g_min
+                self.noise_magnitude
             )
 
             # 應用增益
@@ -191,12 +150,6 @@ class SpectralSubtractionDenoiser(BaseDenoiser):
         self.noise_estimator.reset()
         self.gain_calculator.reset()
         self.noise_magnitude = None
-
-        # Reset SNR adaptive detectors
-        if self.snr_detector is not None:
-            self.snr_detector.snr_history = []
-        if self.clean_detector is not None:
-            self.clean_detector.reset()
 
     def get_params(self) -> dict:
         """獲取參數"""
