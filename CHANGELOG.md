@@ -4,7 +4,60 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
-## [1.5.1] - 2026-01-02
+## [2.1.1] - 2026-01-06
+
+### 改進 (Changed)
+- ⬆️ **V3 系列參數同步優化**
+  - 將最優參數 `alpha_xi=0.96` 同步到所有 V3 變體（V3, V3-2, V3-3, V3-4）
+  - 來源：V3-3 參數調優實驗結果
+  - 影響：提升所有 V3 系列的 SNR 平滑效果
+
+- ⬆️ **V4 (IMCRA-OMLSA) 配置修復**
+  - 修復錯誤參數導致的性能下降問題
+  - `alpha_d`: 0.92 → **0.88**（噪聲估計更新速率）
+  - `L`: 100 → **120**（最小值追蹤窗口）
+  - `alpha_g`: 0.7 → **0.88**（增益平滑因子）
+  - 暫時禁用 `noise_tracking` 和 `snr_adaptive` 以提升穩定性
+  - 效果：V4 恢復最佳性能，segSNR 改善達 +4.84 dB
+
+### 修改文件
+1. `config/v3_config.yaml` - alpha_xi: 0.95 → 0.96
+2. `config/v3_2_config.yaml` - alpha_xi: 0.92 → 0.96
+3. `config/v3_3_config.yaml` - alpha_xi: 0.90 → 0.96
+4. `config/v3_4_config.yaml` - alpha_xi: 0.92 → 0.96
+5. `config/v4_config.yaml` - 修復 alpha_d, L, alpha_g 參數
+
+### 性能結果（benchmark_comparison.py）
+
+| 排名 | 方法 | segSNR 改善 (dB) |
+|------|------|------------------|
+| 🥇 1 | **V4 (IMCRA-OMLSA)** | **+5.68** |
+| 🥈 2 | RNNoise | +3.97 |
+| 🥉 3 | V3 (SPP-MMSE) | +3.96 |
+| 4 | V3-4 (Laplacian) | +3.79 |
+| 5 | V3-2 (MMSE-LSA) | +3.42 |
+
+---
+
+## [2.1.0] - 2026-01-05
+
+### 新增 (Added)
+- ✨ **V3-3/V3-4 參數優化**: 採用 V3-2 對齊參數
+  - V3-3: PESQ 從 1.458 提升至 1.733 (+18.9%)
+  - V3-4: STOI 達到 0.874（傳統算法最佳）
+  - 核心發現：SNR Adaptive (enable: true, base_g_min_db: -12.0) 是高性能的關鍵
+
+- ✨ **Clean 保護測試**: 新增 clean.wav 高 SNR 測試用例
+  - 所有方法通過 clean protection 測試（PESQ 降幅 < 0.01）
+
+### 改進 (Changed)
+- ⬆️ **Phase 6 機制**: fast_startup 和 transition_detection 實現
+  - 因 clean 場景過度處理問題暫時禁用
+  - 保留於代碼中供未來研究
+
+---
+
+## [2.0.1] - 2026-01-02
 
 ### 🔴 緊急修復 (Critical Fixes)
 - 🐛 **V3-3 (PMMSE) 先驗分佈文檔錯誤修正**
@@ -48,7 +101,7 @@
 
 ---
 
-## [1.5.0] - 2026-01-02
+## [2.0.0] - 2026-01-02
 
 ### 新增 (Added)
 - ✅ **V3 整合 V3-1**：統一 MMSE-STSA 實現

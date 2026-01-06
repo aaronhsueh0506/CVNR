@@ -8,25 +8,25 @@ audio:
   window_type: hanning
 noise_estimation:
   method: imcra
-  alpha_s: 0.92       # 0.90 → 0.92 (提高平滑度)
-  alpha_d: 0.88       # 0.92 → 0.88 (對齊 Changelog v1.5.0 建議)
-  L: 120              # 100 → 120 (對齊 Changelog v1.5.0)
-  delta_db: 5.0       # ❗ 8.0 → 5.0 (關鍵修復！回到代碼預設值)
+  alpha_s: 0.90
+  alpha_d: 0.88    # 優化值（從 0.92 修正）
+  L: 120           # 優化值（從 100 修正）
+  delta_db: 8.0
   num_init_frames: 20
 spp:
-  alpha_xi: 0.95      # 0.98 → 0.95 (加快 SPP 更新，對齊 V3)
+  alpha_xi: 0.98
   q: 0.5
   xi_min_db: -25.0
 gain_calculation:
   method: omlsa
-  g_min_db: -15.0     # ❗ -20.0 → -15.0 (關鍵修復！減少過度抑制)
-  alpha_g: 0.75       # 0.7 → 0.75 (對齊 V3)
+  g_min_db: -20.0
+  alpha_g: 0.88    # 優化值（從 0.7 修正）
   gamma_0: 4.6
 noise_tracking:
-  enable: true
+  enable: false    # 暫時禁用以測試性能
 snr_adaptive:
-  enable: true
-  base_g_min_db: -12.0    # ❗ -18.0 → -12.0 (關鍵修復！對齊 V3/V3-2)
+  enable: false    # 暫時禁用以測試性能
+  base_g_min_db: -18.0
   snr_smoothing: 0.9
   clean_detection: true
   clean_bypass: false
