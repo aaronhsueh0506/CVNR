@@ -5,8 +5,8 @@ audio:
   sample_rate: 16000
   window_type: hanning
 gain_calculation:
-  alpha_g: 0.7
-  g_min_db: -12.0
+  alpha_g: 0.6            # v2.12: 調優結果 (原 0.7)
+  g_min_db: -12.0         # v2.12: 維持 -12.0
   method: mmse_lsa
   use_linear_spp_weighting: false
 name: MMSE-LSA
@@ -18,7 +18,7 @@ noise_estimation:
 noise_tracking:
   enable: true
 spp:
-  alpha_xi: 0.96
-  q: 0.5
+  alpha_xi: 0.94          # v2.12: 調優結果 (原 0.96)
+  q: 0.5                  # v2.12: 維持 0.5
   xi_min_db: -25.0
 version: 3-2

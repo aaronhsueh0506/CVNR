@@ -12,13 +12,13 @@ noise_estimation:
   num_init_frames: 20
   update_during_speech: false
 spp:
-  alpha_xi: 0.96
-  q: 0.6
+  alpha_xi: 0.96          # v2.12: 調優結果
+  q: 0.5                  # v2.12: 調優結果 (原 0.6)
   xi_min_db: -25.0
 gain_calculation:
   method: spp_mmse
-  g_min_db: -12.0
-  alpha_g: 0.75
+  g_min_db: -15.0         # v2.12: 調優結果 (原 -12.0)
+  alpha_g: 0.6            # v2.12: 調優結果 (原 0.75)
   use_full_formula: false
 noise_tracking:
   enable: true

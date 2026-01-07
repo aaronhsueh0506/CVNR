@@ -13,6 +13,7 @@
 import numpy as np
 import librosa
 import os
+import argparse
 from pathlib import Path
 from typing import Dict, List, Tuple
 from utils.metrics_loizou import composite_measure
@@ -187,6 +188,10 @@ def main():
     """
     主評估流程
     """
+    parser = argparse.ArgumentParser(description='計算改善（Improvement）指標')
+    parser.add_argument('--tag', type=str, default='', help='報告標籤，用於區分不同測試')
+    args = parser.parse_args()
+
     print("=" * 100)
     print("降噪改善（Improvement）指標計算")
     print("=" * 100)
@@ -426,7 +431,8 @@ def main():
     os.makedirs(output_dir, exist_ok=True)
 
     # 生成 Markdown 報告（4 個獨立表格）
-    md_path = f"{output_dir}/improvement_report.md"
+    tag_suffix = f"_{args.tag}" if args.tag else ""
+    md_path = f"{output_dir}/improvement_report{tag_suffix}.md"
     with open(md_path, 'w', encoding='utf-8') as f:
         f.write("# 降噪評估完整報告\n\n")
 

@@ -6,6 +6,7 @@
 用於後續的 improvement 指標計算
 
 v2.0: 使用配置文件參數進行優化
+v2.1: 支持 --version 和 --config 參數用於批量調參
 """
 
 import numpy as np
@@ -13,6 +14,7 @@ import librosa
 import soundfile as sf
 import os
 import yaml
+import argparse
 from pathlib import Path
 from denoisers import (
     SpectralSubtractionDenoiser,
@@ -37,15 +39,6 @@ test_cases = ['clean'] + [f"{n}_{s}dB" for n in noise_types for s in snr_levels]
 # 輸出目錄（統一到 output/）
 output_dir = 'output'
 os.makedirs(output_dir, exist_ok=True)
-
-print("=" * 100)
-print("重新生成所有降噪方法的原始降噪輸出")
-print("=" * 100)
-print(f"測試用例: {len(test_cases)} 個 (含 clean.wav 高 SNR 測試)")
-print(f"方法: V1, V2, V3, V3-2, V3-3, V3-4, V4")
-print(f"預期輸出: {len(test_cases) * 7} 個文件")  # 13 * 7 = 91
-print(f"輸出目錄: {output_dir}/")
-print("=" * 100)
 
 # 方法配置（包含配置文件路徑）
 methods = {
@@ -163,64 +156,104 @@ def get_denoiser_params_from_config(config, sr, fft_size):
 
     return params
 
-# 生成
-processed = 0
-total = len(methods) * len(test_cases)
+def main():
+    parser = argparse.ArgumentParser(description='重新生成降噪輸出')
+    parser.add_argument('--version', type=str, nargs='+',
+                        help='指定版本 (例: V3 V3-2 V4)，不指定則處理全部')
+    parser.add_argument('--config', type=str,
+                        help='使用自定義配置文件 (需配合 --version 使用單一版本)')
+    args = parser.parse_args()
 
-for method_name, method_config in methods.items():
-    print(f"\n處理方法: {method_name}")
-    print("-" * 100)
+    # 確定要處理的方法
+    if args.version:
+        methods_to_process = {k: v for k, v in methods.items() if k in args.version}
+        if not methods_to_process:
+            print(f"❌ 未找到指定版本: {args.version}")
+            print(f"可用版本: {list(methods.keys())}")
+            return
+    else:
+        methods_to_process = methods
 
-    # 加載配置文件
-    config = load_config(method_config['config'])
+    # 如果提供了自定義配置，檢查是否只處理單一版本
+    if args.config:
+        if len(methods_to_process) != 1:
+            print("❌ 使用 --config 時必須指定單一 --version")
+            return
+        version_name = list(methods_to_process.keys())[0]
+        methods_to_process[version_name]['config'] = args.config
+        print(f"使用自定義配置: {args.config}")
 
-    for test_id in test_cases:
-        # ✅ 使用正確的輸入文件：append_silence 目錄下的 prepend 文件
-        # Clean 測試使用特殊路徑
-        if test_id == 'clean':
-            input_file = "test_wav/wav/append_silence/clean_prepend.wav"
-        else:
-            input_file = f"test_wav/wav/append_silence/{test_id}_prepend.wav"
-        output_file = f"{output_dir}/{method_name}_{test_id}.wav"
+    # 生成
+    processed = 0
+    total = len(methods_to_process) * len(test_cases)
 
-        if not os.path.exists(input_file):
-            processed += 1
-            print(f"  [{processed}/{total}] ⚠️  {test_id} - 找不到輸入文件")
-            continue
+    print("=" * 100)
+    print("重新生成降噪方法的原始降噪輸出")
+    print("=" * 100)
+    print(f"測試用例: {len(test_cases)} 個")
+    print(f"處理版本: {list(methods_to_process.keys())}")
+    print(f"預期輸出: {total} 個文件")
+    print(f"輸出目錄: {output_dir}/")
+    print("=" * 100)
 
-        try:
-            # 加載並統一重採樣到 16kHz
-            noisy, original_sr = librosa.load(input_file, sr=None)
+    for method_name, method_config in methods_to_process.items():
+        print(f"\n處理方法: {method_name}")
+        print("-" * 100)
 
-            # 強制重採樣到 16kHz
-            target_sr = 16000
-            if original_sr != target_sr:
-                noisy = librosa.resample(noisy, orig_sr=original_sr, target_sr=target_sr)
-            sr = target_sr
+        # 加載配置文件
+        config = load_config(method_config['config'])
 
-            # 使用配置文件的 FFT size（統一為 512）
-            fft_size = config['audio']['fft_size']
+        for test_id in test_cases:
+            # ✅ 使用正確的輸入文件：append_silence 目錄下的 prepend 文件
+            # Clean 測試使用特殊路徑
+            if test_id == 'clean':
+                input_file = "test_wav/wav/append_silence/clean_prepend.wav"
+            else:
+                input_file = f"test_wav/wav/append_silence/{test_id}_prepend.wav"
+            output_file = f"{output_dir}/{method_name}_{test_id}.wav"
 
-            # 從配置文件獲取參數
-            denoiser_params = get_denoiser_params_from_config(config, sr, fft_size)
+            if not os.path.exists(input_file):
+                processed += 1
+                print(f"  [{processed}/{total}] ⚠️  {test_id} - 找不到輸入文件")
+                continue
 
-            # 創建降噪器
-            denoiser = method_config['class'](**denoiser_params)
+            try:
+                # 加載並統一重採樣到 16kHz
+                noisy, original_sr = librosa.load(input_file, sr=None)
 
-            # 處理
-            enhanced = denoiser.denoise(noisy)
+                # 強制重採樣到 16kHz
+                target_sr = 16000
+                if original_sr != target_sr:
+                    noisy = librosa.resample(noisy, orig_sr=original_sr, target_sr=target_sr)
+                sr = target_sr
 
-            # 保存（保持原始採樣率）
-            sf.write(output_file, enhanced, sr)
+                # 使用配置文件的 FFT size（統一為 512）
+                fft_size = config['audio']['fft_size']
 
-            processed += 1
-            print(f"  [{processed}/{total}] ✓ {test_id} (sr={sr}Hz)")
+                # 從配置文件獲取參數
+                denoiser_params = get_denoiser_params_from_config(config, sr, fft_size)
 
-        except Exception as e:
-            processed += 1
-            print(f"  [{processed}/{total}] ✗ {test_id} - ERROR: {e}")
+                # 創建降噪器
+                denoiser = method_config['class'](**denoiser_params)
 
-print("\n" + "=" * 100)
-print(f"完成! 成功生成 {processed}/{total} 個文件")
-print(f"輸出目錄: {output_dir}/")
-print("=" * 100)
+                # 處理
+                enhanced = denoiser.denoise(noisy)
+
+                # 保存（保持原始採樣率）
+                sf.write(output_file, enhanced, sr)
+
+                processed += 1
+                print(f"  [{processed}/{total}] ✓ {test_id} (sr={sr}Hz)")
+
+            except Exception as e:
+                processed += 1
+                print(f"  [{processed}/{total}] ✗ {test_id} - ERROR: {e}")
+
+    print("\n" + "=" * 100)
+    print(f"完成! 成功生成 {processed}/{total} 個文件")
+    print(f"輸出目錄: {output_dir}/")
+    print("=" * 100)
+
+
+if __name__ == "__main__":
+    main()
