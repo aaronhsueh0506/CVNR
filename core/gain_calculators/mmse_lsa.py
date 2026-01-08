@@ -100,6 +100,11 @@ class MmseLsaGainCalculator:
         # 轉回線性域
         gain = np.exp(log_gain)
 
+        # v2.2: 增益補償 - LSA 傾向於低估幅度，對高 SNR 區域給予輕微 Boost
+        # 當 xi > 1 (約 0dB SNR)，語音成分明確時，補償 20%
+        gain_boost = np.where(xi > 1.0, 1.2, 1.0)
+        gain = gain * gain_boost
+
         # 限制範圍
         gain = np.clip(gain, g_min_effective, 1.0)
 

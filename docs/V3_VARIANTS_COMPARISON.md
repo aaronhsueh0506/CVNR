@@ -17,10 +17,10 @@
 本文檔詳細對比四個 MMSE 變體 (V3, V3-2, V3-3, V3-4) 的技術細節、性能差異和使用建議。
 
 **四個變體**:
-- **V3 (MMSE-STSA)**: 標準 MMSE，Gaussian 先驗
-- **V3-2 (MMSE-LSA)**: 對數域 MMSE，Musical Noise 最少
-- **V3-3 (PMMSE)**: Gaussian 先驗 + IS 距離，感知優化
-- **V3-4 (Laplacian-MMSE)**: Laplacian 先驗 + MSE，降噪最強
+- **V3 (MMSE-STSA)**: 標準 MMSE，Gaussian 先驗 (Ephraim & Malah 1984)
+- **V3-2 (MMSE-LSA)**: 對數域 MMSE，Musical Noise 最少 (Ephraim & Malah 1985)
+- **V3-3 (PMMSE)**: Parametric MMSE，β=0.5 解析解 (Wolfe & Godsill 2003)
+- **V3-4 (Laplacian-MMSE)**: Laplacian 先驗 + MSE，STOI 最佳 (Chen & Loizou 2007)
 
 ## 理論基礎
 
@@ -63,10 +63,10 @@ X̂ = arg min E[C(X, X̂) | Y]
 - 理論: log(X) 的誤差對小值更敏感
 
 **V3-3 (PMMSE)**:
-- 改進: IS 距離成本函數 (感知動機)
-- 先驗: Gaussian (與 V3 相同，但成本函數不同)
-- 目標: 感知質量優化
-- 理論: IS 距離更符合人耳感知，對小幅度更寬容
+- 改進: Parametric MMSE 框架 (Wolfe & Godsill 2003)
+- 特點: β=0.5 時有閉式解析解
+- 先驗: Gaussian (complex Gaussian → Rayleigh 幅度分佈)
+- 理論: 使用 i0e 避免數值溢出，計算高效
 
 **V3-4 (Laplacian-MMSE)**:
 - 改進: Laplacian 先驗提供稀疏性
@@ -121,55 +121,66 @@ X̂ = exp(E[log X | Y])
 
 **文獻**: Ephraim & Malah (1985)
 
-### V3-3: PMMSE
+### V3-3: PMMSE (Wolfe & Godsill 2003)
 
-**增益函數**:
+**增益函數** (β=0.5 特例):
 ```
-G = √((v+1)/2) * exp(E1(v/2))
+G_PM = sqrt(v) / (sqrt(π) · γ) · exp(v/2) / I0(v/2)
+     = sqrt(v) / (sqrt(π) · γ) / i0e(v/2)
 ```
 
-**成本函數** (IS 距離):
-```
-C(X, X̂) = (X - X̂)²/X
-        = X/X̂ + X̂/X - 2
-```
+其中:
+- `v = ξ/(1+ξ) · γ`（先驗 SNR 與後驗 SNR 的組合）
+- `i0e(x) = exp(-|x|) · I0(x)`（數值穩定的指數縮放 Bessel 函數）
 
 **先驗**: Gaussian 分佈 (complex Gaussian → Rayleigh 幅度分佈)
 ```
 p(|X|) = (|X|/σ²) * exp(-|X|²/(2σ²))
 ```
 
-其中 σ² 是語音功率
+**數值穩定性**:
+使用 `scipy.special.i0e` 避免 Bessel 函數 I0 在大參數時的溢出問題
 
 **特點**:
-- IS 距離感知動機，更符合人耳感知
+- β=0.5 時有閉式解析解
 - Gaussian 先驗假設語音 DFT 係數為 complex Gaussian
 - 需要計算修正貝塞爾函數 I0 (Modified Bessel function)
 
-**文獻**: Loizou (2005)
+**文獻**: Wolfe, P. J., & Godsill, S. J. (2003)
 
-### V3-4: Laplacian-MMSE
+### V3-4: Laplacian-MMSE (Chen & Loizou 2007)
 
 **增益函數**:
 ```
-G = (√π/2) * √v * exp(-v/2) * I₀(v/2)
+G_Lap = (√π/2) · √v · exp(-v/2) · I₀(v/2)
 ```
+
+其中:
+- `v = β · ξ/(1+ξ) · γ`
+- `β = 1.0`（Laplacian 形狀參數，Chen & Loizou 原始設置）
+- `I₀` 為零階修正 Bessel 函數
 
 **先驗**: Laplacian 分佈
 ```
 p(X) ∝ exp(-β|X|)
 ```
 
-**與 V3 對比**:
+**Laplacian 優勢**:
+- 峰態係數 = 6（Gaussian 為 3）
+- 更「尖銳」，更適合稀疏信號建模
+- 語音 DFT 係數實測峰態 ≈ 5-8，更接近 Laplacian
+
+**與其他變體對比**:
 - V3: Gaussian 先驗，需要 I₀ 和 I₁
-- V3-4: Laplacian 先驗，只需要 I₀
+- V3-3: Gaussian 先驗，β=0.5 解析解
+- V3-4: Laplacian 先驗，β=1.0，只需要 I₀
 
 **特點**:
 - 最強的稀疏性約束
-- 降噪效果最好
+- STOI 表現最佳（在 V3 變體中）
 - 計算複雜度中等
 
-**文獻**: Martin (2005), Chen & Loizou (2007)
+**文獻**: Chen, J., & Loizou, P. C. (2007)
 
 ## 性能實測對比
 
@@ -640,11 +651,10 @@ print("="*80)
 - Ephraim, Y., & Malah, D. (1985). "Speech enhancement using a minimum mean-square error log-spectral amplitude estimator." *IEEE Transactions on Acoustics, Speech, and Signal Processing*, 33(2), 443-445.
 
 ### V3-3 (PMMSE)
-- Loizou, P. C. (2005). "Speech enhancement based on perceptually motivated Bayesian estimators of the magnitude spectrum." *IEEE Transactions on Speech and Audio Processing*, 13(5), 857-869.
+- Wolfe, P. J., & Godsill, S. J. (2003). "Efficient alternatives to the Ephraim and Malah suppression rule for audio signal enhancement." *EURASIP Journal on Advances in Signal Processing*, 2003(10), 1043-1051.
 
 ### V3-4 (Laplacian-MMSE)
-- Martin, R. (2005). "Speech enhancement based on minimum mean-square error estimation and supergaussian priors." *IEEE Transactions on Speech and Audio Processing*, 13(5), 845-856.
-- Chen, J., & Loizou, P. C. (2007). "Speech enhancement using a MMSE short time spectral magnitude estimator with Laplacian speech priors." In *2007 IEEE ICASSP*, Vol. 4, pp. IV-853-IV-856.
+- Chen, J., & Loizou, P. C. (2007). "Speech enhancement using a MMSE estimator with supergaussian speech modeling." In *2007 IEEE ICASSP*, Vol. 4, pp. IV-853-IV-856. DOI: 10.1109/ICASSP.2007.366837
 
 ### 相關資源
 - [README.md](../README.md) - 項目主文檔
