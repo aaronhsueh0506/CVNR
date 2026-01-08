@@ -63,17 +63,20 @@ class WienerGainCalculator:
         self,
         noisy_psd: np.ndarray,
         noise_psd: np.ndarray,
-        g_min: float = None
+        g_min: float = None,
+        enhanced_mag_prev: np.ndarray = None
     ) -> np.ndarray:
         """
         計算 Wiener 濾波增益
 
         v2.0: 支持 Decision Directed 方法
+        v2.2: 修正 DD 公式，使用上一幀增強後的幅度和當前噪聲估計
 
         參數:
             noisy_psd: 帶噪語音功率譜密度 (n_freqs,)
             noise_psd: 噪聲功率譜密度 (n_freqs,)
             g_min: SNR adaptive 最小增益（可選，用於動態調整）
+            enhanced_mag_prev: 上一幀增強後的幅度譜（用於正確 DD 公式）
 
         返回:
             gain: Wiener 增益 (n_freqs,)
@@ -86,13 +89,21 @@ class WienerGainCalculator:
         gamma = noisy_psd / (noise_psd + 1e-10)
 
         # 2. 估計先驗 SNR (a priori SNR)
-        if self.use_dd and self.prev_gain is not None and self.prev_gamma is not None:
-            # Decision Directed 方法 (Ephraim & Malah 1984)
-            # ξ(l) = α·G²(l-1)·γ(l-1) + (1-α)·max(γ(l)-1, 0)
+        if self.use_dd and enhanced_mag_prev is not None:
+            # v2.2: 正確的 Decision Directed 方法
+            # ξ(l) = α·[|X̂(l-1)|² / N(l)] + (1-α)·max(γ(l)-1, 0)
+            # 使用上一幀增強後的幅度和當前噪聲估計
             xi_ml = np.maximum(gamma - 1, 0)  # ML 估計部分
-            xi = self.alpha_dd * (self.prev_gain ** 2 * self.prev_gamma) + \
+            enhanced_psd_prev = enhanced_mag_prev ** 2
+            xi = self.alpha_dd * (enhanced_psd_prev / (noise_psd + 1e-10)) + \
                  (1 - self.alpha_dd) * xi_ml
             xi = np.maximum(xi, 1e-10)  # 防止除零
+        elif self.use_dd and self.prev_gain is not None and self.prev_gamma is not None:
+            # Fallback: 舊版 DD 公式（向後兼容）
+            xi_ml = np.maximum(gamma - 1, 0)
+            xi = self.alpha_dd * (self.prev_gain ** 2 * self.prev_gamma) + \
+                 (1 - self.alpha_dd) * xi_ml
+            xi = np.maximum(xi, 1e-10)
         else:
             # ML 估計（初始化或禁用 DD）
             # ξ_ML = max(γ - 1, 0) = max(Y² - N, 0) / N
@@ -120,10 +131,31 @@ class WienerGainCalculator:
         return gain
 
     def reset(self):
-        """重置增益計算器狀態"""
+        """重置增益計算器狀態 (Hard Reset)"""
         self.prev_gain = None
         self.prev_gamma = None
         self.prev_xi = None
+
+    def soft_reset(self, decay_factor: float = 0.5):
+        """
+        軟重置：保留歷史狀態但進行衰減 (Soft Reset)
+
+        用於噪聲場景突變時，避免完全重置導致的語音斷裂。
+        相比 Hard Reset，Soft Reset 能：
+        1. 保留語音輪廓
+        2. 降低對舊環境的信賴度
+        3. 避免 DD SNR 估計突然跳變
+
+        參數:
+            decay_factor: 衰減因子 (0.0-1.0)，默認 0.5
+                         - 0.0 = 完全重置 (等同 Hard Reset)
+                         - 1.0 = 完全保留 (無衰減)
+                         - 0.5 = 減半 (推薦值)
+        """
+        if self.prev_gain is not None:
+            self.prev_gain *= decay_factor
+        # prev_gamma 和 prev_xi 可以選擇性衰減或保持
+        # 但降低 gain 是最關鍵的，因為它直接影響 DD 的先驗 SNR
 
     def __repr__(self):
         dd_str = f", DD(α={self.alpha_dd})" if self.use_dd else ""

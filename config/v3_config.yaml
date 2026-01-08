@@ -7,9 +7,13 @@ audio:
   fft_size: 512
   window_type: hanning
 noise_estimation:
-  method: recursive_average # v2.1: 改回 recursive_average + SPP 軟判決
-  alpha: 0.95               # 噪聲更新速率
-  num_init_frames: 20
+  method: mcra              # v2.2: 改用 MCRA 噪聲估計
+  alpha_s: 0.9              # 時間平滑因子
+  alpha_d: 0.85             # 噪聲更新基礎速率
+  alpha_p: 0.2              # SPP 平滑因子
+  L: 96                     # 最小值窗口長度
+  delta_db: 5.0             # 偏差補償
+  num_init_frames: 10       # 初始噪聲估計幀數
 spp:
   alpha_xi: 0.96          # v2.12: 調優結果
   q: 0.5                  # v2.12: 調優結果 (原 0.6)

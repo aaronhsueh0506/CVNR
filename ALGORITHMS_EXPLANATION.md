@@ -1,7 +1,7 @@
 # 語音降噪演算法詳解
 
-**版本**：v1.5.0
-**更新日期**：2026-01-02
+**版本**：v2.3
+**更新日期**：2026-01-08
 **適用對象**：技術介紹、演算法說明、項目展示
 
 ---
@@ -124,6 +124,83 @@ noise_tracking:
 - 更新所有配置文件（v2, v3, v3-2, v3-3, v3-4, v4）
 - 統一測試框架
 - 完善技術文檔
+
+---
+
+## v2.2 重大更新 (2026-01-08)
+
+### 🎯 V2 Wiener Filter 核心改進
+
+#### Bayesian SPP 取代 Sigmoid 近似
+
+**之前（Sigmoid 近似 - 不準確）:**
+```python
+spp = 1 / (1 + exp(-2*(γ-1)))  # 僅用 γ，忽略 ξ
+```
+
+**之後（Bayesian SPP - 正確）:**
+```python
+Λ = ξ/(1+ξ) · γ
+spp = 1 / [1 + (q/(1-q)) · exp(-Λ)]
+```
+
+**改進效果**: V2 ΔPESQ 從 +0.035 提升至 +0.244
+
+#### DD 公式修正（Decision-Directed SNR Estimation）
+
+**之前:** 使用 prev_gamma（間接計算）
+**之後:** 使用 enhanced_mag_prev（直接計算）
+
+```
+ξ(l) = α · [|X̂(l-1)|² / N(l)] + (1-α) · max(γ(l)-1, 0)
+其中 |X̂(l-1)| = G(l-1) · |Y(l-1)|  ← 直接使用增強後幅度
+```
+
+這是 Ephraim & Malah (1984) 原始論文中的正確實現方式。
+
+#### MCRA 噪聲估計支持
+
+新增 MCRA (Minima Controlled Recursive Averaging) 噪聲估計器選項：
+- 更穩健的最小值追蹤
+- SPP 加權更新
+- 對非穩態噪聲更魯棒
+
+---
+
+## v2.3 重大更新 (2026-01-08)
+
+### 🎯 Soft Reset 噪聲場景適應
+
+#### 問題：Hard Reset 的弊端
+
+當檢測到噪聲場景變化時，舊的 Hard Reset 策略會：
+- 完全清空 `gain_prev = None`
+- 導致語音斷裂
+- 產生突發噪音
+- 收斂時間過長
+
+#### 解決方案：Soft Reset
+
+```python
+if noise_change_detected:
+    # Soft Reset：衰減但不清空
+    if gain_prev is not None:
+        gain_prev *= 0.5
+    # 不再重置 spp_estimator 和 gain_calculator
+    # 讓它們根據新噪聲估計自然收斂
+```
+
+**優點:**
+- ✅ 保留歷史信息但降低信賴度
+- ✅ 平滑過渡，避免語音斷裂
+- ✅ 自然收斂到新噪聲估計
+- ✅ 更好的聽感體驗
+
+#### 統一實現
+
+所有降噪器版本都採用 Soft Reset：
+- **V2**: WienerGainCalculator 新增 `soft_reset()` 方法
+- **V3, V3-2, V3-3, V3-4, V4**: `gain_prev *= 0.5` 取代 `gain_prev = None`
 
 ---
 
@@ -443,30 +520,37 @@ G_base = (ξ/(1+ξ)) * exp(0.5 * E1(v))
 
 ---
 
-### V3-3: PMMSE (Loizou 2005)
+### V3-3: PMMSE (Wolfe & Godsill 2003)
 
-**技術原理**：感知動機 MMSE (Gaussian 先驗 + Itakura-Saito 距離)
+**技術原理**：Parametric MMSE，β=0.5 特例的 MMSE 估計
 
-#### 核心創新：感知成本函數
+#### 核心創新：β 參數化 MMSE
 
-**成本函數**: 最小化 `E[(|X| - |Xhat|)² / |X|]`
+Wolfe & Godsill (2003) 提出了參數化 MMSE 估計框架，其中 β=0.5 給出解析解。
 
-- 等價於 **Itakura-Saito (IS) 距離**
-- 對小幅度更寬容,對大幅度更嚴格
-- 更符合人耳感知特性
-
-**公式** (Loizou 2005 Equation 12):
+**增益函數** (β=0.5 特例):
 ```
-G = {sqrt(v) / [sqrt(pi) * gamma]} * [exp(v/2) / I0(v/2)]
+G_PM = sqrt(v) / (sqrt(π) · γ) · exp(v/2) / I0(v/2)
+     = sqrt(v) / (sqrt(π) · γ) / i0e(v/2)
 ```
+
+其中:
+- `v = ξ/(1+ξ) · γ`（先驗 SNR 與後驗 SNR 的組合）
+- `i0e(x) = exp(-|x|) · I0(x)`（避免數值溢出的指數縮放 Bessel 函數）
 
 **Gaussian 先驗**:
 ```
 p(X) ~ CN(0, σ²)  (complex Gaussian)
 |X| ~ Rayleigh(σ)  (幅度譜服從 Rayleigh 分佈)
 ```
-- 假設語音 DFT 係數為 complex Gaussian
-- 幅度譜服從 Rayleigh 分佈
+
+#### 數值穩定性
+
+使用 `scipy.special.i0e` 避免 Bessel 函數 I0 在大參數時的溢出問題：
+```python
+from scipy.special import i0e
+gain = np.sqrt(v) / (np.sqrt(np.pi) * gamma) / i0e(v / 2)
+```
 
 #### 關鍵參數
 
@@ -478,56 +562,63 @@ p(X) ~ CN(0, σ²)  (complex Gaussian)
 
 #### 技術特點
 
-- ✅ **感知動機**: IS 距離更符合人耳感知
-- ✅ **少殘留噪聲**: 相比 Gaussian-MMSE 更乾淨
-- 📖 **研究價值**: Loizou 2005 經典論文實現
+- ✅ **解析解**: β=0.5 時有閉式解，計算高效
+- ✅ **數值穩定**: 使用 i0e 避免溢出
+- ✅ **Gaussian 先驗**: 適合一般語音信號
+- 📖 **文獻**: Wolfe, P. J., & Godsill, S. J. (2003)
 
 ---
 
 ### V3-4: Laplacian-MMSE (Chen & Loizou 2007)
 
-**技術原理**：Laplacian 先驗 + 標準 MSE (最新研究成果)
+**技術原理**：Laplacian 先驗 + 標準 MSE
 
 #### 核心特點
+
+Chen & Loizou (2007) 提出使用 Laplacian 分佈作為語音幅度譜的先驗，比 Gaussian 先驗更符合語音的稀疏特性。
 
 **與 V3-3 的區別**:
 | 項目 | V3-3 (PMMSE) | V3-4 (Lap-MMSE) |
 |------|--------------|-----------------|
-| 成本函數 | E[(X-Xhat)²/X] | E[(X-Xhat)²] |
 | 先驗分佈 | Gaussian | Laplacian |
-| 距離測度 | Itakura-Saito | 標準 MSE |
+| 增益特性 | β=0.5 解析解 | β=1.0 Laplacian |
+| 稀疏性 | 標準 | 更強 |
 
-**公式**:
+**增益函數** (Chen & Loizou 2007):
 ```
-G = (√π/2) * √v * exp(-v/2) * I₀(v/2)
+G_Lap = (√π/2) · √v · exp(-v/2) · I₀(v/2)
 ```
-其中: `v = β * ξ/(1+ξ) * γ`
+
+其中:
+- `v = β · ξ/(1+ξ) · γ`
+- `β = 1.0`（Laplacian 形狀參數）
+- `I₀` 為零階修正 Bessel 函數
 
 **Laplacian 優勢**:
-- 峰態係數 = 6 (Gaussian 為 3)
-- 更「尖銳」,更適合稀疏信號
-- 語音 DFT 係數實測峰態 ≈ 5-8
+- 峰態係數 = 6（Gaussian 為 3）
+- 更「尖銳」，更適合稀疏信號建模
+- 語音 DFT 係數實測峰態 ≈ 5-8，更接近 Laplacian
 
 #### 關鍵參數
 
 | 參數 | 默認值 | 作用 |
 |------|--------|------|
-| beta_laplacian | 1.5 | Laplacian 形狀參數 |
+| beta_laplacian | 1.0 | Laplacian 形狀參數（Chen & Loizou 原始值）|
 | g_min_db | -20 dB | 最小增益 |
 | alpha_g | 0.7 | 增益時間平滑 |
 
 **beta_laplacian 調優**:
-- 1.0: 較寬鬆,接近 Gaussian,保留更多細節
-- 1.5: 平衡設置 (推薦)
-- 2.0: 較保守,更多抑制
+- 1.0: Chen & Loizou 原始設置（推薦）
+- 1.5: 較保守，更多抑制
+- 2.0: 最保守
 
 #### 技術特點
 
-- ✅ **最新研究**: Chen & Loizou 2007
-- ✅ **稀疏性建模**: Laplacian 更適合語音特性
+- ✅ **稀疏性建模**: Laplacian 更符合語音 DFT 係數分佈
 - ✅ **少殘留噪聲**: 比 Gaussian-MMSE 更乾淨
 - ✅ **可調形狀**: beta 參數控制保守程度
-- 📊 **最佳殘留噪聲**: 四個變體中殘留噪聲最少
+- ✅ **STOI 最優**: 在所有 V3 變體中 STOI 表現最佳
+- 📖 **文獻**: Chen, J., & Loizou, P. C. (2007). "Speech enhancement using a MMSE estimator with supergaussian speech modeling."
 
 ---
 

@@ -1,11 +1,10 @@
 # V2.2: Wiener Filter with DD + SPP-gated noise update
+# v2.2 更新:
+#   - 使用正確的 Bayesian SPP 估計器（取代 Sigmoid 近似）
+#   - 修正 DD 公式：使用上一幀增強後的幅度和當前噪聲估計
+#   - 改用 MCRA 噪聲估計
 #
-# 噪聲估計方法: RecursiveAverage + SPP 軟判決
-#   - 使用 Sigmoid(gamma-1) 近似 SPP
-#   - 語音段自動降低噪聲更新速率
-#   - Decision-Directed (DD) 方法估計先驗 SNR
-#
-# ΔPESQ: +0.035 (相較噪聲輸入)
+# ΔPESQ: 預期 +0.15~0.25 (修復後)
 
 version: "2.2"
 name: "Wiener Filter with DD"
@@ -18,10 +17,13 @@ audio:
   window_type: hanning
 
 noise_estimation:
-  method: recursive_average   # RecursiveAverage + SPP 軟判決
-  alpha: 0.95                 # 噪聲更新速率
-  num_init_frames: 20
-  update_during_speech: false # 語音時不更新噪聲（由 SPP 控制）
+  method: mcra                # v2.2: 改用 MCRA 噪聲估計
+  alpha_s: 0.9                # 時間平滑因子
+  alpha_d: 0.85               # 噪聲更新基礎速率
+  alpha_p: 0.2                # SPP 平滑因子
+  L: 96                       # 最小值窗口長度（約 1 秒 @ 10ms）
+  delta_db: 5.0               # 偏差補償
+  num_init_frames: 10         # 初始噪聲估計幀數
 
 gain_calculation:
   method: wiener

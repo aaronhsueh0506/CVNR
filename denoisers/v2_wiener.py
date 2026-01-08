@@ -11,6 +11,7 @@ from core import FrameProcessor, Reconstructor
 from core.noise_estimators import RecursiveAverageNoiseEstimator, McraNoiseEstimator
 from core.gain_calculators import WienerGainCalculator
 from core.noise_change_detector import NoiseChangeDetector  # v1.5.0 新增
+from core.spp_estimator import SppEstimator  # v2.2: 正確的 Bayesian SPP
 from .base_denoiser import BaseDenoiser
 from typing import Tuple
 
@@ -20,6 +21,11 @@ class WienerDenoiser(BaseDenoiser):
     版本 2: Wiener 濾波降噪器
 
     基於最小均方誤差 (MMSE) 準則的最優濾波器
+
+    v2.2 新增:
+        - 使用正確的 Bayesian SPP 估計器（取代 Sigmoid 近似）
+        - 修正 DD 公式：使用上一幀增強後的幅度和當前噪聲估計
+        - ξ(l) = α·[|X̂(l-1)|² / N(l)] + (1-α)·max(γ(l)-1, 0)
 
     v2.1 新增:
         - 支持 MCRA 噪聲估計（語音段自動減少噪聲更新）
@@ -141,6 +147,16 @@ class WienerDenoiser(BaseDenoiser):
         else:
             self.noise_change_detector = None
 
+        # v2.2: 正確的 Bayesian SPP 估計器（取代 Sigmoid 近似）
+        self.spp_estimator = SppEstimator(
+            alpha=alpha_dd,  # 使用 DD 平滑因子
+            q=0.5,           # 語音先驗機率
+            xi_min_db=-25.0  # 最小先驗 SNR
+        )
+
+        # v2.2: 保存上一幀增強後的幅度（用於正確 DD 公式）
+        self.enhanced_mag_prev = None
+
     def denoise(self, noisy_signal: np.ndarray) -> np.ndarray:
         """
         對帶噪信號進行降噪
@@ -197,28 +213,47 @@ class WienerDenoiser(BaseDenoiser):
             # 獲取噪聲估計
             noise_psd = self.noise_estimator.noise_psd
 
-            # v2.0: 計算後驗 SNR 和 SPP 近似（用於軟判決噪聲更新）
-            gamma = noisy_psd / (noise_psd + 1e-10)
-            # 使用 Sigmoid 近似 SPP: spp ≈ 1 / (1 + exp(-2*(gamma-1)))
-            spp_approx = 1.0 / (1.0 + np.exp(-2.0 * (gamma - 1.0)))
+            # v2.2: 使用正確的 Bayesian SPP（取代 Sigmoid 近似）
+            # SPP 估計器使用 DD 方法計算 xi，返回正確的語音存在機率
+            if self.gain_calculator.prev_gain is not None:
+                prev_gain = self.gain_calculator.prev_gain
+            else:
+                prev_gain = np.ones_like(noisy_psd)  # 初始幀使用 1.0
+
+            spp, xi_spp, gamma = self.spp_estimator.estimate(noisy_psd, noise_psd, prev_gain)
 
             # v1.5.0: 噪聲變化檢測
             if self.enable_noise_tracking and self.noise_change_detector is not None:
                 # 檢測噪聲變化
-                if self.noise_change_detector.detect(gamma, spp_approx):
-                    # 觸發快速適應
+                if self.noise_change_detector.detect(gamma, spp):
+                    # 1. 噪聲估計器進入快速適應模式 (保持不變)
                     self.noise_estimator.trigger_fast_adaptation()
-                    # 清除增益歷史
-                    self.gain_calculator.reset()
 
-            # 計算 Wiener 增益
-            gain = self.gain_calculator.calculate(noisy_psd, noise_psd)
+                    # 2. v2.3: 使用 Soft Reset 替代 Hard Reset
+                    #    避免完全重置導致的語音斷裂和突發噪音
+                    self.gain_calculator.soft_reset(decay_factor=0.5)
+
+                    # 3. 增強幅度歷史衰減（而非清空）
+                    if self.enhanced_mag_prev is not None:
+                        self.enhanced_mag_prev *= 0.5
+
+                    # 注意：不再重置 spp_estimator，讓它根據新噪聲估計自然收斂
+
+            # v2.2: 計算 Wiener 增益，傳遞上一幀增強後的幅度
+            gain = self.gain_calculator.calculate(
+                noisy_psd,
+                noise_psd,
+                enhanced_mag_prev=self.enhanced_mag_prev
+            )
 
             # 應用增益
             enhanced_magnitude[i] = gain * noisy_magnitude[i]
 
+            # v2.2: 保存當前幀增強後的幅度（供下一幀 DD 使用）
+            self.enhanced_mag_prev = enhanced_magnitude[i].copy()
+
             # v2.0: 更新噪聲估計（使用 SPP 軟判決）
-            self.noise_estimator.update(noisy_magnitude[i], spp=spp_approx)
+            self.noise_estimator.update(noisy_magnitude[i], spp=spp)
 
         # 相位保持不變
         enhanced_phase = noisy_phase
@@ -232,6 +267,9 @@ class WienerDenoiser(BaseDenoiser):
         # v1.5.0: 重置噪聲變化檢測器
         if self.enable_noise_tracking and self.noise_change_detector is not None:
             self.noise_change_detector.reset()
+        # v2.2: 重置 SPP 估計器和增強幅度歷史
+        self.spp_estimator.reset()
+        self.enhanced_mag_prev = None
 
     def get_params(self) -> dict:
         """獲取參數"""

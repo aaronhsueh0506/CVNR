@@ -212,12 +212,16 @@ class SppMmseDenoiser(BaseDenoiser):
             if self.enable_noise_tracking and self.noise_change_detector is not None:
                 # 使用 posterior SNR (gamma) 檢測噪聲變化
                 if self.noise_change_detector.detect(gamma, spp):
-                    # 觸發快速適應
+                    # 1. 噪聲估計器進入快速適應模式
                     self.noise_estimator.trigger_fast_adaptation()
-                    # 清除歷史狀態
-                    self.gain_calculator.reset()
-                    self.spp_estimator.reset()
-                    self.gain_prev = None
+
+                    # 2. v2.3: Soft Reset - 增益歷史衰減（而非清空）
+                    #    避免完全重置導致的語音斷裂和突發噪音
+                    if self.gain_prev is not None:
+                        self.gain_prev *= 0.5  # 降低對上一幀語音估計的信賴度，但不歸零
+
+                    # 注意：不再重置 spp_estimator 和 gain_calculator
+                    #       讓它們根據新噪聲估計自然收斂即可
 
             # 2.3 計算 SPP 加權的 MMSE 增益 ⭐ 核心步驟
             gain = self.gain_calculator.calculate(spp, xi, gamma)

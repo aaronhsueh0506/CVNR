@@ -4,6 +4,59 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [2.3.0] - 2026-01-08
+
+### 新增 (Added)
+- ✨ **Soft Reset 策略**: 取代 Hard Reset 處理噪聲場景變化
+  - 使用 `gain_prev *= 0.5` 衰減而非完全清空
+  - 避免語音斷裂和突發噪音問題
+  - 保留歷史狀態但降低信賴度
+
+### 改進 (Changed)
+- ⬆️ **所有降噪器統一 Soft Reset**:
+  - V2: WienerGainCalculator 新增 `soft_reset()` 方法
+  - V3, V3-2, V3-3, V3-4, V4: `gain_prev *= 0.5` 取代 `gain_prev = None`
+- ⬆️ 不再重置 spp_estimator 和 gain_calculator，讓它們根據新噪聲估計自然收斂
+
+### 技術細節 (Technical Details)
+
+#### Soft Reset 設計原理
+
+**問題：Hard Reset 的弊端**
+- 完全清空 gain_prev 會導致下一幀瞬間跳到純噪聲估計
+- 造成可聽到的語音斷裂和突發噪音
+- 收斂到新穩態需要過長時間
+
+**解決方案：Soft Reset**
+```python
+if noise_change_detected:
+    # Soft Reset：衰減但不清空
+    if gain_prev is not None:
+        gain_prev *= 0.5  # 降低對上一幀估計的信賴度
+
+    # 觸發噪聲估計器快速適應
+    noise_estimator.trigger_fast_adaptation()
+
+    # 注意：不再重置 spp_estimator 和 gain_calculator
+```
+
+**優點**:
+- 保留歷史信息但降低信賴度
+- 平滑過渡到新噪聲場景
+- 避免語音斷裂和突發噪音
+- 更快收斂到新穩態
+
+### 修改文件
+1. `core/gain_calculators/wiener.py` - 新增 `soft_reset()` 方法
+2. `denoisers/v2_wiener.py` - 使用 `soft_reset()` 和 `enhanced_mag_prev *= 0.5`
+3. `denoisers/v3_spp_mmse.py` - `gain_prev *= 0.5` 取代 `gain_prev = None`
+4. `denoisers/v3_2_mmse_lsa.py` - `gain_prev *= 0.5` 取代 `gain_prev = None`
+5. `denoisers/v3_3_pmmse.py` - `gain_prev *= 0.5` 取代 `gain_prev = None`
+6. `denoisers/v3_4_laplacian_mmse.py` - `gain_prev *= 0.5` 取代 `gain_prev = None`
+7. `denoisers/v4_imcra_omlsa.py` - `gain_prev *= 0.5` 取代 `gain_prev = None`
+
+---
+
 ## [2.2.0] - 2026-01-08
 
 ### 新增 (Added)
