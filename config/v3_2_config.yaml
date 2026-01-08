@@ -11,10 +11,9 @@ gain_calculation:
   use_linear_spp_weighting: false
 name: MMSE-LSA
 noise_estimation:
-  alpha: 0.95
-  method: recursive_average
+  method: recursive_average # v2.1: 改回 recursive_average + SPP 軟判決
+  alpha: 0.95               # 噪聲更新速率
   num_init_frames: 20
-  update_during_speech: false
 noise_tracking:
   enable: true
 spp:

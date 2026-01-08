@@ -1,6 +1,6 @@
 """
 V3-3: PMMSE Denoiser - 感知動機 MMSE 降噪器
-基於 Loizou 2005
+基於 Wolfe & Godsill 2003 (β=0.5)
 """
 
 import numpy as np
@@ -9,7 +9,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from core import FrameProcessor, Reconstructor, SppEstimator, TransitionDetector
-from core.noise_estimators import RecursiveAverageNoiseEstimator
+from core.noise_estimators import RecursiveAverageNoiseEstimator, McraNoiseEstimator
 from core.gain_calculators import PmmseGainCalculator
 from core.noise_change_detector import NoiseChangeDetector
 from .base_denoiser import BaseDenoiser
@@ -18,20 +18,25 @@ from typing import Optional
 
 class PmmseDenoiser(BaseDenoiser):
     """
-    版本 3-3: PMMSE 降噪器 (Perceptually Motivated MMSE with Gaussian Prior)
+    版本 3-3: PMMSE 降噪器 (Wolfe & Godsill β=0.5)
 
-    基於 Loizou 2005 的感知動機 Bayesian 估計器 (Equation 12)
+    公式:
+        G_PM = sqrt(v) / (sqrt(π) · γ) · exp(v/2) / I_0(v/2)
+             = sqrt(v) / (sqrt(π) · γ) · 1 / i0e(v/2)
+
+    其中:
+        v = ξ/(1+ξ) · γ
+        i0e: 指數縮放的 Modified Bessel function (避免數值溢出)
 
     核心特點:
-        - 先驗分佈: Gaussian (complex Gaussian → Rayleigh 幅度分佈)
-        - 成本函數: E[(|X| - |Xhat|)^2 / |X|] (Itakura-Saito 距離)
-        - 感知動機的 IS 距離，更符合人耳感知特性
-        - 特殊函數: Modified Bessel function I0
+        - 感知動機的成本函數
+        - β=0.5 特例解析解
+        - 使用 scipy.special.i0e 避免數值溢出
 
     與 V3/V3-2 的區別:
         - V3 (MMSE-STSA): 最小化 E[(|X| - |Xhat|)^2] (線性域)
         - V3-2 (MMSE-LSA): 最小化 E[(log|X| - log|Xhat|)^2] (對數域)
-        - V3-3 (PMMSE): 最小化 E[(|X| - |Xhat|)^2 / |X|] (感知加權 IS 距離)
+        - V3-3 (PMMSE): Wolfe & Godsill β=0.5 感知動機估計
 
     參數:
         sample_rate: 採樣率
@@ -72,9 +77,16 @@ class PmmseDenoiser(BaseDenoiser):
         alpha_g_startup: float = 0.4,
         num_init_frames_fast: int = 10,
         enable_transition_detection: bool = False,
-        transition_config: Optional[dict] = None
+        transition_config: Optional[dict] = None,
+        # v2.0 MCRA 噪聲估計參數
+        noise_method: str = 'recursive_average',  # 'recursive_average' 或 'mcra'
+        alpha_s: float = 0.9,       # MCRA 時間平滑因子
+        alpha_p: float = 0.2,       # MCRA SPP 平滑因子
+        L: int = 96,                # MCRA 最小值窗口長度
+        delta_db: float = 5.0       # MCRA 偏差補償 (dB)
     ):
         super().__init__(sample_rate)
+        self.noise_method = noise_method
 
         # 創建處理器
         self.processor = FrameProcessor(
@@ -91,16 +103,27 @@ class PmmseDenoiser(BaseDenoiser):
             window=self.processor.window
         )
 
-        # 創建噪聲估計器 (Phase 6: 添加快速啟動)
-        self.noise_estimator = RecursiveAverageNoiseEstimator(
-            alpha=alpha_noise,
-            num_init_frames=num_init_frames,
-            update_during_speech=False,
-            enable_fast_startup=enable_fast_startup,
-            startup_frames=startup_frames,
-            alpha_startup=alpha_noise_startup,
-            num_init_frames_fast=num_init_frames_fast
-        )
+        # 創建噪聲估計器（根據配置選擇）
+        if noise_method == 'mcra':
+            self.noise_estimator = McraNoiseEstimator(
+                alpha_s=alpha_s,
+                alpha_d=alpha_noise,
+                alpha_p=alpha_p,
+                L=L,
+                delta_db=delta_db,
+                num_init_frames=num_init_frames
+            )
+        else:
+            # Phase 6: 添加快速啟動
+            self.noise_estimator = RecursiveAverageNoiseEstimator(
+                alpha=alpha_noise,
+                num_init_frames=num_init_frames,
+                update_during_speech=False,
+                enable_fast_startup=enable_fast_startup,
+                startup_frames=startup_frames,
+                alpha_startup=alpha_noise_startup,
+                num_init_frames_fast=num_init_frames_fast
+            )
 
         # 創建 SPP 估計器 (Phase 6: 添加快速啟動)
         self.spp_estimator = SppEstimator(
@@ -112,16 +135,11 @@ class PmmseDenoiser(BaseDenoiser):
             alpha_startup=alpha_xi_startup
         )
 
-        # 創建 PMMSE 增益計算器 (Phase 6: 添加快速啟動和 boost 模式)
-        transition_cfg = transition_config or {}
+        # 創建 PMMSE 增益計算器 (Wolfe & Godsill β=0.5)
         self.gain_calculator = PmmseGainCalculator(
             g_min_db=g_min_db,
             alpha_g=alpha_g,
-            use_spp_weighting=use_spp_weighting,
-            enable_fast_startup=enable_fast_startup,
-            startup_frames=startup_frames,
-            alpha_g_startup=alpha_g_startup,
-            alpha_g_boost=transition_cfg.get('alpha_g_boost', 0.4)
+            use_spp_weighting=use_spp_weighting
         )
 
         # 存儲上一幀的增益（Decision Directed）
@@ -279,9 +297,9 @@ class PmmseDenoiser(BaseDenoiser):
             # 保存增益供下一幀使用
             self.gain_prev = gain.copy()
 
-            # 更新噪聲估計
-            is_speech = np.mean(spp) > 0.5
-            self.noise_estimator.update(noisy_magnitude[i], is_speech=is_speech)
+            # 更新噪聲估計（v2.0: 使用 SPP 軟判決）
+            # SPP 高（語音）→ 更新慢，SPP 低（噪聲）→ 正常更新
+            self.noise_estimator.update(noisy_magnitude[i], spp=spp)
 
         # 相位保持不變
         enhanced_phase = noisy_phase
@@ -306,14 +324,14 @@ class PmmseDenoiser(BaseDenoiser):
 
     def get_params(self) -> dict:
         """獲取參數"""
-        return {
+        params = {
             'version': 'V3-3',
             'name': 'PMMSE',
             'sample_rate': self.sample_rate,
             'frame_size_ms': self.processor.frame_size_ms,
             'frame_shift_ms': self.processor.frame_shift_ms,
             'fft_size': self.processor.fft_size,
-            'alpha_noise': self.noise_estimator.alpha,
+            'noise_method': self.noise_method,
             'alpha_xi': self.spp_estimator.alpha,
             'q': self.spp_estimator.q,
             'xi_min_db': 10 * np.log10(self.spp_estimator.xi_min),
@@ -322,6 +340,14 @@ class PmmseDenoiser(BaseDenoiser):
             'use_spp_weighting': self.gain_calculator.use_spp_weighting,
             'num_init_frames': self.noise_estimator.num_init_frames
         }
+        if self.noise_method == 'mcra':
+            params['alpha_s'] = self.noise_estimator.alpha_s
+            params['alpha_d'] = self.noise_estimator.alpha_d
+            params['alpha_p'] = self.noise_estimator.alpha_p
+            params['L'] = self.noise_estimator.L
+        else:
+            params['alpha_noise'] = self.noise_estimator.alpha
+        return params
 
     def __repr__(self):
         params = self.get_params()

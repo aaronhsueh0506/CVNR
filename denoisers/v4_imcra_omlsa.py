@@ -62,15 +62,23 @@ class ImcraOmlsaDenoiser(BaseDenoiser):
         frame_size_ms: int = 20,
         frame_shift_ms: int = 10,
         fft_size: int = 512,
-        alpha_s: float = 0.9,
-        alpha_d: float = 0.85,
-        L: int = 150,
-        delta_db: float = 5.0,
+        # IMCRA 參數（Cohen 2003）
+        freq_smooth_width: int = 1,  # 頻率平滑窗寬度
+        alpha_s: float = 0.9,        # 時間平滑因子
+        alpha_d: float = 0.85,       # 噪聲更新速率
+        L: int = 96,                 # 最小值窗口長度（約 1 秒）
+        V: int = 15,                 # 更新週期
+        U: int = 8,                  # 子窗口數量
+        delta_db: float = 5.0,       # 第一階段閾值
+        delta_s_db: float = 3.0,     # 第二階段閾值
+        # SPP 參數
         alpha_xi: float = 0.98,
         q: float = 0.5,
         xi_min_db: float = -25.0,
+        # OMLSA 增益參數
         g_min_db: float = -20.0,
         alpha_g: float = 0.7,
+        # 初始化參數
         num_init_frames: int = 20,
         enable_noise_tracking: bool = True,  # v1.5.0 新增
         use_linear_spp_weighting: bool = False  # v2.1: 對齊 V3-2
@@ -92,12 +100,16 @@ class ImcraOmlsaDenoiser(BaseDenoiser):
             window=self.processor.window
         )
 
-        # 創建 IMCRA 噪聲估計器 ⭐ 核心組件 1
+        # 創建 IMCRA 噪聲估計器 ⭐ 核心組件 1（Cohen 2003 兩階段實現）
         self.noise_estimator = ImcraNoiseEstimator(
+            freq_smooth_width=freq_smooth_width,
             alpha_s=alpha_s,
             alpha_d=alpha_d,
             L=L,
+            V=V,
+            U=U,
             delta_db=delta_db,
+            delta_s_db=delta_s_db,
             num_init_frames=num_init_frames
         )
 
@@ -243,17 +255,24 @@ class ImcraOmlsaDenoiser(BaseDenoiser):
             'frame_size_ms': self.processor.frame_size_ms,
             'frame_shift_ms': self.processor.frame_shift_ms,
             'fft_size': self.processor.fft_size,
+            # IMCRA 參數
+            'freq_smooth_width': self.noise_estimator.freq_smooth_width,
             'alpha_s': self.noise_estimator.alpha_s,
             'alpha_d': self.noise_estimator.alpha_d,
             'L': self.noise_estimator.L,
+            'V': self.noise_estimator.V,
+            'U': self.noise_estimator.U,
             'delta_db': 10 * np.log10(self.noise_estimator.delta),
+            'delta_s_db': 10 * np.log10(self.noise_estimator.delta_s),
+            # SPP 參數
             'alpha_xi': self.spp_estimator.alpha,
             'q': self.spp_estimator.q,
             'xi_min_db': 10 * np.log10(self.spp_estimator.xi_min),
+            # 增益參數
             'g_min_db': 10 * np.log10(self.gain_calculator.g_min),
             'alpha_g': self.gain_calculator.alpha_g,
             'num_init_frames': self.noise_estimator.num_init_frames,
-            'enable_noise_tracking': self.enable_noise_tracking  # v1.5.0 新增
+            'enable_noise_tracking': self.enable_noise_tracking
         }
 
     def __repr__(self):

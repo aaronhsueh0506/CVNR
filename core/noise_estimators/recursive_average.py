@@ -98,17 +98,20 @@ class RecursiveAverageNoiseEstimator:
     def update(
         self,
         magnitude: np.ndarray,
-        is_speech: Optional[bool] = None
+        is_speech: Optional[bool] = None,
+        spp: Optional[np.ndarray] = None
     ) -> np.ndarray:
         """
         遞歸更新噪聲估計
 
         v1.3.0: 支持動態 alpha（快速/正常模式）
         v1.4.0: 支持快速啟動模式，前 N 幀使用激進參數
+        v2.0: 支持 SPP 軟判決更新
 
         參數:
             magnitude: 當前幀的幅度譜 (n_freqs,)
-            is_speech: 當前幀是否為語音（可選）
+            is_speech: 當前幀是否為語音（可選，硬判決）
+            spp: 語音存在機率 (n_freqs,)（可選，軟判決，優先於 is_speech）
 
         返回:
             noise_psd: 更新後的噪聲功率譜密度 (n_freqs,)
@@ -137,13 +140,22 @@ class RecursiveAverageNoiseEstimator:
         # 計算當前幀的功率譜
         current_psd = magnitude ** 2
 
-        # 決定是否更新
-        should_update = True
-        if is_speech is not None and not self.update_during_speech:
-            should_update = not is_speech
-
-        # 遞歸更新（使用當前 alpha）
-        if should_update:
+        # v2.0: SPP 軟判決更新（優先級最高）
+        if spp is not None:
+            # 軟判決：使用 SPP 調整更新速率
+            # α̃ = α + (1-α) * spp
+            # spp 高（語音）→ α̃ 接近 1 → 更新慢
+            # spp 低（噪聲）→ α̃ 接近 α → 正常更新
+            tilde_alpha = self.current_alpha + (1 - self.current_alpha) * spp
+            self.noise_psd = tilde_alpha * self.noise_psd + (1 - tilde_alpha) * current_psd
+        elif is_speech is not None and not self.update_during_speech:
+            # 硬判決：原有邏輯
+            if not is_speech:
+                self.noise_psd = self.current_alpha * self.noise_psd + \
+                                (1 - self.current_alpha) * current_psd
+            # is_speech=True 時不更新
+        else:
+            # 無語音資訊：總是更新
             self.noise_psd = self.current_alpha * self.noise_psd + \
                             (1 - self.current_alpha) * current_psd
 
