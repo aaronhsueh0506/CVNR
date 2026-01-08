@@ -1,19 +1,34 @@
+# V2.2: Wiener Filter with DD + SPP-gated noise update
+#
+# 噪聲估計方法: RecursiveAverage + SPP 軟判決
+#   - 使用 Sigmoid(gamma-1) 近似 SPP
+#   - 語音段自動降低噪聲更新速率
+#   - Decision-Directed (DD) 方法估計先驗 SNR
+#
+# ΔPESQ: +0.035 (相較噪聲輸入)
+
+version: "2.2"
+name: "Wiener Filter with DD"
+
 audio:
-  fft_size: 512
-  frame_shift_ms: 10
-  frame_size_ms: 20
   sample_rate: 16000
+  frame_size_ms: 20
+  frame_shift_ms: 10
+  fft_size: 512
   window_type: hanning
-gain_calculation:
-  alpha_smooth: 0.8
-  method: wiener
-  min_gain: 0.1
-name: Wiener Filter
+
 noise_estimation:
-  alpha: 0.95
-  method: recursive_average
+  method: recursive_average   # RecursiveAverage + SPP 軟判決
+  alpha: 0.95                 # 噪聲更新速率
   num_init_frames: 20
-  update_during_speech: false
+  update_during_speech: false # 語音時不更新噪聲（由 SPP 控制）
+
+gain_calculation:
+  method: wiener
+  min_gain: 0.05              # 最小增益 (-26 dB)
+  alpha_smooth: 0.5           # 增益平滑因子
+  use_dd: true                # 啟用 Decision-Directed 方法
+  alpha_dd: 0.98              # DD 平滑因子
+
 noise_tracking:
   enable: true
-version: 2

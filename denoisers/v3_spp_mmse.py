@@ -10,7 +10,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from core import FrameProcessor, Reconstructor, SppEstimator
-from core.noise_estimators import RecursiveAverageNoiseEstimator
+from core.noise_estimators import RecursiveAverageNoiseEstimator, McraNoiseEstimator
 from core.gain_calculators import SppMmseGainCalculator
 from core.noise_change_detector import NoiseChangeDetector  # v1.3.0 新增
 from .base_denoiser import BaseDenoiser
@@ -70,9 +70,16 @@ class SppMmseDenoiser(BaseDenoiser):
         alpha_g: float = 0.7,
         use_full_formula: bool = False,  # v1.5.0 新增：True=Bessel完整版, False=E1簡化版
         num_init_frames: int = 20,
-        enable_noise_tracking: bool = True  # v1.3.0 新增：是否啟用噪聲場景追蹤
+        enable_noise_tracking: bool = True,  # v1.3.0 新增：是否啟用噪聲場景追蹤
+        # v2.0 MCRA 噪聲估計參數
+        noise_method: str = 'recursive_average',  # 'recursive_average' 或 'mcra'
+        alpha_s: float = 0.9,       # MCRA 時間平滑因子
+        alpha_p: float = 0.2,       # MCRA SPP 平滑因子
+        L: int = 96,                # MCRA 最小值窗口長度
+        delta_db: float = 5.0       # MCRA 偏差補償 (dB)
     ):
         super().__init__(sample_rate)
+        self.noise_method = noise_method
 
         # 創建處理器
         self.processor = FrameProcessor(
@@ -89,12 +96,22 @@ class SppMmseDenoiser(BaseDenoiser):
             window=self.processor.window
         )
 
-        # 創建噪聲估計器
-        self.noise_estimator = RecursiveAverageNoiseEstimator(
-            alpha=alpha_noise,
-            num_init_frames=num_init_frames,
-            update_during_speech=False  # 不在語音段更新
-        )
+        # 創建噪聲估計器（根據配置選擇）
+        if noise_method == 'mcra':
+            self.noise_estimator = McraNoiseEstimator(
+                alpha_s=alpha_s,
+                alpha_d=alpha_noise,  # 使用 alpha_noise 作為 alpha_d
+                alpha_p=alpha_p,
+                L=L,
+                delta_db=delta_db,
+                num_init_frames=num_init_frames
+            )
+        else:
+            self.noise_estimator = RecursiveAverageNoiseEstimator(
+                alpha=alpha_noise,
+                num_init_frames=num_init_frames,
+                update_during_speech=False  # 不在語音段更新
+            )
 
         # 創建 SPP 估計器 ⭐ 核心組件
         self.spp_estimator = SppEstimator(
@@ -211,10 +228,9 @@ class SppMmseDenoiser(BaseDenoiser):
             # 2.5 保存增益供下一幀使用（Decision Directed）
             self.gain_prev = gain.copy()
 
-            # 2.6 更新噪聲估計
-            # 使用 SPP 作為語音活動指示（軟判決）
-            is_speech = np.mean(spp) > 0.5  # 簡單閾值
-            self.noise_estimator.update(noisy_magnitude[i], is_speech=is_speech)
+            # 2.6 更新噪聲估計（v2.0: 使用 SPP 軟判決）
+            # SPP 高（語音）→ 更新慢，SPP 低（噪聲）→ 正常更新
+            self.noise_estimator.update(noisy_magnitude[i], spp=spp)
 
         # 相位保持不變
         enhanced_phase = noisy_phase
@@ -233,14 +249,14 @@ class SppMmseDenoiser(BaseDenoiser):
 
     def get_params(self) -> dict:
         """獲取參數"""
-        return {
+        params = {
             'version': 'V3',
             'name': 'MMSE-STSA',
             'sample_rate': self.sample_rate,
             'frame_size_ms': self.processor.frame_size_ms,
             'frame_shift_ms': self.processor.frame_shift_ms,
             'fft_size': self.processor.fft_size,
-            'alpha_noise': self.noise_estimator.alpha,
+            'noise_method': self.noise_method,
             'alpha_xi': self.spp_estimator.alpha,
             'q': self.spp_estimator.q,
             'xi_min_db': 10 * np.log10(self.spp_estimator.xi_min),
@@ -250,6 +266,15 @@ class SppMmseDenoiser(BaseDenoiser):
             'num_init_frames': self.noise_estimator.num_init_frames,
             'enable_noise_tracking': self.enable_noise_tracking
         }
+        # 根據噪聲估計方法添加對應參數
+        if self.noise_method == 'mcra':
+            params['alpha_s'] = self.noise_estimator.alpha_s
+            params['alpha_d'] = self.noise_estimator.alpha_d
+            params['alpha_p'] = self.noise_estimator.alpha_p
+            params['L'] = self.noise_estimator.L
+        else:
+            params['alpha_noise'] = self.noise_estimator.alpha
+        return params
 
     def get_spp_statistics(self) -> dict:
         """

@@ -4,6 +4,54 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [2.2.0] - 2026-01-08
+
+### 新增 (Added)
+- ✨ **V2.2 版本發布**: Wiener Filter with DD + SPP-gated noise update
+  - 啟用 Decision-Directed (DD) 方法估計先驗 SNR
+  - 使用 Sigmoid(gamma-1) 近似 SPP 進行軟判決噪聲更新
+  - ΔPESQ: +0.035 (相較噪聲輸入)
+
+- ✨ **V2 MCRA 噪聲估計支持** (實驗性)
+  - 新增 MCRA 噪聲估計器選項
+  - 改進 MCRA 初始化：使用 20th 百分位數避免語音幀污染
+  - 注意：MCRA 對 V2 Wiener 效果有限，建議使用 recursive_average
+
+### 改進 (Changed)
+- ⬆️ **V3-3 (PMMSE) 重新實作**
+  - 使用 Wolfe & Godsill (2003) β=0.5 公式
+  - G_PM = sqrt(v) / (sqrt(π) · γ) · 1 / i0e(v/2)
+  - 使用 `scipy.special.i0e` 避免數值溢出
+  - ΔPESQ: +0.339
+
+- ⬆️ **V3-4 (Laplacian-MMSE) 重新實作**
+  - 使用 Chen & Loizou (2007) 公式
+  - G_Lap = (sqrt(π)/2) · sqrt(v) · exp(-v/2) · I0(v/2)
+  - Laplacian 先驗適合語音頻譜稀疏性
+  - ΔPESQ: +0.376
+
+### 文檔 (Documentation)
+- 📝 **各版本噪聲估計方法說明**
+
+| 版本 | 噪聲估計器 | SPP 來源 | 說明 |
+|------|-----------|---------|------|
+| V1 | SimpleAverage | 無 | 前 N 幀平均 |
+| V2 | RecursiveAverage | Sigmoid 近似 | DD 方法估計先驗 SNR |
+| V3~V3-4 | RecursiveAverage | SppEstimator (Bayesian) | 貝葉斯 SPP 軟判決 |
+| V4 | IMCRA | 內部兩階段計算 | Cohen 2003 兩階段結構 |
+
+### 修改文件
+1. `config/v2_config.yaml` - 更新為 V2.2，添加詳細說明
+2. `config/v3_3_config.yaml` - 添加 Wolfe & Godsill 公式說明
+3. `config/v3_4_config.yaml` - 添加 Chen & Loizou 公式說明
+4. `core/gain_calculators/pmmse.py` - Wolfe & Godsill β=0.5 實作
+5. `core/gain_calculators/laplacian_mmse.py` - Chen & Loizou 實作
+6. `core/noise_estimators/mcra.py` - 改進初始化策略
+7. `denoisers/v2_wiener.py` - 支持 MCRA 噪聲估計
+8. `regenerate_all.py` - 支持 V2 MCRA 參數
+
+---
+
 ## [2.1.2] - 2026-01-06
 
 ### 修復 (Fixed)

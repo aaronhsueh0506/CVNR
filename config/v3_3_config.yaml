@@ -1,24 +1,40 @@
+# V3-3: PMMSE (Perceptually Motivated MMSE)
+#
+# 增益計算: Wolfe & Godsill (2003) β=0.5 公式
+#   G_PM = sqrt(v) / (sqrt(π) · γ) · 1 / i0e(v/2)
+#   使用 scipy.special.i0e 避免數值溢出
+#
+# 噪聲估計方法: RecursiveAverage + Bayesian SPP 軟判決
+#   - SppEstimator 計算語音存在機率
+#   - 語音段自動降低噪聲更新速率
+#
+# ΔPESQ: +0.339
+
+version: "3.3"
+name: "PMMSE-Wolfe-Godsill"
+
 audio:
-  fft_size: 512
-  frame_shift_ms: 10
-  frame_size_ms: 20
   sample_rate: 16000
+  frame_size_ms: 20
+  frame_shift_ms: 10
+  fft_size: 512
   window_type: hanning
-gain_calculation:
-  alpha_g: 0.6            # v2.12: 調優結果 (原 0.7)
-  g_min_db: -9.0          # v2.12: 調優結果 (原 -12.0)
-  method: pmmse
-  use_spp_weighting: true
-name: PMMSE-V3-2-Aligned
+
 noise_estimation:
-  alpha: 0.95
-  method: recursive_average
+  method: recursive_average   # RecursiveAverage + SPP 軟判決
+  alpha: 0.95                 # 噪聲更新速率
   num_init_frames: 20
-  update_during_speech: false
+
+spp:
+  alpha_xi: 0.94              # DD 平滑因子
+  q: 0.5                      # 語音先驗機率
+  xi_min_db: -25.0
+
+gain_calculation:
+  method: pmmse               # Wolfe & Godsill β=0.5 公式
+  g_min_db: -15.0             # 最小增益
+  alpha_g: 0.5                # 增益時間平滑
+  use_spp_weighting: true
+
 noise_tracking:
   enable: true
-spp:
-  alpha_xi: 0.94          # v2.12: 調優結果 (原 0.96)
-  q: 0.5                  # v2.12: 維持 0.5
-  xi_min_db: -25.0
-version: 3-3-v3-2-aligned

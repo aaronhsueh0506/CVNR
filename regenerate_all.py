@@ -94,6 +94,34 @@ def get_denoiser_params_from_config(config, sr, fft_size):
                 'beta': gc.get('beta', 0.02),
                 'alpha_smooth': gc.get('alpha_smooth', 0.8)
             })
+        # V2 Wiener 參數（含 DD）
+        elif gc.get('method') == 'wiener':
+            params.update({
+                'min_gain': gc.get('min_gain', 0.01),
+                'alpha_smooth': gc.get('alpha_smooth', 0.8),
+                'use_dd': gc.get('use_dd', True),           # v2.0 DD 方法
+                'alpha_dd': gc.get('alpha_dd', 0.98)        # v2.0 DD 平滑因子
+            })
+            # v2.1: V2 Wiener 噪聲估計支持
+            if 'noise_estimation' in config:
+                ne = config['noise_estimation']
+                ne_method = ne.get('method', 'recursive_average')
+                if ne_method == 'mcra':
+                    params.update({
+                        'noise_method': 'mcra',
+                        'alpha_s': ne.get('alpha_s', 0.9),
+                        'alpha_d': ne.get('alpha_d', 0.85),
+                        'alpha_p': ne.get('alpha_p', 0.2),
+                        'L': ne.get('L', 96),
+                        'delta_db': ne.get('delta_db', 5.0)
+                    })
+                else:
+                    # recursive_average 參數
+                    params.update({
+                        'noise_method': 'recursive_average',
+                        'alpha': ne.get('alpha', 0.95),
+                        'update_during_speech': ne.get('update_during_speech', False)
+                    })
         # V3 (SPP-MMSE) 支持 use_full_formula
         elif gc.get('method') == 'spp_mmse':
             params.update({
@@ -101,11 +129,27 @@ def get_denoiser_params_from_config(config, sr, fft_size):
                 'alpha_g': gc.get('alpha_g', 0.7),
                 'use_full_formula': gc.get('use_full_formula', False)
             })
-        # V3-2, V3-3, V3-4 不支持 use_full_formula
-        elif gc.get('method') in ['mmse_lsa', 'pmmse', 'laplacian_mmse']:
+        # V3-2 (MMSE-LSA)
+        elif gc.get('method') == 'mmse_lsa':
             params.update({
                 'g_min_db': gc.get('g_min_db', -20.0),
-                'alpha_g': gc.get('alpha_g', 0.7)
+                'alpha_g': gc.get('alpha_g', 0.7),
+                'use_linear_spp_weighting': gc.get('use_linear_spp_weighting', False)
+            })
+        # V3-3 (PMMSE - Wolfe & Godsill β=0.5)
+        elif gc.get('method') == 'pmmse':
+            params.update({
+                'g_min_db': gc.get('g_min_db', -20.0),
+                'alpha_g': gc.get('alpha_g', 0.5),
+                'use_spp_weighting': gc.get('use_spp_weighting', True)
+            })
+        # V3-4 (Laplacian-MMSE - Chen & Loizou)
+        elif gc.get('method') == 'laplacian_mmse':
+            params.update({
+                'g_min_db': gc.get('g_min_db', -20.0),
+                'alpha_g': gc.get('alpha_g', 0.5),
+                'beta_laplacian': gc.get('beta_laplacian', 1.0),
+                'use_spp_weighting': gc.get('use_spp_weighting', True)
             })
         # V4 (OMLSA)
         elif gc.get('method') == 'omlsa':
@@ -124,14 +168,42 @@ def get_denoiser_params_from_config(config, sr, fft_size):
             'xi_min_db': spp.get('xi_min_db', -25.0)
         })
 
-    # IMCRA 噪聲估計參數（V4）
+    # 噪聲估計參數（V3 系列專用，V2 不需要 noise_method）
+    # 判斷是否為 V3 系列（有 spp 配置）
+    is_v3_series = 'spp' in config
+    if 'noise_estimation' in config and is_v3_series:
+        ne = config['noise_estimation']
+        ne_method = ne.get('method', 'recursive_average')
+
+        if ne_method == 'mcra':
+            # MCRA 噪聲估計參數（Cohen & Berdugo 2002）
+            params.update({
+                'noise_method': 'mcra',
+                'alpha_s': ne.get('alpha_s', 0.9),
+                'alpha_noise': ne.get('alpha_d', 0.85),  # 映射 config 的 alpha_d 到 denoiser 的 alpha_noise
+                'alpha_p': ne.get('alpha_p', 0.2),
+                'L': ne.get('L', 96),
+                'delta_db': ne.get('delta_db', 5.0)
+            })
+        elif ne_method == 'recursive_average':
+            # RecursiveAverage 噪聲估計參數（v2.1: + SPP 軟判決）
+            params.update({
+                'noise_method': 'recursive_average',
+                'alpha_noise': ne.get('alpha', 0.95)  # 映射 config 的 alpha 到 denoiser 的 alpha_noise
+            })
+
+    # IMCRA 噪聲估計參數（V4, Cohen 2003 兩階段實現）
     if 'noise_estimation' in config and config['noise_estimation'].get('method') == 'imcra':
         ne = config['noise_estimation']
         params.update({
+            'freq_smooth_width': ne.get('freq_smooth_width', 1),
             'alpha_s': ne.get('alpha_s', 0.9),
             'alpha_d': ne.get('alpha_d', 0.85),
-            'L': ne.get('L', 150),
-            'delta_db': ne.get('delta_db', 5.0)
+            'L': ne.get('L', 96),
+            'V': ne.get('V', 15),
+            'U': ne.get('U', 8),
+            'delta_db': ne.get('delta_db', 5.0),
+            'delta_s_db': ne.get('delta_s_db', 3.0)
         })
 
     # Fast Startup 參數（Phase 6）

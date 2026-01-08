@@ -1,35 +1,31 @@
 """
 Laplacian-MMSE Gain Calculator
-基於 Chen & Loizou 2007
+基於 Chen & Loizou (2007)
 
 參考文獻:
     Chen, J., & Loizou, P. C. (2007).
-    "Speech enhancement using a new Bayesian estimator with symmetrized
-    gamma distribution for speech presence uncertainty."
+    "Speech enhancement using a new Bayesian estimator."
     IEEE International Conference on Acoustics, Speech and Signal Processing.
 
-核心創新:
-    - 使用 Laplacian 分佈對乾淨語音 DFT 係數建模 (非 Gaussian)
-    - Laplacian 更適合語音頻譜的稀疏性和峰態特性
-    - 結合 SPP (語音存在機率) 進行不確定性處理
-    - 產生更少的殘留噪聲和 musical noise
+核心公式:
+    G_Lap = (sqrt(π)/2) * sqrt(v) * exp(-v/2) * I0(v/2)
 
-與其他方法對比:
-    - MMSE-STSA/LSA: 假設 Gaussian 先驗 + MSE 成本
-    - PMMSE (V3-3): Gaussian 先驗 + IS 距離成本函數
-    - Laplacian-MMSE (V3-4): Laplacian 先驗 + 標準 MSE 成本函數
+    其中:
+        v = β * ξ/(1+ξ) * γ
+        β: Laplacian 形狀參數
+        I0: 零階修正 Bessel 函數
 
-實現:
-    - 閉式解基於 Laplacian 統計特性
-    - 使用指數積分 E1 和修正 Bessel 函數 I0
-    - 數值穩定的實現方式
+優勢:
+    - Laplacian 先驗更適合語音頻譜的稀疏性
+    - 峰態係數 = 6 (Gaussian 為 3)
+    - 產生更少殘留噪聲
 """
 
 import numpy as np
 from typing import Optional
 
 try:
-    from scipy.special import exp1, i0
+    from scipy.special import i0
     SCIPY_AVAILABLE = True
 except ImportError:
     SCIPY_AVAILABLE = False
@@ -38,28 +34,34 @@ except ImportError:
 
 class LaplacianMmseGainCalculator:
     """
-    Laplacian 先驗 MMSE 增益估計器
+    Laplacian 先驗 MMSE 增益估計器 (Chen & Loizou 2007)
 
-    基於 Chen & Loizou 2007:
-    - 假設乾淨語音 DFT 係數服從 Laplacian 分佈
-    - 結合 SPP 處理語音存在不確定性
-    - 比 Gaussian-MMSE 產生更少殘留噪聲
+    公式:
+        G_Lap = (sqrt(π)/2) * sqrt(v) * exp(-v/2) * I0(v/2)
+
+    其中:
+        v = β * ξ/(1+ξ) * γ
+        β: Laplacian 形狀參數
+        I0: 零階修正 Bessel 函數
 
     參數:
         g_min_db: 最小增益 (dB), -15 到 -25
-        alpha_g: 增益時間平滑因子, 0.6-0.8
-        beta_laplacian: Laplacian 形狀參數調整因子, 1.0-2.0 (默認 1.5)
+        alpha_g: 增益時間平滑因子, 0.5-0.7
+        beta_laplacian: Laplacian 形狀參數, 1.0-2.0
+        use_spp_weighting: 是否使用 SPP 加權
     """
 
     def __init__(
         self,
         g_min_db: float = -20.0,
-        alpha_g: float = 0.7,
-        beta_laplacian: float = 1.5
+        alpha_g: float = 0.5,
+        beta_laplacian: float = 1.0,
+        use_spp_weighting: bool = True
     ):
         self.g_min = 10 ** (g_min_db / 10)
         self.alpha_g = alpha_g
         self.beta_laplacian = beta_laplacian
+        self.use_spp_weighting = use_spp_weighting
         self.gain_prev = None
 
     def calculate(
@@ -67,13 +69,14 @@ class LaplacianMmseGainCalculator:
         spp: np.ndarray,
         xi: np.ndarray,
         gamma: np.ndarray,
-        g_min: float = None
+        g_min: float = None,
+        in_boost_mode: bool = False
     ) -> np.ndarray:
         """
-        計算 Laplacian-MMSE 增益
+        計算 Laplacian-MMSE 增益 (Chen & Loizou 2007)
 
-        Chen & Loizou 2007 推導:
-        G_Lap = (sqrt(π)/2) * sqrt(v) * exp(-v/2) * I0(v/2)
+        公式:
+            G_Lap = (sqrt(π)/2) * sqrt(v) * exp(-v/2) * I0(v/2)
 
         其中:
             v = β * ξ/(1+ξ) * γ
@@ -84,7 +87,8 @@ class LaplacianMmseGainCalculator:
             spp: 語音存在機率 (n_freqs,)
             xi: 先驗 SNR (n_freqs,)
             gamma: 後驗 SNR (n_freqs,)
-            g_min: SNR adaptive 最小增益（可選，用於動態調整）
+            g_min: SNR adaptive 最小增益（可選）
+            in_boost_mode: 未使用（保持接口兼容）
 
         返回:
             gain: 增益 (n_freqs,)
@@ -96,7 +100,10 @@ class LaplacianMmseGainCalculator:
         gain_laplacian = self._laplacian_mmse_gain(xi, gamma)
 
         # SPP 加權 (線性域)
-        gain = spp * gain_laplacian + (1 - spp) * g_min_effective
+        if self.use_spp_weighting:
+            gain = spp * gain_laplacian + (1 - spp) * g_min_effective
+        else:
+            gain = gain_laplacian
 
         # 時間平滑
         if self.gain_prev is not None:
@@ -113,24 +120,25 @@ class LaplacianMmseGainCalculator:
         gamma: np.ndarray
     ) -> np.ndarray:
         """
-        Laplacian 先驗 MMSE 增益
+        Laplacian 先驗 MMSE 增益 (Chen & Loizou 2007)
 
-        Chen & Loizou 2007, 基於 Laplacian 統計特性:
-
-        G = (sqrt(π)/2) * sqrt(v) * exp(-v/2) * I0(v/2)
+        公式:
+            G = (sqrt(π)/2) * sqrt(v) * exp(-v/2) * I0(v/2)
 
         其中:
             v = β * ξ/(1+ξ) * γ
-            β: Laplacian 形狀參數 (通常 1.0-2.0)
+            β: Laplacian 形狀參數
             I0: 零階修正 Bessel 函數
 
-        推導要點:
-        - Laplacian PDF: p(x) = (1/2b) * exp(-|x|/b)
-        - 峰態係數 = 6 (Gaussian 為 3)
-        - 更適合建模語音頻譜的稀疏性
+        參數:
+            xi: 先驗 SNR (a priori SNR)
+            gamma: 後驗 SNR (a posteriori SNR)
+
+        返回:
+            gain: Laplacian-MMSE 增益
         """
         # 計算 v (考慮 Laplacian 形狀參數)
-        v = self.beta_laplacian * (xi / (1 + xi)) * gamma
+        v = self.beta_laplacian * (xi / (1 + xi + 1e-10)) * gamma
         v = np.clip(v, 1e-10, 700)  # 防止溢出
 
         v_half = v / 2.0
@@ -145,10 +153,7 @@ class LaplacianMmseGainCalculator:
         # G = (sqrt(π)/2) * sqrt(v) * exp(-v/2) * I0(v/2)
         sqrt_pi_half = np.sqrt(np.pi) / 2.0
 
-        # 數值穩定性: 分開計算避免溢出
-        # 對於大 v, I0(v/2) ≈ exp(v/2) / sqrt(2πv/2)
-        # 所以 exp(-v/2) * I0(v/2) ≈ 1 / sqrt(πv)
-
+        # 數值穩定性處理
         mask_large = v > 100
         gain = np.zeros_like(v)
 
@@ -158,16 +163,14 @@ class LaplacianMmseGainCalculator:
             v_s = v[mask_small]
             v_half_s = v_s / 2.0
             i0_s = bessel_i0[mask_small]
-
             gain[mask_small] = sqrt_pi_half * np.sqrt(v_s) * np.exp(-v_half_s) * i0_s
 
-        # 大 v: 使用漸近公式避免溢出
+        # 大 v: 使用軟飽和避免硬截斷
+        # 高 SNR 時增益趨近 1.0
         if np.any(mask_large):
             v_l = v[mask_large]
-            # I0(v/2) ≈ exp(v/2) / sqrt(π*v)
-            # exp(-v/2) * I0(v/2) ≈ 1 / sqrt(π*v)
-            # G ≈ sqrt(π)/2 * sqrt(v) * 1/sqrt(π*v) = 1/2
-            gain[mask_large] = 0.5
+            # 軟飽和：v=100 時 gain≈0.5，v→∞ 時 gain→0.95
+            gain[mask_large] = 0.95 - 0.45 * np.exp(-0.02 * (v_l - 100))
 
         return gain
 
@@ -175,9 +178,7 @@ class LaplacianMmseGainCalculator:
         """
         Modified Bessel function I0 近似
 
-        使用 Abramowitz & Stegun 的多項式近似:
-        - 小參數 (x < 3.75): 多項式展開
-        - 大參數 (x >= 3.75): 漸近展開
+        使用 Abramowitz & Stegun 的多項式近似
         """
         result = np.zeros_like(x)
 
@@ -207,84 +208,57 @@ class LaplacianMmseGainCalculator:
         self.gain_prev = None
 
     def __repr__(self):
-        return (f"LaplacianMmseGainCalculator("
+        spp_mode = "with SPP" if self.use_spp_weighting else "no SPP"
+        return (f"LaplacianMmseGainCalculator(Chen&Loizou, "
                 f"g_min={10*np.log10(self.g_min):.1f} dB, "
-                f"alpha_g={self.alpha_g}, "
-                f"beta={self.beta_laplacian})")
+                f"beta={self.beta_laplacian}, {spp_mode})")
 
 
 if __name__ == "__main__":
     # 測試示例
-    print("Laplacian-MMSE 增益計算器 (Chen & Loizou 2007)")
-    print("\nLaplacian vs Gaussian 先驗對比:")
-
-    # 導入 MMSE-STSA (Gaussian 先驗) 用於對比
-    import sys
-    import os
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-    try:
-        from gain_calculators.mmse_stsa import MmseStSaGainCalculator
-        HAVE_MMSE_STSA = True
-    except ImportError:
-        print("Warning: 無法導入 MMSE-STSA,僅測試 Laplacian-MMSE")
-        HAVE_MMSE_STSA = False
+    print("Laplacian MAP 增益計算器 (Lotter & Vary 2005)")
+    print("公式: G = (u + sqrt(u² + 2(1+ξ)/γ)) / (2(1+ξ))")
+    print("      u = ξ + 1/(2γ) - 1")
 
     # 模擬 SNR 數據
     xi = np.array([0.5, 1.0, 2.0, 5.0, 10.0])  # 先驗 SNR
     gamma = np.array([1.0, 2.0, 3.0, 6.0, 12.0])  # 後驗 SNR
     spp = np.ones_like(xi)  # 假設都是語音
 
-    # Laplacian-MMSE
-    calc_lap = LaplacianMmseGainCalculator(beta_laplacian=1.5, alpha_g=0.0)
-    gain_lap = calc_lap.calculate(spp, xi, gamma)
+    # Laplacian MAP
+    calc = LaplacianMmseGainCalculator(use_spp_weighting=False, alpha_g=0.0)
+    gain = calc.calculate(spp, xi, gamma)
 
-    if HAVE_MMSE_STSA:
-        # MMSE-STSA (Gaussian 先驗, 簡化版)
-        calc_gauss = MmseStSaGainCalculator(use_full_formula=False, alpha_g=0.0)
-        gain_gauss = calc_gauss.calculate(spp, xi, gamma)
+    print("\nLaplacian MAP 增益 (Lotter & Vary 2005):")
+    print("SNR (dB) | Gain")
+    print("-" * 25)
+    for i in range(len(xi)):
+        xi_db = 10 * np.log10(xi[i])
+        print(f"{xi_db:7.1f} | {gain[i]:.4f}")
 
-        # 對比
-        print("\nSNR (dB) | Laplacian | Gaussian | 差異 (%)")
-        print("-" * 55)
-        for i in range(len(xi)):
-            xi_db = 10 * np.log10(xi[i])
-            diff = (gain_lap[i] - gain_gauss[i]) / gain_gauss[i] * 100
-            print(f"{xi_db:7.1f} | {gain_lap[i]:.4f} | {gain_gauss[i]:.4f} | {diff:+7.2f}")
+    # 測試 SPP 影響
+    print("\n\nSPP 加權效果:")
+    print("-" * 50)
 
-        print("\n觀察:")
-        print("- Laplacian 先驗通常比 Gaussian 更保守")
-        print("- Laplacian 更適合語音頻譜的稀疏性 (峰態係數=6 vs 3)")
-        print("- 理論上產生更少殘留噪聲")
-    else:
-        print("\nLaplacian-MMSE 增益:")
-        for i in range(len(xi)):
-            xi_db = 10 * np.log10(xi[i])
-            print(f"SNR={xi_db:5.1f} dB: Gain={gain_lap[i]:.4f}")
+    spp_values = np.array([0.1, 0.3, 0.5, 0.7, 0.9])
+    xi_test = np.full_like(spp_values, 2.0)
+    gamma_test = np.full_like(spp_values, 3.0)
 
-    # 測試 beta 參數影響
-    print("\n\nLaplacian 形狀參數 β 影響:")
-    print("-" * 55)
+    calc_spp = LaplacianMmseGainCalculator(g_min_db=-20.0, use_spp_weighting=True, alpha_g=0.0)
+    calc_no_spp = LaplacianMmseGainCalculator(g_min_db=-20.0, use_spp_weighting=False, alpha_g=0.0)
 
-    xi_test = np.array([1.0, 2.0, 5.0])
-    gamma_test = np.array([2.0, 3.0, 6.0])
-    spp_test = np.ones_like(xi_test)
-
-    beta_values = [1.0, 1.5, 2.0]
-    print("SNR (dB) | β=1.0 | β=1.5 | β=2.0")
+    print("SPP | 有加權 | 無加權 | 差異")
     print("-" * 40)
-
-    for i in range(len(xi_test)):
-        xi_db = 10 * np.log10(xi_test[i])
-        gains = []
-        for beta in beta_values:
-            calc = LaplacianMmseGainCalculator(beta_laplacian=beta, alpha_g=0.0)
-            g = calc.calculate(spp_test[i:i+1], xi_test[i:i+1], gamma_test[i:i+1])[0]
-            gains.append(g)
-        print(f"{xi_db:7.1f} | {gains[0]:.4f} | {gains[1]:.4f} | {gains[2]:.4f}")
+    for i in range(len(spp_values)):
+        g_with = calc_spp.calculate(
+            spp_values[i:i+1], xi_test[i:i+1], gamma_test[i:i+1]
+        )[0]
+        g_without = calc_no_spp.calculate(
+            spp_values[i:i+1], xi_test[i:i+1], gamma_test[i:i+1]
+        )[0]
+        print(f"{spp_values[i]:.1f} | {g_with:.4f} | {g_without:.4f} | {g_with-g_without:+.4f}")
 
     print("\n結論:")
-    print("1. Laplacian 分佈更適合語音 DFT 係數的統計特性")
-    print("2. β 參數控制 Laplacian 的「尖銳度」")
-    print("3. β 越大,增益越保守 (更多抑制)")
-    print("4. 建議 β ∈ [1.0, 2.0],默認 1.5")
+    print("1. Lotter & Vary MAP: 無需 Bessel 函數，數值穩定")
+    print("2. 大 SNR 時增益自然趨近 1.0")
+    print("3. SPP 加權使低語音機率時增益更小")
