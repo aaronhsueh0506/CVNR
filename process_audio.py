@@ -66,6 +66,7 @@ except ImportError:
     print("Install with: pip install pyyaml")
 
 from utils.audio_io import read_audio, write_audio
+from utils.visualization import plot_spp_spectrogram
 from denoisers import (
     SpectralSubtractionDenoiser,
     WienerDenoiser,
@@ -457,7 +458,18 @@ def process_audio_file(
 
         try:
             start_time = time.time()
-            enhanced = denoiser.denoise(audio)
+
+            # V3 系列支援 return_spp 獲取 SPP 時頻矩陣
+            spp_matrix = None
+            if version == 'V3' and hasattr(denoiser, 'denoise'):
+                result = denoiser.denoise(audio, return_spp=True)
+                if isinstance(result, tuple) and len(result) == 2:
+                    enhanced, spp_matrix = result
+                else:
+                    enhanced = result
+            else:
+                enhanced = denoiser.denoise(audio)
+
             processing_time = time.time() - start_time
 
             # v1.5.1: 確保輸出長度與輸入一致（修復繪圖維度不匹配問題）
@@ -478,7 +490,8 @@ def process_audio_file(
             results[version] = {
                 'enhanced': enhanced,
                 'processing_time': processing_time,
-                'rtf': rtf
+                'rtf': rtf,
+                'spp_matrix': spp_matrix  # None for non-V3 denoisers
             }
 
             print(f"✓ ({processing_time*1000:.1f} ms, RTF: {rtf:.3f})")
@@ -487,7 +500,7 @@ def process_audio_file(
             print(f"✗ Failed: {e}")
 
     # 保存輸出文件
-    print(f"\n[4/5] 保存結果")
+    print(f"\n[4/6] 保存結果")
     print("-"*70)
 
     saved_count = 0
@@ -502,7 +515,7 @@ def process_audio_file(
             print(f"  ✗ {version}: Failed to save - {e}")
 
     # 繪製波形圖
-    print(f"\n[5/5] 生成波形對比圖")
+    print(f"\n[5/6] 生成波形對比圖")
     print("-"*70)
 
     try:
@@ -511,6 +524,32 @@ def process_audio_file(
         print(f"  ✗ Failed to generate plot: {e}")
         if not MATPLOTLIB_AVAILABLE:
             print(f"  提示: 安裝 matplotlib 以生成波形圖: pip install matplotlib")
+
+    # 繪製 SPP 時頻圖（V3 系列）
+    print(f"\n[6/6] 生成 SPP 時頻圖")
+    print("-"*70)
+
+    spp_count = 0
+    for version, result in results.items():
+        if result.get('spp_matrix') is not None:
+            try:
+                spp_output_path = os.path.join(output_dir, f"{basename}_{version.lower()}_spp.png")
+                # 計算 hop_length（幀移的採樣點數）
+                hop_length = int(sample_rate * 10 / 1000)  # 默認 10ms 幀移
+                plot_spp_spectrogram(
+                    result['spp_matrix'],
+                    spp_output_path,
+                    sample_rate=sample_rate,
+                    hop_length=hop_length,
+                    title=f'{version} SPP Time-Frequency Map'
+                )
+                print(f"  ✓ {version} SPP: {spp_output_path}")
+                spp_count += 1
+            except Exception as e:
+                print(f"  ✗ {version} SPP: Failed - {e}")
+
+    if spp_count == 0:
+        print(f"  (沒有 V3 系列降噪器，跳過 SPP 圖生成)")
 
     # 總結
     print("\n" + "="*70)
