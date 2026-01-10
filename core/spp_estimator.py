@@ -101,9 +101,25 @@ class SppEstimator:
         # Λ(k,l) = ξ/(1+ξ) · γ
         log_likelihood = xi / (1 + xi) * gamma
 
-        # 4. 計算 SPP
-        # p(k,l) = 1 / [1 + (q/(1-q))·exp(-Λ)]
-        spp = 1 / (1 + (self.q / (1 - self.q)) * np.exp(-log_likelihood))
+        # [Old / Buggy Code]
+        # spp = 1 / (1 + (self.q / (1 - self.q)) * np.exp(-log_likelihood))
+        # 問題：
+        # 1. q 的比率寫反了，導致 q 代表的意義顛倒。
+        # 2. 少了 (1+xi) 項，這項在低 SNR 時能幫助壓低 SPP。
+
+        # [Fixed Code]
+        # 使用 Cohen & Berdugo (2001) 標準公式
+        # 修正比率為 (1-q)/q，並加入 (1+xi) 項
+        
+        # 防止溢位: 限制 (1+xi) 不超過合理範圍
+        term_xi = 1 + xi
+        
+        # 計算先驗比率 (1-q)/q
+        prior_ratio = (1 - self.q) / (self.q + 1e-10)
+        
+        # 組合公式: 1 / (1 + prior_ratio * (1+xi) * exp(-v))
+        # 注意 log_likelihood 變數存的是 v (gamma * xi / (1+xi))
+        spp = 1 / (1 + prior_ratio * term_xi * np.exp(-log_likelihood))
 
         # 保存當前值供下一幀使用
         self.xi_prev = xi

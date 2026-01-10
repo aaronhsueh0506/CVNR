@@ -17,10 +17,10 @@ noise_estimation:
 spp:
   alpha_xi: 0.96          # v2.12: 調優結果
   q: 0.5                  # v2.12: 調優結果 (原 0.6)
-  xi_min_db: -25.0
+  xi_min_db: -30.0
 gain_calculation:
   method: spp_mmse
-  g_min_db: -15.0         # v2.12: 調優結果 (原 -12.0)
+  g_min_db: -20.0         # v2.12: 調優結果 (原 -12.0)
   alpha_g: 0.6            # v2.12: 調優結果 (原 0.75)
   use_full_formula: false
 noise_tracking:
