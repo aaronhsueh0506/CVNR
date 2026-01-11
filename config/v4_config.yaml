@@ -26,17 +26,17 @@ noise_estimation:
   delta_s_db: 3.0            # 第二階段閾值 Γ_1
   num_init_frames: 20
 
-# SPP Estimation
+# SPP Estimation (Optuna 1000-trial, Score 0.5209)
 spp:
-  alpha_xi: 0.96
-  q: 0.5
-  xi_min_db: -25.0
+  alpha_xi: 0.9              # Optuna 1000-trial
+  q: 0.6                     # Optuna 1000-trial
+  xi_min_db: -19.0           # Optuna 1000-trial
 
 # OMLSA Gain Calculation
 gain_calculation:
   method: "omlsa"
-  g_min_db: -9.0             # 最小增益
-  alpha_g: 0.3               # 增益平滑（對數域）
+  g_min_db: -17.0            # Optuna 1000-trial
+  alpha_g: 0.87              # Optuna 1000-trial
   gamma_0: 4.6               # SPP 閾值參數
   use_linear_spp_weighting: false
 

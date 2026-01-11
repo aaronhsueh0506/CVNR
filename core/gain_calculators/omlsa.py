@@ -24,11 +24,18 @@ class OmlsaGainCalculator:
         - 更複雜的增益平滑策略
         - 進一步減少音樂噪聲
 
+    v1.5.0: 支持非對稱平滑
+    - Attack (增益上升): 使用 alpha_attack (快速響應)
+    - Decay (增益下降): 使用 alpha_decay (慢速抑制 Musical Noise)
+
     參數:
         g_min_db: 最小增益（dB）
         alpha_g: 增益平滑因子
         gamma_0: SPP 閾值參數
         use_linear_spp_weighting: True=線性域加權（對齊V3-2）, False=對數域加權（標準OMLSA）
+        use_asymmetric_smoothing: 是否使用非對稱平滑 (v1.5.0)
+        alpha_attack: Attack 平滑因子 (增益上升時使用，預設 0.3)
+        alpha_decay: Decay 平滑因子 (增益下降時使用，預設 alpha_g)
     """
 
     def __init__(
@@ -36,12 +43,20 @@ class OmlsaGainCalculator:
         g_min_db: float = -20.0,
         alpha_g: float = 0.7,
         gamma_0: float = 4.6,
-        use_linear_spp_weighting: bool = False
+        use_linear_spp_weighting: bool = False,
+        use_asymmetric_smoothing: bool = True,
+        alpha_attack: float = 0.3,
+        alpha_decay: float = None
     ):
         self.g_min = 10 ** (g_min_db / 10)
         self.alpha_g = alpha_g
         self.gamma_0 = gamma_0
         self.use_linear_spp_weighting = use_linear_spp_weighting
+
+        # v1.5.0: 非對稱平滑參數
+        self.use_asymmetric_smoothing = use_asymmetric_smoothing
+        self.alpha_attack = alpha_attack
+        self.alpha_decay = alpha_decay if alpha_decay is not None else alpha_g
 
         # 狀態變量
         self.gain_prev = None
@@ -88,9 +103,21 @@ class OmlsaGainCalculator:
             log_gain = spp * log_gain_h1 + (1 - spp) * log_g_min_effective
 
         # v2.1: 對數域時間平滑
+        # v1.5.0: 支持非對稱平滑
         if self.log_gain_prev is not None and self.alpha_g > 0:
-            log_gain = self.alpha_g * self.log_gain_prev + \
-                      (1 - self.alpha_g) * log_gain
+            if self.use_asymmetric_smoothing:
+                # 非對稱平滑: Attack 快, Decay 慢
+                # Attack: log_gain > log_gain_prev (增益上升)
+                # Decay: log_gain <= log_gain_prev (增益下降)
+                alpha_effective = np.where(
+                    log_gain > self.log_gain_prev,
+                    self.alpha_attack,  # Attack: 快速響應
+                    self.alpha_decay    # Decay: 慢速抑制 Musical Noise
+                )
+                log_gain = alpha_effective * self.log_gain_prev + (1 - alpha_effective) * log_gain
+            else:
+                # 對稱平滑 (原始行為)
+                log_gain = self.alpha_g * self.log_gain_prev + (1 - self.alpha_g) * log_gain
 
         # 保存當前對數增益
         self.log_gain_prev = log_gain.copy()

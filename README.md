@@ -1,6 +1,6 @@
 # 語音降噪系統 (Speech Denoising System)
 
-**版本**: v2.3
+**版本**: v2.4
 
 傳統信號處理方法的實時語音降噪系統，採用漸進式學習路徑。
 
@@ -608,8 +608,9 @@ python3 process_audio.py input.wav --versions V3 V3-2 V3-3 V3-4
 - `use_full_formula`: false (推薦數值穩定簡化版)
 
 **V3-4 (Laplacian-MMSE)**:
-- `g_min_db`: -20 dB (允許強抑制)
-- `beta`: 0.5 (Laplacian 形狀參數)
+- `xi_min_db`: -15.0 dB (Rescue 優化值，原-10過高)
+- `g_min_db`: -18.0 dB (Rescue 優化值，原-25過低會死寂)
+- `alpha_g`: 0.70 (Rescue 優化值)
 
 詳見：[V3 變體詳細對比](docs/V3_VARIANTS_COMPARISON.md)
 
@@ -1220,7 +1221,20 @@ MIT License
 
 ## 📜 版本歷史
 
-### v2.3.0 (2026-01-08) ✨ 最新
+### v2.4.0 (2026-01-11) ✨ 最新
+- ✨ **Optuna 貝葉斯優化**: 全版本 1000-trial 參數優化
+
+  | 版本 | PESQ | STOI | segSNR | xi_min_db | g_min_db | alpha_g |
+  |------|------|------|--------|-----------|----------|---------|
+  | V4 (IMCRA-OMLSA) | **1.747** | **0.859** | +5.22 dB | -19.0 | -17.0 | 0.87 |
+  | V3-2 (MMSE-LSA) | 1.738 | **0.859** | +5.12 dB | -22.0 | -13.0 | 0.84 |
+  | V3-3 (PMMSE) | 1.688 | 0.839 | **+6.06 dB** | -19.0 | -18.0 | 0.80 |
+  | V3 (MMSE-STSA) | 1.676 | 0.837 | +6.00 dB | -25.0 | -17.0 | 0.80 |
+  | V3-4 (Laplacian) | 1.539 | 0.840 | +5.10 dB | -15.0 | -18.0 | 0.70 |
+
+- ✨ **V3-4 Rescue 優化**: xi_min 原 -10.0 過高導致微弱語音被截斷，g_min 原 -25.0 過低導致死寂
+
+### v2.3.0 (2026-01-08)
 - ✨ **Soft Reset 策略**: 取代 Hard Reset 處理噪聲場景變化
   - 使用 `gain_prev *= 0.5` 衰減而非完全清空
   - 避免語音斷裂和突發噪音問題
