@@ -60,17 +60,20 @@ class SppEstimator:
         self,
         Y_psd: np.ndarray,
         noise_psd: np.ndarray,
-        gain_prev: Optional[np.ndarray] = None
+        gain_prev: Optional[np.ndarray] = None,
+        enhanced_psd_prev: Optional[np.ndarray] = None
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         估計 SPP
 
         v1.4.0: 支持快速啟動模式，使用動態 alpha
+        v1.5.0: 修正 DD 公式使用當前幀噪聲 λ_n
 
         參數:
             Y_psd: 帶噪語音功率譜密度 (n_freqs,)
             noise_psd: 噪聲功率譜密度 (n_freqs,)
             gain_prev: 上一幀的增益（可選，用於 Decision Directed）
+            enhanced_psd_prev: 上一幀增強後的功率譜 |X̂_{n-1}|²（可選，v1.5.0 新增）
 
         返回:
             spp: 語音存在機率 (n_freqs,)
@@ -91,9 +94,18 @@ class SppEstimator:
             # 初始化：使用直接估計
             xi = np.maximum(gamma - 1, 0)
         else:
-            # Decision Directed 方法（使用當前 alpha）
-            # ξ(k,l) = α·[G²(k,l-1)·γ(k,l-1)] + (1-α)·max(γ(k,l)-1, 0)
-            xi_dd = self.current_alpha * (gain_prev ** 2 * self.gamma_prev) + \
+            # v1.5.0: 修正 DD 公式
+            # 正確公式: ξ(k,l) = α · |X̂(k,l-1)|² / λ_n(k,l) + (1-α) · max(γ(k,l)-1, 0)
+            # 使用當前幀噪聲 λ_n 而非上一幀 λ_{n-1}
+            if enhanced_psd_prev is not None:
+                # 使用傳入的增強功率譜 (推薦方式)
+                xi_dd_term1 = enhanced_psd_prev / (noise_psd + 1e-10)
+            else:
+                # 向後兼容：使用 gain_prev² * Y_prev_psd (近似)
+                # 注意：這仍然使用 gamma_prev 中的舊噪聲
+                xi_dd_term1 = gain_prev ** 2 * self.gamma_prev
+
+            xi_dd = self.current_alpha * xi_dd_term1 + \
                     (1 - self.current_alpha) * np.maximum(gamma - 1, 0)
             xi = np.maximum(xi_dd, self.xi_min)
 
@@ -174,6 +186,8 @@ def compute_spp_batch(
     """
     批量計算 SPP（用於離線處理）
 
+    v1.5.0: 支持正確的 DD 計算（使用當前幀噪聲）
+
     參數:
         Y_psd: 帶噪語音功率譜密度 (n_frames, n_freqs)
         noise_psd: 噪聲功率譜密度 (n_frames, n_freqs) 或 (n_freqs,)
@@ -196,8 +210,11 @@ def compute_spp_batch(
     xi = np.zeros_like(Y_psd)
     gamma = np.zeros_like(Y_psd)
 
-    # 逐幀處理
+    # v1.5.0: 追蹤增強功率譜
     gain_prev = None
+    enhanced_psd_prev = None
+
+    # 逐幀處理
     for i in range(n_frames):
         if noise_psd.ndim == 1:
             noise_frame = noise_psd
@@ -207,11 +224,15 @@ def compute_spp_batch(
         spp[i], xi[i], gamma[i] = estimator.estimate(
             Y_psd[i],
             noise_frame,
-            gain_prev
+            gain_prev,
+            enhanced_psd_prev
         )
 
         # 簡單估計增益（用於下一幀）
         # 這裡使用 Wiener 增益作為近似
         gain_prev = xi[i] / (1 + xi[i])
+
+        # v1.5.0: 計算增強功率譜供下一幀使用
+        enhanced_psd_prev = (gain_prev ** 2) * Y_psd[i]
 
     return spp, xi, gamma

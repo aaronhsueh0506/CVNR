@@ -192,6 +192,9 @@ class MmseLsaDenoiser(BaseDenoiser):
         # 初始化輸出
         enhanced_magnitude = np.zeros_like(noisy_magnitude)
 
+        # v1.5.0: 保存上一幀增強功率譜（用於正確的 DD 計算）
+        enhanced_psd_prev = None
+
         # 逐幀處理
         for i in range(n_frames):
             # 計算功率譜密度
@@ -199,10 +202,12 @@ class MmseLsaDenoiser(BaseDenoiser):
             noise_psd = self.noise_estimator.noise_psd
 
             # 估計 SPP、先驗 SNR 和後驗 SNR
+            # v1.5.0: 傳入 enhanced_psd_prev 用於正確的 DD 計算
             spp, xi, gamma = self.spp_estimator.estimate(
                 Y_psd,
                 noise_psd,
-                self.gain_prev
+                self.gain_prev,
+                enhanced_psd_prev
             )
 
             # 噪聲場景變化檢測
@@ -227,6 +232,9 @@ class MmseLsaDenoiser(BaseDenoiser):
 
             # 保存增益供下一幀使用
             self.gain_prev = gain.copy()
+
+            # v1.5.0: 保存增強功率譜供下一幀 DD 使用
+            enhanced_psd_prev = enhanced_magnitude[i] ** 2
 
             # 更新噪聲估計（v2.0: 使用 SPP 軟判決）
             # SPP 高（語音）→ 更新慢，SPP 低（噪聲）→ 正常更新

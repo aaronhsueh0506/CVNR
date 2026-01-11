@@ -208,6 +208,9 @@ class SppMmseDenoiser(BaseDenoiser):
         enhanced_magnitude = np.zeros_like(noisy_magnitude)
         spp_history = [] if return_spp else None
 
+        # v1.5.0: 保存上一幀增強功率譜（用於正確的 DD 計算）
+        enhanced_psd_prev = None
+
         # 步驟 2: 逐幀處理
         for i in range(n_frames):
             # 2.1 計算當前幀的功率譜密度
@@ -215,10 +218,12 @@ class SppMmseDenoiser(BaseDenoiser):
             noise_psd = self.noise_estimator.noise_psd
 
             # 2.2 估計 SPP、先驗 SNR 和後驗 SNR ⭐ 核心步驟
+            # v1.5.0: 傳入 enhanced_psd_prev 用於正確的 DD 計算
             spp, xi, gamma = self.spp_estimator.estimate(
                 Y_psd,
                 noise_psd,
-                self.gain_prev
+                self.gain_prev,
+                enhanced_psd_prev
             )
 
             # 收集 SPP 歷史 (用於可視化)
@@ -248,6 +253,9 @@ class SppMmseDenoiser(BaseDenoiser):
 
             # 2.5 保存增益供下一幀使用（Decision Directed）
             self.gain_prev = gain.copy()
+
+            # v1.5.0: 保存增強功率譜供下一幀 DD 使用
+            enhanced_psd_prev = enhanced_magnitude[i] ** 2
 
             # 2.6 更新噪聲估計（v2.0: 使用 SPP 軟判決）
             # SPP 高（語音）→ 更新慢，SPP 低（噪聲）→ 正常更新

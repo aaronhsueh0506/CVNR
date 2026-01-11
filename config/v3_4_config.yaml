@@ -1,17 +1,17 @@
-# V3-4: Laplacian-MMSE (Chen & Loizou 2007)
+# V3-4: Laplacian MAP (Lotter & Vary 2005)
 #
-# 增益計算: Chen & Loizou (2007) Laplacian-MMSE 公式
-#   G_Lap = (sqrt(π)/2) · sqrt(v) · exp(-v/2) · I0(v/2)
+# 增益計算: Lotter & Vary (2005) Laplacian MAP 公式
+#   u = ξ + 1/(2γ) - 1
+#   G = (u + sqrt(u² + 2(1+ξ)/γ)) / (2(1+ξ))
 #   Laplacian 先驗更適合語音頻譜的稀疏性（峰態係數=6）
+#   高 SNR 時增益自然趨近 1.0
 #
-# 噪聲估計方法: RecursiveAverage + Bayesian SPP 軟判決
-#   - SppEstimator 計算語音存在機率
-#   - 語音段自動降低噪聲更新速率
+# 噪聲估計方法: MCRA + Bayesian SPP 軟判決
 #
-# ΔPESQ: +0.376
+# Score: 0.4840 (Rescue 500-trial with Gemini suggested search space)
 
 version: "3.4"
-name: "Laplacian-MMSE-Chen-Loizou"
+name: "Laplacian-MAP-Lotter-Vary"
 
 audio:
   sample_rate: 16000
@@ -21,24 +21,24 @@ audio:
   window_type: hanning
 
 noise_estimation:
-  method: mcra                # v2.2: 改用 MCRA 噪聲估計
-  alpha_s: 0.9                # 時間平滑因子
-  alpha_d: 0.85               # 噪聲更新基礎速率
-  alpha_p: 0.2                # SPP 平滑因子
-  L: 96                       # 最小值窗口長度
-  delta_db: 5.0               # 偏差補償
-  num_init_frames: 10         # 初始噪聲估計幀數
+  method: mcra              # v2.2: 改用 MCRA 噪聲估計
+  alpha_s: 0.8              # 時間平滑因子
+  alpha_d: 0.95             # 噪聲更新基礎速率
+  alpha_p: 0.2              # SPP 平滑因子
+  L: 125                     # 最小值窗口長度
+  delta_db: 5.0             # 偏差補償
+  num_init_frames: 10       # 初始噪聲估計幀數
 
 spp:
-  alpha_xi: 0.98              # v2.2: Laplacian 對 xi 敏感，增加 DD 平滑
-  q: 0.5                      # 語音先驗機率
-  xi_min_db: -25.0
+  alpha_xi: 0.9           # Rescue 500-trial (Score 0.4840)
+  q: 0.3                  # Rescue 500-trial
+  xi_min_db: -15.0        # Rescue 500-trial (原-10.0過高)
 
 gain_calculation:
-  method: laplacian_mmse      # Chen & Loizou 2007 公式
-  g_min_db: -15.0             # 最小增益
-  alpha_g: 0.5                # 增益時間平滑
-  beta_laplacian: 1.0         # Laplacian 形狀參數
+  method: laplacian_mmse      # Lotter & Vary 2005 MAP 公式
+  g_min_db: -18.0             # Rescue 500-trial (原-25.0過低會死寂)
+  alpha_g: 0.70               # Rescue 500-trial
+  beta_laplacian: 1.0         # 保留向後兼容（未使用）
   use_spp_weighting: true
 
 noise_tracking:

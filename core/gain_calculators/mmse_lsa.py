@@ -39,22 +39,38 @@ class MmseLsaGainCalculator:
     2. LSA 在對數域進行時間平滑: log(G_t) = α*log(G_{t-1}) + (1-α)*log(G_t)
     3. 這使得小增益被抑制更多,大增益變化更平緩
 
+    v1.5.0: 支持非對稱平滑
+    - Attack (增益上升): 使用 alpha_attack (快速響應)
+    - Decay (增益下降): 使用 alpha_decay (慢速抑制 Musical Noise)
+
     參數:
         g_min_db: 最小增益 (dB), -15 到 -25
-        alpha_g: 增益時間平滑因子, 0.6-0.8
+        alpha_g: 增益時間平滑因子, 0.6-0.8 (對稱平滑時使用)
         use_linear_spp_weighting: True=線性域加權(退化為STSA), False=對數域加權(推薦)
+        use_asymmetric_smoothing: 是否使用非對稱平滑 (v1.5.0)
+        alpha_attack: Attack 平滑因子 (增益上升時使用，預設 0.3)
+        alpha_decay: Decay 平滑因子 (增益下降時使用，預設 alpha_g)
     """
 
     def __init__(
         self,
         g_min_db: float = -20.0,
         alpha_g: float = 0.7,
-        use_linear_spp_weighting: bool = False
+        use_linear_spp_weighting: bool = False,
+        use_asymmetric_smoothing: bool = True,
+        alpha_attack: float = 0.3,
+        alpha_decay: float = None
     ):
         self.g_min = 10 ** (g_min_db / 10)
         self.log_g_min = np.log(self.g_min + 1e-10)
         self.alpha_g = alpha_g
         self.use_linear_spp_weighting = use_linear_spp_weighting
+
+        # v1.5.0: 非對稱平滑參數
+        self.use_asymmetric_smoothing = use_asymmetric_smoothing
+        self.alpha_attack = alpha_attack
+        self.alpha_decay = alpha_decay if alpha_decay is not None else alpha_g
+
         self.log_gain_prev = None
 
     def calculate(
@@ -94,16 +110,29 @@ class MmseLsaGainCalculator:
             log_gain = spp * log_gain_mmse + (1 - spp) * log_g_min_effective
 
         # 對數域時間平滑 (LSA 的核心特徵)
+        # v1.5.0: 支持非對稱平滑
         if self.log_gain_prev is not None:
-            log_gain = self.alpha_g * self.log_gain_prev + (1 - self.alpha_g) * log_gain
+            if self.use_asymmetric_smoothing:
+                # 非對稱平滑: Attack 快, Decay 慢
+                # Attack: log_gain > log_gain_prev (增益上升)
+                # Decay: log_gain <= log_gain_prev (增益下降)
+                alpha_effective = np.where(
+                    log_gain > self.log_gain_prev,
+                    self.alpha_attack,  # Attack: 快速響應
+                    self.alpha_decay    # Decay: 慢速抑制 Musical Noise
+                )
+                log_gain = alpha_effective * self.log_gain_prev + (1 - alpha_effective) * log_gain
+            else:
+                # 對稱平滑 (原始行為)
+                log_gain = self.alpha_g * self.log_gain_prev + (1 - self.alpha_g) * log_gain
 
         # 轉回線性域
         gain = np.exp(log_gain)
 
         # v2.2: 增益補償 - LSA 傾向於低估幅度，對高 SNR 區域給予輕微 Boost
         # 當 xi > 1 (約 0dB SNR)，語音成分明確時，補償 20%
-        gain_boost = np.where(xi > 1.0, 1.2, 1.0)
-        gain = gain * gain_boost
+        # gain_boost = np.where(xi > 1.0, 1.2, 1.0)
+        # gain = gain * gain_boost
 
         # 限制範圍
         gain = np.clip(gain, g_min_effective, 1.0)

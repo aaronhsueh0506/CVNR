@@ -244,6 +244,9 @@ class PmmseDenoiser(BaseDenoiser):
         # 初始化 SPP 歷史記錄
         spp_history = [] if return_spp else None
 
+        # v1.5.0: 保存上一幀增強功率譜（用於正確的 DD 計算）
+        enhanced_psd_prev = None
+
         # 逐幀處理
         for i in range(n_frames):
             # 計算功率譜密度
@@ -251,10 +254,12 @@ class PmmseDenoiser(BaseDenoiser):
             noise_psd = self.noise_estimator.noise_psd
 
             # 估計 SPP、先驗 SNR 和後驗 SNR
+            # v1.5.0: 傳入 enhanced_psd_prev 用於正確的 DD 計算
             spp, xi, gamma = self.spp_estimator.estimate(
                 Y_psd,
                 noise_psd,
-                self.gain_prev
+                self.gain_prev,
+                enhanced_psd_prev
             )
 
             # 保存 SPP 數據 (用於可視化)
@@ -289,10 +294,10 @@ class PmmseDenoiser(BaseDenoiser):
             gain = self.gain_calculator.calculate(spp, xi, gamma, in_boost_mode=in_boost_mode)
 
             # 增益變化率限制（防止 Musical Noise）
-            # 限制幀間增益變化 ±6dB (ratio: 0.5~2.0)
+            # v1.5.0: 放寬上限以支持爆破音 (-6dB ~ +12dB)
             if self.gain_prev is not None:
                 gain_ratio = gain / (self.gain_prev + 1e-10)
-                gain_ratio = np.clip(gain_ratio, 0.5, 2.0)
+                gain_ratio = np.clip(gain_ratio, 0.5, 4.0)  # -6dB ~ +12dB
                 gain = self.gain_prev * gain_ratio
 
             # 應用增益
@@ -300,6 +305,9 @@ class PmmseDenoiser(BaseDenoiser):
 
             # 保存增益供下一幀使用
             self.gain_prev = gain.copy()
+
+            # v1.5.0: 保存增強功率譜供下一幀 DD 使用
+            enhanced_psd_prev = enhanced_magnitude[i] ** 2
 
             # 更新噪聲估計（v2.0: 使用 SPP 軟判決）
             # SPP 高（語音）→ 更新慢，SPP 低（噪聲）→ 正常更新

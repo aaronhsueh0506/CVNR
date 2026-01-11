@@ -195,6 +195,9 @@ class ImcraOmlsaDenoiser(BaseDenoiser):
         # 初始化輸出
         enhanced_magnitude = np.zeros_like(noisy_magnitude)
 
+        # v1.5.0: 保存上一幀增強功率譜（用於正確的 DD 計算）
+        enhanced_psd_prev = None
+
         # 步驟 2: 逐幀處理
         for i in range(n_frames):
             # 2.1 計算當前幀的功率譜密度
@@ -202,10 +205,12 @@ class ImcraOmlsaDenoiser(BaseDenoiser):
             noise_psd = self.noise_estimator.noise_psd
 
             # 2.2 估計 SPP、先驗 SNR 和後驗 SNR ⭐
+            # v1.5.0: 傳入 enhanced_psd_prev 用於正確的 DD 計算
             spp, xi, gamma = self.spp_estimator.estimate(
                 Y_psd,
                 noise_psd,
-                self.gain_prev
+                self.gain_prev,
+                enhanced_psd_prev
             )
 
             # v1.5.0: 噪聲變化檢測
@@ -230,6 +235,9 @@ class ImcraOmlsaDenoiser(BaseDenoiser):
 
             # 2.5 保存增益供下一幀使用
             self.gain_prev = gain.copy()
+
+            # v1.5.0: 保存增強功率譜供下一幀 DD 使用
+            enhanced_psd_prev = enhanced_magnitude[i] ** 2
 
             # 2.6 更新 IMCRA 噪聲估計 ⭐
             # IMCRA 使用 SPP 引導更新
