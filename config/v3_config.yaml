@@ -9,19 +9,19 @@ audio:
 noise_estimation:
   method: mcra              # v2.2: 改用 MCRA 噪聲估計
   alpha_s: 0.8              # 時間平滑因子
-  alpha_d: 0.95             # 噪聲更新基礎速率
+  alpha_d: 0.9              # 噪聲更新基礎速率 (對齊 V3-2)
   alpha_p: 0.2              # SPP 平滑因子
-  L: 125                     # 最小值窗口長度
-  delta_db: 5.0             # 偏差補償
-  num_init_frames: 10       # 初始噪聲估計幀數
+  L: 60                     # 最小值窗口長度 (對齊 V3-2)
+  delta_db: 10.0            # 偏差補償 (對齊 V3-2)
+  num_init_frames: 20       # 初始噪聲估計幀數 (對齊 V3-2)
 spp:
-  alpha_xi: 0.9           # Optuna 1000-trial (Score 0.5037)
-  q: 0.35                 # Optuna 1000-trial
-  xi_min_db: -25.0        # Optuna 1000-trial
+  alpha_xi: 0.95          # 對齊 V3-2
+  q: 0.3                  # 對齊 V3-2
+  xi_min_db: -25.0        # 保持
 gain_calculation:
   method: spp_mmse
-  g_min_db: -17.0         # Optuna 1000-trial
-  alpha_g: 0.80           # Optuna 1000-trial
+  g_min_db: -15.0         # 優化結果 (50-trial)
+  alpha_g: 0.85           # 優化結果 (50-trial)
   use_full_formula: true
 noise_tracking:
   enable: true

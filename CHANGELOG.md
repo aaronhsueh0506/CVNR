@@ -4,6 +4,44 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [2.4.0] - 2026-01-12
+
+### 新增 (Added)
+- ✨ **V3-2 return_spp 支持**: 添加 SPP 歷史數據返回功能
+  - `denoise()` 方法新增 `return_spp` 參數
+  - `denoise_spectrum()` 方法新增 SPP 收集邏輯
+  - 與 V3, V3-3, V3-4 統一 API
+
+### 改進 (Changed)
+- ⬆️ **V3 系列 50-trial Optuna 參數優化**
+  - 目標函數: 0.8×PESQ + 0.2×STOI
+  - 固定 SPP 參數: alpha_xi=0.95, q=0.3, xi_min_db=-25.0
+  - 僅優化 Gain 參數: g_min_db, alpha_g
+  - 移除 0dB SNR 測試 case
+
+- ⬆️ **優化結果更新至配置文件**:
+  | 版本 | g_min_db | alpha_g | ΔPESQ |
+  |------|----------|---------|-------|
+  | V3   | -15.0    | 0.85    | +0.403 |
+  | V3-2 | -15.0    | 0.90    | +0.399 |
+  | V3-3 | -15.0    | 0.85    | +0.354 |
+  | V3-4 | -25.0    | 0.85    | +0.197 |
+
+- ⬆️ **SPP 可視化配色方案**: `gray_r` 取代 `jet`
+  - 更直觀：黑色=高 SPP（語音），白色=低 SPP（噪聲）
+  - 符合 SPP 物理意義
+
+### 修改文件
+1. `config/v3_config.yaml` - g_min_db=-15.0, alpha_g=0.85
+2. `config/v3_2_config.yaml` - g_min_db=-15.0, alpha_g=0.90
+3. `config/v3_3_config.yaml` - g_min_db=-15.0, alpha_g=0.85
+4. `config/v3_4_config.yaml` - g_min_db=-25.0, alpha_g=0.85
+5. `denoisers/v3_2_mmse_lsa.py` - 添加 return_spp 支持
+6. `utils/visualization.py` - SPP colormap 改為 gray_r
+7. `tools/parameter_optimizer.py` - 固定 SPP 參數，搜索空間調整
+
+---
+
 ## [2.3.0] - 2026-01-08
 
 ### 新增 (Added)

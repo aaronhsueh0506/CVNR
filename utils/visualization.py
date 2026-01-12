@@ -40,7 +40,7 @@ def plot_spp_spectrogram(
         spp_matrix.T,
         aspect='auto',
         origin='lower',
-        cmap='jet',
+        cmap='gray_r',
         vmin=0.0,
         vmax=1.0,
         extent=[0, duration, 0, max_freq]
@@ -107,7 +107,7 @@ def plot_spp_comparison(
     # 2. SPP Map
     im1 = axes[1].imshow(
         spp_matrix.T, aspect='auto', origin='lower',
-        cmap='jet', vmin=0, vmax=1,
+        cmap='gray_r', vmin=0, vmax=1,
         extent=[0, duration, 0, max_freq]
     )
     axes[1].set_title('SPP (Speech Presence Probability)')

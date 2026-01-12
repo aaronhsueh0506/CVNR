@@ -137,21 +137,27 @@ class MmseLsaDenoiser(BaseDenoiser):
         else:
             self.noise_change_detector = None
 
-    def denoise(self, noisy_signal: np.ndarray) -> np.ndarray:
+    def denoise(self, noisy_signal: np.ndarray, return_spp: bool = False):
         """
         對帶噪信號進行降噪
 
         參數:
             noisy_signal: 帶噪音頻信號 (n_samples,)
+            return_spp: 是否返回 SPP 歷史數據 (用於可視化)
 
         返回:
             enhanced_signal: 降噪後的信號 (n_samples,)
+            spp_history: SPP 歷史數據 (n_frames, n_freqs) - 僅當 return_spp=True
         """
         # 1. 分幀和 FFT
         magnitudes, phases, spectra = self.processor.process_signal(noisy_signal)
 
         # 2. 降噪
-        enhanced_magnitudes, enhanced_phases = self.denoise_spectrum(magnitudes, phases)
+        result = self.denoise_spectrum(magnitudes, phases, return_spp=return_spp)
+        if return_spp:
+            enhanced_magnitudes, enhanced_phases, spp_history = result
+        else:
+            enhanced_magnitudes, enhanced_phases = result
 
         # 3. 重建信號
         enhanced_signal = self.reconstructor.reconstruct_signal(
@@ -160,12 +166,15 @@ class MmseLsaDenoiser(BaseDenoiser):
             original_length=len(noisy_signal)
         )
 
+        if return_spp:
+            return enhanced_signal, spp_history
         return enhanced_signal
 
     def denoise_spectrum(
         self,
         noisy_magnitude: np.ndarray,
-        noisy_phase: np.ndarray
+        noisy_phase: np.ndarray,
+        return_spp: bool = False
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         在頻域進行降噪
@@ -179,10 +188,12 @@ class MmseLsaDenoiser(BaseDenoiser):
         參數:
             noisy_magnitude: 帶噪語音幅度譜 (n_frames, n_freqs)
             noisy_phase: 帶噪語音相位譜 (n_frames, n_freqs)
+            return_spp: 是否返回 SPP 歷史數據 (用於可視化)
 
         返回:
             enhanced_magnitude: 降噪後的幅度譜 (n_frames, n_freqs)
             enhanced_phase: 相位譜（不變）(n_frames, n_freqs)
+            spp_history: SPP 歷史數據 (n_frames, n_freqs) - 僅當 return_spp=True
         """
         n_frames = noisy_magnitude.shape[0]
 
@@ -191,6 +202,9 @@ class MmseLsaDenoiser(BaseDenoiser):
 
         # 初始化輸出
         enhanced_magnitude = np.zeros_like(noisy_magnitude)
+
+        # SPP 歷史記錄（用於可視化）
+        spp_history = [] if return_spp else None
 
         # v1.5.0: 保存上一幀增強功率譜（用於正確的 DD 計算）
         enhanced_psd_prev = None
@@ -209,6 +223,10 @@ class MmseLsaDenoiser(BaseDenoiser):
                 self.gain_prev,
                 enhanced_psd_prev
             )
+
+            # 收集 SPP 歷史（用於可視化）
+            if return_spp:
+                spp_history.append(spp.copy())
 
             # 噪聲場景變化檢測
             if self.enable_noise_tracking and self.noise_change_detector is not None:
@@ -243,6 +261,8 @@ class MmseLsaDenoiser(BaseDenoiser):
         # 相位保持不變
         enhanced_phase = noisy_phase
 
+        if return_spp:
+            return enhanced_magnitude, enhanced_phase, np.array(spp_history)
         return enhanced_magnitude, enhanced_phase
 
     def reset(self):
