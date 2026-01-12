@@ -188,19 +188,39 @@ def create_denoiser_from_config(
         gain_config = config.get('gain_calculation', {})
         noise_config = config.get('noise_estimation', {})
 
-        return SppMmseDenoiser(
-            sample_rate=sample_rate,
-            frame_size_ms=frame_size_ms,
-            frame_shift_ms=frame_shift_ms,
-            fft_size=fft_size,
-            alpha_xi=spp_config.get('alpha_xi', 0.98),
-            q=spp_config.get('q', 0.5),
-            xi_min_db=spp_config.get('xi_min_db', -25.0),
-            g_min_db=gain_config.get('g_min_db', -20.0),
-            alpha_g=gain_config.get('alpha_g', 0.7),
-            alpha_noise=noise_config.get('alpha', 0.95),
-            num_init_frames=noise_config.get('num_init_frames', 20)
-        )
+        # 基本參數
+        params = {
+            'sample_rate': sample_rate,
+            'frame_size_ms': frame_size_ms,
+            'frame_shift_ms': frame_shift_ms,
+            'fft_size': fft_size,
+            'alpha_xi': spp_config.get('alpha_xi', 0.98),
+            'q': spp_config.get('q', 0.5),
+            'xi_min_db': spp_config.get('xi_min_db', -25.0),
+            'g_min_db': gain_config.get('g_min_db', -20.0),
+            'alpha_g': gain_config.get('alpha_g', 0.7),
+            'num_init_frames': noise_config.get('num_init_frames', 20),
+            'use_full_formula': gain_config.get('use_full_formula', False)
+        }
+
+        # 噪聲估計方法
+        ne_method = noise_config.get('method', 'recursive_average')
+        if ne_method == 'mcra':
+            params.update({
+                'noise_method': 'mcra',
+                'alpha_s': noise_config.get('alpha_s', 0.9),
+                'alpha_noise': noise_config.get('alpha_d', 0.85),
+                'alpha_p': noise_config.get('alpha_p', 0.2),
+                'L': noise_config.get('L', 96),
+                'delta_db': noise_config.get('delta_db', 5.0)
+            })
+        else:
+            params.update({
+                'noise_method': 'recursive_average',
+                'alpha_noise': noise_config.get('alpha', 0.95)
+            })
+
+        return SppMmseDenoiser(**params)
 
     elif version == 'V3-2':
         # V3-2: MMSE-LSA (Ephraim-Malah 1985)
@@ -209,21 +229,40 @@ def create_denoiser_from_config(
         noise_config = config.get('noise_estimation', {})
         tracking_config = config.get('noise_tracking', {})
 
-        return MmseLsaDenoiser(
-            sample_rate=sample_rate,
-            frame_size_ms=frame_size_ms,
-            frame_shift_ms=frame_shift_ms,
-            fft_size=fft_size,
-            alpha_xi=spp_config.get('alpha_xi', 0.98),
-            q=spp_config.get('q', 0.5),
-            xi_min_db=spp_config.get('xi_min_db', -25.0),
-            g_min_db=gain_config.get('g_min_db', -20.0),
-            alpha_g=gain_config.get('alpha_g', 0.7),
-            use_linear_spp_weighting=gain_config.get('use_linear_spp_weighting', False),
-            alpha_noise=noise_config.get('alpha', 0.95),
-            num_init_frames=noise_config.get('num_init_frames', 20),
-            enable_noise_tracking=tracking_config.get('enable', True)
-        )
+        # 基本參數
+        params = {
+            'sample_rate': sample_rate,
+            'frame_size_ms': frame_size_ms,
+            'frame_shift_ms': frame_shift_ms,
+            'fft_size': fft_size,
+            'alpha_xi': spp_config.get('alpha_xi', 0.98),
+            'q': spp_config.get('q', 0.5),
+            'xi_min_db': spp_config.get('xi_min_db', -25.0),
+            'g_min_db': gain_config.get('g_min_db', -20.0),
+            'alpha_g': gain_config.get('alpha_g', 0.7),
+            'use_linear_spp_weighting': gain_config.get('use_linear_spp_weighting', False),
+            'num_init_frames': noise_config.get('num_init_frames', 20),
+            'enable_noise_tracking': tracking_config.get('enable', True)
+        }
+
+        # 噪聲估計方法
+        ne_method = noise_config.get('method', 'recursive_average')
+        if ne_method == 'mcra':
+            params.update({
+                'noise_method': 'mcra',
+                'alpha_s': noise_config.get('alpha_s', 0.9),
+                'alpha_noise': noise_config.get('alpha_d', 0.85),
+                'alpha_p': noise_config.get('alpha_p', 0.2),
+                'L': noise_config.get('L', 96),
+                'delta_db': noise_config.get('delta_db', 5.0)
+            })
+        else:
+            params.update({
+                'noise_method': 'recursive_average',
+                'alpha_noise': noise_config.get('alpha', 0.95)
+            })
+
+        return MmseLsaDenoiser(**params)
 
     elif version == 'V3-3':
         # V3-3: PMMSE (Loizou 2005)
@@ -232,21 +271,40 @@ def create_denoiser_from_config(
         noise_config = config.get('noise_estimation', {})
         tracking_config = config.get('noise_tracking', {})
 
-        return PmmseDenoiser(
-            sample_rate=sample_rate,
-            frame_size_ms=frame_size_ms,
-            frame_shift_ms=frame_shift_ms,
-            fft_size=fft_size,
-            alpha_xi=spp_config.get('alpha_xi', 0.98),
-            q=spp_config.get('q', 0.5),
-            xi_min_db=spp_config.get('xi_min_db', -25.0),
-            g_min_db=gain_config.get('g_min_db', -20.0),
-            alpha_g=gain_config.get('alpha_g', 0.7),
-            use_spp_weighting=gain_config.get('use_spp_weighting', True),
-            alpha_noise=noise_config.get('alpha', 0.95),
-            num_init_frames=noise_config.get('num_init_frames', 20),
-            enable_noise_tracking=tracking_config.get('enable', True)
-        )
+        # 基本參數
+        params = {
+            'sample_rate': sample_rate,
+            'frame_size_ms': frame_size_ms,
+            'frame_shift_ms': frame_shift_ms,
+            'fft_size': fft_size,
+            'alpha_xi': spp_config.get('alpha_xi', 0.98),
+            'q': spp_config.get('q', 0.5),
+            'xi_min_db': spp_config.get('xi_min_db', -25.0),
+            'g_min_db': gain_config.get('g_min_db', -20.0),
+            'alpha_g': gain_config.get('alpha_g', 0.7),
+            'use_spp_weighting': gain_config.get('use_spp_weighting', True),
+            'num_init_frames': noise_config.get('num_init_frames', 20),
+            'enable_noise_tracking': tracking_config.get('enable', True)
+        }
+
+        # 噪聲估計方法
+        ne_method = noise_config.get('method', 'recursive_average')
+        if ne_method == 'mcra':
+            params.update({
+                'noise_method': 'mcra',
+                'alpha_s': noise_config.get('alpha_s', 0.9),
+                'alpha_noise': noise_config.get('alpha_d', 0.85),
+                'alpha_p': noise_config.get('alpha_p', 0.2),
+                'L': noise_config.get('L', 96),
+                'delta_db': noise_config.get('delta_db', 5.0)
+            })
+        else:
+            params.update({
+                'noise_method': 'recursive_average',
+                'alpha_noise': noise_config.get('alpha', 0.95)
+            })
+
+        return PmmseDenoiser(**params)
 
     elif version == 'V3-4':
         # V3-4: Laplacian-MMSE (Chen & Loizou 2007)
@@ -255,21 +313,40 @@ def create_denoiser_from_config(
         noise_config = config.get('noise_estimation', {})
         tracking_config = config.get('noise_tracking', {})
 
-        return LaplacianMmseDenoiser(
-            sample_rate=sample_rate,
-            frame_size_ms=frame_size_ms,
-            frame_shift_ms=frame_shift_ms,
-            fft_size=fft_size,
-            alpha_xi=spp_config.get('alpha_xi', 0.98),
-            q=spp_config.get('q', 0.5),
-            xi_min_db=spp_config.get('xi_min_db', -25.0),
-            g_min_db=gain_config.get('g_min_db', -20.0),
-            alpha_g=gain_config.get('alpha_g', 0.7),
-            beta_laplacian=gain_config.get('beta_laplacian', 1.5),
-            alpha_noise=noise_config.get('alpha', 0.95),
-            num_init_frames=noise_config.get('num_init_frames', 20),
-            enable_noise_tracking=tracking_config.get('enable', True)
-        )
+        # 基本參數
+        params = {
+            'sample_rate': sample_rate,
+            'frame_size_ms': frame_size_ms,
+            'frame_shift_ms': frame_shift_ms,
+            'fft_size': fft_size,
+            'alpha_xi': spp_config.get('alpha_xi', 0.98),
+            'q': spp_config.get('q', 0.5),
+            'xi_min_db': spp_config.get('xi_min_db', -25.0),
+            'g_min_db': gain_config.get('g_min_db', -20.0),
+            'alpha_g': gain_config.get('alpha_g', 0.7),
+            'beta_laplacian': gain_config.get('beta_laplacian', 1.5),
+            'num_init_frames': noise_config.get('num_init_frames', 20),
+            'enable_noise_tracking': tracking_config.get('enable', True)
+        }
+
+        # 噪聲估計方法
+        ne_method = noise_config.get('method', 'recursive_average')
+        if ne_method == 'mcra':
+            params.update({
+                'noise_method': 'mcra',
+                'alpha_s': noise_config.get('alpha_s', 0.9),
+                'alpha_noise': noise_config.get('alpha_d', 0.85),
+                'alpha_p': noise_config.get('alpha_p', 0.2),
+                'L': noise_config.get('L', 96),
+                'delta_db': noise_config.get('delta_db', 5.0)
+            })
+        else:
+            params.update({
+                'noise_method': 'recursive_average',
+                'alpha_noise': noise_config.get('alpha', 0.95)
+            })
+
+        return LaplacianMmseDenoiser(**params)
 
     elif version == 'V4':
         # V4: IMCRA-OMLSA
@@ -604,7 +681,7 @@ def main():
     parser.add_argument(
         '--config-dir',
         default=None,
-        help='配置文件目錄（默認: ../config，相對於腳本目錄）'
+        help='配置文件目錄（默認: ./config，相對於腳本目錄）'
     )
 
     args = parser.parse_args()
@@ -612,7 +689,7 @@ def main():
     # 如果沒有指定 config_dir，使用相對於腳本的路徑
     if args.config_dir is None:
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        args.config_dir = os.path.join(script_dir, '..', 'config')
+        args.config_dir = os.path.join(script_dir, 'config')
 
     # 處理音頻文件
     success = process_audio_file(
