@@ -5,23 +5,23 @@ audio:
   sample_rate: 16000
   window_type: hanning
 gain_calculation:
-  alpha_g: 0.84           # Optuna 1000-trial (Score 0.5195)
-  g_min_db: -13.0         # Optuna 1000-trial
+  alpha_g: 0.90          # 優化結果 (50-trial)
+  g_min_db: -15.0        # 優化結果 (50-trial)
   method: mmse_lsa
   use_linear_spp_weighting: false
 name: MMSE-LSA
 noise_estimation:
   method: mcra              # v2.2: 改用 MCRA 噪聲估計
   alpha_s: 0.8              # 時間平滑因子
-  alpha_d: 0.95             # 噪聲更新基礎速率
+  alpha_d: 0.9              # 噪聲更新基礎速率
   alpha_p: 0.2              # SPP 平滑因子
-  L: 125                     # 最小值窗口長度
-  delta_db: 5.0             # 偏差補償
-  num_init_frames: 10       # 初始噪聲估計幀數
+  L: 60                     # 最小值窗口長度
+  delta_db: 10.0             # 偏差補償
+  num_init_frames: 20       # 初始噪聲估計幀數
 noise_tracking:
   enable: true
 spp:
-  alpha_xi: 0.9          # Optuna 1000-trial (Score 0.5195)
-  q: 0.5                 # Optuna 1000-trial
-  xi_min_db: -22.0       # Optuna 1000-trial
+  alpha_xi: 0.95          # Optuna 1000-trial (Score 0.5195)
+  q: 0.3                 # Optuna 1000-trial
+  xi_min_db: -25.0       # Optuna 1000-trial
 version: 3-2

@@ -47,38 +47,25 @@ VERSION_CONFIG_MAP = {
     'V4': 'v4_config.yaml'
 }
 
-# 參數搜索空間
+# 固定 SPP 參數 (全局)
+FIXED_SPP = {
+    'alpha_xi': 0.95,
+    'q': 0.3,
+    'xi_min_db': -25.0
+}
+
+# 參數搜索空間 - 只優化 Gain 參數
 SEARCH_SPACE = {
-    # SPP 參數
-    'alpha_xi': {
-        'min': 0.85,
-        'max': 0.98,
-        'step': 0.02,
-        'type': 'float'
-    },
-    'q': {
-        'min': 0.3,
-        'max': 0.9,
-        'step': 0.1,
-        'type': 'float'
-    },
-    'xi_min_db': {
-        'min': -25.0,
-        'max': -8.0,
-        'step': 3.0,
-        'type': 'float'
-    },
-    # Gain 參數
     'g_min_db': {
-        'min': -20.0,
-        'max': -5.0,
-        'step': 3.0,
+        'min': -25.0,
+        'max': -15.0,
+        'step': 2.0,
         'type': 'float'
     },
     'alpha_g': {
-        'min': 0.5,
-        'max': 0.9,
-        'step': 0.1,
+        'min': 0.85,
+        'max': 0.95,
+        'step': 0.05,
         'type': 'float'
     }
 }
@@ -93,8 +80,8 @@ WEIGHTS = {
 # 新版複合評分常量 (根據 optuna_strategy.md)
 PESQ_MAX = 4.644  # PESQ wideband 最大值 (clean vs clean)
 COMPOSITE_WEIGHTS = {
-    'pesq': 0.7,
-    'stoi': 0.3
+    'pesq': 0.8,
+    'stoi': 0.2
 }
 SILENCE_PENALTY_THRESHOLD = -25.0  # g_min_db 閾值
 SILENCE_PENALTY_VALUE = 0.05  # 懲罰值
@@ -177,8 +164,8 @@ def save_config(config: Dict, config_path: Path):
 
 
 def generate_random_params() -> Dict[str, float]:
-    """生成隨機參數組合"""
-    params = {}
+    """生成隨機參數組合 (SPP 固定，只隨機 Gain 參數)"""
+    params = FIXED_SPP.copy()  # 先加入固定 SPP 參數
     for param_name, space in SEARCH_SPACE.items():
         if space['type'] == 'float':
             # 生成在範圍內的隨機值，對齊到步長
@@ -189,7 +176,7 @@ def generate_random_params() -> Dict[str, float]:
 
 
 def generate_grid_params() -> List[Dict[str, float]]:
-    """生成網格搜索的所有參數組合"""
+    """生成網格搜索的所有參數組合 (SPP 固定，只搜索 Gain 參數)"""
     import itertools
 
     param_values = {}
@@ -201,7 +188,13 @@ def generate_grid_params() -> List[Dict[str, float]]:
     keys = list(param_values.keys())
     combinations = list(itertools.product(*[param_values[k] for k in keys]))
 
-    return [dict(zip(keys, combo)) for combo in combinations]
+    # 每個組合都加入固定 SPP 參數
+    result = []
+    for combo in combinations:
+        params = FIXED_SPP.copy()
+        params.update(dict(zip(keys, combo)))
+        result.append(params)
+    return result
 
 
 def generate_focused_grid_params(base_config: Dict) -> List[Dict[str, float]]:
@@ -263,56 +256,25 @@ def create_optuna_study(version: str, base_config: Dict, result_dir: Path,
     # 記錄所有試驗結果
     all_results = []
 
-    # === V3-4 Rescue 搜索空間 (Gemini 建議) ===
-    # 問題: 原 1000-trial 結果落在極端值 (xi_min=-10太高, g_min=-25太低)
-    if version == 'V3-4':
-        search_space = {
-            'alpha_xi': (0.9, 0.9, 0.01),       # 固定為 0.9
-            'q': (0.2, 0.6, 0.05),               # 微調
-            'xi_min_db': (-35.0, -15.0, 2.0),    # 關鍵: 允許更低值
-            'g_min_db': (-20.0, -12.0, 1.0),     # 關鍵: 限制較高值，避免 Musical Noise
-            'alpha_g': (0.70, 0.95, 0.05)        # 微調
-        }
-        print("使用 V3-4 Rescue 搜索空間 (Gemini 建議):")
-        for k, (lo, hi, step) in search_space.items():
-            print(f"  {k}: [{lo}, {hi}], step={step}")
-    # 定義搜索空間 (根據 optuna_strategy.md)
-    # 新的標準搜索空間
-    elif expanded:
-        # 擴大的搜索空間
-        search_space = {
-            'alpha_xi': (0.80, 0.99, 0.01),
-            'q': (0.05, 0.8, 0.05),
-            'xi_min_db': (-30.0, -5.0, 1.0),
-            'g_min_db': (-35.0, -5.0, 1.0),
-            'alpha_g': (0.5, 0.99, 0.01)
-        }
-        print("使用擴大搜索空間:")
-        for k, (lo, hi, step) in search_space.items():
-            print(f"  {k}: [{lo}, {hi}], step={step}")
-    else:
-        # 標準搜索空間 (optuna_strategy.md)
-        search_space = {
-            'alpha_xi': (0.90, 0.99, 0.01),
-            'q': (0.1, 0.6, 0.05),
-            'xi_min_db': (-25.0, -10.0, 1.0),
-            'g_min_db': (-30.0, -10.0, 1.0),
-            'alpha_g': (0.80, 0.98, 0.01)
-        }
-        print("使用標準搜索空間 (optuna_strategy.md):")
-        for k, (lo, hi, step) in search_space.items():
-            print(f"  {k}: [{lo}, {hi}], step={step}")
+    # 統一搜索空間 - SPP 參數固定，只優化 Gain 參數
+    search_space = {
+        'g_min_db': (-25.0, -15.0, 2.0),  # 中心: -20.0
+        'alpha_g': (0.85, 0.95, 0.05)     # 中心: 0.9
+    }
+    print("搜索空間 (SPP 固定，只優化 Gain):")
+    for k, (lo, hi, step) in search_space.items():
+        print(f"  {k}: [{lo}, {hi}], step={step}")
+
+    # 使用全局 FIXED_SPP
+    print(f"固定 SPP 參數: alpha_xi={FIXED_SPP['alpha_xi']}, q={FIXED_SPP['q']}, xi_min_db={FIXED_SPP['xi_min_db']}")
 
     def objective(trial):
         """Optuna 目標函數 - 使用複合分數"""
-        # 使用 Optuna 建議參數
+        # SPP 參數固定，只優化 gain 參數
         params = {
-            'alpha_xi': trial.suggest_float('alpha_xi', search_space['alpha_xi'][0],
-                                            search_space['alpha_xi'][1], step=search_space['alpha_xi'][2]),
-            'q': trial.suggest_float('q', search_space['q'][0],
-                                     search_space['q'][1], step=search_space['q'][2]),
-            'xi_min_db': trial.suggest_float('xi_min_db', search_space['xi_min_db'][0],
-                                              search_space['xi_min_db'][1], step=search_space['xi_min_db'][2]),
+            'alpha_xi': FIXED_SPP['alpha_xi'],
+            'q': FIXED_SPP['q'],
+            'xi_min_db': FIXED_SPP['xi_min_db'],
             'g_min_db': trial.suggest_float('g_min_db', search_space['g_min_db'][0],
                                             search_space['g_min_db'][1], step=search_space['g_min_db'][2]),
             'alpha_g': trial.suggest_float('alpha_g', search_space['alpha_g'][0],
@@ -388,7 +350,9 @@ def create_optuna_study(version: str, base_config: Dict, result_dir: Path,
 
     # 獲取最佳結果
     best_trial = study.best_trial
-    best_params = best_trial.params
+    best_params = best_trial.params.copy()
+    # 加入固定的 SPP 參數
+    best_params.update(FIXED_SPP)
     best_composite_score = best_trial.value
 
     # 找到對應的完整 metrics 和 pesq_improvement
@@ -498,7 +462,7 @@ def evaluate_version_directly(version: str) -> Optional[Dict]:
 
     # 測試用例
     noise_types = ['babble', 'car', 'street']
-    snr_levels = [0, 5, 10, 15]
+    snr_levels = [5, 10, 15]  # 移除 0dB
     test_cases = [f"{n}_{s}dB" for n in noise_types for s in snr_levels]
 
     # 改善量 (用於向後兼容)
