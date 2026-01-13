@@ -42,14 +42,14 @@ os.makedirs(output_dir, exist_ok=True)
 
 # 方法配置（包含配置文件路徑）
 methods = {
-    'V1': {
-        'class': SpectralSubtractionDenoiser,
-        'config': 'config/v1_config.yaml'
-    },
-    'V2': {
-        'class': WienerDenoiser,
-        'config': 'config/v2_config.yaml'
-    },
+    # 'V1': {
+    #     'class': SpectralSubtractionDenoiser,
+    #     'config': 'config/v1_config.yaml'
+    # },
+    # 'V2': {
+    #     'class': WienerDenoiser,
+    #     'config': 'config/v2_config.yaml'
+    # },
     'V3': {
         'class': SppMmseDenoiser,
         'config': 'config/v3_config.yaml'
@@ -60,11 +60,11 @@ methods = {
     },
     'V3-3': {
         'class': PmmseDenoiser,
-        'config': 'config/v3_3_config.yaml'  # V3-2 參數對齊
+        'config': 'config/v3_3_config.yaml'
     },
     'V3-4': {
         'class': LaplacianMmseDenoiser,
-        'config': 'config/v3_4_config.yaml'  # V3-2 參數對齊
+        'config': 'config/v3_4_config.yaml'
     },
     'V4': {
         'class': ImcraOmlsaDenoiser,

@@ -337,66 +337,107 @@ p(X) ∝ exp(-β|X|)
 - **理由**: 平衡性能與質量
 - **配置**: 默認配置
 
+## Optuna 優化結果 (2026-01-12, 500 trials)
+
+### 最佳參數總覽
+
+| 版本 | Composite | PESQ | STOI | q | alpha_xi | xi_min_db | g_min_db | alpha_g |
+|------|-----------|------|------|---|----------|-----------|----------|---------|
+| **V3-2** | **0.5095** | 1.916 | 0.898 | 0.50 | 0.92 | -20.0 | -12.5 | 0.80 |
+| V3 | 0.5044 | 1.897 | 0.888 | 0.40 | 0.90 | -22.0 | -19.5 | 0.65 |
+| V3-3 | 0.5043 | 1.902 | 0.884 | 0.45 | 0.90 | -19.0 | -14.0 | 0.70 |
+| V3-4 | 0.4691 | 1.705 | 0.877 | 0.30 | 0.90 | -23.0 | -20.0 | 0.70 |
+
+**目標函數**: `0.8 * (PESQ/4.644) + 0.2 * STOI`
+
+### 關鍵發現
+
+1. **V3-2 (MMSE-LSA) 表現最佳**: PESQ 和 STOI 都是最高
+   - 較高的 `g_min_db` (-12.5) 表示不需要太激進的噪聲抑制
+   - `alpha_g: 0.80` 提供適度的增益平滑
+
+2. **V3-4 (Laplacian MAP) 表現較差**: PESQ 明顯低於其他版本
+   - 需要非常低的 `xi_min_db` (-23.0) 和 `g_min_db` (-20.0)
+   - 算法特性需要更激進的參數設置
+
+3. **V3 和 V3-3 表現相近**: composite score 幾乎相同
+   - V3-3 的 `g_min_db` 較高 (-14.0 vs -19.5)
+   - V3 的 `q` 較低 (0.40 vs 0.45)
+
 ## 參數調整建議
 
 ### V3 (MMSE-STSA)
 
 ```yaml
-# config/v3_config.yaml
+# config/v3_config.yaml - Optuna 500-trial 最佳參數 (2026-01-12)
+spp:
+  alpha_xi: 0.90
+  q: 0.40
+  xi_min_db: -22.0
 gain_calculation:
-  g_min_db: -20.0           # 最小增益 (標準)
-  alpha_g: 0.85             # 增益平滑 (高平滑減少 Musical Noise)
-  use_full_formula: false   # E1 簡化版 (更快)
+  g_min_db: -19.5
+  alpha_g: 0.65
+  use_full_formula: true
 ```
 
 **調整建議**:
-- **降低 Musical Noise**: 提高 `alpha_g` 到 0.9
-- **增強降噪**: 降低 `g_min_db` 到 -25
-- **提高速度**: 保持 `use_full_formula = false`
+- **降低 Musical Noise**: 提高 `alpha_g` 到 0.75-0.80
+- **增強降噪**: 降低 `g_min_db` 到 -22 或更低
+- **提高速度**: 設置 `use_full_formula = false`
 
 ### V3-2 (MMSE-LSA)
 
 ```yaml
-# config/v3_2_config.yaml
+# config/v3_2_config.yaml - Optuna 500-trial 最佳參數 (2026-01-12)
+spp:
+  alpha_xi: 0.92
+  q: 0.50
+  xi_min_db: -20.0
 gain_calculation:
-  g_min_db: -22.0           # 可稍低 (對數域更穩定)
-  alpha_g: 0.7              # 適中平滑 (對數域自帶平滑)
+  g_min_db: -12.5
+  alpha_g: 0.80
 ```
 
 **調整建議**:
-- **最佳音質**: `g_min_db = -18`, `alpha_g = 0.7`
-- **更強降噪**: `g_min_db = -25`, `alpha_g = 0.6`
-- **減少 Musical Noise**: `alpha_g = 0.8`
+- **最佳音質**: 使用上述最佳參數
+- **更強降噪**: 降低 `g_min_db` 到 -15 或 -18
+- **減少 Musical Noise**: `alpha_g = 0.85`
 
 ### V3-3 (PMMSE)
 
 ```yaml
-# config/v3_3_config.yaml
+# config/v3_3_config.yaml - Optuna 500-trial 最佳參數 (2026-01-12)
+spp:
+  alpha_xi: 0.90
+  q: 0.45
+  xi_min_db: -19.0
 gain_calculation:
-  g_min_db: -25.0           # 需要更低才有效
-  alpha_g: 0.5              # 降低平滑避免過度抑制
-  beta: 0.5                 # Laplacian 形狀參數
+  g_min_db: -14.0
+  alpha_g: 0.70
 ```
 
 **調整建議**:
-- **實驗性最佳**: `g_min_db = -30`, `beta = 0.7`
-- **減少失真**: `alpha_g = 0.7`, `g_min_db = -20`
+- **最佳效果**: 使用上述最佳參數
+- **減少失真**: 提高 `g_min_db` 到 -12
 - **注意**: V3-3 對參數敏感，需要仔細調試
 
 ### V3-4 (Laplacian-MMSE)
 
 ```yaml
-# config/v3_4_config.yaml
+# config/v3_4_config.yaml - Optuna 500-trial 最佳參數 (2026-01-12)
+spp:
+  alpha_xi: 0.90
+  q: 0.30
+  xi_min_db: -23.0
 gain_calculation:
-  g_min_db: -20.0           # 標準（已足夠強）
-  alpha_g: 0.7              # 標準平滑
-  beta: 0.5                 # Laplacian 形狀參數
+  g_min_db: -20.0
+  alpha_g: 0.70
 ```
 
 **調整建議**:
-- **最強降噪**: `g_min_db = -25`, `beta = 0.7`
-- **平衡質量**: `g_min_db = -18`, `alpha_g = 0.8`
-- **極低 SNR**: `g_min_db = -30`, `alpha_g = 0.5`
+- **最強降噪**: 降低 `g_min_db` 到 -25
+- **平衡質量**: 提高 `g_min_db` 到 -18, `alpha_g` 到 0.75
+- **極低 SNR**: `g_min_db = -25`, `alpha_g = 0.65`
 
 ### 噪聲追蹤參數
 

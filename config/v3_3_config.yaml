@@ -8,7 +8,7 @@
 #   - SppEstimator 計算語音存在機率
 #   - 語音段自動降低噪聲更新速率
 #
-# ΔPESQ: +0.449 (Optuna 優化)
+# Score: 0.5043 (Optuna 500-trial, 2026-01-12)
 
 version: "3.3"
 name: "PMMSE-Wolfe-Godsill"
@@ -23,21 +23,21 @@ audio:
 noise_estimation:
   method: mcra              # v2.2: 改用 MCRA 噪聲估計
   alpha_s: 0.8              # 時間平滑因子
-  alpha_d: 0.9              # 噪聲更新基礎速率 (對齊 V3-2)
+  alpha_d: 0.95              # 噪聲更新基礎速率
   alpha_p: 0.2              # SPP 平滑因子
-  L: 60                     # 最小值窗口長度 (對齊 V3-2)
-  delta_db: 10.0            # 偏差補償 (對齊 V3-2)
-  num_init_frames: 20       # 初始噪聲估計幀數 (對齊 V3-2)
+  L: 120                     # 最小值窗口長度
+  delta_db: 5.0             # 偏差補償
+  num_init_frames: 20       # 初始噪聲估計幀數
 
 spp:
-  alpha_xi: 0.95          # 對齊 V3-2
-  q: 0.3                  # 對齊 V3-2
-  xi_min_db: -25.0        # 對齊 V3-2
+  alpha_xi: 0.90          # Optuna 500-trial (2026-01-12)
+  q: 0.45                 # Optuna 500-trial (2026-01-12)
+  xi_min_db: -19.0        # Optuna 500-trial (2026-01-12)
 
 gain_calculation:
   method: pmmse               # Wolfe & Godsill β=0.5 公式
-  g_min_db: -15.0             # 優化結果 (50-trial)
-  alpha_g: 0.85               # 優化結果 (50-trial)
+  g_min_db: -14.0             # Optuna 500-trial (2026-01-12)
+  alpha_g: 0.70               # Optuna 500-trial (2026-01-12)
   use_spp_weighting: true
 
 noise_tracking:

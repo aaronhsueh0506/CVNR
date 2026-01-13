@@ -47,14 +47,14 @@ VERSION_CONFIG_MAP = {
     'V4': 'v4_config.yaml'
 }
 
-# 固定 SPP 參數 (全局)
+# 固定 SPP 參數 (全局) - 舊版向後兼容
 FIXED_SPP = {
     'alpha_xi': 0.95,
     'q': 0.3,
     'xi_min_db': -25.0
 }
 
-# 參數搜索空間 - 只優化 Gain 參數
+# 參數搜索空間 - 只優化 Gain 參數 (舊版向後兼容)
 SEARCH_SPACE = {
     'g_min_db': {
         'min': -25.0,
@@ -70,6 +70,49 @@ SEARCH_SPACE = {
     }
 }
 
+# ============================================================================
+# 版本專屬搜索空間 (用於 Optuna 貝葉斯優化)
+# 格式: (min, max, step) - step=None 表示連續搜索
+# ============================================================================
+VERSION_SEARCH_SPACES = {
+    # V3: MMSE-STSA (線性估計 - 需提升穩定度)
+    # 特點：線性算法較溫和，容易有殘留噪聲或回音
+    'V3': {
+        'q':         (0.40, 0.80, 0.05),   # 較高值加強非穩態噪聲抑制
+        'alpha_xi':  (0.90, 0.98, 0.01),   # 先驗 SNR 穩定性
+        'xi_min_db': (-25.0, -15.0, 1.0),  # 避免過度壓制微弱語音
+        'g_min_db':  (-22.0, -16.0, 0.5),  # 地板值，過低會暴露音樂噪聲
+        'alpha_g':   (0.65, 0.90, 0.05),   # 回音(0.7) vs 噪聲(0.85) 平衡
+    },
+    # V3-2: MMSE-LSA (對數估計 - 需提升反應速度)
+    # 特點：對數算法壓制力強，容易導致聲音悶、小聲
+    'V3-2': {
+        'q':         (0.50, 0.85, 0.05),   # 需較樂觀估計(0.7+)保留高頻
+        'alpha_xi':  (0.92, 0.98, 0.01),
+        'xi_min_db': (-20.0, -10.0, 1.0),  # 拉高下限防止聲音悶
+        'g_min_db':  (-16.0, -10.0, 0.5),  # 較高地板補償音量
+        'alpha_g':   (0.50, 0.80, 0.05),   # 較快反應避免截斷尾韻
+    },
+    # V3-3: PMMSE (感知模型 - 類 STSA)
+    # 特點：基於聽覺掩蔽效應，介於 STSA 與 LSA 之間
+    'V3-3': {
+        'q':         (0.30, 0.70, 0.05),
+        'alpha_xi':  (0.90, 0.98, 0.01),
+        'xi_min_db': (-25.0, -15.0, 1.0),
+        'g_min_db':  (-20.0, -14.0, 0.5),
+        'alpha_g':   (0.70, 0.95, 0.05),
+    },
+    # V3-4: Laplacian MAP (最大後驗機率 - 需修復參數)
+    # 特點：極度敏感，需要極低的先驗下限
+    'V3-4': {
+        'q':         (0.30, 0.70, 0.05),
+        'alpha_xi':  (0.90, 0.98, 0.01),
+        'xi_min_db': (-35.0, -20.0, 1.0),  # 絕對關鍵！必須允許極低 SNR
+        'g_min_db':  (-20.0, -12.0, 0.5),  # 拉高地板掩蓋 MAP 音樂噪聲
+        'alpha_g':   (0.70, 0.95, 0.05),   # 較高平滑度穩定增益
+    },
+}
+
 # 目標函數權重 (舊版，保留向後兼容)
 WEIGHTS = {
     'pesq': 0.5,
@@ -77,14 +120,14 @@ WEIGHTS = {
     'segsnr': 0.2
 }
 
-# 新版複合評分常量 (根據 optuna_strategy.md)
+# 新版複合評分常量
 PESQ_MAX = 4.644  # PESQ wideband 最大值 (clean vs clean)
 COMPOSITE_WEIGHTS = {
-    'pesq': 0.8,
-    'stoi': 0.2
+    'pesq': 0.8,   # 主要目標：最大化 PESQ
+    'stoi': 0.2    # 次要：STOI 作為 tie-breaker
 }
-SILENCE_PENALTY_THRESHOLD = -25.0  # g_min_db 閾值
-SILENCE_PENALTY_VALUE = 0.05  # 懲罰值
+SILENCE_PENALTY_THRESHOLD = -30.0  # g_min_db 閾值 (放寬以適應 V3-4)
+SILENCE_PENALTY_VALUE = 0.03  # 懲罰值 (降低懲罰)
 
 
 def calculate_composite_score(metrics: Dict, g_min_db: float) -> float:
@@ -256,30 +299,39 @@ def create_optuna_study(version: str, base_config: Dict, result_dir: Path,
     # 記錄所有試驗結果
     all_results = []
 
-    # 統一搜索空間 - SPP 參數固定，只優化 Gain 參數
-    search_space = {
-        'g_min_db': (-25.0, -15.0, 2.0),  # 中心: -20.0
-        'alpha_g': (0.85, 0.95, 0.05)     # 中心: 0.9
-    }
-    print("搜索空間 (SPP 固定，只優化 Gain):")
-    for k, (lo, hi, step) in search_space.items():
-        print(f"  {k}: [{lo}, {hi}], step={step}")
+    # 使用版本專屬搜索空間
+    if version in VERSION_SEARCH_SPACES:
+        search_space = VERSION_SEARCH_SPACES[version]
+        print(f"使用 {version} 專屬搜索空間:")
+    else:
+        # 向後兼容：使用舊的固定空間
+        search_space = {
+            'q':         (FIXED_SPP['q'], FIXED_SPP['q'], None),
+            'alpha_xi':  (FIXED_SPP['alpha_xi'], FIXED_SPP['alpha_xi'], None),
+            'xi_min_db': (FIXED_SPP['xi_min_db'], FIXED_SPP['xi_min_db'], None),
+            'g_min_db':  (-25.0, -15.0, 2.0),
+            'alpha_g':   (0.85, 0.95, 0.05)
+        }
+        print(f"使用預設搜索空間 (版本 {version} 無專屬設定):")
 
-    # 使用全局 FIXED_SPP
-    print(f"固定 SPP 參數: alpha_xi={FIXED_SPP['alpha_xi']}, q={FIXED_SPP['q']}, xi_min_db={FIXED_SPP['xi_min_db']}")
+    for k, (lo, hi, step) in search_space.items():
+        step_str = f", step={step}" if step else ""
+        print(f"  {k}: [{lo}, {hi}]{step_str}")
 
     def objective(trial):
         """Optuna 目標函數 - 使用複合分數"""
-        # SPP 參數固定，只優化 gain 參數
-        params = {
-            'alpha_xi': FIXED_SPP['alpha_xi'],
-            'q': FIXED_SPP['q'],
-            'xi_min_db': FIXED_SPP['xi_min_db'],
-            'g_min_db': trial.suggest_float('g_min_db', search_space['g_min_db'][0],
-                                            search_space['g_min_db'][1], step=search_space['g_min_db'][2]),
-            'alpha_g': trial.suggest_float('alpha_g', search_space['alpha_g'][0],
-                                           search_space['alpha_g'][1], step=search_space['alpha_g'][2])
-        }
+        # 根據版本專屬搜索空間優化所有參數
+        params = {}
+        for param_name, (lo, hi, step) in search_space.items():
+            if lo == hi:
+                # 固定值
+                params[param_name] = lo
+            elif step is not None:
+                # 離散搜索
+                params[param_name] = trial.suggest_float(param_name, lo, hi, step=step)
+            else:
+                # 連續搜索
+                params[param_name] = trial.suggest_float(param_name, lo, hi)
 
         print(f"\n[Trial {trial.number + 1}] 參數:")
         for k, v in params.items():
@@ -338,7 +390,7 @@ def create_optuna_study(version: str, base_config: Dict, result_dir: Path,
 
     print(f"\n開始 Optuna 貝葉斯優化 ({n_trials} trials)...")
     print("使用 TPE (Tree-structured Parzen Estimator) 採樣器")
-    print("目標函數: 0.7 * norm_pesq + 0.3 * stoi (含死寂懲罰)")
+    print(f"目標函數: {COMPOSITE_WEIGHTS['pesq']} * norm_pesq + {COMPOSITE_WEIGHTS['stoi']} * stoi")
     print("前 10 個 trials 用於初始化探索")
 
     # 執行優化
@@ -351,8 +403,7 @@ def create_optuna_study(version: str, base_config: Dict, result_dir: Path,
     # 獲取最佳結果
     best_trial = study.best_trial
     best_params = best_trial.params.copy()
-    # 加入固定的 SPP 參數
-    best_params.update(FIXED_SPP)
+    # 不再需要加入 FIXED_SPP，因為所有參數都在搜索空間中
     best_composite_score = best_trial.value
 
     # 找到對應的完整 metrics 和 pesq_improvement
@@ -370,10 +421,12 @@ def create_optuna_study(version: str, base_config: Dict, result_dir: Path,
         'best_params': best_params,
         'best_composite_score': best_composite_score,
         'best_pesq_improvement': best_pesq_improvement,
-        'objective_formula': '0.7 * (pesq_raw / 4.644) + 0.3 * stoi_raw',
+        'objective_formula': f"{COMPOSITE_WEIGHTS['pesq']} * (pesq_raw / {PESQ_MAX}) + {COMPOSITE_WEIGHTS['stoi']} * stoi_raw",
         'silence_penalty': f'-{SILENCE_PENALTY_VALUE} if g_min_db < {SILENCE_PENALTY_THRESHOLD}',
         'n_trials': len(study.trials),
-        'n_successful': len([t for t in study.trials if t.value != float('-inf')])
+        'n_successful': len([t for t in study.trials if t.value != float('-inf')]),
+        'version': version,
+        'search_space': {k: list(v) for k, v in search_space.items()}
     }
 
     stats_path = result_dir / 'optuna_stats.json'
@@ -458,7 +511,7 @@ def evaluate_version_directly(version: str) -> Optional[Dict]:
     from utils.metrics_loizou import composite_measure
 
     EVAL_SR = 16000
-    TRIM_SECONDS = 0.5
+    TRIM_SECONDS = 0.5  # 移除前 0.5 秒靜音
 
     # 測試用例
     noise_types = ['babble', 'car', 'street']
@@ -474,11 +527,16 @@ def evaluate_version_directly(version: str) -> Optional[Dict]:
     pesq_raw_scores = []
     stoi_raw_scores = []
 
-    clean_path = PROJECT_DIR / 'test_wav' / 'wav' / 'clean.wav'
+    # Clean 參考檔案 (使用 append_silence 目錄下的版本)
+    clean_path = PROJECT_DIR / 'test_wav' / 'wav' / 'append_silence' / 'clean_prepend.wav'
     clean, _ = librosa.load(str(clean_path), sr=EVAL_SR)
 
+    # Trim clean（移除前 0.5 秒靜音，與 noisy/enhanced 對齊）
+    skip_samples = int(TRIM_SECONDS * EVAL_SR)
+    clean = clean[skip_samples:]
+
     for test_id in test_cases:
-        # 文件路徑
+        # 文件路徑 (使用 append_silence 目錄)
         noisy_path = PROJECT_DIR / 'test_wav' / 'wav' / 'append_silence' / f'{test_id}_prepend.wav'
         enhanced_path = PROJECT_DIR / 'output' / f'{version}_{test_id}.wav'
 
@@ -710,7 +768,8 @@ def optimize(version: str, method: str = 'random', n_trials: int = 50,
                 'best_metrics': best_metrics,
                 'best_composite_score': composite_score,
                 'best_pesq_improvement': best_metrics['pesq'],
-                'objective_formula': '0.7 * (pesq_raw / 4.644) + 0.3 * stoi_raw',
+                'objective_formula': f"{COMPOSITE_WEIGHTS['pesq']} * (pesq_raw / {PESQ_MAX}) + {COMPOSITE_WEIGHTS['stoi']} * stoi_raw",
+                'search_space': {k: list(v) for k, v in VERSION_SEARCH_SPACES.get(version, {}).items()},
                 'timestamp': timestamp
             }
             summary_path = result_dir / 'summary.json'
