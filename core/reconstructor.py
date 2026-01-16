@@ -46,23 +46,6 @@ class Reconstructor:
         self.frame_shift = frame_shift
         self.window = window
 
-    def apply_gain(
-        self,
-        spectrum: np.ndarray,
-        gain: np.ndarray
-    ) -> np.ndarray:
-        """
-        對頻譜應用增益
-
-        參數:
-            spectrum: 複數頻譜 (n_freqs,) 或 (n_frames, n_freqs)
-            gain: 增益 (n_freqs,) 或 (n_frames, n_freqs)
-
-        返回:
-            enhanced_spectrum: 增強後的複數頻譜
-        """
-        return spectrum * gain
-
     def reconstruct_frame(
         self,
         magnitude: np.ndarray,
@@ -195,36 +178,6 @@ class Reconstructor:
         frames = np.zeros((n_frames, frame_length))
         for i in range(n_frames):
             frames[i] = self.reconstruct_frame(magnitudes[i], phases[i])
-
-        # Overlap-Add
-        signal = self.overlap_add(frames, original_length)
-
-        return signal
-
-    def reconstruct_from_spectra(
-        self,
-        spectra: np.ndarray,
-        original_length: Optional[int] = None
-    ) -> np.ndarray:
-        """
-        從複數頻譜重建完整信號
-
-        參數:
-            spectra: 複數頻譜 (n_frames, n_freqs)
-            original_length: 原始信號長度
-
-        返回:
-            signal: 重建的時域信號
-        """
-        n_frames = spectra.shape[0]
-
-        # 確定幀長度（如果有窗函數則使用窗函數長度，否則使用 FFT size）
-        frame_length = len(self.window) if self.window is not None else self.fft_size
-
-        # 重建每一幀
-        frames = np.zeros((n_frames, frame_length))
-        for i in range(n_frames):
-            frames[i] = self.reconstruct_from_spectrum(spectra[i])
 
         # Overlap-Add
         signal = self.overlap_add(frames, original_length)
