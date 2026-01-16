@@ -81,10 +81,6 @@ def get_denoiser_params_from_config(config, sr, fft_size):
         'frame_shift_ms': config['audio']['frame_shift_ms']
     }
 
-    # 添加噪聲追蹤（如果啟用）
-    if config.get('noise_tracking', {}).get('enable', False):
-        params['enable_noise_tracking'] = True
-
     # V1 特殊參數
     if 'gain_calculation' in config:
         gc = config['gain_calculation']
@@ -205,26 +201,6 @@ def get_denoiser_params_from_config(config, sr, fft_size):
             'delta_db': ne.get('delta_db', 5.0),
             'delta_s_db': ne.get('delta_s_db', 3.0)
         })
-
-    # Fast Startup 參數（Phase 6）
-    if 'fast_startup' in config:
-        fs = config['fast_startup']
-        if fs.get('enable', False):
-            params.update({
-                'enable_fast_startup': True,
-                'startup_frames': fs.get('startup_frames', 50),
-                'alpha_noise_startup': fs.get('alpha_noise_startup', 0.7),
-                'alpha_xi_startup': fs.get('alpha_xi_startup', 0.7),
-                'alpha_g_startup': fs.get('alpha_g_startup', 0.4),
-                'num_init_frames_fast': fs.get('num_init_frames_fast', 10)
-            })
-
-    # Transition Detection 參數（Phase 6）
-    if 'transition_detection' in config:
-        td = config['transition_detection']
-        if td.get('enable', False):
-            params['enable_transition_detection'] = True
-            params['transition_config'] = td
 
     return params
 

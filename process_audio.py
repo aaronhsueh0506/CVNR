@@ -167,7 +167,6 @@ def create_denoiser_from_config(
         # V2: Wiener Filter
         gain_config = config.get('gain_calculation', {})
         noise_config = config.get('noise_estimation', {})
-        tracking_config = config.get('noise_tracking', {})
 
         return WienerDenoiser(
             sample_rate=sample_rate,
@@ -178,8 +177,7 @@ def create_denoiser_from_config(
             min_gain=gain_config.get('min_gain', 0.01),
             alpha_smooth=gain_config.get('alpha_smooth', 0.8),
             num_init_frames=noise_config.get('num_init_frames', 20),
-            update_during_speech=noise_config.get('update_during_speech', False),
-            enable_noise_tracking=tracking_config.get('enable', True)
+            update_during_speech=noise_config.get('update_during_speech', False)
         )
 
     elif version == 'V3':
@@ -227,7 +225,6 @@ def create_denoiser_from_config(
         spp_config = config.get('spp', {})
         gain_config = config.get('gain_calculation', {})
         noise_config = config.get('noise_estimation', {})
-        tracking_config = config.get('noise_tracking', {})
 
         # 基本參數
         params = {
@@ -241,8 +238,7 @@ def create_denoiser_from_config(
             'g_min_db': gain_config.get('g_min_db', -20.0),
             'alpha_g': gain_config.get('alpha_g', 0.7),
             'use_linear_spp_weighting': gain_config.get('use_linear_spp_weighting', False),
-            'num_init_frames': noise_config.get('num_init_frames', 20),
-            'enable_noise_tracking': tracking_config.get('enable', True)
+            'num_init_frames': noise_config.get('num_init_frames', 20)
         }
 
         # 噪聲估計方法
@@ -269,7 +265,6 @@ def create_denoiser_from_config(
         spp_config = config.get('spp', {})
         gain_config = config.get('gain_calculation', {})
         noise_config = config.get('noise_estimation', {})
-        tracking_config = config.get('noise_tracking', {})
 
         # 基本參數
         params = {
@@ -283,8 +278,7 @@ def create_denoiser_from_config(
             'g_min_db': gain_config.get('g_min_db', -20.0),
             'alpha_g': gain_config.get('alpha_g', 0.7),
             'use_spp_weighting': gain_config.get('use_spp_weighting', True),
-            'num_init_frames': noise_config.get('num_init_frames', 20),
-            'enable_noise_tracking': tracking_config.get('enable', True)
+            'num_init_frames': noise_config.get('num_init_frames', 20)
         }
 
         # 噪聲估計方法
@@ -311,7 +305,6 @@ def create_denoiser_from_config(
         spp_config = config.get('spp', {})
         gain_config = config.get('gain_calculation', {})
         noise_config = config.get('noise_estimation', {})
-        tracking_config = config.get('noise_tracking', {})
 
         # 基本參數
         params = {
@@ -325,8 +318,7 @@ def create_denoiser_from_config(
             'g_min_db': gain_config.get('g_min_db', -20.0),
             'alpha_g': gain_config.get('alpha_g', 0.7),
             'beta_laplacian': gain_config.get('beta_laplacian', 1.5),
-            'num_init_frames': noise_config.get('num_init_frames', 20),
-            'enable_noise_tracking': tracking_config.get('enable', True)
+            'num_init_frames': noise_config.get('num_init_frames', 20)
         }
 
         # 噪聲估計方法

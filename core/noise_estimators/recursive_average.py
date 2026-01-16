@@ -38,12 +38,14 @@ class RecursiveAverageNoiseEstimator:
         enable_fast_startup: bool = False,
         startup_frames: int = 50,
         alpha_startup: float = 0.7,
-        num_init_frames_fast: int = 10
+        num_init_frames_fast: int = 10,
+        spp_hard_threshold: float = 0.8
     ):
         self.alpha = alpha
         self.alpha_normal = alpha  # 保存正常模式的 alpha
         self.num_init_frames = num_init_frames
         self.update_during_speech = update_during_speech
+        self.spp_hard_threshold = spp_hard_threshold  # v2.5: 混合門控閾值
 
         self.noise_psd = None
         self.is_initialized = False
@@ -140,13 +142,14 @@ class RecursiveAverageNoiseEstimator:
         # 計算當前幀的功率譜
         current_psd = magnitude ** 2
 
-        # v2.0: SPP 軟判決更新（優先級最高）
+        # v2.5: SPP 混合門控更新（優先級最高）
         if spp is not None:
-            # 軟判決：使用 SPP 調整更新速率
-            # α̃ = α + (1-α) * spp
-            # spp 高（語音）→ α̃ 接近 1 → 更新慢
-            # spp 低（噪聲）→ α̃ 接近 α → 正常更新
-            tilde_alpha = self.current_alpha + (1 - self.current_alpha) * spp
+            # 混合門控：高 SPP 完全停止，低 SPP 軟判決
+            # SPP > threshold → α̃ = 1.0（完全停止更新）
+            # SPP ≤ threshold → α̃ = α + (1-α) * SPP（軟判決）
+            hard_mask = spp > self.spp_hard_threshold
+            soft_alpha = self.current_alpha + (1 - self.current_alpha) * spp
+            tilde_alpha = np.where(hard_mask, 1.0, soft_alpha)
             self.noise_psd = tilde_alpha * self.noise_psd + (1 - tilde_alpha) * current_psd
         elif is_speech is not None and not self.update_during_speech:
             # 硬判決：原有邏輯

@@ -169,38 +169,41 @@ spp = 1 / [1 + (q/(1-q)) · exp(-Λ)]
 
 ## v2.3 重大更新 (2026-01-08)
 
-### 🎯 Soft Reset 噪聲場景適應
+### 🎯 MCRA 雙視窗最小值追蹤
 
-#### 問題：Hard Reset 的弊端
+#### 噪聲場景適應機制
 
-當檢測到噪聲場景變化時，舊的 Hard Reset 策略會：
-- 完全清空 `gain_prev = None`
-- 導致語音斷裂
-- 產生突發噪音
-- 收斂時間過長
-
-#### 解決方案：Soft Reset
+使用 Cohen & Berdugo 2002 的 Dual-Window Minima Tracking 方法，
+MCRA 內建自動適應噪聲場景變化的能力，無需外部檢測器。
 
 ```python
-if noise_change_detected:
-    # Soft Reset：衰減但不清空
-    if gain_prev is not None:
-        gain_prev *= 0.5
-    # 不再重置 spp_estimator 和 gain_calculator
-    # 讓它們根據新噪聲估計自然收斂
+# 雙視窗最小值追蹤
+self.S_min = np.minimum(self.S_min, self.S)
+self.S_min_sw = np.minimum(self.S_min_sw, self.S)
+self.counter += 1
+
+# 每 L 幀強制更新（自動適應噪聲場景變化）
+if self.counter >= self.L:
+    self.S_min = np.minimum(self.stored_min, self.S_min_sw)
+    self.stored_min = self.S_min_sw.copy()
+    self.S_min_sw = self.S.copy()
+    self.counter = 0
 ```
 
 **優點:**
-- ✅ 保留歷史信息但降低信賴度
-- ✅ 平滑過渡，避免語音斷裂
-- ✅ 自然收斂到新噪聲估計
-- ✅ 更好的聽感體驗
+- ✅ 內建場景變化適應
+- ✅ 減少程式碼重複
+- ✅ 消除邏輯衝突
+- ✅ 簡化降噪器介面
 
-#### 統一實現
+#### 架構改善
 
-所有降噪器版本都採用 Soft Reset：
-- **V2**: WienerGainCalculator 新增 `soft_reset()` 方法
-- **V3, V3-2, V3-3, V3-4, V4**: `gain_prev *= 0.5` 取代 `gain_prev = None`
+重構後的簡化架構：
+```
+Denoiser
+└── NoiseEstimator (MCRA with dual-window)
+    └── 內建場景變化適應 (每 L 幀自動更新)
+```
 
 ---
 
@@ -1096,17 +1099,11 @@ gain_calculation:
 
 ### 動態噪聲環境
 
-**推薦版本**：V3 或 V4（需啟用噪聲追蹤）
-
-**配置建議**：
-```yaml
-# V3 配置（v1.3.0）
-enable_noise_tracking: true  # 啟用噪聲場景追蹤
-```
+**推薦版本**：V3 或 V4
 
 **優勢**：
-- 快速適應噪聲變化（100-600ms）
-- 自動檢測場景切換
+- MCRA 雙視窗最小值追蹤自動適應噪聲變化
+- 每 L 幀自動更新最小值
 - 無需手動調整
 
 ---
