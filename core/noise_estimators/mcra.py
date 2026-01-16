@@ -14,6 +14,53 @@ v3.0: 升級為雙視窗最小值追蹤 (Dual-Window Minima Tracking)
 - 雙視窗最小值追蹤：快速適應噪聲變化
 - SPP 門控：語音段自動減少噪聲更新
 
+============================================================================
+雙視窗最小值追蹤 (Dual-Window Minima Tracking) 原理
+============================================================================
+
+問題：傳統單視窗最小值追蹤的局限性
+--------------------------------------
+- 使用 FIFO 緩衝區存儲過去 L 幀的最小值
+- 當噪聲突然增加時，需要等待整個 L 幀窗口更新完畢
+- 適應時間 = L × 幀移 (例如 96 × 10ms = 960ms)
+
+解決方案：雙視窗結構
+--------------------------------------
+Cohen & Berdugo 2002 提出使用兩個重疊的子視窗：
+
+┌─────────────────────────────────────────────┐
+│               全局最小值 S_min               │
+├─────────────────────┬───────────────────────┤
+│   stored_min        │      S_min_sw         │
+│   (上一輪最小值)     │    (當前子視窗最小值)   │
+├─────────────────────┴───────────────────────┤
+│          ← counter 計數 (0 到 L-1) →         │
+└─────────────────────────────────────────────┘
+
+運作流程 (每幀執行)：
+1. S_min = min(S_min, S)         # 持續追蹤全局最小值
+2. S_min_sw = min(S_min_sw, S)   # 持續追蹤子視窗最小值
+3. counter++
+
+當 counter >= L 時 (每 L 幀觸發一次)：
+4. S_min = min(stored_min, S_min_sw)  # 合併兩個子視窗
+5. stored_min = S_min_sw              # 保存當前子視窗最小值
+6. S_min_sw = S                       # 重置子視窗
+7. counter = 0
+
+優點：
+- 自動適應噪聲場景變化（最多 L 幀延遲）
+- 無需外部檢測器判斷場景變化
+- 記憶體效率高（只需 3 個陣列，不需要 FIFO 緩衝區）
+- 計算效率高（只有 min 運算）
+
+實例（L=96, 幀移=10ms）：
+- 正常運作：每 960ms 自動刷新最小值
+- 噪聲突增：最多 960ms 後 S_min 會追上新噪聲水平
+- 噪聲突降：S_min 立即跟隨（因為 min 運算）
+
+============================================================================
+
 參考文獻：
     Cohen, I. & Berdugo, B. (2002). "Noise estimation by minima controlled
     recursive averaging for robust speech enhancement." IEEE Signal Processing
@@ -148,17 +195,31 @@ class McraNoiseEstimator:
         # S(k,l) = α_s·S(k,l-1) + (1-α_s)·|Y(k,l)|²
         self.S = self.alpha_s * self.S + (1 - self.alpha_s) * power
 
-        # 3. 雙視窗最小值追蹤 (Dual-Window Logic)
-        self.S_min = np.minimum(self.S_min, self.S)
-        self.S_min_sw = np.minimum(self.S_min_sw, self.S)
+        # ================================================================
+        # 3. 雙視窗最小值追蹤 (Dual-Window Minima Tracking)
+        # ================================================================
+        # 每幀持續追蹤：
+        #   - S_min: 全局最小值（用於語音檢測）
+        #   - S_min_sw: 當前子視窗最小值（用於下一輪更新）
+        self.S_min = np.minimum(self.S_min, self.S)      # 步驟 1
+        self.S_min_sw = np.minimum(self.S_min_sw, self.S)  # 步驟 2
 
-        self.counter += 1
+        self.counter += 1  # 步驟 3
 
-        # 每 L 幀強制更新（關鍵：自動適應噪聲場景變化）
+        # 每 L 幀觸發視窗切換（關鍵：自動適應噪聲場景變化）
+        # 這是雙視窗的核心邏輯：
+        #   - stored_min 保存上一輪的子視窗最小值
+        #   - S_min_sw 保存當前輪的子視窗最小值
+        #   - 兩者取最小值作為新的 S_min
+        #   - 這樣即使噪聲突增，最多 L 幀後 S_min 會追上
         if self.counter >= self.L:
+            # 步驟 4: 合併兩個子視窗的最小值
             self.S_min = np.minimum(self.stored_min, self.S_min_sw)
+            # 步驟 5: 保存當前子視窗最小值供下一輪使用
             self.stored_min = self.S_min_sw.copy()
+            # 步驟 6: 重置當前子視窗（從當前幀開始新一輪追蹤）
             self.S_min_sw = self.S.copy()
+            # 步驟 7: 重置計數器
             self.counter = 0
 
         # 4. 語音指示器（基於最小值比）
