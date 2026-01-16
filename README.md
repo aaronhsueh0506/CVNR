@@ -10,7 +10,7 @@
 
 **基礎版本**：
 1. **V1: 頻譜減法 (Spectral Subtraction)** - 最經典的方法
-2. **V2: Wiener 濾波** - 基於 MMSE 的最優濾波 (v1.5.0 新增噪聲追蹤)
+2. **V2: Wiener 濾波** - 基於 MMSE 的最優濾波
 3. **V3: MMSE-STSA** ⭐ - 概率軟判決方法 (v1.5.0 整合 V3-1，支持公式切換)
 4. **V4: IMCRA + OMLSA** - 產品級先進方案 (segSNR +4.60dB，但有過度抑制問題)
 
@@ -20,7 +20,6 @@
    - 對數域最小均方誤差估計，減少 Musical Noise
    - 適合: 高質量語音增強，對音質要求高的場景
    - 特點: 更少的音樂噪聲，頻譜更平滑
-   - v1.5.0: 新增噪聲場景追蹤
 
 6. **V3-3: PMMSE (感知動機 MMSE)**
    - 基於 Gaussian 先驗 + IS 距離的感知優化
@@ -37,12 +36,11 @@
 ## 🎯 特點
 
 - ✅ **七個演算法版本**：V1-V4 基礎版本 + V3-2/V3-3/V3-4 MMSE 變體
-- ✅ **v2.3**: Soft Reset 噪聲場景適應（避免語音斷裂）
+- ✅ **v2.5**: MCRA 雙視窗最小值追蹤（內建場景變化適應）
 - ✅ **v2.2**: V2 Wiener 使用 Bayesian SPP、DD 使用 enhanced_mag_prev、MCRA 支持
 - ✅ **v1.4.0**: MMSE 學術標準實現（4 個 MMSE 變體）
 - ✅ 模塊化設計，易於理解和擴展
 - ✅ **已修復 Musical Noise 問題**（v1.1.0 更新）
-- ✅ **噪聲場景自適應**（v1.3.0 更新）
 - ✅ 完整的測試數據生成工具
 - ✅ 支持多種噪聲類型和 SNR 等級
 - ✅ 詳細的中文注釋和參數說明
@@ -191,7 +189,7 @@ python3 tools/validate_best_config.py
 
 # 檢查:
 # ✓ V1 配置參數
-# ✓ V2 配置參數（含噪聲追蹤）
+# ✓ V2 配置參數
 # ✓ V3 配置參數（SPP + 增益參數）
 # ✓ V4 配置參數（IMCRA + OMLSA）
 ```
@@ -347,7 +345,7 @@ python3 comprehensive_evaluation.py
 
 **✅ v2.3 關鍵改進**：
 - ✅ **V2 Wiener 大幅改進**：ΔPESQ 從 +0.035 提升至 +0.244（使用 Bayesian SPP）
-- ✅ **Soft Reset 策略**：避免噪聲場景變化時的語音斷裂
+- ✅ **MCRA 雙視窗最小值追蹤**：內建噪聲場景變化適應
 - ✅ **V4 PESQ 改善最佳**：+0.410，產品級效果
 - ✅ **V3-4 STOI 最佳**：0.875，可懂度最高
 - ✅ **所有版本優於 Speex**：segSNR 改善 +4.3~5.6 dB vs +1.41 dB
@@ -655,10 +653,10 @@ speech_denoise/
 │   ├── frame_processor.py
 │   ├── reconstructor.py
 │   ├── spp_estimator.py
-│   ├── noise_change_detector.py
 │   ├── noise_estimators/
 │   │   ├── simple_average.py
 │   │   ├── recursive_average.py
+│   │   ├── mcra.py                # 雙視窗最小值追蹤 (v2.5 重構)
 │   │   └── imcra.py
 │   └── gain_calculators/
 │       ├── spectral_subtraction.py
@@ -1189,25 +1187,7 @@ MIT License
 
 ## 🔮 未來工作 (Future Work)
 
-### 快速啟動與場景轉換優化 (Fast Startup + Transition Detection)
-
-**狀態**: 實驗性實現保留於代碼中（目前禁用）
-
-**核心思路**:
-- **快速啟動模式**: 前 50 幀使用更激進參數加快收斂（500ms → 250ms）
-- **場景轉換檢測**: 檢測 SPP 突變並觸發快速響應模式（噪音→語音延遲 150ms → 60ms）
-
-**當前狀態**:
-- ✅ 已實現於 PmmseDenoiser, RecursiveAverageNoiseEstimator, SppEstimator
-- ❌ 在 clean.wav 場景下會過度處理（PESQ 從 4.644 降至 3.255）
-- 🚧 已禁用（fast_startup.enable: false），保留 transition_detection 框架供未來研究
-
-**未來研究方向**:
-1. **Clean 場景自適應保護**: 自動檢測高 SNR/clean 場景並禁用快速啟動
-2. **將機制擴展到其他算法**: V3, V3-2, V3-4 的 fast_startup 支持
-3. **更智能的 SPP 跳變檢測**: 降低誤觸發率，提升穩健性
-
-### 其他潛在改進
+### 潛在改進
 
 #### 參數自動調優
 - 基於噪聲類型和 SNR 級別的自適應參數選擇
@@ -1235,11 +1215,10 @@ MIT License
 - ✨ **V3-4 Rescue 優化**: xi_min 原 -10.0 過高導致微弱語音被截斷，g_min 原 -25.0 過低導致死寂
 
 ### v2.3.0 (2026-01-08)
-- ✨ **Soft Reset 策略**: 取代 Hard Reset 處理噪聲場景變化
-  - 使用 `gain_prev *= 0.5` 衰減而非完全清空
-  - 避免語音斷裂和突發噪音問題
-  - 所有降噪器統一實現 Soft Reset
-- ⬆️ 不再重置 spp_estimator 和 gain_calculator，讓它們自然收斂
+- ✨ **重構噪聲追蹤機制**: 移除外部 NoiseChangeDetector
+  - MCRA 雙視窗最小值追蹤內建處理場景變化
+  - 每 L 幀自動更新最小值（Cohen & Berdugo 2002）
+- ⬆️ 簡化降噪器架構，移除 enable_noise_tracking 參數
 
 ### v2.2.0 (2026-01-08)
 - ✨ **V2 Wiener Filter 核心改進**:
@@ -1264,8 +1243,6 @@ MIT License
 - ✅ **V3-4 參數優化**: 採用 V3-2 對齊參數，STOI 達到 0.874（傳統算法最佳）
 - ✅ **Clean 保護測試**: 新增 clean.wav 高 SNR 測試用例（13 個測試用例）
   - 所有方法通過 clean protection 測試（PESQ 降幅 < 0.01）
-- ✅ **Phase 6 機制保留**: fast_startup 和 transition_detection 實現保留於代碼中
-  - 因 clean 場景過度處理問題暫時禁用，留作未來研究
 - ✅ 更新 README 和文檔，版本升級至 v2.1.0
 
 ### v2.0.0 (2026-01)
@@ -1277,9 +1254,9 @@ MIT License
   - 音量損失從 8-10dB 降至 3-5dB
   - 添加混合策略和變化限制
   - 自適應 delta 調整（3-12dB）
-- ✅ **噪聲追蹤擴展**：擴展到所有主要版本
-  - V2, V3-2, V3-3, V3-4, V4 全部支持噪聲場景自適應
-  - 適應速度 100-600ms
+- ✅ **MCRA 雙視窗最小值追蹤**：內建於噪聲估計器
+  - 自動適應噪聲場景變化
+  - 每 L 幀強制更新最小值
 - ✅ 更新所有配置文件和文檔
 
 ### v1.4.0 (2026-01)
@@ -1294,10 +1271,6 @@ MIT License
   - WSS (加權頻譜斜率距離)
 
 ### v1.3.0 (2026-01)
-- ✅ **添加噪聲場景自適應機制** (V3)
-  - 自動檢測噪聲類型突變
-  - 快速適應機制：100-600ms（提升 2-4 倍）
-  - 使用現有參數（Posterior SNR）的輕量級檢測
 - ✅ 創建 ALGORITHMS_EXPLANATION.md（演算法詳解文檔）
 - ✅ 整理和清理項目文檔
 
@@ -1332,4 +1305,4 @@ MIT License
 - 🥈 **V3-4 (Laplacian)**: STOI 最佳 (0.875)，可懂度最高
 - 🥉 **V3 (MMSE-STSA)**: 平衡性能，適合一般應用
 
-**v2.3 新特性**：Soft Reset 策略確保噪聲場景變化時的平滑過渡！
+**v2.5 新特性**：MCRA 雙視窗最小值追蹤，自動適應噪聲場景變化！

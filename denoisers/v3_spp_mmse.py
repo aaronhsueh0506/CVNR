@@ -12,7 +12,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from core import FrameProcessor, Reconstructor, SppEstimator
 from core.noise_estimators import RecursiveAverageNoiseEstimator, McraNoiseEstimator
 from core.gain_calculators import SppMmseGainCalculator
-from core.noise_change_detector import NoiseChangeDetector  # v1.3.0 新增
 from .base_denoiser import BaseDenoiser
 from typing import Tuple
 
@@ -70,7 +69,6 @@ class SppMmseDenoiser(BaseDenoiser):
         alpha_g: float = 0.7,
         use_full_formula: bool = False,  # v1.5.0 新增：True=Bessel完整版, False=E1簡化版
         num_init_frames: int = 20,
-        enable_noise_tracking: bool = True,  # v1.3.0 新增：是否啟用噪聲場景追蹤
         # v2.0 MCRA 噪聲估計參數
         noise_method: str = 'recursive_average',  # 'recursive_average' 或 'mcra'
         alpha_s: float = 0.9,       # MCRA 時間平滑因子
@@ -129,20 +127,6 @@ class SppMmseDenoiser(BaseDenoiser):
 
         # 存儲上一幀的增益（用於 Decision Directed）
         self.gain_prev = None
-
-        # v1.3.0: 噪聲場景變化檢測器
-        self.enable_noise_tracking = enable_noise_tracking
-        if enable_noise_tracking:
-            self.noise_change_detector = NoiseChangeDetector(
-                history_length=20,
-                energy_ratio_high=2.0,
-                energy_ratio_low=0.5,
-                spp_threshold=0.3,
-                confirmation_frames=3,
-                cooldown_frames=50
-            )
-        else:
-            self.noise_change_detector = None
 
     def denoise(self, noisy_signal: np.ndarray, return_spp: bool = False):
         """
@@ -230,21 +214,6 @@ class SppMmseDenoiser(BaseDenoiser):
             if return_spp:
                 spp_history.append(spp.copy())
 
-            # v1.3.0: 噪聲場景變化檢測
-            if self.enable_noise_tracking and self.noise_change_detector is not None:
-                # 使用 posterior SNR (gamma) 檢測噪聲變化
-                if self.noise_change_detector.detect(gamma, spp):
-                    # 1. 噪聲估計器進入快速適應模式
-                    self.noise_estimator.trigger_fast_adaptation()
-
-                    # 2. v2.3: Soft Reset - 增益歷史衰減（而非清空）
-                    #    避免完全重置導致的語音斷裂和突發噪音
-                    if self.gain_prev is not None:
-                        self.gain_prev *= 0.5  # 降低對上一幀語音估計的信賴度，但不歸零
-
-                    # 注意：不再重置 spp_estimator 和 gain_calculator
-                    #       讓它們根據新噪聲估計自然收斂即可
-
             # 2.3 計算 SPP 加權的 MMSE 增益 ⭐ 核心步驟
             gain = self.gain_calculator.calculate(spp, xi, gamma)
 
@@ -274,9 +243,6 @@ class SppMmseDenoiser(BaseDenoiser):
         self.spp_estimator.reset()
         self.gain_calculator.reset()
         self.gain_prev = None
-        # v1.3.0: 重置噪聲變化檢測器
-        if self.enable_noise_tracking and self.noise_change_detector is not None:
-            self.noise_change_detector.reset()
 
     def get_params(self) -> dict:
         """獲取參數"""
@@ -294,8 +260,7 @@ class SppMmseDenoiser(BaseDenoiser):
             'g_min_db': 10 * np.log10(self.gain_calculator.g_min),
             'alpha_g': self.gain_calculator.alpha_g,
             'use_full_formula': self.gain_calculator.use_full_formula,
-            'num_init_frames': self.noise_estimator.num_init_frames,
-            'enable_noise_tracking': self.enable_noise_tracking
+            'num_init_frames': self.noise_estimator.num_init_frames
         }
         # 根據噪聲估計方法添加對應參數
         if self.noise_method == 'mcra':

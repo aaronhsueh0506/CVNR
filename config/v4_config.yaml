@@ -28,9 +28,9 @@ noise_estimation:
 
 # SPP Estimation (Optuna 1000-trial, Score 0.5209)
 spp:
-  alpha_xi: 0.9              # Optuna 1000-trial
-  q: 0.6                     # Optuna 1000-trial
-  xi_min_db: -19.0           # Optuna 1000-trial
+  alpha_xi: 0.92              
+  q: 0.6                     
+  xi_min_db: -15.0          
 
 # OMLSA Gain Calculation
 gain_calculation:

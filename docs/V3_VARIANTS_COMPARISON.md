@@ -301,9 +301,8 @@ p(X) ∝ exp(-β|X|)
 - **替代**: V3-4 如果需要更強降噪
 
 **非穩態噪聲 (Babble, Street, Crowd)**:
-- **推薦**: V3-4 (with 噪聲追蹤)
-- **理由**: 強降噪，適應能力強
-- **配置**: 啟用 `enable_noise_tracking = true`
+- **推薦**: V3-4
+- **理由**: 強降噪，MCRA 雙視窗自動適應
 
 **Musical Noise 敏感場景**:
 - **推薦**: V3-2
@@ -439,21 +438,12 @@ gain_calculation:
 - **平衡質量**: 提高 `g_min_db` 到 -18, `alpha_g` 到 0.75
 - **極低 SNR**: `g_min_db = -25`, `alpha_g = 0.65`
 
-### 噪聲追蹤參數
+### MCRA 噪聲追蹤
 
-所有版本都支持噪聲追蹤 (v1.5.0)：
-
-```yaml
-noise_estimation:
-  enable_noise_tracking: true     # 啟用場景追蹤
-  tracking_threshold: 3.0         # 檢測閾值 (dB)
-  adaptation_speed: medium        # 適應速度: slow/medium/fast
-```
-
-**建議**:
-- **穩態噪聲**: `enable_noise_tracking = false`
-- **非穩態噪聲**: `enable_noise_tracking = true`, `adaptation_speed = medium`
-- **快速變化**: `adaptation_speed = fast`
+所有 V3 系列使用 MCRA 雙視窗最小值追蹤 (v2.3.0)：
+- 自動適應噪聲場景變化
+- 每 L 幀強制更新最小值
+- 無需額外配置參數
 
 ## 常見問題
 

@@ -50,39 +50,30 @@ noise_estimation:
   delta_db: 6.0       # 減少噪聲估計偏移（8.0 → 6.0）
 ```
 
-### 2. 噪聲場景轉換功能
+### 2. 噪聲場景轉換功能 ✅ 已完成
 
-**背景**: 當噪聲場景突然變化時（如從安靜環境進入嘈雜街道），IMCRA 的最小值追蹤需要時間適應。
+**背景**: 當噪聲場景突然變化時（如從安靜環境進入嘈雜街道），噪聲估計需要時間適應。
 
-**已實現但未優化的功能**:
-- `NoiseChangeDetector` ([core/noise_change_detector.py](../core/noise_change_detector.py))
-- `trigger_fast_tracking()` in IMCRA
-- `trigger_fast_transition()` in SPP estimator
+**v2.3.0 解決方案**: MCRA 雙視窗最小值追蹤 (Cohen & Berdugo 2002)
 
-**改善方向**:
+```python
+# 雙視窗最小值追蹤
+self.S_min = np.minimum(self.S_min, self.S)
+self.S_min_sw = np.minimum(self.S_min_sw, self.S)
+self.counter += 1
 
-1. **自適應閾值調整**
-   ```python
-   # 根據當前 SNR 動態調整檢測閾值
-   if avg_snr < 5:  # 低 SNR 環境
-       energy_ratio_high = 1.5  # 更敏感
-   else:
-       energy_ratio_high = 2.5  # 更保守
-   ```
+# 每 L 幀強制更新（自動適應噪聲場景變化）
+if self.counter >= self.L:
+    self.S_min = np.minimum(self.stored_min, self.S_min_sw)
+    self.stored_min = self.S_min_sw.copy()
+    self.S_min_sw = self.S.copy()
+    self.counter = 0
+```
 
-2. **漸進式參數恢復**
-   ```python
-   # 不要立即恢復，而是漸進式
-   for frame in transition_frames:
-       alpha_s = alpha_s_fast + (alpha_s_normal - alpha_s_fast) * (frame / total_frames)
-   ```
-
-3. **頻帶獨立的場景檢測**
-   ```python
-   # 低頻和高頻分別檢測
-   low_freq_change = detect_change(spectrum[:n_freqs//4])
-   high_freq_change = detect_change(spectrum[n_freqs//4:])
-   ```
+**優點**:
+- 內建場景變化適應
+- 無需外部檢測器
+- 簡化架構
 
 ### 3. 使用 MCRA 替代 IMCRA
 

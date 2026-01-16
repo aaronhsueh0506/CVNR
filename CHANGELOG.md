@@ -44,54 +44,58 @@
 
 ## [2.3.0] - 2026-01-08
 
-### 新增 (Added)
-- ✨ **Soft Reset 策略**: 取代 Hard Reset 處理噪聲場景變化
-  - 使用 `gain_prev *= 0.5` 衰減而非完全清空
-  - 避免語音斷裂和突發噪音問題
-  - 保留歷史狀態但降低信賴度
+### 重構 (Refactored)
+- ✨ **整合場景轉換偵測至 MCRA**：移除外部 NoiseChangeDetector 和 TransitionDetector
+  - 使用 Cohen & Berdugo 的 Dual-Window Minima Tracking 方法
+  - MCRA 內建處理噪聲場景變化，每 L 幀自動更新最小值
+  - 簡化降噪器架構，移除 `enable_noise_tracking` 參數
 
 ### 改進 (Changed)
-- ⬆️ **所有降噪器統一 Soft Reset**:
-  - V2: WienerGainCalculator 新增 `soft_reset()` 方法
-  - V3, V3-2, V3-3, V3-4, V4: `gain_prev *= 0.5` 取代 `gain_prev = None`
-- ⬆️ 不再重置 spp_estimator 和 gain_calculator，讓它們根據新噪聲估計自然收斂
+- ⬆️ **MCRA 雙視窗最小值追蹤**：
+  - 新增 `S_min_sw` (子視窗最小值)
+  - 新增 `stored_min` (存儲的最小值)
+  - 新增 `counter` (視窗計數器)
+  - 移除 `min_buffer` (FIFO 緩衝區)
 
 ### 技術細節 (Technical Details)
 
-#### Soft Reset 設計原理
+#### Dual-Window Minima Tracking
 
-**問題：Hard Reset 的弊端**
-- 完全清空 gain_prev 會導致下一幀瞬間跳到純噪聲估計
-- 造成可聽到的語音斷裂和突發噪音
-- 收斂到新穩態需要過長時間
-
-**解決方案：Soft Reset**
 ```python
-if noise_change_detected:
-    # Soft Reset：衰減但不清空
-    if gain_prev is not None:
-        gain_prev *= 0.5  # 降低對上一幀估計的信賴度
+# 雙視窗最小值追蹤 (Cohen & Berdugo 2002)
+self.S_min = np.minimum(self.S_min, self.S)
+self.S_min_sw = np.minimum(self.S_min_sw, self.S)
+self.counter += 1
 
-    # 觸發噪聲估計器快速適應
-    noise_estimator.trigger_fast_adaptation()
-
-    # 注意：不再重置 spp_estimator 和 gain_calculator
+# 每 L 幀強制更新（自動適應噪聲場景變化）
+if self.counter >= self.L:
+    self.S_min = np.minimum(self.stored_min, self.S_min_sw)
+    self.stored_min = self.S_min_sw.copy()
+    self.S_min_sw = self.S.copy()
+    self.counter = 0
 ```
 
 **優點**:
-- 保留歷史信息但降低信賴度
-- 平滑過渡到新噪聲場景
-- 避免語音斷裂和突發噪音
-- 更快收斂到新穩態
+- 內建場景變化適應
+- 減少程式碼重複
+- 消除邏輯衝突
+- 簡化降噪器介面
+
+### 刪除 (Removed)
+- ❌ `core/noise_change_detector.py` - 外部噪聲變化檢測器
+- ❌ `core/transition_detector.py` - 外部場景轉換檢測器
+- ❌ 所有降噪器的 `enable_noise_tracking` 參數
+- ❌ `trigger_fast_adaptation()` 方法
 
 ### 修改文件
-1. `core/gain_calculators/wiener.py` - 新增 `soft_reset()` 方法
-2. `denoisers/v2_wiener.py` - 使用 `soft_reset()` 和 `enhanced_mag_prev *= 0.5`
-3. `denoisers/v3_spp_mmse.py` - `gain_prev *= 0.5` 取代 `gain_prev = None`
-4. `denoisers/v3_2_mmse_lsa.py` - `gain_prev *= 0.5` 取代 `gain_prev = None`
-5. `denoisers/v3_3_pmmse.py` - `gain_prev *= 0.5` 取代 `gain_prev = None`
-6. `denoisers/v3_4_laplacian_mmse.py` - `gain_prev *= 0.5` 取代 `gain_prev = None`
-7. `denoisers/v4_imcra_omlsa.py` - `gain_prev *= 0.5` 取代 `gain_prev = None`
+1. `core/noise_estimators/mcra.py` - 升級為雙視窗最小值追蹤
+2. `denoisers/v3_spp_mmse.py` - 移除 NoiseChangeDetector
+3. `denoisers/v3_2_mmse_lsa.py` - 移除 NoiseChangeDetector
+4. `denoisers/v3_3_pmmse.py` - 移除 NoiseChangeDetector 和 TransitionDetector
+5. `denoisers/v3_4_laplacian_mmse.py` - 移除 NoiseChangeDetector
+6. `denoisers/v4_imcra_omlsa.py` - 移除 NoiseChangeDetector
+7. `regenerate_all.py` - 移除 enable_noise_tracking 參數處理
+8. `process_audio.py` - 移除 enable_noise_tracking 參數處理
 
 ---
 
@@ -207,9 +211,8 @@ if noise_change_detected:
   - 所有方法通過 clean protection 測試（PESQ 降幅 < 0.01）
 
 ### 改進 (Changed)
-- ⬆️ **Phase 6 機制**: fast_startup 和 transition_detection 實現
-  - 因 clean 場景過度處理問題暫時禁用
-  - 保留於代碼中供未來研究
+- ⬆️ **參數優化**：V3-3/V3-4 採用 V3-2 對齊參數
+- ⬆️ **測試覆蓋**：新增 clean.wav 高 SNR 測試用例
 
 ---
 
@@ -266,13 +269,8 @@ if noise_change_detected:
   - 刪除獨立的 V3-1 版本
   - 統一命名為 "MMSE-STSA"
 
-- ✅ **噪聲追蹤擴展**：擴展到所有主要版本
-  - V2 (Wiener Filter)
-  - V3-2 (MMSE-LSA)
-  - V3-3 (PMMSE)
-  - V3-4 (Laplacian-MMSE)
-  - V4 (IMCRA-OMLSA)
-  - 統一配置：`noise_tracking.enable: true`
+- ✅ **MCRA 噪聲估計**：所有 V3 系列使用 RecursiveAverage + SPP 軟判決
+  - V4 使用 IMCRA 兩階段結構
 
 ### 改進 (Changed)
 - ⬆️ **V4 性能優化**：修復音量和震動問題
@@ -294,22 +292,14 @@ if noise_change_detected:
 - ❌ `config/v3_1_config.yaml`（已合併）
 
 ### 修改文件
-1. `config/v2_config.yaml` - 添加 noise_tracking
-2. `config/v3_config.yaml` - 添加 use_full_formula, noise_tracking
-3. `config/v3_2_config.yaml` - 添加 noise_tracking
-4. `config/v3_3_config.yaml` - 添加 noise_tracking
-5. `config/v3_4_config.yaml` - 添加 noise_tracking
-6. `config/v4_config.yaml` - 優化 4 個參數，添加 noise_tracking
-7. `core/gain_calculators/spp_mmse.py` - 整合 V3-1 功能
-8. `core/gain_calculators/omlsa.py` - 添加混合策略和變化限制
-9. `core/noise_estimators/imcra.py` - 添加自適應 delta
-10. `denoisers/v2_wiener.py` - 添加噪聲追蹤
-11. `denoisers/v3_spp_mmse.py` - 添加 use_full_formula 參數
-12. `denoisers/v3_2_mmse_lsa.py` - 添加噪聲追蹤
-13. `denoisers/v3_3_pmmse.py` - 添加噪聲追蹤
-14. `denoisers/v3_4_laplacian_mmse.py` - 添加噪聲追蹤
-15. `denoisers/v4_imcra_omlsa.py` - 全面優化
-16. `examples/process_audio.py` - 移除 V3-1，添加參數支持
+1. `config/v3_config.yaml` - 添加 use_full_formula
+2. `config/v4_config.yaml` - 優化 IMCRA/OMLSA 參數
+3. `core/gain_calculators/spp_mmse.py` - 整合 V3-1 功能
+4. `core/gain_calculators/omlsa.py` - 添加混合策略和變化限制
+5. `core/noise_estimators/imcra.py` - 添加自適應 delta
+6. `denoisers/v3_spp_mmse.py` - 添加 use_full_formula 參數
+7. `denoisers/v4_imcra_omlsa.py` - 全面優化
+8. `examples/process_audio.py` - 移除 V3-1，添加參數支持
 
 詳見：[PROJECT_STATUS.md](PROJECT_STATUS.md)
 
@@ -360,73 +350,8 @@ if noise_change_detected:
 ## [1.3.0] - 2026-01-01
 
 ### 新增 (Added)
-- ✅ **噪聲場景自適應機制**
-  - 新增 `NoiseChangeDetector` 噪聲場景變化檢測器
-  - 使用 Posterior SNR (γ) 檢測噪聲場景突變
-  - V3 降噪器集成場景自適應功能
-  - 新增 `enable_noise_tracking` 參數（可選啟用/關閉）
-
-### 改進 (Changed)
-- ⬆️ **V1 噪聲估計器**：添加快速重估機制（200-400ms 適應）
-- ⬆️ **V2/V3 噪聲估計器**：添加動態 alpha 切換（100-200ms 適應）
-- ⬆️ **V4 噪聲估計器**：添加快速追蹤模式（300-600ms 適應）
-
-### 技術細節 (Technical Details)
-
-#### 噪聲場景自適應機制
-
-**設計原理**：
-- 使用已有的 Posterior SNR (γ) 進行檢測，無需額外計算
-- 在非語音段（SPP < 0.3）檢測噪聲能量比變化
-- 當能量比 > 2.0 或 < 0.5 時觸發快速適應
-
-**檢測流程**：
-```python
-γ_ref = mean(γ_history[過去20幀])
-γ_cur = γ[當前幀]
-energy_ratio = sum(γ_cur) / sum(γ_ref)
-
-if energy_ratio > 2.0 or < 0.5:
-    → 噪聲場景變化！觸發快速適應
-```
-
-**適應策略**：
-
-| 版本 | 正常模式 | 快速模式 | 適應時間 |
-|------|----------|----------|----------|
-| V1 | 固定噪聲 | 重估20幀 | 200-400ms |
-| V2/V3 | α=0.95 | α=0.5 | 100-200ms |
-| V4 | α_s=0.9, L=150 | α_s=0.7, L=50 | 300-600ms |
-
-**修改文件**：
-1. `core/noise_change_detector.py` - 新建檢測器
-2. `core/noise_estimators/simple_average.py` - V1 重估機制
-3. `core/noise_estimators/recursive_average.py` - V2/V3 動態 alpha
-4. `core/noise_estimators/imcra.py` - V4 快速追蹤
-5. `denoisers/v3_spp_mmse.py` - 集成檢測器
-6. `examples/test_noise_scene_adaptation.py` - 測試腳本
-
-**使用範例**：
-```python
-from denoisers.v3_spp_mmse import SppMmseDenoiser
-
-# 默認啟用噪聲追蹤
-denoiser = SppMmseDenoiser(sample_rate=16000)
-enhanced = denoiser.denoise(noisy_signal)
-
-# 關閉噪聲追蹤（如果不需要）
-denoiser = SppMmseDenoiser(
-    sample_rate=16000,
-    enable_noise_tracking=False
-)
-```
-
-**性能影響**：
-- 計算開銷：< 1%
-- 內存開銷：~10KB
-- 適應速度：2-4倍提升
-
-詳見：[CHANGES_SUMMARY_v1.3.0.md](CHANGES_SUMMARY_v1.3.0.md)
+- ✅ 創建 ALGORITHMS_EXPLANATION.md（演算法詳解文檔）
+- ✅ 整理和清理項目文檔
 
 ---
 
@@ -662,34 +587,9 @@ output[start:end] += frame  # 不重複加窗
 
 ## 未來計劃
 
-### [1.2.0] - 噪聲場景轉換適應機制（計劃中）
-
-**目標**：讓 V1-V4 能夠檢測並適應噪聲類型突變
-
-#### 計劃新增
-- ⚪ NoiseChangeDetector（噪聲變化檢測器）
-  - 三個檢測指標：頻譜距離、能量比、頻帶遷移
-  - 多指標融合判決
-  - SPP 引導檢測（只在非語音段）
-
-- ⚪ 快速適應機制
-  - V1: 噪聲重估機制（200-400ms）
-  - V2/V3: 動態 alpha 切換（100-200ms）
-  - V4: IMCRA 快速追蹤模式（300-600ms）
-
-#### 預期效果
-- 適應速度：0.5-2 秒
-- 加速比：2-4 倍（相比原始）
-- 誤檢率：< 1-2%
-
-詳見：[計劃文件](/Users/mingyu/.claude/plans/clever-cooking-moon.md)
-
----
-
-## [1.3.0] - 擴展功能（未來）
-
 ### 計劃功能
-- ✅ 評估指標（PESQ, STOI, segSNR）- 已完成於 v1.2.0
+- ✅ 評估指標（PESQ, STOI, segSNR）- 已完成
+- ✅ MCRA 雙視窗最小值追蹤 - 已完成於 v2.3.0
 - ⚪ 可視化工具（頻譜圖、SPP 熱圖）
 - ⚪ 實時音頻流處理
 - ⚪ C++ 移植
