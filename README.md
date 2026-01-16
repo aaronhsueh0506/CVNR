@@ -1,6 +1,6 @@
 # 語音降噪系統 (Speech Denoising System)
 
-**版本**: v2.4
+**版本**: v2.5
 
 傳統信號處理方法的實時語音降噪系統，採用漸進式學習路徑。
 
@@ -1201,7 +1201,12 @@ MIT License
 
 ## 📜 版本歷史
 
-### v2.4.0 (2026-01-11) ✨ 最新
+### v2.5.0 (2026-01-16) ✨ 最新
+- ✨ **MCRA 單/雙視窗模式切換**: `use_dual_window` 參數支持效果比較
+- 🧹 **清理冗餘程式碼**: 移除死代碼 (spp fast startup, imcra fast tracking, reconstructor 未使用方法)
+- ✅ **IMCRA 遺忘機制驗證**: 確認 Cohen 2003 最小值重置邏輯正確
+
+### v2.4.0 (2026-01-11)
 - ✨ **Optuna 貝葉斯優化**: 全版本 1000-trial 參數優化
 
   | 版本 | PESQ | STOI | segSNR | xi_min_db | g_min_db | alpha_g |

@@ -4,6 +4,34 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [2.5.0] - 2026-01-16
+
+### 重構 (Refactored)
+- ✨ **MCRA 單/雙視窗模式切換**: 新增 `use_dual_window` 參數
+  - `True` (預設)：雙視窗模式，記憶體效率高 O(3×n_freqs)
+  - `False`：單視窗 FIFO 緩衝區模式 O(L×n_freqs)
+  - 方便效果比較實驗
+
+- 🧹 **清理冗餘程式碼**:
+  - 移除 `spp_estimator.py` 的 fast startup 功能 (死代碼)
+  - 移除 `imcra.py` 的 fast tracking 功能 (死代碼)
+  - 移除 `reconstructor.py` 的 `apply_gain()` 和 `reconstruct_from_spectra()` 方法 (未使用)
+  - 保留 `recursive_average.py` 的 fast 功能 (可能有用)
+
+### 驗證 (Verified)
+- ✅ **IMCRA 最小值重置邏輯正確**: 確認 Cohen 2003 FIFO 緩衝區方法的遺忘機制
+  - `S_min_sw = S_smoothed.copy()` 在第 213 行存在
+  - 每 V 幀重置子視窗最小值
+  - 噪聲增加時最多 L = U × V 幀後追上
+
+### 修改文件
+1. `core/noise_estimators/mcra.py` - 添加 `use_dual_window` 參數，支持單/雙視窗切換
+2. `core/spp_estimator.py` - 移除 fast startup 相關代碼
+3. `core/noise_estimators/imcra.py` - 移除 fast tracking 相關代碼
+4. `core/reconstructor.py` - 移除未使用的方法
+
+---
+
 ## [2.4.0] - 2026-01-12
 
 ### 新增 (Added)

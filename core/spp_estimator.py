@@ -19,11 +19,6 @@ class SppEstimator:
         q: 語音先驗機率 (通常為 0.5)
         xi_min_db: 先驗 SNR 下限 (dB)
 
-    v1.4.0 新增 (Phase 6):
-        enable_fast_startup: 啟用快速啟動模式
-        startup_frames: 快速啟動持續幀數
-        alpha_startup: 快速啟動時的 alpha 值
-
     參考文獻:
         Cohen & Berdugo (2001): "Speech Enhancement for Non-stationary Noise Environments"
     """
@@ -32,29 +27,16 @@ class SppEstimator:
         self,
         alpha: float = 0.98,
         q: float = 0.5,
-        xi_min_db: float = -25.0,
-        enable_fast_startup: bool = False,
-        startup_frames: int = 50,
-        alpha_startup: float = 0.7
+        xi_min_db: float = -25.0
     ):
         self.alpha = alpha
-        self.alpha_normal = alpha  # 保存正常模式的 alpha
         self.q = q
         self.xi_min = 10 ** (xi_min_db / 10)
 
         # 狀態變量（用於 Decision Directed 方法）
         self.xi_prev = None  # 上一幀的先驗 SNR
         self.gamma_prev = None  # 上一幀的後驗 SNR
-
-        # v1.4.0: 快速啟動狀態
-        self.enable_fast_startup = enable_fast_startup
-        self.startup_frames = startup_frames
-        self.alpha_startup = alpha_startup
         self.frame_count = 0
-        self.in_startup_mode = enable_fast_startup
-
-        # 當前使用的 alpha
-        self.current_alpha = alpha_startup if enable_fast_startup else alpha
 
     def estimate(
         self,
@@ -66,7 +48,6 @@ class SppEstimator:
         """
         估計 SPP
 
-        v1.4.0: 支持快速啟動模式，使用動態 alpha
         v1.5.0: 修正 DD 公式使用當前幀噪聲 λ_n
 
         參數:
@@ -80,12 +61,6 @@ class SppEstimator:
             xi: 先驗 SNR (n_freqs,)
             gamma: 後驗 SNR (n_freqs,)
         """
-        # v1.4.0: 快速啟動模式計時器
-        if self.in_startup_mode:
-            if self.frame_count >= self.startup_frames:
-                self.in_startup_mode = False
-                self.current_alpha = self.alpha_normal
-
         # 1. 計算後驗 SNR (a posteriori SNR)
         gamma = Y_psd / (noise_psd + 1e-10)
 
@@ -105,8 +80,8 @@ class SppEstimator:
                 # 注意：這仍然使用 gamma_prev 中的舊噪聲
                 xi_dd_term1 = gain_prev ** 2 * self.gamma_prev
 
-            xi_dd = self.current_alpha * xi_dd_term1 + \
-                    (1 - self.current_alpha) * np.maximum(gamma - 1, 0)
+            xi_dd = self.alpha * xi_dd_term1 + \
+                    (1 - self.alpha) * np.maximum(gamma - 1, 0)
             xi = np.maximum(xi_dd, self.xi_min)
 
         # 3. 計算對數似然比
@@ -136,40 +111,15 @@ class SppEstimator:
         # 保存當前值供下一幀使用
         self.xi_prev = xi
         self.gamma_prev = gamma
-
-        # v1.4.0: 更新幀計數
         self.frame_count += 1
 
         return spp, xi, gamma
 
-    def trigger_fast_transition(self, boost_alpha: float = 0.4):
-        """
-        觸發快速過渡模式（v1.4.0 新增 - Phase 6）
-
-        用於檢測到 SPP 跳變時，快速適應新的語音段
-        - 臨時降低 current_alpha
-        - 部分重置 xi_prev 以加速響應
-
-        參數:
-            boost_alpha: 過渡時使用的 alpha 值（預設 0.4）
-        """
-        # 臨時設置低 alpha（會被 denoiser 的 boost 計時器管理）
-        self.current_alpha = boost_alpha
-
-        # 部分重置 xi_prev 以減少歷史影響
-        if self.xi_prev is not None:
-            # 保留 50% 的歷史信息，避免完全重置
-            self.xi_prev = self.xi_prev * 0.5
-
     def reset(self):
-        """重置狀態（v1.4.0: 包含快速啟動狀態）"""
+        """重置狀態"""
         self.xi_prev = None
         self.gamma_prev = None
-
-        # v1.4.0: 重置快速啟動狀態
         self.frame_count = 0
-        self.in_startup_mode = self.enable_fast_startup
-        self.current_alpha = self.alpha_startup if self.enable_fast_startup else self.alpha_normal
 
     def __repr__(self):
         return (f"SppEstimator(alpha={self.alpha}, q={self.q}, "
