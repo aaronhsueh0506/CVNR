@@ -102,6 +102,9 @@ class ImcraNoiseEstimator:
         self.frame_count = 0
         self.subwin_count = 0  # 子窗口內的幀計數
 
+        # 場景轉換偵測
+        self.prev_frame_energy = 1.0  # 前一幀能量（初始化為 1 避免除零）
+
     def _init_freq_smooth_window(self):
         """初始化頻率平滑窗（歸一化 Hanning 窗）"""
         w = self.freq_smooth_width
@@ -256,6 +259,9 @@ class ImcraNoiseEstimator:
         self.frame_count = self.num_init_frames
         self.subwin_count = 0
 
+        # 初始化前一幀能量
+        self.prev_frame_energy = np.sum(init_psd)
+
         return self.noise_psd
 
     def update(
@@ -280,6 +286,23 @@ class ImcraNoiseEstimator:
 
         # 1. 計算功率譜
         power = magnitude ** 2
+
+        # === 場景轉換偵測 ===
+        E_curr = np.sum(power)
+        beta = E_curr / (self.prev_frame_energy + 1e-10)
+
+        # 計算自適應係數 η
+        # β > 50: 突發尖峰（脈衝噪聲），忽略
+        # β ≈ 1: 能量穩定，η ≈ 0.95（正常更新）
+        # β > 10: 能量突增，η → 0（加速噪聲更新）
+        if beta > 50:
+            eta = 0.0
+        else:
+            eta = 0.95 / (1.0 + np.exp(-20 * (beta - 10)))
+
+        # 更新前一幀能量
+        self.prev_frame_energy = E_curr
+        # === 場景轉換偵測結束 ===
 
         # 2. 頻率平滑
         S_f = self._frequency_smooth(power)
@@ -324,8 +347,10 @@ class ImcraNoiseEstimator:
         # ==================== 噪聲更新 ====================
 
         # 10. 自適應平滑因子
-        # tilde_α_d = α_d + (1 - α_d) * p
-        tilde_alpha_d = self.alpha_d + (1 - self.alpha_d) * spp_noise_update
+        # 原始: tilde_α_d = α_d + (1 - α_d) * p
+        # 修改: tilde_α_d = (α_d + (1 - α_d) * p) × η
+        # η 由場景轉換偵測計算，當噪聲突增時 η 變小，加速噪聲更新
+        tilde_alpha_d = (self.alpha_d + (1 - self.alpha_d) * spp_noise_update) * eta
 
         # 11. 噪聲估計更新
         # λ_d = tilde_α_d * λ_d + (1 - tilde_α_d) * |Y|²
@@ -364,6 +389,7 @@ class ImcraNoiseEstimator:
         self.is_initialized = False
         self.frame_count = 0
         self.subwin_count = 0
+        self.prev_frame_energy = 1.0
 
     def __repr__(self):
         return (f"ImcraNoiseEstimator(alpha_s={self.alpha_s}, "
