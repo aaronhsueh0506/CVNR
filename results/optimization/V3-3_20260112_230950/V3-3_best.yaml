@@ -1,0 +1,27 @@
+audio:
+  fft_size: 512
+  frame_shift_ms: 10
+  frame_size_ms: 20
+  sample_rate: 16000
+  window_type: hanning
+gain_calculation:
+  alpha_g: 0.7
+  g_min_db: -14.0
+  method: pmmse
+  use_spp_weighting: true
+name: PMMSE-Wolfe-Godsill
+noise_estimation:
+  L: 120
+  alpha_d: 0.95
+  alpha_p: 0.2
+  alpha_s: 0.8
+  delta_db: 5.0
+  method: mcra
+  num_init_frames: 20
+noise_tracking:
+  enable: true
+spp:
+  alpha_xi: 0.9
+  q: 0.45
+  xi_min_db: -19.0
+version: '3.3'

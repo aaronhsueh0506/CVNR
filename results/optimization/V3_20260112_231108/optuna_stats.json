@@ -1,0 +1,44 @@
+{
+  "best_trial": 103,
+  "best_params": {
+    "q": 0.4,
+    "alpha_xi": 0.9,
+    "xi_min_db": -22.0,
+    "g_min_db": -19.5,
+    "alpha_g": 0.65
+  },
+  "best_composite_score": 0.5043770204464756,
+  "best_pesq_improvement": 0.5719334549374051,
+  "objective_formula": "0.8 * (pesq_raw / 4.644) + 0.2 * stoi_raw",
+  "silence_penalty": "-0.03 if g_min_db < -30.0",
+  "n_trials": 500,
+  "n_successful": 500,
+  "version": "V3",
+  "search_space": {
+    "q": [
+      0.4,
+      0.8,
+      0.05
+    ],
+    "alpha_xi": [
+      0.9,
+      0.98,
+      0.01
+    ],
+    "xi_min_db": [
+      -25.0,
+      -15.0,
+      1.0
+    ],
+    "g_min_db": [
+      -22.0,
+      -16.0,
+      0.5
+    ],
+    "alpha_g": [
+      0.65,
+      0.9,
+      0.05
+    ]
+  }
+}
