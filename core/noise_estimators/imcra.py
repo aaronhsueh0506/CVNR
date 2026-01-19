@@ -296,7 +296,7 @@ class ImcraNoiseEstimator:
         # β ≈ 1: 能量穩定，η ≈ 0.95（正常更新）
         # β > 10: 能量突增，η → 0（加速噪聲更新）
         if beta > 50:
-            eta = 0.0
+            eta = 0.0  # 突發尖峰（脈衝噪聲），強制快速更新噪聲
         else:
             eta = 0.95 / (1.0 + np.exp(20 * (beta - 10)))
 
