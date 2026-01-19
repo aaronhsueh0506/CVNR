@@ -102,8 +102,10 @@ class ImcraNoiseEstimator:
         self.frame_count = 0
         self.subwin_count = 0  # 子窗口內的幀計數
 
-        # 場景轉換偵測
-        self.prev_frame_energy = 1.0  # 前一幀能量（初始化為 1 避免除零）
+        # 快速追蹤模式（保持向後兼容）
+        self.is_fast_mode = False
+        self.fast_mode_frames = 0
+        self.fast_mode_duration = 100
 
     def _init_freq_smooth_window(self):
         """初始化頻率平滑窗（歸一化 Hanning 窗）"""
@@ -259,9 +261,6 @@ class ImcraNoiseEstimator:
         self.frame_count = self.num_init_frames
         self.subwin_count = 0
 
-        # 初始化前一幀能量
-        self.prev_frame_energy = np.sum(init_psd)
-
         return self.noise_psd
 
     def update(
@@ -282,33 +281,24 @@ class ImcraNoiseEstimator:
         if not self.is_initialized:
             raise RuntimeError("Noise estimator not initialized. Call estimate() first.")
 
+        # 快速模式處理
+        if self.is_fast_mode:
+            self.fast_mode_frames += 1
+            if self.fast_mode_frames >= self.fast_mode_duration:
+                self.is_fast_mode = False
+                self.fast_mode_frames = 0
+
         # ==================== 第一階段：粗略 VAD ====================
 
         # 1. 計算功率譜
         power = magnitude ** 2
 
-        # === 場景轉換偵測 ===
-        E_curr = np.sum(power)
-        beta = E_curr / (self.prev_frame_energy + 1e-10)
-
-        # 計算自適應係數 η
-        # β > 50: 突發尖峰（脈衝噪聲），忽略
-        # β ≈ 1: 能量穩定，η ≈ 0.95（正常更新）
-        # β > 10: 能量突增，η → 0（加速噪聲更新）
-        if beta > 50:
-            eta = 0.0  # 突發尖峰（脈衝噪聲），強制快速更新噪聲
-        else:
-            eta = 0.95 / (1.0 + np.exp(20 * (beta - 10)))
-
-        # 更新前一幀能量
-        self.prev_frame_energy = E_curr
-        # === 場景轉換偵測結束 ===
-
         # 2. 頻率平滑
         S_f = self._frequency_smooth(power)
 
         # 3. 時間平滑
-        self.S = self.alpha_s * self.S + (1 - self.alpha_s) * S_f
+        alpha_s = 0.7 if self.is_fast_mode else self.alpha_s
+        self.S = alpha_s * self.S + (1 - alpha_s) * S_f
 
         # 4. 最小值追蹤
         self.S_min_sw, self.S_min_buffer, self.S_min = self._update_minimum_tracking(
@@ -326,7 +316,7 @@ class ImcraNoiseEstimator:
         S_tilde_f = self._conditional_frequency_smooth(S_f, indicator)
 
         # 7. 第二階段時間平滑
-        self.S_tilde = self.alpha_s * self.S_tilde + (1 - self.alpha_s) * S_tilde_f
+        self.S_tilde = alpha_s * self.S_tilde + (1 - alpha_s) * S_tilde_f
 
         # 8. 第二階段最小值追蹤
         self.S_tilde_min_sw, self.S_tilde_min_buffer, self.S_tilde_min = \
@@ -347,10 +337,9 @@ class ImcraNoiseEstimator:
         # ==================== 噪聲更新 ====================
 
         # 10. 自適應平滑因子
-        # 原始: tilde_α_d = α_d + (1 - α_d) * p
-        # 修改: tilde_α_d = (α_d + (1 - α_d) * p) × η
-        # η 由場景轉換偵測計算，當噪聲突增時 η 變小，加速噪聲更新
-        tilde_alpha_d = (self.alpha_d + (1 - self.alpha_d) * spp_noise_update) * eta
+        # tilde_α_d = α_d + (1 - α_d) * p
+        alpha_d = 0.5 if self.is_fast_mode else self.alpha_d
+        tilde_alpha_d = alpha_d + (1 - alpha_d) * spp_noise_update
 
         # 11. 噪聲估計更新
         # λ_d = tilde_α_d * λ_d + (1 - tilde_α_d) * |Y|²
@@ -375,6 +364,26 @@ class ImcraNoiseEstimator:
         spp = 1.0 / (1.0 + np.exp(-5 * (S_ratio / self.delta - 1.0)))
         return spp
 
+    def trigger_fast_tracking(self):
+        """
+        觸發快速追蹤模式
+
+        用於噪聲場景變化時快速適應
+        """
+        self.is_fast_mode = True
+        self.fast_mode_frames = 0
+
+        # 重置最小值追蹤到當前值
+        if self.S is not None:
+            self.S_min = self.S.copy()
+            self.S_min_sw = self.S.copy()
+            self.S_min_buffer = np.tile(self.S, (self.U, 1))
+
+        if self.S_tilde is not None:
+            self.S_tilde_min = self.S_tilde.copy()
+            self.S_tilde_min_sw = self.S_tilde.copy()
+            self.S_tilde_min_buffer = np.tile(self.S_tilde, (self.U, 1))
+
     def reset(self):
         """重置估計器"""
         self.noise_psd = None
@@ -389,7 +398,8 @@ class ImcraNoiseEstimator:
         self.is_initialized = False
         self.frame_count = 0
         self.subwin_count = 0
-        self.prev_frame_energy = 1.0
+        self.is_fast_mode = False
+        self.fast_mode_frames = 0
 
     def __repr__(self):
         return (f"ImcraNoiseEstimator(alpha_s={self.alpha_s}, "
