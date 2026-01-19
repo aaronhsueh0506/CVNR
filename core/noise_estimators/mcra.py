@@ -50,9 +50,7 @@ class McraNoiseEstimator:
         num_init_frames: int = 20
     ):
         self.alpha_s = alpha_s
-        self.alpha_s_normal = alpha_s  # 保存正常模式的 alpha_s
         self.alpha_d = alpha_d
-        self.alpha_d_normal = alpha_d  # 保存正常模式的 alpha_d
         self.alpha_p = alpha_p
         self.L = L
         self.delta = 10 ** (delta_db / 10)  # 線性域的 delta
@@ -67,13 +65,6 @@ class McraNoiseEstimator:
 
         self.is_initialized = False
         self.frame_count = 0
-
-        # 快速適應模式（v1.3.0 兼容）
-        self.is_fast_mode = False
-        self.fast_mode_frames = 0
-        self.fast_mode_duration = 50  # 快速模式持續幀數
-        self.alpha_s_fast = 0.7       # 快速模式的 alpha_s
-        self.alpha_d_fast = 0.5       # 快速模式的 alpha_d
 
     def estimate(self, magnitude_spectrum: np.ndarray) -> np.ndarray:
         """
@@ -138,23 +129,12 @@ class McraNoiseEstimator:
         if not self.is_initialized:
             raise RuntimeError("Noise estimator not initialized. Call estimate() first.")
 
-        # 快速模式計時
-        if self.is_fast_mode:
-            self.fast_mode_frames += 1
-            if self.fast_mode_frames >= self.fast_mode_duration:
-                self.is_fast_mode = False
-                self.fast_mode_frames = 0
-
-        # 選擇當前模式的參數
-        alpha_s = self.alpha_s_fast if self.is_fast_mode else self.alpha_s
-        alpha_d = self.alpha_d_fast if self.is_fast_mode else self.alpha_d
-
         # 1. 計算當前幀的功率譜
         power = magnitude ** 2
 
         # 2. 時間平滑
         # S(k,l) = α_s·S(k,l-1) + (1-α_s)·|Y(k,l)|²
-        self.S = alpha_s * self.S + (1 - alpha_s) * power
+        self.S = self.alpha_s * self.S + (1 - self.alpha_s) * power
 
         # 3. 更新最小值緩衝區（FIFO 滾動）
         self.min_buffer = np.roll(self.min_buffer, -1, axis=0)
@@ -181,7 +161,7 @@ class McraNoiseEstimator:
         # α̃_d(k,l) = α_d + (1-α_d)·p(k,l)
         # 當 SPP 高（語音段）時，α̃_d 接近 1，噪聲更新慢
         # 當 SPP 低（噪聲段）時，α̃_d 接近 α_d，噪聲更新快
-        tilde_alpha_d = alpha_d + (1 - alpha_d) * spp_for_update
+        tilde_alpha_d = self.alpha_d + (1 - self.alpha_d) * spp_for_update
 
         # N(k,l) = α̃_d·N(k,l-1) + (1-α̃_d)·|Y(k,l)|²
         self.noise_psd = tilde_alpha_d * self.noise_psd + (1 - tilde_alpha_d) * power
@@ -189,23 +169,6 @@ class McraNoiseEstimator:
         self.frame_count += 1
 
         return self.noise_psd
-
-    def trigger_fast_adaptation(self):
-        """
-        觸發快速適應模式（v1.3.0 兼容接口）
-
-        用於噪聲場景變化檢測後，快速適應新的噪聲特性：
-        - 降低 alpha_s 加速功率譜響應
-        - 降低 alpha_d 加速噪聲更新
-        - 重置最小值緩衝區
-        """
-        self.is_fast_mode = True
-        self.fast_mode_frames = 0
-
-        # 重置最小值到當前值，加速適應
-        if self.S is not None:
-            self.S_min = self.S.copy()
-            self.min_buffer = np.tile(self.S, (self.L, 1))
 
     def reset(self):
         """重置估計器狀態"""
@@ -216,8 +179,6 @@ class McraNoiseEstimator:
         self.spp = None
         self.is_initialized = False
         self.frame_count = 0
-        self.is_fast_mode = False
-        self.fast_mode_frames = 0
 
     def __repr__(self):
         return (f"McraNoiseEstimator(alpha_s={self.alpha_s}, alpha_d={self.alpha_d}, "
