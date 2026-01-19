@@ -132,6 +132,9 @@ class McraNoiseEstimator:
         self.is_initialized = False
         self.frame_count = 0
 
+        # 場景轉換偵測
+        self.prev_frame_energy = 1.0  # 前一幀能量（初始化為 1 避免除零）
+
     def estimate(self, magnitude_spectrum: np.ndarray) -> np.ndarray:
         """
         初始化噪聲估計
@@ -181,6 +184,9 @@ class McraNoiseEstimator:
         self.is_initialized = True
         self.frame_count = self.num_init_frames
 
+        # 初始化前一幀能量
+        self.prev_frame_energy = np.sum(init_psd)
+
         return self.noise_psd
 
     def update(
@@ -209,6 +215,23 @@ class McraNoiseEstimator:
 
         # 1. 計算當前幀的功率譜
         power = magnitude ** 2
+
+        # === 場景轉換偵測 ===
+        E_curr = np.sum(power)
+        beta = E_curr / (self.prev_frame_energy + 1e-10)
+
+        # 計算自適應係數 η
+        # β > 50: 突發尖峰（脈衝噪聲），忽略
+        # β ≈ 1: 能量穩定，η ≈ 0.95（正常更新）
+        # β > 10: 能量突增，η → 0（加速噪聲更新）
+        if beta > 50:
+            eta = 0.0
+        else:
+            eta = 0.95 / (1.0 + np.exp(-20 * (beta - 10)))
+
+        # 更新前一幀能量
+        self.prev_frame_energy = E_curr
+        # === 場景轉換偵測結束 ===
 
         # 2. 時間平滑
         # S(k,l) = α_s·S(k,l-1) + (1-α_s)·|Y(k,l)|²
@@ -265,7 +288,10 @@ class McraNoiseEstimator:
         # 6. 噪聲更新
         # 若提供外部 SPP，使用外部 SPP；否則使用內部 SPP
         used_spp = spp if spp is not None else self.spp
-        alpha_d_tilde = self.alpha_d + (1 - self.alpha_d) * used_spp
+        # 原始: alpha_d_tilde = α_d + (1 - α_d) × SPP
+        # 修改: alpha_d_tilde = (α_d + (1 - α_d) × SPP) × η
+        # η 由場景轉換偵測計算，當噪聲突增時 η 變小，加速噪聲更新
+        alpha_d_tilde = (self.alpha_d + (1 - self.alpha_d) * used_spp) * eta
 
         # N(k,l) = α̃_d·N(k,l-1) + (1-α̃_d)·|Y(k,l)|²
         self.noise_psd = alpha_d_tilde * self.noise_psd + (1 - alpha_d_tilde) * power
@@ -286,6 +312,7 @@ class McraNoiseEstimator:
         self.is_initialized = False
         self.frame_count = 0
         self.counter = 0
+        self.prev_frame_energy = 1.0
 
     def __repr__(self):
         mode = "dual-window" if self.use_dual_window else "single-window"
