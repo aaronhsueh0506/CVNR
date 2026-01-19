@@ -227,7 +227,7 @@ class McraNoiseEstimator:
         if beta > 50:
             eta = 0.0
         else:
-            eta = 0.95 / (1.0 + np.exp(-20 * (beta - 10)))
+            eta = 0.95 / (1.0 + np.exp(20 * (beta - 10)))
 
         # 更新前一幀能量
         self.prev_frame_energy = E_curr
