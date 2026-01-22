@@ -324,7 +324,7 @@ def create_denoiser_from_config(
         # MCRA 噪聲估計參數
         params.update({
             'alpha_s': noise_config.get('alpha_s', 0.9),
-            'alpha_noise': noise_config.get('alpha_d', 0.85),
+            'alpha_d': noise_config.get('alpha_d', 0.85),
             'alpha_p': noise_config.get('alpha_p', 0.2),
             'L': noise_config.get('L', 96),
             'delta_db': noise_config.get('delta_db', 5.0)
