@@ -39,7 +39,7 @@ gain_calculation:
   method: omlsa             # OMLSA 增益計算
   g_min_db: -20.0           # 最小增益
   alpha_g: 0.7              # 增益時間平滑因子
-  use_linear_spp_weighting: true   # true=線性域加權(避免人聲壓抑)
+  use_linear_spp_weighting: false  # false=對數域加權(標準OMLSA)
 
 post_processing:
   enable_soft_vad: false    # Disabled - causes voice suppression
