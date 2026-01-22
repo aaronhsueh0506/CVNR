@@ -51,7 +51,7 @@ class WienerDenoiser(BaseDenoiser):
         # 兼容性參數 (保留接口但不使用)
         enable_noise_tracking: bool = False,
         # v2.6 Soft VAD
-        enable_soft_vad: bool = True
+        enable_soft_vad: bool = False
     ):
         super().__init__(sample_rate, n_fft=fft_size)
         self.enable_soft_vad = enable_soft_vad

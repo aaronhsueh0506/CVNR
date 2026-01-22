@@ -82,7 +82,7 @@ class ImcraOmlsaDenoiser(BaseDenoiser):
         num_init_frames: int = 20,
         use_linear_spp_weighting: bool = False,  # v2.1: 對齊 V3-2
         # v2.6 Soft VAD
-        enable_soft_vad: bool = True
+        enable_soft_vad: bool = False
     ):
         super().__init__(sample_rate, n_fft=fft_size)
         self.enable_soft_vad = enable_soft_vad
