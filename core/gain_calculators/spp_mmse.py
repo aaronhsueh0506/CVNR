@@ -183,7 +183,7 @@ class SppMmseGainCalculator:
 
             # G = (Γ(1.5)/γ) * √v * exp(-v/2) * [(1+v)*I₀(v/2) + v*I₁(v/2)]
             term = (1 + v_s) * i0_s + v_s * i1_s
-            gain[mask_small] = (self.gamma_const / gamma_s) * \
+            gain[mask_small] = (self.gamma_const / (gamma_s + 1e-10)) * \
                                np.sqrt(v_s) * np.exp(-v_half_s) * term
 
         # 大 v: 使用 E1 簡化公式避免溢出
