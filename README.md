@@ -666,7 +666,6 @@ speech_denoise/
 │       ├── spp_mmse.py
 │       ├── mmse_lsa.py
 │       ├── pmmse.py
-│       ├── omlsa.py
 │       └── omlsa.py
 │
 ├── utils/                         # 工具模塊
