@@ -32,13 +32,12 @@ spp:
   q: 0.6                     
   xi_min_db: -15.0          
 
-# OMLSA Gain Calculation
+# OMLSA Gain Calculation（標準對數域 SPP 加權）
 gain_calculation:
   method: "omlsa"
   g_min_db: -17.0            # Optuna 1000-trial
   alpha_g: 0.87              # Optuna 1000-trial
   gamma_0: 4.6               # SPP 閾值參數
-  use_linear_spp_weighting: false
 
 # Noise Scene Tracking (v1.5.0)
 noise_tracking:

@@ -80,7 +80,6 @@ class ImcraOmlsaDenoiser(BaseDenoiser):
         alpha_g: float = 0.7,
         # 初始化參數
         num_init_frames: int = 20,
-        use_linear_spp_weighting: bool = False,  # v2.1: 對齊 V3-2
         # v2.6 Soft VAD
         enable_soft_vad: bool = False
     ):
@@ -122,11 +121,10 @@ class ImcraOmlsaDenoiser(BaseDenoiser):
             xi_min_db=xi_min_db
         )
 
-        # 創建 OMLSA 增益計算器 ⭐ 核心組件 3
+        # 創建 OMLSA 增益計算器 ⭐ 核心組件 3（標準 OMLSA, 對數域 SPP 加權）
         self.gain_calculator = OmlsaGainCalculator(
             g_min_db=g_min_db,
-            alpha_g=alpha_g,
-            use_linear_spp_weighting=use_linear_spp_weighting  # v2.1
+            alpha_g=alpha_g
         )
 
         # 存儲上一幀的增益
