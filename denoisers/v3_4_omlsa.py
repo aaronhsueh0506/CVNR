@@ -81,7 +81,7 @@ class OmlsaMcraDenoiser(BaseDenoiser):
         num_init_frames: int = 20,
         use_linear_spp_weighting: bool = False,
         # Soft VAD
-        enable_soft_vad: bool = True
+        enable_soft_vad: bool = False
     ):
         super().__init__(sample_rate, n_fft=fft_size)
 

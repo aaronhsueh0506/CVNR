@@ -77,7 +77,7 @@ class SppMmseDenoiser(BaseDenoiser):
         L: int = 96,                # MCRA 最小值窗口長度
         delta_db: float = 5.0,      # MCRA 偏差補償 (dB)
         # v2.6 Soft VAD
-        enable_soft_vad: bool = True
+        enable_soft_vad: bool = False
     ):
         super().__init__(sample_rate, n_fft=fft_size)
         self.enable_soft_vad = enable_soft_vad
