@@ -1,17 +1,18 @@
-# V3-4: Laplacian MAP (Lotter & Vary 2005)
+# V3-4: OMLSA-MCRA (Cohen 2001-2003)
 #
-# 增益計算: Lotter & Vary (2005) Laplacian MAP 公式
-#   u = ξ + 1/(2γ) - 1
-#   G = (u + sqrt(u² + 2(1+ξ)/γ)) / (2(1+ξ))
-#   Laplacian 先驗更適合語音頻譜的稀疏性（峰態係數=6）
-#   高 SNR 時增益自然趨近 1.0
+# 增益計算: OMLSA (Optimally Modified Log-Spectral Amplitude)
+#   在對數域進行 SPP 加權: log(G) = p*log(G_mmse) + (1-p)*log(g_min)
 #
-# 噪聲估計方法: MCRA + Bayesian SPP 軟判決
+# 噪聲估計方法: MCRA (含瞬態偵測 v2.6)
+#   - 最小值控制遞歸平均
+#   - 瞬態偵測: eta = 0.95 / (1 + e^(20*(beta-10)))
 #
-# Score: 0.4691 (Optuna 500-trial, 2026-01-12)
+# 後處理: Human Voice Band Soft VAD (v2.6)
+#   - 頻率範圍: 300Hz - 3400Hz
+#   - 映射函數: 0.1 + 0.9 * (1 - e^(-3*mean_power))
 
 version: "3.4"
-name: "Laplacian-MAP-Lotter-Vary"
+name: "OMLSA-MCRA"
 
 audio:
   sample_rate: 16000
@@ -19,27 +20,26 @@ audio:
   frame_shift_ms: 10
   fft_size: 512
   window_type: hanning
-  
+
 noise_estimation:
-  method: mcra              # v2.2: 改用 MCRA 噪聲估計
-  alpha_s: 0.8              # 時間平滑因子
-  alpha_d: 0.95              # 噪聲更新基礎速率
+  method: mcra
+  alpha_s: 0.9              # 時間平滑因子
+  alpha_d: 0.85             # 噪聲更新基礎速率
   alpha_p: 0.2              # SPP 平滑因子
-  L: 120                     # 最小值窗口長度
-  delta_db: 5.0             # 偏差補償
+  L: 96                     # 最小值窗口長度（約 1 秒 @ 10ms 幀移）
+  delta_db: 5.0             # 語音檢測閾值
   num_init_frames: 20       # 初始噪聲估計幀數
 
 spp:
-  alpha_xi: 0.90          # Optuna 500-trial (2026-01-12)
-  q: 0.30                 # Optuna 500-trial (2026-01-12)
-  xi_min_db: -23.0        # Optuna 500-trial (2026-01-12)
+  alpha_xi: 0.98            # 先驗 SNR 平滑因子
+  q: 0.5                    # 語音先驗機率
+  xi_min_db: -25.0          # 先驗 SNR 下限
 
 gain_calculation:
-  method: laplacian_mmse      # Lotter & Vary 2005 MAP 公式
-  g_min_db: -20.0             # Optuna 500-trial (2026-01-12)
-  alpha_g: 0.70               # Optuna 500-trial (2026-01-12)
-  beta_laplacian: 1.0         # 保留向後兼容（未使用）
-  use_spp_weighting: true
+  method: omlsa             # OMLSA 增益計算
+  g_min_db: -20.0           # 最小增益
+  alpha_g: 0.7              # 增益時間平滑因子
+  use_linear_spp_weighting: false  # false=對數域加權(推薦)
 
-noise_tracking:
-  enable: true
+post_processing:
+  enable_soft_vad: true     # Human Voice Band Soft VAD (v2.6)

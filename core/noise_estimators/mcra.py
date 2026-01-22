@@ -8,6 +8,12 @@ Cohen & Berdugo (2002)
 - 時間平滑：減少功率譜波動
 - 最小值追蹤：找到噪聲底線
 - SPP 門控：語音段自動減少噪聲更新
+- 瞬態偵測：基於能量比的自適應 alpha_d（v2.6 新增）
+
+v2.6 新增:
+    - 瞬態偵測 (Transient Detection): 基於幀間能量比 β = E_cur / E_prev
+    - 當 β > 10（能量突增）時，η → 0，加速噪聲估計更新
+    - 當 β ≈ 1（能量穩定）時，η ≈ 0.95，正常更新
 
 參考文獻：
     Cohen, I. & Berdugo, B. (2002). "Noise estimation by minima controlled
@@ -63,6 +69,9 @@ class McraNoiseEstimator:
         self.min_buffer = None      # 最小值追蹤緩衝區 (L, n_freqs)
         self.spp = None             # Speech Presence Probability
 
+        # 瞬態偵測 (v2.6)
+        self.prev_frame_power = 1.0  # 前一幀總能量
+
         self.is_initialized = False
         self.frame_count = 0
 
@@ -100,6 +109,9 @@ class McraNoiseEstimator:
         # 初始化最小值追蹤緩衝區（用 init_psd 填滿）
         self.min_buffer = np.tile(init_psd, (self.L, 1))
 
+        # 初始化瞬態偵測 (v2.6)
+        self.prev_frame_power = np.sum(init_psd)
+
         self.is_initialized = True
         self.frame_count = self.num_init_frames
 
@@ -132,6 +144,22 @@ class McraNoiseEstimator:
         # 1. 計算當前幀的功率譜
         power = magnitude ** 2
 
+        # === 瞬態偵測 (v2.6) ===
+        # 計算當前幀總能量
+        E_cur = np.sum(power)
+
+        # 計算能量比 β
+        beta = E_cur / (self.prev_frame_power + 1e-10)
+
+        # 計算適應因子 η (sigmoid)
+        # β ≈ 1 (穩定): η ≈ 0.95
+        # β > 10 (突增): η → 0
+        eta = 0.95 / (1.0 + np.exp(20 * (beta - 10)))
+
+        # 更新前一幀能量
+        self.prev_frame_power = E_cur
+        # === 瞬態偵測結束 ===
+
         # 2. 時間平滑
         # S(k,l) = α_s·S(k,l-1) + (1-α_s)·|Y(k,l)|²
         self.S = self.alpha_s * self.S + (1 - self.alpha_s) * power
@@ -163,8 +191,12 @@ class McraNoiseEstimator:
         # 當 SPP 低（噪聲段）時，α̃_d 接近 α_d，噪聲更新快
         tilde_alpha_d = self.alpha_d + (1 - self.alpha_d) * spp_for_update
 
-        # N(k,l) = α̃_d·N(k,l-1) + (1-α̃_d)·|Y(k,l)|²
-        self.noise_psd = tilde_alpha_d * self.noise_psd + (1 - tilde_alpha_d) * power
+        # v2.6: 套用瞬態偵測的 eta
+        # 當能量突增時 (η → 0)，alpha_d_final → 0，加速噪聲更新
+        alpha_d_final = tilde_alpha_d * eta
+
+        # N(k,l) = α_d_final·N(k,l-1) + (1-α_d_final)·|Y(k,l)|²
+        self.noise_psd = alpha_d_final * self.noise_psd + (1 - alpha_d_final) * power
 
         self.frame_count += 1
 
@@ -177,6 +209,7 @@ class McraNoiseEstimator:
         self.S_min = None
         self.min_buffer = None
         self.spp = None
+        self.prev_frame_power = 1.0  # 重置瞬態偵測 (v2.6)
         self.is_initialized = False
         self.frame_count = 0
 
