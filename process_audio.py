@@ -74,7 +74,7 @@ from denoisers import (
     ImcraOmlsaDenoiser,
     MmseLsaDenoiser,
     PmmseDenoiser,
-    LaplacianMmseDenoiser
+    OmlsaMcraDenoiser
 )
 
 
@@ -301,7 +301,7 @@ def create_denoiser_from_config(
         return PmmseDenoiser(**params)
 
     elif version == 'V3-4':
-        # V3-4: Laplacian-MMSE (Chen & Loizou 2007)
+        # V3-4: OMLSA-MCRA (Cohen 2003)
         spp_config = config.get('spp', {})
         gain_config = config.get('gain_calculation', {})
         noise_config = config.get('noise_estimation', {})
@@ -317,28 +317,20 @@ def create_denoiser_from_config(
             'xi_min_db': spp_config.get('xi_min_db', -25.0),
             'g_min_db': gain_config.get('g_min_db', -20.0),
             'alpha_g': gain_config.get('alpha_g', 0.7),
-            'beta_laplacian': gain_config.get('beta_laplacian', 1.5),
+            'use_linear_spp_weighting': gain_config.get('use_linear_spp_weighting', False),
             'num_init_frames': noise_config.get('num_init_frames', 20)
         }
 
-        # 噪聲估計方法
-        ne_method = noise_config.get('method', 'recursive_average')
-        if ne_method == 'mcra':
-            params.update({
-                'noise_method': 'mcra',
-                'alpha_s': noise_config.get('alpha_s', 0.9),
-                'alpha_noise': noise_config.get('alpha_d', 0.85),
-                'alpha_p': noise_config.get('alpha_p', 0.2),
-                'L': noise_config.get('L', 96),
-                'delta_db': noise_config.get('delta_db', 5.0)
-            })
-        else:
-            params.update({
-                'noise_method': 'recursive_average',
-                'alpha_noise': noise_config.get('alpha', 0.95)
-            })
+        # MCRA 噪聲估計參數
+        params.update({
+            'alpha_s': noise_config.get('alpha_s', 0.9),
+            'alpha_noise': noise_config.get('alpha_d', 0.85),
+            'alpha_p': noise_config.get('alpha_p', 0.2),
+            'L': noise_config.get('L', 96),
+            'delta_db': noise_config.get('delta_db', 5.0)
+        })
 
-        return LaplacianMmseDenoiser(**params)
+        return OmlsaMcraDenoiser(**params)
 
     elif version == 'V4':
         # V4: IMCRA-OMLSA

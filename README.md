@@ -1,6 +1,6 @@
 # 語音降噪系統 (Speech Denoising System)
 
-**版本**: v2.5
+**版本**: v2.6
 
 傳統信號處理方法的實時語音降噪系統，採用漸進式學習路徑。
 
@@ -27,15 +27,16 @@
    - 特點: 感知動機的成本函數，優異的 STOI 表現
    - v2.1.1: alpha_xi=0.96 同步優化
 
-7. **V3-4: Laplacian-MMSE (Laplacian 先驗 MMSE)**
-   - Laplacian 先驗 + MSE 成本函數
-   - 適合: 高可懂度需求場景
-   - 特點: **STOI 優異** (0.872)，保留語音細節
-   - v2.1.1: alpha_xi=0.96 同步優化
+7. **V3-4: OMLSA-MCRA (OMLSA + MCRA 噪聲估計)**
+   - OMLSA 增益函數 + MCRA 噪聲估計（含瞬態偵測）
+   - 適合: 非穩態噪聲環境
+   - 特點: **MCRA 瞬態偵測** (energy ratio)，快速適應噪聲變化
+   - v2.6: 新架構替換 Laplacian-MMSE
 
 ## 🎯 特點
 
 - ✅ **七個演算法版本**：V1-V4 基礎版本 + V3-2/V3-3/V3-4 MMSE 變體
+- ✅ **v2.6**: Human Voice Band Soft VAD 後處理 + MCRA 瞬態偵測 (energy ratio)
 - ✅ **v2.5**: MCRA 雙視窗最小值追蹤（內建場景變化適應）
 - ✅ **v2.2**: V2 Wiener 使用 Bayesian SPP、DD 使用 enhanced_mag_prev、MCRA 支持
 - ✅ **v1.4.0**: MMSE 學術標準實現（4 個 MMSE 變體）
@@ -321,7 +322,7 @@ python3 comprehensive_evaluation.py
 |------|------|-------------|---------------|-------|---------------|
 | 🥇 1 | **V1 (Spectral Sub)** | **+5.59 dB** | +4.86 dB | +0.193 | 0.853 |
 | 🥈 2 | **V3 (MMSE-STSA)** | +5.06 dB | **+4.98 dB** | +0.392 | 0.848 |
-| 🥉 3 | **V3-4 (Laplacian)** | +5.03 dB | +4.40 dB | +0.399 | **0.875** |
+| 🥉 3 | **V3-4 (OMLSA-MCRA)** | +5.03 dB | +4.40 dB | +0.399 | **0.875** |
 | 4 | V2 (Wiener) | +5.02 dB | +4.25 dB | +0.244 | 0.832 |
 | 5 | V3-3 (PMMSE) | +4.95 dB | +4.55 dB | +0.332 | 0.832 |
 | 6 | V4 (IMCRA-OMLSA) | +4.81 dB | +4.91 dB | **+0.410** | 0.865 |
@@ -334,7 +335,7 @@ python3 comprehensive_evaluation.py
 | 排名 | 方法 | Enhanced PESQ | ΔPESQ | Enhanced STOI | 特點 |
 |------|------|---------------|-------|---------------|------|
 | 🥇 1 | **V4 (IMCRA-OMLSA)** | 1.930 | **+0.410** | 0.865 | **PESQ 改善最佳** |
-| 🥈 2 | **V3-4 (Laplacian)** | 1.919 | +0.399 | **0.875** | **傳統算法 STOI 最佳** |
+| 🥈 2 | **V3-4 (OMLSA-MCRA)** | 1.919 | +0.399 | **0.875** | **傳統算法 STOI 最佳** |
 | 🥉 3 | **V3 (MMSE-STSA)** | 1.911 | +0.392 | 0.848 | 平衡性能 |
 | 4 | RNNoise | 1.909 | +0.390 | **0.905** | **深度學習 STOI 最佳** |
 | 5 | V3-2 (MMSE-LSA) | 1.907 | +0.387 | 0.847 | 對數域 MMSE |
@@ -516,7 +517,7 @@ test_set = generator.generate_test_set(
 | 需求 | 推薦版本 | 原因 |
 |------|---------|------|
 | **最佳綜合效果** | V3 或 V4 | 平衡性能與質量 |
-| **最強降噪** | V3-4 (Laplacian-MMSE) | 殘留噪聲最少 |
+| **非穩態噪聲** | V3-4 (OMLSA-MCRA) | 瞬態偵測快速適應 |
 | **最佳音質** | V3-2 (MMSE-LSA) | Musical Noise 最少 |
 | **學術研究** | V3-3 (PMMSE) | 感知動機方法 |
 | **實時性能** | V3 (MMSE-STSA) | 計算最快 |
@@ -557,16 +558,17 @@ test_set = generator.generate_test_set(
 - **配置**: `config/v3_3_config.yaml`
 - **注意**: 需要 scipy >= 1.7.0
 
-#### V3-4: Laplacian-MMSE
-- **成本函數**: E[(X-X̂)²] (線性域 MSE)
-- **先驗分佈**: Laplacian
+#### V3-4: OMLSA-MCRA
+- **增益函數**: OMLSA (Optimally-Modified Log-Spectral Amplitude)
+- **噪聲估計**: MCRA (含瞬態偵測)
 - **計算複雜度**: 中等
-- **音質特點**: 殘留噪聲最少，降噪最強
+- **音質特點**: 快速適應非穩態噪聲
 - **適用場景**:
-  - 需要最強降噪效果
-  - 噪聲抑制優先於保真度
-  - 嚴重噪聲環境 (SNR < 5 dB)
+  - 非穩態噪聲環境（街道、咖啡廳）
+  - 需要快速噪聲適應
+  - 語音存在機率軟判決
 - **配置**: `config/v3_4_config.yaml`
+- **v2.6 新增**: MCRA 瞬態偵測 (β = E_cur / E_prev, η = 0.95 / (1 + e^(20*(β-10))))
 
 ### 性能對比 (典型值)
 
@@ -605,10 +607,10 @@ python3 process_audio.py input.wav --versions V3 V3-2 V3-3 V3-4
 - `alpha_g`: 0.7 (增益時間平滑因子)
 - `use_full_formula`: false (推薦數值穩定簡化版)
 
-**V3-4 (Laplacian-MMSE)**:
-- `xi_min_db`: -15.0 dB (Rescue 優化值，原-10過高)
-- `g_min_db`: -18.0 dB (Rescue 優化值，原-25過低會死寂)
-- `alpha_g`: 0.70 (Rescue 優化值)
+**V3-4 (OMLSA-MCRA)**:
+- `g_min_db`: -20.0 dB (最小增益)
+- `alpha_g`: 0.70 (增益時間平滑)
+- `use_linear_spp_weighting`: false (使用對數域加權)
 
 詳見：[V3 變體詳細對比](docs/V3_VARIANTS_COMPARISON.md)
 
@@ -646,7 +648,7 @@ speech_denoise/
 │   ├── v3_spp_mmse.py
 │   ├── v3_2_mmse_lsa.py
 │   ├── v3_3_pmmse.py
-│   ├── v3_4_laplacian_mmse.py
+│   ├── v3_4_omlsa.py
 │   └── v4_imcra_omlsa.py
 │
 ├── core/                          # 核心模塊
@@ -664,7 +666,7 @@ speech_denoise/
 │       ├── spp_mmse.py
 │       ├── mmse_lsa.py
 │       ├── pmmse.py
-│       ├── laplacian_mmse.py
+│       ├── omlsa.py
 │       └── omlsa.py
 │
 ├── utils/                         # 工具模塊
@@ -1120,12 +1122,10 @@ test_set = generator.generate_test_set(
 - DOI: 10.1109/TSA.2005.851929
 - 說明: Gaussian 先驗 (Rayleigh 幅度分佈) + IS 距離，感知動機方法
 
-**Laplacian-MMSE (V3-4)**:
-- Chen, J., & Loizou, P. C. (2007). "Speech enhancement using a MMSE short time spectral magnitude estimator with Laplacian speech priors." In *2007 IEEE International Conference on Acoustics, Speech and Signal Processing (ICASSP)*, Vol. 4, pp. IV-853-IV-856.
-- DOI: 10.1109/ICASSP.2007.367218
-- Martin, R. (2005). "Speech enhancement based on minimum mean-square error estimation and supergaussian priors." *IEEE Transactions on Speech and Audio Processing*, 13(5), 845-856.
-- DOI: 10.1109/TSA.2005.851929
-- 說明: Laplacian 先驗提供更強的稀疏性約束
+**MCRA (V3-4 噪聲估計)**:
+- Cohen, I., & Berdugo, B. (2002). "Noise estimation by minima controlled recursive averaging for robust speech enhancement." *IEEE Signal Processing Letters*, 9(1), 12-15.
+- DOI: 10.1109/97.988717
+- 說明: V3-4 使用 MCRA 噪聲估計 + OMLSA 增益，含瞬態偵測
 
 ### 先進算法
 
@@ -1201,7 +1201,21 @@ MIT License
 
 ## 📜 版本歷史
 
-### v2.5.0 (2026-01-16) ✨ 最新
+### v2.6.0 (2026-01-22) ✨ 最新
+- ✨ **V3-4 架構重構**: 從 Laplacian-MMSE 改為 OMLSA-MCRA
+  - 使用 MCRA 噪聲估計 + OMLSA 增益函數
+  - 新增瞬態偵測 (energy ratio based η)
+- ✨ **Human Voice Band Soft VAD**: 全版本新增後處理
+  - 頻率範圍: 300Hz - 3400Hz
+  - 映射函數: y = 0.1 + 0.9 * (1 - e^(-3*mean_power))
+  - 時間平滑: α_vad = 0.95
+- ✨ **MCRA 瞬態偵測**:
+  - 能量比 β = E_cur / E_prev
+  - 適應因子 η = 0.95 / (1 + e^(20*(β-10)))
+  - β ≈ 1（穩定）→ η ≈ 0.95，β > 10（突增）→ η → 0
+- 🔄 **OmlsaMcraDenoiser**: 替換 LaplacianMmseDenoiser
+
+### v2.5.0 (2026-01-16)
 - ✨ **MCRA 單/雙視窗模式切換**: `use_dual_window` 參數支持效果比較
 - 🧹 **清理冗餘程式碼**: 移除死代碼 (spp fast startup, imcra fast tracking, reconstructor 未使用方法)
 - ✅ **IMCRA 遺忘機制驗證**: 確認 Cohen 2003 最小值重置邏輯正確
@@ -1307,7 +1321,7 @@ MIT License
 
 **推薦版本**：
 - 🏆 **V4 (IMCRA-OMLSA)**: PESQ 改善最佳 (+0.410)，產品級效果
-- 🥈 **V3-4 (Laplacian)**: STOI 最佳 (0.875)，可懂度最高
+- 🥈 **V3-4 (OMLSA-MCRA)**: 非穩態噪聲適應，瞬態偵測
 - 🥉 **V3 (MMSE-STSA)**: 平衡性能，適合一般應用
 
-**v2.5 新特性**：MCRA 雙視窗最小值追蹤，自動適應噪聲場景變化！
+**v2.6 新特性**：Human Voice Band Soft VAD + MCRA 瞬態偵測！
