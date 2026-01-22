@@ -2,6 +2,7 @@
 V3: MMSE-STSA Denoiser - MMSE 短時頻譜幅度估計降噪器
 ⭐ 重點版本：引入概率軟判決
 v1.5.0: 整合 V3-1，支持 Bessel/E1 公式切換
+v2.6: 添加 Human Voice Band Soft VAD 後處理
 """
 
 import numpy as np
@@ -74,9 +75,12 @@ class SppMmseDenoiser(BaseDenoiser):
         alpha_s: float = 0.9,       # MCRA 時間平滑因子
         alpha_p: float = 0.2,       # MCRA SPP 平滑因子
         L: int = 96,                # MCRA 最小值窗口長度
-        delta_db: float = 5.0       # MCRA 偏差補償 (dB)
+        delta_db: float = 5.0,      # MCRA 偏差補償 (dB)
+        # v2.6 Soft VAD
+        enable_soft_vad: bool = True
     ):
-        super().__init__(sample_rate)
+        super().__init__(sample_rate, n_fft=fft_size)
+        self.enable_soft_vad = enable_soft_vad
         self.noise_method = noise_method
 
         # 創建處理器
@@ -220,13 +224,17 @@ class SppMmseDenoiser(BaseDenoiser):
             # 2.4 應用增益
             enhanced_magnitude[i] = gain * noisy_magnitude[i]
 
-            # 2.5 保存增益供下一幀使用（Decision Directed）
+            # 2.5 v2.6: 套用 Soft VAD 後處理
+            if self.enable_soft_vad:
+                enhanced_magnitude[i] = self._apply_soft_vad(enhanced_magnitude[i])
+
+            # 2.6 保存增益供下一幀使用（Decision Directed）
             self.gain_prev = gain.copy()
 
             # v1.5.0: 保存增強功率譜供下一幀 DD 使用
             enhanced_psd_prev = enhanced_magnitude[i] ** 2
 
-            # 2.6 更新噪聲估計（v2.0: 使用 SPP 軟判決）
+            # 2.7 更新噪聲估計（v2.0: 使用 SPP 軟判決）
             # SPP 高（語音）→ 更新慢，SPP 低（噪聲）→ 正常更新
             self.noise_estimator.update(noisy_magnitude[i], spp=spp)
 
@@ -243,6 +251,7 @@ class SppMmseDenoiser(BaseDenoiser):
         self.spp_estimator.reset()
         self.gain_calculator.reset()
         self.gain_prev = None
+        self._reset_vad()
 
     def get_params(self) -> dict:
         """獲取參數"""

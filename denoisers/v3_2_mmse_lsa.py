@@ -1,6 +1,7 @@
 """
 V3-2: MMSE-LSA Denoiser - MMSE 對數短時頻譜幅度估計降噪器
 基於 Ephraim-Malah 1985
+v2.6: 添加 Human Voice Band Soft VAD 後處理
 """
 
 import numpy as np
@@ -67,9 +68,12 @@ class MmseLsaDenoiser(BaseDenoiser):
         alpha_s: float = 0.9,       # MCRA 時間平滑因子
         alpha_p: float = 0.2,       # MCRA SPP 平滑因子
         L: int = 96,                # MCRA 最小值窗口長度
-        delta_db: float = 5.0       # MCRA 偏差補償 (dB)
+        delta_db: float = 5.0,      # MCRA 偏差補償 (dB)
+        # v2.6 Soft VAD
+        enable_soft_vad: bool = True
     ):
-        super().__init__(sample_rate)
+        super().__init__(sample_rate, n_fft=fft_size)
+        self.enable_soft_vad = enable_soft_vad
         self.noise_method = noise_method
 
         # 創建處理器
@@ -218,6 +222,10 @@ class MmseLsaDenoiser(BaseDenoiser):
             # 應用增益
             enhanced_magnitude[i] = gain * noisy_magnitude[i]
 
+            # v2.6: 套用 Soft VAD 後處理
+            if self.enable_soft_vad:
+                enhanced_magnitude[i] = self._apply_soft_vad(enhanced_magnitude[i])
+
             # 保存增益供下一幀使用
             self.gain_prev = gain.copy()
 
@@ -241,6 +249,7 @@ class MmseLsaDenoiser(BaseDenoiser):
         self.spp_estimator.reset()
         self.gain_calculator.reset()
         self.gain_prev = None
+        self._reset_vad()
 
     def get_params(self) -> dict:
         """獲取參數"""

@@ -1,5 +1,7 @@
 """
 V2.3: Wiener Filter with DD (No SPP, No Oversubtraction)
+
+v2.6: 添加 Human Voice Band Soft VAD 後處理
 """
 
 import numpy as np
@@ -17,11 +19,12 @@ from typing import Tuple
 class WienerDenoiser(BaseDenoiser):
     """
     版本 2.3: 純淨版 Wiener Filter + DD
-    
+
     特點:
     1. 保留 DD (Decision Directed) -> 穩定 SNR 估計，減少音樂噪聲
     2. 移除 SPP -> 回歸純粹 Wiener 邏輯，避免軟判決誤傷
     3. 依賴 MCRA 內部的機率估計來更新噪聲
+    4. v2.6: Human Voice Band Soft VAD 後處理
     """
 
     def __init__(
@@ -46,9 +49,12 @@ class WienerDenoiser(BaseDenoiser):
         L: int = 96,
         delta_db: float = 5.0,
         # 兼容性參數 (保留接口但不使用)
-        enable_noise_tracking: bool = False 
+        enable_noise_tracking: bool = False,
+        # v2.6 Soft VAD
+        enable_soft_vad: bool = True
     ):
-        super().__init__(sample_rate)
+        super().__init__(sample_rate, n_fft=fft_size)
+        self.enable_soft_vad = enable_soft_vad
         self.noise_method = noise_method
 
         # 1. 處理器
@@ -135,6 +141,10 @@ class WienerDenoiser(BaseDenoiser):
             # 2. 應用增益
             enhanced_magnitude[i] = gain * noisy_magnitude[i]
 
+            # 2.5 v2.6: 套用 Soft VAD 後處理
+            if self.enable_soft_vad:
+                enhanced_magnitude[i] = self._apply_soft_vad(enhanced_magnitude[i])
+
             # 3. 保存狀態 (供下一幀 DD 使用)
             self.enhanced_mag_prev = enhanced_magnitude[i].copy()
 
@@ -148,6 +158,7 @@ class WienerDenoiser(BaseDenoiser):
         self.noise_estimator.reset()
         self.gain_calculator.reset()
         self.enhanced_mag_prev = None
+        self._reset_vad()
 
     def get_params(self) -> dict:
         params = {
