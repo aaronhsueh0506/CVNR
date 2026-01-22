@@ -42,4 +42,4 @@ gain_calculation:
   use_linear_spp_weighting: false  # false=對數域加權(推薦)
 
 post_processing:
-  enable_soft_vad: true     # Human Voice Band Soft VAD (v2.6)
+  enable_soft_vad: false    # Disabled - causes voice suppression
