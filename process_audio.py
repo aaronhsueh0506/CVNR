@@ -317,7 +317,6 @@ def create_denoiser_from_config(
             'xi_min_db': spp_config.get('xi_min_db', -25.0),
             'g_min_db': gain_config.get('g_min_db', -20.0),
             'alpha_g': gain_config.get('alpha_g', 0.7),
-            'use_linear_spp_weighting': gain_config.get('use_linear_spp_weighting', False),
             'num_init_frames': noise_config.get('num_init_frames', 20)
         }
 
