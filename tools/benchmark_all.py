@@ -32,7 +32,7 @@ from denoisers import (
     ImcraOmlsaDenoiser,
     MmseLsaDenoiser,
     PmmseDenoiser,
-    LaplacianMmseDenoiser
+    OmlsaMcraDenoiser
 )
 
 
@@ -72,7 +72,7 @@ class BenchmarkRunner:
             'V3': SppMmseDenoiser(sample_rate=self.sample_rate, enable_noise_tracking=True),
             'V3-2': MmseLsaDenoiser(sample_rate=self.sample_rate, enable_noise_tracking=True),
             'V3-3': PmmseDenoiser(sample_rate=self.sample_rate, enable_noise_tracking=True),
-            'V3-4': LaplacianMmseDenoiser(sample_rate=self.sample_rate, enable_noise_tracking=True),
+            'V3-4': OmlsaMcraDenoiser(sample_rate=self.sample_rate),
             'V4': ImcraOmlsaDenoiser(sample_rate=self.sample_rate, enable_noise_tracking=True)
         }
 

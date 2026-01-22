@@ -22,7 +22,7 @@ from denoisers import (
     SppMmseDenoiser,
     MmseLsaDenoiser,
     PmmseDenoiser,
-    LaplacianMmseDenoiser,
+    OmlsaMcraDenoiser,
     ImcraOmlsaDenoiser
 )
 
@@ -63,7 +63,7 @@ methods = {
         'config': 'config/v3_3_config.yaml'
     },
     'V3-4': {
-        'class': LaplacianMmseDenoiser,
+        'class': OmlsaMcraDenoiser,
         'config': 'config/v3_4_config.yaml'
     },
     'V4': {
@@ -139,13 +139,12 @@ def get_denoiser_params_from_config(config, sr, fft_size):
                 'alpha_g': gc.get('alpha_g', 0.5),
                 'use_spp_weighting': gc.get('use_spp_weighting', True)
             })
-        # V3-4 (Laplacian-MMSE - Chen & Loizou)
-        elif gc.get('method') == 'laplacian_mmse':
+        # V3-4 (OMLSA-MCRA)
+        elif gc.get('method') == 'omlsa':
             params.update({
                 'g_min_db': gc.get('g_min_db', -20.0),
-                'alpha_g': gc.get('alpha_g', 0.5),
-                'beta_laplacian': gc.get('beta_laplacian', 1.0),
-                'use_spp_weighting': gc.get('use_spp_weighting', True)
+                'alpha_g': gc.get('alpha_g', 0.7),
+                'use_linear_spp_weighting': gc.get('use_linear_spp_weighting', False)
             })
         # V4 (OMLSA)
         elif gc.get('method') == 'omlsa':
