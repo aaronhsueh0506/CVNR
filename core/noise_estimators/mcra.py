@@ -154,7 +154,9 @@ class McraNoiseEstimator:
         # 計算適應因子 η (sigmoid)
         # β ≈ 1 (穩定): η ≈ 0.95
         # β > 10 (突增): η → 0
-        eta = 0.95 / (1.0 + np.exp(20 * (beta - 10)))
+        # 使用 clip 防止 overflow（exp(700) 已足夠大）
+        exponent = np.clip(20 * (beta - 10), -700, 700)
+        eta = 0.95 / (1.0 + np.exp(exponent))
 
         # 更新前一幀能量
         self.prev_frame_power = E_cur
