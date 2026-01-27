@@ -69,11 +69,10 @@ EXAMPLE_DIR = example
 OBJ_DIR = obj
 BIN_DIR = bin
 
-# Source files
+# Source files (gain calculation merged into mmse_lsa_denoiser.c)
 SRCS = $(SRC_DIR)/mmse_lsa_denoiser.c \
        $(SRC_DIR)/mcra_noise_estimator.c \
        $(SRC_DIR)/spp_estimator.c \
-       $(SRC_DIR)/mmse_lsa_gain.c \
        $(SRC_DIR)/fft_wrapper.c
 
 LIB_SRCS = $(LIB_DIR)/kiss_fft.c

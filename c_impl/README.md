@@ -130,14 +130,12 @@ c_impl/
 │   ├── mmse_lsa_types.h       # 配置結構和預設值
 │   ├── mcra_noise_estimator.h # MCRA 噪聲估計
 │   ├── spp_estimator.h        # SPP 估計
-│   ├── mmse_lsa_gain.h        # MMSE-LSA 增益計算
 │   ├── fft_wrapper.h          # FFT 接口
 │   └── fast_math.h            # 快速數學函數 (LUT+Taylor)
 ├── src/
-│   ├── mmse_lsa_denoiser.c
+│   ├── mmse_lsa_denoiser.c    # 主模組（含 MMSE-LSA 增益計算）
 │   ├── mcra_noise_estimator.c
 │   ├── spp_estimator.c
-│   ├── mmse_lsa_gain.c
 │   └── fft_wrapper.c
 ├── lib/
 │   └── kiss_fft/              # KISS FFT 庫

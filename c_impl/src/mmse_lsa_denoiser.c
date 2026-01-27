@@ -5,13 +5,14 @@
  * Streaming by hop_size (frame_shift)
  *
  * Based on Ephraim-Malah 1985
+ *
+ * This file includes the gain calculation (merged from mmse_lsa_gain.c)
  */
 
 #include "mmse_lsa_denoiser.h"
 #include "mmse_lsa_types.h"
 #include "mcra_noise_estimator.h"
 #include "spp_estimator.h"
-#include "mmse_lsa_gain.h"
 #include "fft_wrapper.h"
 #include "fast_math.h"
 
@@ -51,10 +52,9 @@ struct MmseLsaDenoiser {
     float* phase;           // angle(Y)
     float* enhanced_mag;    // Enhanced magnitude
 
-    // Sub-modules
+    // Sub-modules (MCRA and SPP only - gain calculation is now inline)
     McraNoiseEstimator* noise_est;
     SppEstimator* spp_est;
-    MmseLsaGain* gain_calc;
 
     // SPP/Gain buffers [n_freqs]
     float* spp;             // Speech presence probability
@@ -77,15 +77,188 @@ struct MmseLsaDenoiser {
     int init_frame_count;
     float* init_power_sum;  // [n_freqs] - accumulated power during init
     bool is_initialized;
+
+    // === Gain calculation parameters (merged from MmseLsaGain) ===
+    float g_min;            // Minimum gain (linear)
+    float log_g_min;        // log(g_min)
+    float alpha_g;          // Symmetric smoothing factor
+    float alpha_attack;     // Attack smoothing (gain increasing)
+    float alpha_decay;      // Decay smoothing (gain decreasing)
+    float* log_gain_prev;   // Previous frame gain in log domain [n_freqs]
+    bool gain_initialized;  // Whether gain calculator has processed first frame
 };
 
-// Helper: Create sqrt(Hann) window for perfect reconstruction
+// ============================================================================
+// Helper functions
+// ============================================================================
+
+// Create sqrt(Hann) window for perfect reconstruction
 static void create_sqrt_hann_window(float* window, int size) {
     for (int i = 0; i < size; i++) {
         float hann = 0.5f * (1.0f - cosf(2.0f * M_PI * i / (float)size));
         window[i] = sqrtf(hann);
     }
 }
+
+// ============================================================================
+// Gain calculation (merged from mmse_lsa_gain.c)
+// ============================================================================
+
+/**
+ * Initialize gain calculation parameters
+ */
+static void init_gain_params(MmseLsaDenoiser* self, const MmseLsaConfig* config) {
+    self->g_min = powf(10.0f, config->g_min_db / 10.0f);
+    self->log_g_min = logf(self->g_min + 1e-10f);
+    self->alpha_g = config->alpha_g;
+    self->alpha_attack = config->alpha_attack;
+    self->alpha_decay = config->alpha_decay;
+    self->gain_initialized = false;
+}
+
+/**
+ * Reset gain calculation state
+ */
+static void reset_gain_state(MmseLsaDenoiser* self) {
+    if (self->log_gain_prev) {
+        memset(self->log_gain_prev, 0, self->n_freqs * sizeof(float));
+    }
+    self->gain_initialized = false;
+}
+
+/**
+ * Calculate MMSE-LSA gain with SPP weighting
+ *
+ * Based on Ephraim-Malah 1985:
+ * G = (ξ/(1+ξ)) × exp(0.5 × E1(v))
+ *
+ * Where:
+ *   v = ξ/(1+ξ) × γ
+ *   E1(v) = ∫[v,∞] (e^(-t)/t) dt (Exponential Integral)
+ *
+ * With SPP weighting (OMLSA style):
+ *   log(G) = p × log(G_H1) + (1-p) × log(G_min)
+ *
+ * And asymmetric smoothing:
+ *   Attack: fast response (α_attack)
+ *   Decay: slow to reduce musical noise (α_decay)
+ */
+static void calculate_gain(
+    MmseLsaDenoiser* self,
+    const float* spp,
+    const float* xi,
+    const float* gamma,
+    const float* v_in,  // Can be NULL if not using shared xi_ratio
+    float* gain_out
+) {
+    int n_freqs = self->n_freqs;
+    float g_min = self->g_min;
+    float log_g_min = self->log_g_min;
+    float alpha_attack = self->alpha_attack;
+    float alpha_decay = self->alpha_decay;
+
+    for (int k = 0; k < n_freqs; k++) {
+        float xi_k = xi[k];
+        float gamma_k = gamma[k];
+        float spp_k = spp[k];
+
+        // 1. Calculate v = ξ/(1+ξ) × γ
+        float v, xi_ratio;
+#ifdef USE_SHARED_XI_RATIO
+        if (v_in != NULL) {
+            // Use pre-computed v, recover xi_ratio from v/gamma
+            v = v_in[k];
+            xi_ratio = v / (gamma_k + 1e-10f);
+        } else {
+            // Compute as usual
+            xi_ratio = xi_k / (1.0f + xi_k);
+            v = xi_ratio * gamma_k;
+        }
+#else
+        (void)v_in;  // Unused
+        xi_ratio = xi_k / (1.0f + xi_k);
+        v = xi_ratio * gamma_k;
+#endif
+
+        // Clamp v to prevent overflow
+        if (v < 1e-10f) v = 1e-10f;
+        if (v > 700.0f) v = 700.0f;
+
+        // 2. Calculate E1(v) using 3-segment approximation
+        float exp1_v = exp1_approx(v);
+
+        // 3. MMSE-LSA gain: G_H1 = (ξ/(1+ξ)) × exp(0.5 × E1(v))
+        float gain_mmse = xi_ratio * fast_exp(0.5f * exp1_v);
+
+        // Clamp gain_mmse to valid range
+        if (gain_mmse < g_min) gain_mmse = g_min;
+        if (gain_mmse > 1.0f) gain_mmse = 1.0f;
+
+        // 4. Log-domain SPP weighting (OMLSA style)
+        // log(G) = p × log(G_H1) + (1-p) × log(G_min)
+        float log_gain_mmse = fast_log(gain_mmse + 1e-10f);
+        float log_gain = spp_k * log_gain_mmse + (1.0f - spp_k) * log_g_min;
+
+        // 5. Log-domain temporal smoothing
+        if (self->gain_initialized) {
+            float log_gain_prev_k = self->log_gain_prev[k];
+
+            // Asymmetric smoothing: Attack fast, Decay slow
+            float alpha;
+            if (log_gain > log_gain_prev_k) {
+                // Attack: gain increasing
+                alpha = alpha_attack;
+            } else {
+                // Decay: gain decreasing
+                alpha = alpha_decay;
+            }
+            log_gain = alpha * log_gain_prev_k + (1.0f - alpha) * log_gain;
+        }
+
+        // 6. Convert back to linear domain and clamp
+#ifdef USE_FAST_GAIN_SMOOTHING
+        // Optimization: perform clamping in log domain to avoid redundant exp→log
+        // log(g_min) = log_g_min, log(1.0) = 0
+        float gain;
+        float log_gain_save;
+        if (log_gain < log_g_min) {
+            // Clamp to g_min
+            gain = g_min;
+            log_gain_save = log_g_min;
+        } else if (log_gain > 0.0f) {
+            // Clamp to 1.0
+            gain = 1.0f;
+            log_gain_save = 0.0f;
+        } else {
+            // No clamping needed - normal case
+            gain = fast_exp(log_gain);
+            log_gain_save = log_gain;
+        }
+        gain_out[k] = gain;
+        self->log_gain_prev[k] = log_gain_save;
+#else
+        // Original version
+        float gain = fast_exp(log_gain);
+
+#ifndef USE_SINGLE_CLAMP
+        // 7. Clamp to valid range (redundant if gain_mmse already clamped)
+        if (gain < g_min) gain = g_min;
+        if (gain > 1.0f) gain = 1.0f;
+#endif
+
+        gain_out[k] = gain;
+
+        // Save log-domain gain for next frame
+        self->log_gain_prev[k] = fast_log(gain + 1e-10f);
+#endif
+    }
+
+    self->gain_initialized = true;
+}
+
+// ============================================================================
+// Denoiser implementation
+// ============================================================================
 
 MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config) {
     if (!config) return NULL;
@@ -104,7 +277,6 @@ MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config) {
     self->n_freqs = config->fft_size / 2 + 1;
 
     // Warning: if frame_size > fft_size, only fft_size samples will be processed per frame
-    // This may cause quality degradation. Consider increasing fft_size or reducing frame_size_ms.
     if (self->frame_size > self->fft_size) {
         fprintf(stderr, "Warning: frame_size (%d) > fft_size (%d). "
                 "Only first %d samples will be used. Consider using fft_size >= frame_size.\n",
@@ -132,10 +304,9 @@ MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config) {
     self->phase = (float*)calloc(self->n_freqs, sizeof(float));
     self->enhanced_mag = (float*)calloc(self->n_freqs, sizeof(float));
 
-    // Create sub-modules
+    // Create sub-modules (MCRA and SPP only)
     self->noise_est = mcra_create(self->n_freqs, config);
     self->spp_est = spp_create(self->n_freqs, config);
-    self->gain_calc = mmse_lsa_gain_create(self->n_freqs, config);
 
     // Allocate SPP/gain buffers
     self->spp = (float*)calloc(self->n_freqs, sizeof(float));
@@ -158,14 +329,18 @@ MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config) {
     self->init_frame_count = 0;
     self->is_initialized = false;
 
+    // Initialize gain calculation parameters
+    init_gain_params(self, config);
+    self->log_gain_prev = (float*)calloc(self->n_freqs, sizeof(float));
+
     // Verify all allocations
     if (!self->input_buffer || !self->fft_handle || !self->window ||
         !self->fft_in || !self->spectrum || !self->power ||
         !self->magnitude || !self->phase || !self->enhanced_mag ||
-        !self->noise_est || !self->spp_est || !self->gain_calc ||
+        !self->noise_est || !self->spp_est ||
         !self->spp || !self->xi || !self->gamma || !self->gain ||
         !self->ola_buffer || !self->gain_prev || !self->enhanced_psd_prev ||
-        !self->init_power_sum
+        !self->init_power_sum || !self->log_gain_prev
 #ifdef USE_SHARED_XI_RATIO
         || !self->v
 #endif
@@ -191,7 +366,6 @@ void mmse_lsa_destroy(MmseLsaDenoiser* self) {
     if (self->enhanced_mag) free(self->enhanced_mag);
     if (self->noise_est) mcra_destroy(self->noise_est);
     if (self->spp_est) spp_destroy(self->spp_est);
-    if (self->gain_calc) mmse_lsa_gain_destroy(self->gain_calc);
     if (self->spp) free(self->spp);
     if (self->xi) free(self->xi);
     if (self->gamma) free(self->gamma);
@@ -203,6 +377,7 @@ void mmse_lsa_destroy(MmseLsaDenoiser* self) {
     if (self->gain_prev) free(self->gain_prev);
     if (self->enhanced_psd_prev) free(self->enhanced_psd_prev);
     if (self->init_power_sum) free(self->init_power_sum);
+    if (self->log_gain_prev) free(self->log_gain_prev);
 
     free(self);
 }
@@ -274,12 +449,7 @@ static void process_frame(MmseLsaDenoiser* self) {
                        self->v);
 
         // Calculate MMSE-LSA gain (with pre-computed v)
-        mmse_lsa_gain_calculate_ex(self->gain_calc,
-                                   self->spp,
-                                   self->xi,
-                                   self->gamma,
-                                   self->v,
-                                   self->gain);
+        calculate_gain(self, self->spp, self->xi, self->gamma, self->v, self->gain);
 #else
         // Estimate SPP, xi, gamma
         spp_estimate(self->spp_est,
@@ -292,11 +462,7 @@ static void process_frame(MmseLsaDenoiser* self) {
                     self->gamma);
 
         // Calculate MMSE-LSA gain
-        mmse_lsa_gain_calculate(self->gain_calc,
-                                self->spp,
-                                self->xi,
-                                self->gamma,
-                                self->gain);
+        calculate_gain(self, self->spp, self->xi, self->gamma, NULL, self->gain);
 #endif
 
         // Update noise estimate with SPP
@@ -416,7 +582,9 @@ void mmse_lsa_reset(MmseLsaDenoiser* self) {
     // Reset sub-modules
     mcra_reset(self->noise_est);
     spp_reset(self->spp_est);
-    mmse_lsa_gain_reset(self->gain_calc);
+
+    // Reset gain calculation state
+    reset_gain_state(self);
 
     // Reset state buffers
     memset(self->gain_prev, 0, self->n_freqs * sizeof(float));
@@ -443,8 +611,9 @@ int mmse_lsa_get_n_freqs(const MmseLsaDenoiser* self) {
 
 int mmse_lsa_get_latency(const MmseLsaDenoiser* self) {
     if (!self) return 0;
-    // Latency = frame_size (buffering) + init_frames * hop_size
-    return self->frame_size + self->config.num_init_frames * self->hop_size;
+    // Latency = frame_size (OLA buffering only)
+    // Note: init period is pass-through, not counted as latency
+    return self->frame_size;
 }
 
 bool mmse_lsa_is_initialized(const MmseLsaDenoiser* self) {
