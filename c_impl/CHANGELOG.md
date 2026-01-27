@@ -2,12 +2,24 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [v1.2.0] - 2026-01-27
+
+### 重構
+
+#### 合併 mmse_lsa_gain 到 mmse_lsa_denoiser
+- **刪除檔案**: `src/mmse_lsa_gain.c`, `include/mmse_lsa_gain.h`
+- **修改檔案**: `src/mmse_lsa_denoiser.c`
+- **原因**: 增益計算只被 denoiser 內部使用，合併後更易理解
+- **效果**: 減少 2 個檔案，簡化構建流程
+
+---
+
 ## [v1.1.0] - 2026-01-27
 
 ### 新增優化開關
 
 #### USE_FAST_GAIN_SMOOTHING
-- **檔案**: `src/mmse_lsa_gain.c`
+- **檔案**: `src/mmse_lsa_denoiser.c`（原 `src/mmse_lsa_gain.c`）
 - **功能**: 在 log 域直接進行 clamp，避免 exp→log 冗餘轉換
 - **原理**:
   ```c
@@ -32,8 +44,7 @@
 - **檔案**:
   - `include/spp_estimator.h` - 新增 `spp_estimate_ex()`
   - `src/spp_estimator.c` - 實現 `spp_estimate_ex()`
-  - `include/mmse_lsa_gain.h` - 新增 `mmse_lsa_gain_calculate_ex()`
-  - `src/mmse_lsa_gain.c` - 實現 `mmse_lsa_gain_calculate_ex()`
+  - `src/mmse_lsa_denoiser.c` - 實現 `calculate_gain_ex()` 內部函數
   - `src/mmse_lsa_denoiser.c` - 使用擴展 API，新增 `v` 緩衝區
 - **功能**: SPP 和 Gain 共用 `v = xi/(1+xi) * gamma` 計算結果
 - **原理**:
@@ -92,7 +103,7 @@
 - **測試**: 與原版相關度 100%
 
 #### USE_SINGLE_CLAMP
-- **檔案**: `src/mmse_lsa_gain.c`
+- **檔案**: `src/mmse_lsa_denoiser.c`
 - **功能**: 移除冗餘的 clamp 操作
 - **原理**:
   ```c
