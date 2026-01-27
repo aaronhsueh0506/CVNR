@@ -73,8 +73,7 @@ from denoisers import (
     SppMmseDenoiser,
     ImcraOmlsaDenoiser,
     MmseLsaDenoiser,
-    PmmseDenoiser,
-    OmlsaMcraDenoiser
+    PmmseDenoiser
 )
 
 
