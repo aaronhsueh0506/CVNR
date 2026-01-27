@@ -110,13 +110,16 @@ free(out_buf);
 
 ## 延遲
 
-總延遲 = frame_size + (num_init_frames × hop_size)
+算法延遲 = frame_size = **20 ms**（與採樣率無關）
 
-| 採樣率 | frame_size | 初始化延遲 | 總延遲 |
-|--------|-----------|-----------|--------|
-| 8 kHz | 160 | 1600 | 1760 samples (220 ms) |
-| 16 kHz | 320 | 3200 | 3520 samples (220 ms) |
-| 48 kHz | 960 | 9600 | 10560 samples (220 ms) |
+| 採樣率 | frame_size | 延遲 |
+|--------|-----------|------|
+| 8 kHz | 160 samples | 20 ms |
+| 16 kHz | 320 samples | 20 ms |
+| 48 kHz | 960 samples | 20 ms |
+
+> **注意**: 初始化期間（前 20 幀 = 200ms）音頻直接 pass-through（不做降噪），
+> 之後開始正常降噪處理。
 
 ## 檔案結構
 
