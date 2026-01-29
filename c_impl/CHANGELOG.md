@@ -62,6 +62,29 @@
 | B5 (frame merge) | bit-exact | — |
 | **全部 A+B** | — | **corr = 0.9999** |
 
+### 尚未實作（階段 C：定點化）
+
+以下為規劃中但尚未實作的項目，詳見 plan file。
+
+#### C1. 數值格式選擇
+- 音頻樣本: Q15 (int16_t)
+- FFT: Q15（CMSIS DSP `arm_rfft_q15()`）
+- 功率譜/噪聲 PSD: Q31 (int32_t)
+- SNR (gamma, xi): Q8.8 (uint16_t)
+- gain / SPP: Q15
+- log_gain: Q8.8 (int16_t)
+
+#### C2. 定點化優先順序
+1. **gain calculator** — exp/log 最多，改為 LUT + 線性插值（收益最大）
+2. **spp_estimator** — 除法改查表倒數，exp(-v) 查表
+3. **mcra_noise_estimator** — 只有乘加，改為定點 MAC
+4. **FFT** — 用 CMSIS DSP `arm_cfft_q15()` 或定點 KISS FFT 替換
+
+#### C3. 定點化策略
+- 逐模組替換，每步驗證 correlation > 99%
+- 新增 `USE_FIXED_POINT` 編譯開關
+- 新增檔案: `fixed_point_math.h`, `gain_calculator_fixed.c`, `spp_estimator_fixed.c`
+
 ---
 
 ## [v1.2.0] - 2026-01-27
