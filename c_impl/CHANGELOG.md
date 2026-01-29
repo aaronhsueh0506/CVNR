@@ -2,6 +2,68 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [v1.3.0] - 2026-01-29
+
+### 嵌入式優化（階段 A+B）
+
+目標：針對嵌入式/MCU 平台減少計算量，預估節省 ~230K cycles/幀
+
+#### 階段 A：預設啟用 6 個優化 flag
+- **檔案**: `Makefile`
+- **改動**: 5 個既有數學等價優化 + 1 個新增 (`USE_INCREMENTAL_MIN`) 改為 `make` 預設啟用
+- **新增**: `make debug` target（關閉所有優化 + 使用標準數學函數）
+- **驗證**: vs 原始 baseline correlation = 0.9999
+
+#### 階段 B1：消除 sqrtf — magnitude → power 域化簡
+- **檔案**: `src/mmse_lsa_denoiser.c`
+- **改動**: 移除 `process_frame` 中每幀 513 次 `sqrtf(power[k])` → `magnitude[k]`
+- **原理**: `magnitude` 下游全部被平方回去（enhanced_psd_prev = enhanced_mag²），sqrt 和 ² 互相抵銷
+  - `enhanced_psd_prev[k] = gain² × power[k]`（取代 `(gain × sqrt(power))²`）
+  - VAD 能量: `gain² × power`（取代 `enhanced_mag²`）
+  - `fft_apply_gain` 直接用 gain × complex spectrum，不需 magnitude
+  - magnitude 只在 `#ifdef DEBUG_DUMP` 時計算
+- **省**: 513 × sqrtf ≈ 25K cycles/幀
+
+#### 階段 B2：VAD 用 fast_exp_neg 取代 expf
+- **檔案**: `src/mmse_lsa_denoiser.c`
+- **改動**: `expf(-3.0f * mean_power)` → `fast_exp_neg(3.0f * mean_power)`
+- **驗證**: B1+B2 合計 vs 前一步 correlation = 0.99999996
+
+#### 階段 B3：MCRA 迴圈合併（6 → 2 迴圈）
+- **檔案**: `src/mcra_noise_estimator.c`
+- **改動**: `mcra_update()` 原本 6 個獨立 for-k 迴圈合併為 2 個：
+  - Loop A: S 平滑 + min_buffer 寫入 + eta 能量累加 + min 追蹤
+  - Loop C: SPP indicator + 噪聲更新
+  - eta sigmoid 計算放在兩迴圈之間（純量運算）
+- **驗證**: bit-exact（純結構重排）
+
+#### 階段 B4：增量最小值追蹤 (USE_INCREMENTAL_MIN)
+- **檔案**: `src/mcra_noise_estimator.c`, `Makefile`
+- **改動**: MCRA min tracking 從每幀 O(L) 全掃描改為增量式 O(1) 平均
+  - 新值 ≤ S_min → 直接更新（O(1)）
+  - 被覆蓋舊值 ≈ S_min → 重掃描（O(L)，~5% 發生）
+  - 否則 S_min 不變（O(1)）
+- **省**: 513 × 120 = 61,560 次比較 → 平均 ~513 次
+- **驗證**: bit-exact
+
+#### 階段 B5：process_frame 迴圈合併（3 → 1 迴圈）
+- **檔案**: `src/mmse_lsa_denoiser.c`
+- **改動**: VAD gain apply + gain_prev save + enhanced_psd_prev save 合併為單一迴圈
+- **驗證**: bit-exact
+
+### 全階段驗證結果
+
+| 階段 | vs 前一步 | vs 原始 baseline |
+|------|-----------|-----------------|
+| A (Makefile flags) | corr = 0.9999 | corr = 0.9999 |
+| B1+B2 (sqrtf + VAD) | corr = 0.99999996 | — |
+| B3 (MCRA merge) | bit-exact | — |
+| B4 (incremental min) | bit-exact | — |
+| B5 (frame merge) | bit-exact | — |
+| **全部 A+B** | — | **corr = 0.9999** |
+
+---
+
 ## [v1.2.0] - 2026-01-27
 
 ### 重構
@@ -11,6 +73,13 @@
 - **修改檔案**: `src/mmse_lsa_denoiser.c`
 - **原因**: 增益計算只被 denoiser 內部使用，合併後更易理解
 - **效果**: 減少 2 個檔案，簡化構建流程
+
+### 文檔
+
+#### README 新增算法流程圖
+- **檔案**: `README.md`
+- **新增**: 完整的 ASCII 流程圖，展示從輸入到輸出的數據流
+- **新增**: 模組職責表（MCRA、SPP、Gain）
 
 ---
 
@@ -195,9 +264,11 @@
 | USE_OPTIMIZED_E1 | 100% | 數學等價 |
 | USE_SINGLE_CLAMP | 100% | 數學等價 |
 | USE_FAST_PERCENTILE | ~99.5% | 近似算法 |
+| USE_INCREMENTAL_MIN | 100% | 數學等價（浮點容差比對） |
 
 ## 注意事項
 
-1. 多個優化開關可以同時使用
+1. 多個優化開關可以同時使用（v1.3.0 起全部預設啟用，除 USE_FAST_PERCENTILE）
 2. `USE_STANDARD_MATH` 會覆蓋 fast_math.h 中的優化函數
-3. 所有優化都經過相關度測試，確保與原版輸出高度一致
+3. `make debug` 可關閉所有優化 + 使用標準數學函數
+4. 所有優化都經過相關度測試，確保與原版輸出高度一致

@@ -7,6 +7,16 @@ CFLAGS += -I./include -I./lib/kiss_fft -I./example
 CFLAGS += $(EXTRA_CFLAGS)
 
 # =============================================================================
+# Default optimizations (mathematically equivalent, 100% bit-exact)
+# =============================================================================
+CFLAGS += -DUSE_FAST_GAIN_SMOOTHING
+CFLAGS += -DUSE_SHARED_XI_RATIO
+CFLAGS += -DUSE_OPTIMIZED_MIN_BUFFER
+CFLAGS += -DUSE_OPTIMIZED_E1
+CFLAGS += -DUSE_SINGLE_CLAMP
+CFLAGS += -DUSE_INCREMENTAL_MIN
+
+# =============================================================================
 # Build Configuration Flags (pass via EXTRA_CFLAGS)
 # =============================================================================
 #
@@ -46,13 +56,13 @@ CFLAGS += $(EXTRA_CFLAGS)
 #   Example: make EXTRA_CFLAGS="-DUSE_SINGLE_CLAMP"
 #
 # Recommended build configurations:
-#   1. Debug build (matches Python output most closely):
-#      make EXTRA_CFLAGS="-DUSE_STANDARD_MATH"
+#   1. Debug build (standard math, no optimizations, matches Python most closely):
+#      make debug
 #
-#   2. Standard build (fast math + exact percentile):
+#   2. Standard build (fast math + all equivalent optimizations):
 #      make
 #
-#   3. Optimized build (all approximations enabled):
+#   3. Full optimized build (all approximations including fast percentile):
 #      make EXTRA_CFLAGS="-DUSE_FAST_PERCENTILE"
 #
 # =============================================================================
@@ -110,6 +120,12 @@ $(OBJ_DIR)/%.o: $(LIB_DIR)/%.c
 # Compile example files
 $(OBJ_DIR)/%.o: $(EXAMPLE_DIR)/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
+
+# Debug build (disable all optimizations, use standard math)
+debug: CFLAGS += -DUSE_STANDARD_MATH
+debug: CFLAGS := $(filter-out -DUSE_FAST_GAIN_SMOOTHING -DUSE_SHARED_XI_RATIO -DUSE_OPTIMIZED_MIN_BUFFER -DUSE_OPTIMIZED_E1 -DUSE_SINGLE_CLAMP -DUSE_INCREMENTAL_MIN,$(CFLAGS))
+debug: dirs $(TARGET)
+	@echo "Debug build complete (standard math, no optimizations): $(TARGET)"
 
 # Clean
 clean:
@@ -171,4 +187,4 @@ help:
 	@echo "After building:"
 	@echo "  ./bin/denoise_wav input.wav output.wav"
 
-.PHONY: all dirs clean install uninstall test lib help
+.PHONY: all dirs clean install uninstall test lib help debug

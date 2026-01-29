@@ -47,6 +47,12 @@ struct McraNoiseEstimator {
     bool is_initialized;
     int frame_count;
 
+    // Eta scene change detection
+    bool enable_eta;
+    float eta_beta_threshold;
+    float eta_slope;
+    float prev_frame_power;     // Previous frame total energy (0 = not yet set)
+
 #ifndef USE_FAST_PERCENTILE
     // Buffer for exact percentile calculation during initialization
     // Layout: init_power_buffer[frame_idx * n_freqs + freq_idx]
@@ -86,6 +92,12 @@ McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config) {
     self->ring_idx = 0;
     self->is_initialized = false;
     self->frame_count = 0;
+
+    // Eta scene change detection
+    self->enable_eta = config->enable_eta;
+    self->eta_beta_threshold = config->eta_beta_threshold;
+    self->eta_slope = config->eta_slope;
+    self->prev_frame_power = 0.0f;
 
 #ifndef USE_FAST_PERCENTILE
     // Allocate buffer for exact percentile calculation
@@ -315,78 +327,107 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
     float alpha_p = self->alpha_p;
     float delta = self->delta;
 
-    // 1. Time smoothing
-    // S(k,l) = α_s·S(k,l-1) + (1-α_s)·|Y(k,l)|²
-    for (int k = 0; k < n_freqs; k++) {
-        self->S[k] = alpha_s * self->S[k] + (1.0f - alpha_s) * power[k];
-    }
-
-    // 2. Update min buffer at current ring position
-#ifdef USE_OPTIMIZED_MIN_BUFFER
-    // Optimized layout: [freq_idx * L + frame_idx]
+    // Loop A+B: Time smoothing + min buffer write + incremental min tracking
     int ring_pos = self->ring_idx;
+    float E_cur = 0.0f;
     for (int k = 0; k < n_freqs; k++) {
-        self->min_buffer[k * L + ring_pos] = self->S[k];
-    }
+        // S(k,l) = α_s·S(k,l-1) + (1-α_s)·|Y(k,l)|²
+        float new_S = alpha_s * self->S[k] + (1.0f - alpha_s) * power[k];
+        self->S[k] = new_S;
+
+        // Read old value before overwriting, then write new value
+#ifdef USE_OPTIMIZED_MIN_BUFFER
+        float* buf_ptr = &self->min_buffer[k * L + ring_pos];
 #else
-    // Original layout: [frame_idx * n_freqs + freq_idx]
-    int buf_offset = self->ring_idx * n_freqs;
-    for (int k = 0; k < n_freqs; k++) {
-        self->min_buffer[buf_offset + k] = self->S[k];
-    }
+        float* buf_ptr = &self->min_buffer[ring_pos * n_freqs + k];
 #endif
+#ifdef USE_INCREMENTAL_MIN
+        float old_val = *buf_ptr;
+#endif
+        *buf_ptr = new_S;
+
+#ifdef USE_INCREMENTAL_MIN
+        // Incremental min tracking: O(1) average, O(L) worst case
+        if (new_S <= self->S_min[k]) {
+            // New value is the minimum
+            self->S_min[k] = new_S;
+        } else if (old_val <= self->S_min[k] * (1.0f + 1e-6f)) {
+            // Evicted value was (approximately) the minimum — must rescan
+#ifdef USE_OPTIMIZED_MIN_BUFFER
+            float* freq_buf = &self->min_buffer[k * L];
+            float min_val = freq_buf[0];
+            for (int l = 1; l < L; l++) {
+                if (freq_buf[l] < min_val) min_val = freq_buf[l];
+            }
+#else
+            float min_val = FLT_MAX;
+            for (int l = 0; l < L; l++) {
+                float val = self->min_buffer[l * n_freqs + k];
+                if (val < min_val) min_val = val;
+            }
+#endif
+            self->S_min[k] = min_val;
+        }
+        // else: S_min unchanged
+#else
+        // Full scan: always find minimum over all L frames
+#ifdef USE_OPTIMIZED_MIN_BUFFER
+        {
+            float* freq_buf = &self->min_buffer[k * L];
+            float min_val = freq_buf[0];
+            for (int l = 1; l < L; l++) {
+                if (freq_buf[l] < min_val) min_val = freq_buf[l];
+            }
+            self->S_min[k] = min_val;
+        }
+#else
+        {
+            float min_val = FLT_MAX;
+            for (int l = 0; l < L; l++) {
+                float val = self->min_buffer[l * n_freqs + k];
+                if (val < min_val) min_val = val;
+            }
+            self->S_min[k] = min_val;
+        }
+#endif
+#endif  // USE_INCREMENTAL_MIN
+
+        // Accumulate total power for eta
+        E_cur += power[k];
+    }
 
     // Advance ring index
     self->ring_idx = (self->ring_idx + 1) % L;
 
-    // 3. Find minimum over L frames for each frequency bin
-#ifdef USE_OPTIMIZED_MIN_BUFFER
-    // Optimized: contiguous access for each frequency bin
-    for (int k = 0; k < n_freqs; k++) {
-        float* freq_buf = &self->min_buffer[k * L];
-        float min_val = freq_buf[0];
-        for (int l = 1; l < L; l++) {
-            if (freq_buf[l] < min_val) {
-                min_val = freq_buf[l];
+    // Eta scene change detection (scalar)
+    float eta = 1.0f;
+    if (self->enable_eta) {
+        if (self->prev_frame_power > 0.0f) {
+            float beta = E_cur / (self->prev_frame_power + 1e-10f);
+            if (beta > 25.0f) {
+                eta = 0.0f;
+            } else {
+                float exponent = self->eta_slope * (beta - self->eta_beta_threshold);
+                if (exponent > 700.0f) exponent = 700.0f;
+                if (exponent < -700.0f) exponent = -700.0f;
+                eta = 0.95f / (1.0f + expf(exponent));
             }
         }
-        self->S_min[k] = min_val;
+        self->prev_frame_power = E_cur;
     }
-#else
-    // Original: strided access (poor cache locality)
-    for (int k = 0; k < n_freqs; k++) {
-        float min_val = FLT_MAX;
-        for (int l = 0; l < L; l++) {
-            float val = self->min_buffer[l * n_freqs + k];
-            if (val < min_val) {
-                min_val = val;
-            }
-        }
-        self->S_min[k] = min_val;
-    }
-#endif
 
-    // 4. Speech indicator and SPP smoothing
+    // Loop C: Speech indicator + SPP smoothing + noise update
+    const float* spp_for_update = spp_ext ? spp_ext : self->spp;
     for (int k = 0; k < n_freqs; k++) {
-        // I(k,l) = 1 if S(k,l)/(S_min(k,l)·δ) > 1 else 0
+        // Speech indicator: I(k,l) = 1 if S(k,l)/(S_min(k,l)·δ) > 1
         float ratio = self->S[k] / (self->S_min[k] * delta + 1e-10f);
         float indicator = (ratio > 1.0f) ? 1.0f : 0.0f;
 
-        // p(k,l) = α_p·p(k,l-1) + (1-α_p)·I(k,l)
+        // SPP smoothing: p(k,l) = α_p·p(k,l-1) + (1-α_p)·I(k,l)
         self->spp[k] = alpha_p * self->spp[k] + (1.0f - alpha_p) * indicator;
-    }
 
-    // 5. Noise update with SPP gating
-    // Use external SPP if provided, otherwise internal SPP
-    const float* spp_for_update = spp_ext ? spp_ext : self->spp;
-
-    for (int k = 0; k < n_freqs; k++) {
-        // α̃_d(k,l) = α_d + (1-α_d)·p(k,l)
-        // When SPP high (speech), α̃_d → 1, slow noise update
-        // When SPP low (noise), α̃_d → α_d, fast noise update
-        float tilde_alpha_d = alpha_d + (1.0f - alpha_d) * spp_for_update[k];
-
-        // N(k,l) = α̃_d·N(k,l-1) + (1-α̃_d)·|Y(k,l)|²
+        // Noise update with SPP gating (uses external SPP if provided, else internal)
+        float tilde_alpha_d = (alpha_d + (1.0f - alpha_d) * spp_for_update[k]) * eta;
         self->noise_psd[k] = tilde_alpha_d * self->noise_psd[k] +
                             (1.0f - tilde_alpha_d) * power[k];
     }
@@ -420,4 +461,5 @@ void mcra_reset(McraNoiseEstimator* self) {
     self->ring_idx = 0;
     self->is_initialized = false;
     self->frame_count = 0;
+    self->prev_frame_power = 0.0f;
 }
