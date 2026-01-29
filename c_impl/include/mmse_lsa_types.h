@@ -42,6 +42,17 @@ typedef struct {
     float alpha_g;          // Gain smoothing (0.7)
     float alpha_attack;     // Asymmetric attack (0.3)
     float alpha_decay;      // Asymmetric decay (0.7)
+
+    // Eta scene change detection (in MCRA)
+    bool enable_eta;            // Enable scene change detection (false)
+    float eta_beta_threshold;   // Energy ratio threshold (10.0)
+    float eta_slope;            // Sigmoid slope (20.0)
+
+    // Soft VAD (post-processing)
+    bool enable_soft_vad;       // Enable soft VAD gating (false)
+    float vad_freq_low;         // VAD band low frequency Hz (300.0)
+    float vad_freq_high;        // VAD band high frequency Hz (3400.0)
+    float alpha_vad;            // VAD temporal smoothing (0.5)
 } MmseLsaConfig;
 
 /**
@@ -83,6 +94,17 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
     config.alpha_g = 0.8f;
     config.alpha_attack = 0.3f;
     config.alpha_decay = 0.7f;
+
+    // Eta scene change detection (disabled by default)
+    config.enable_eta = false;
+    config.eta_beta_threshold = 10.0f;
+    config.eta_slope = 20.0f;
+
+    // Soft VAD (disabled by default)
+    config.enable_soft_vad = false;
+    config.vad_freq_low = 300.0f;
+    config.vad_freq_high = 3400.0f;
+    config.alpha_vad = 0.5f;
 
     return config;
 }

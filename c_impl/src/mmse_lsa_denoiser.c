@@ -86,6 +86,18 @@ struct MmseLsaDenoiser {
     float alpha_decay;      // Decay smoothing (gain decreasing)
     float* log_gain_prev;   // Previous frame gain in log domain [n_freqs]
     bool gain_initialized;  // Whether gain calculator has processed first frame
+
+    // Soft VAD state
+    bool enable_soft_vad;
+    int vad_start_bin;          // Precomputed bin index for vad_freq_low
+    int vad_end_bin;            // Precomputed bin index for vad_freq_high
+    float alpha_vad;
+    float vad_state;            // Temporal smoothed VAD gain (init 1.0)
+
+#ifdef DEBUG_DUMP
+    FILE* debug_fp;
+    int debug_frame_idx;
+#endif
 };
 
 // ============================================================================
@@ -333,6 +345,31 @@ MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config) {
     init_gain_params(self, config);
     self->log_gain_prev = (float*)calloc(self->n_freqs, sizeof(float));
 
+    // Initialize Soft VAD
+    self->enable_soft_vad = config->enable_soft_vad;
+    self->alpha_vad = config->alpha_vad;
+    self->vad_state = 1.0f;
+    if (config->enable_soft_vad) {
+        float freq_res = (float)config->sample_rate / (float)config->fft_size;
+        self->vad_start_bin = (int)(config->vad_freq_low / freq_res);
+        self->vad_end_bin = (int)(config->vad_freq_high / freq_res);
+        if (self->vad_end_bin > self->n_freqs) {
+            self->vad_end_bin = self->n_freqs;
+        }
+    } else {
+        self->vad_start_bin = 0;
+        self->vad_end_bin = 0;
+    }
+
+#ifdef DEBUG_DUMP
+    self->debug_fp = fopen("/tmp/c_debug_dump.bin", "wb");
+    self->debug_frame_idx = 0;
+    if (self->debug_fp) {
+        // Write header: n_freqs (int32)
+        fwrite(&self->n_freqs, sizeof(int), 1, self->debug_fp);
+    }
+#endif
+
     // Verify all allocations
     if (!self->input_buffer || !self->fft_handle || !self->window ||
         !self->fft_in || !self->spectrum || !self->power ||
@@ -379,6 +416,10 @@ void mmse_lsa_destroy(MmseLsaDenoiser* self) {
     if (self->init_power_sum) free(self->init_power_sum);
     if (self->log_gain_prev) free(self->log_gain_prev);
 
+#ifdef DEBUG_DUMP
+    if (self->debug_fp) fclose(self->debug_fp);
+#endif
+
     free(self);
 }
 
@@ -400,11 +441,8 @@ static void process_frame(MmseLsaDenoiser* self) {
     // 2. FFT
     fft_forward(self->fft_handle, self->fft_in, self->spectrum);
 
-    // 3. Calculate power and magnitude
+    // 3. Calculate power spectrum (magnitude computed only for DEBUG_DUMP)
     fft_power(self->spectrum, self->power, n_freqs);
-    for (int k = 0; k < n_freqs; k++) {
-        self->magnitude[k] = sqrtf(self->power[k]);
-    }
 
     // 4. Noise initialization or normal processing
     if (!self->is_initialized) {
@@ -469,16 +507,75 @@ static void process_frame(MmseLsaDenoiser* self) {
         mcra_update(self->noise_est, self->power, self->spp);
     }
 
-    // 5. Apply gain to get enhanced magnitude
-    for (int k = 0; k < n_freqs; k++) {
-        self->enhanced_mag[k] = self->gain[k] * self->magnitude[k];
+    // 5. Soft VAD + save state (merged loop)
+    if (self->enable_soft_vad && self->is_initialized) {
+        // Compute mean enhanced power in speech band (300-3400 Hz)
+        float sum_power = 0.0f;
+        int count = self->vad_end_bin - self->vad_start_bin;
+        for (int k = self->vad_start_bin; k < self->vad_end_bin; k++) {
+            sum_power += self->gain[k] * self->gain[k] * self->power[k];
+        }
+        float mean_power = sum_power / (float)count + 1e-10f;
+
+        // Sigmoid mapping + temporal smoothing
+        float vad_inst = 0.1f + 0.9f * (1.0f - fast_exp_neg(3.0f * mean_power));
+        float vad = self->alpha_vad * self->vad_state
+                  + (1.0f - self->alpha_vad) * vad_inst;
+        self->vad_state = vad;
+
+        // Merged: VAD gain apply + gain_prev save + enhanced_psd_prev save
+        for (int k = 0; k < n_freqs; k++) {
+            float g = self->gain[k] * vad;
+            self->gain[k] = g;
+            self->gain_prev[k] = g;
+            self->enhanced_psd_prev[k] = g * g * self->power[k];
+        }
+    } else {
+        // No VAD: save gain_prev + enhanced_psd_prev
+        for (int k = 0; k < n_freqs; k++) {
+            float g = self->gain[k];
+            self->gain_prev[k] = g;
+            self->enhanced_psd_prev[k] = g * g * self->power[k];
+        }
     }
 
-    // Save state for next frame (DD method)
-    memcpy(self->gain_prev, self->gain, n_freqs * sizeof(float));
-    for (int k = 0; k < n_freqs; k++) {
-        self->enhanced_psd_prev[k] = self->enhanced_mag[k] * self->enhanced_mag[k];
+#ifdef DEBUG_DUMP
+    // Dump per-frame intermediate values
+    if (self->debug_fp) {
+        const float* noise_psd = mcra_get_noise_psd(self->noise_est);
+        // Compute magnitude and enhanced_mag only for debug dump
+        for (int k = 0; k < n_freqs; k++) {
+            self->magnitude[k] = sqrtf(self->power[k]);
+            self->enhanced_mag[k] = self->gain[k] * self->magnitude[k];
+        }
+        // Record format per frame:
+        //   frame_idx (int32)
+        //   is_initialized (int32)
+        //   vad_state (float32)
+        //   noise_psd[n_freqs] (float32)
+        //   magnitude[n_freqs] (float32) - input magnitude (before gain)
+        //   spp[n_freqs] (float32)
+        //   xi[n_freqs] (float32)
+        //   gamma[n_freqs] (float32)
+        //   gain[n_freqs] (float32) - after VAD if enabled
+        //   gain_prev[n_freqs] (float32) - saved for next frame DD
+        //   enhanced_mag[n_freqs] (float32)
+        int fidx = self->debug_frame_idx;
+        int init = self->is_initialized ? 1 : 0;
+        fwrite(&fidx, sizeof(int), 1, self->debug_fp);
+        fwrite(&init, sizeof(int), 1, self->debug_fp);
+        fwrite(&self->vad_state, sizeof(float), 1, self->debug_fp);
+        fwrite(noise_psd, sizeof(float), n_freqs, self->debug_fp);
+        fwrite(self->magnitude, sizeof(float), n_freqs, self->debug_fp);
+        fwrite(self->spp, sizeof(float), n_freqs, self->debug_fp);
+        fwrite(self->xi, sizeof(float), n_freqs, self->debug_fp);
+        fwrite(self->gamma, sizeof(float), n_freqs, self->debug_fp);
+        fwrite(self->gain, sizeof(float), n_freqs, self->debug_fp);
+        fwrite(self->gain_prev, sizeof(float), n_freqs, self->debug_fp);
+        fwrite(self->enhanced_mag, sizeof(float), n_freqs, self->debug_fp);
     }
+    self->debug_frame_idx++;
+#endif
 
     // 6. Reconstruct spectrum with original phase
     // Apply gain directly to complex spectrum (preserves phase)
@@ -594,6 +691,9 @@ void mmse_lsa_reset(MmseLsaDenoiser* self) {
     memset(self->init_power_sum, 0, self->n_freqs * sizeof(float));
     self->init_frame_count = 0;
     self->is_initialized = false;
+
+    // Reset Soft VAD
+    self->vad_state = 1.0f;
 }
 
 // Query functions

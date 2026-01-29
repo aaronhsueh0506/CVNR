@@ -70,6 +70,11 @@ int main(int argc, char* argv[]) {
 
     // 2. Create denoiser with default config
     MmseLsaConfig config = mmse_lsa_default_config(sample_rate);
+
+    // Enable eta scene change detection and soft VAD for testing
+    config.enable_eta = true;
+    config.enable_soft_vad = true;
+
     MmseLsaDenoiser* denoiser = mmse_lsa_create(&config);
 
     if (!denoiser) {
