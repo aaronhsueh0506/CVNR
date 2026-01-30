@@ -43,8 +43,8 @@ def denoise(model_path, input_wav, output_wav):
 
     # 推論
     with torch.no_grad():
-        gains, _ = model(features.unsqueeze(0))  # (1, n_frames-4, n_bands)
-    gains = gains.squeeze(0)  # (n_frames-4, n_bands)
+        gains, _ = model(features.unsqueeze(0))  # (1, n_frames-2, n_bands)
+    gains = gains.squeeze(0)  # (n_frames-2, n_bands)
 
     # 將 band gains 展開到每個 FFT bin
     n_bins = spec.size(0)
@@ -53,8 +53,8 @@ def denoise(model_path, input_wav, output_wav):
 
     for b in range(N_BANDS):
         lo, hi = int(bin_edges[b]), int(bin_edges[b + 1])
-        # gains 對應 spec 的 frame 2 ~ n_frames-3 (因為 conv valid padding 去掉前後各 2)
-        bin_gains[lo:hi, 2:2 + n_frames_out] = gains[:, b].unsqueeze(0)
+        # gains 對應 spec 的 frame 1 ~ n_frames-2 (conv1 k=3 valid 去掉前後各 1)
+        bin_gains[lo:hi, 1:1 + n_frames_out] = gains[:, b].unsqueeze(0)
 
     # 套用 gain 到 complex spectrum
     filtered = spec * bin_gains
