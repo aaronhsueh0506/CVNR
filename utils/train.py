@@ -120,9 +120,9 @@ class RNNoiseModel(nn.Module):
         self.n_bands = n_bands
         self.gru_size = gru_size
 
-        # Conv1d 前處理 (同官方 v0.2)
+        # Conv1d 前處理 (k=3 + k=1, 減少 latency)
         self.conv1 = nn.Conv1d(n_bands, cond_size, kernel_size=3, padding=0)
-        self.conv2 = nn.Conv1d(cond_size, gru_size, kernel_size=3, padding=0)
+        self.conv2 = nn.Conv1d(cond_size, gru_size, kernel_size=1)
 
         # 3 層 GRU
         self.gru1 = nn.GRU(gru_size, gru_size, batch_first=True)
@@ -146,7 +146,7 @@ class RNNoiseModel(nn.Module):
         x: (batch, seq_len, n_bands)
         states: [h1, h2, h3] 或 None
         回傳: gains (batch, seq_len', n_bands), new_states
-              seq_len' = seq_len - 4 (因為兩個 kernel=3 的 valid conv)
+              seq_len' = seq_len - 2 (conv1 kernel=3 valid 減 2 frame)
         """
         device = x.device
         batch = x.size(0)
@@ -162,7 +162,7 @@ class RNNoiseModel(nn.Module):
         tmp = x.permute(0, 2, 1)
         tmp = torch.tanh(self.conv1(tmp))
         tmp = torch.tanh(self.conv2(tmp))
-        conv_out = tmp.permute(0, 2, 1)  # (B, T-4, gru_size)
+        conv_out = tmp.permute(0, 2, 1)  # (B, T-2, gru_size)
 
         # 3 層 GRU
         gru1_out, h1 = self.gru1(conv_out, h1)
@@ -302,8 +302,8 @@ def train(args):
                 targets = targets.to(device)
 
                 pred_gains, _ = model(features)
-                # Conv1d valid padding 會減少 4 個 frame
-                targets = targets[:, 2:-2, :]
+                # Conv1d valid padding 會減少 2 個 frame
+                targets = targets[:, 1:-1, :]
 
                 loss = F.mse_loss(pred_gains ** gamma, targets ** gamma)
 
@@ -326,7 +326,7 @@ def train(args):
                 features = features.to(device)
                 targets = targets.to(device)
                 pred_gains, _ = model(features)
-                targets = targets[:, 2:-2, :]
+                targets = targets[:, 1:-1, :]
                 val_loss_sum += F.mse_loss(pred_gains ** gamma, targets ** gamma).item()
 
         avg_val = val_loss_sum / max(len(val_loader), 1)
