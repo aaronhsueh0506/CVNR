@@ -1,7 +1,7 @@
 """
 RNNoise ONNX 匯出 — 逐幀串流推論
 
-使用標準 torch.onnx.export，讓 ORT 自行做圖優化 (Conv+Tanh fusion 等)
+流程: torch.onnx.export → onnxoptimizer (圖清理) → ORT offline (runtime 融合)
 
 用法:
     python export_onnx.py --model output/rnnoise_best.pth --output rnnoise.onnx
@@ -34,25 +34,104 @@ class RNNoiseStreaming(nn.Module):
         h1, h2, h3: (1, 1, gru_size) — GRU hidden states
         回傳: gains (1, 1, n_bands), h1_out, h2_out, h3_out
         """
-        # Conv1d: (1, 3, 18) → permute → (1, 18, 3) → conv1(k=3) → (1, 64, 1)
         tmp = x.permute(0, 2, 1)
         tmp = torch.tanh(self.conv1(tmp))
         tmp = torch.tanh(self.conv2(tmp))
         conv_out = tmp.permute(0, 2, 1)  # (1, 1, 128)
 
-        # 3 層 GRU
         g1, h1_out = self.gru1(conv_out, h1)
         g2, h2_out = self.gru2(g1, h2)
         g3, h3_out = self.gru3(g2, h3)
 
-        # Concat + Dense + Sigmoid
-        cat = torch.cat([conv_out, g1, g2, g3], dim=-1)  # (1, 1, 512)
-        gains = torch.sigmoid(self.dense_out(cat))        # (1, 1, 18)
+        cat = torch.cat([conv_out, g1, g2, g3], dim=-1)
+        gains = torch.sigmoid(self.dense_out(cat))
 
         return gains, h1_out, h2_out, h3_out
 
 
+# ============================================================
+# 圖優化
+# ============================================================
+
+def count_nodes(model, op_type):
+    return sum(1 for n in model.graph.node if n.op_type == op_type)
+
+
+def optimize_with_onnxoptimizer(inp, outp):
+    """onnxoptimizer: 消除冗餘 op、融合 MatMul+Add→Gemm 等"""
+    try:
+        import onnxoptimizer
+        from onnxoptimizer import get_fuse_and_elimination_passes, get_available_passes
+    except ImportError:
+        print("[skip] onnxoptimizer 未安裝，略過此步")
+        import onnx
+        onnx.save(onnx.load(inp), outp)
+        return outp
+
+    import onnx
+    m = onnx.load(inp)
+    before = len(m.graph.node)
+
+    base = set(get_fuse_and_elimination_passes())
+    avail = set(get_available_passes())
+
+    extra_wanted = {
+        "eliminate_nop_pad",
+        "eliminate_nop_transpose",
+        "eliminate_identity",
+        "eliminate_deadend",
+        "eliminate_unused_initializer",
+        "fuse_consecutive_transposes",
+        "fuse_consecutive_squeezes",
+        "fuse_consecutive_unsqueezes",
+        "fuse_matmul_add_bias_into_gemm",
+        "fuse_add_bias_into_conv",
+    }
+    passes = list((base | (extra_wanted & avail)))
+
+    m2 = onnxoptimizer.optimize(m, passes, fixed_point=True)
+    onnx.save(m2, outp)
+
+    after = len(m2.graph.node)
+    print(f"[onnxoptimizer] {before} → {after} nodes")
+    return outp
+
+
+def optimize_with_ort_offline(inp, outp):
+    """ORT offline: runtime 級優化 (Conv+Tanh fusion 等)"""
+    try:
+        import onnxruntime as ort
+    except ImportError:
+        print("[skip] onnxruntime 未安裝，略過 ORT 離線最佳化")
+        import onnx
+        onnx.save(onnx.load(inp), outp)
+        return outp
+
+    import onnx
+    m = onnx.load(inp)
+    before = len(m.graph.node)
+
+    so = ort.SessionOptions()
+    so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+    so.optimized_model_filepath = outp
+
+    sess = ort.InferenceSession(inp, so, providers=["CPUExecutionProvider"])
+    del sess  # 觸發寫檔
+
+    m2 = onnx.load(outp)
+    after = len(m2.graph.node)
+    print(f"[ORT offline] {before} → {after} nodes")
+    return outp
+
+
+# ============================================================
+# 匯出
+# ============================================================
+
 def export(args):
+    import onnx
+    from collections import Counter
+
     ckpt = torch.load(args.model, map_location='cpu', weights_only=False)
     model = RNNoiseModel(n_bands=N_BANDS, cond_size=64, gru_size=128)
     model.load_state_dict(ckpt['state_dict'])
@@ -65,28 +144,45 @@ def export(args):
     x = torch.randn(1, 3, N_BANDS)
     h = torch.zeros(1, 1, gru_size)
 
+    raw_path = args.output.replace('.onnx', '_raw.onnx')
+
+    # 1) torch.onnx.export
     torch.onnx.export(
         streaming,
         (x, h, h, h),
-        args.output,
+        raw_path,
         input_names=['input', 'h1_in', 'h2_in', 'h3_in'],
         output_names=['gains', 'h1_out', 'h2_out', 'h3_out'],
         opset_version=17,
         do_constant_folding=True,
     )
+    print_stats("torch.onnx.export", raw_path)
 
-    # 統計
-    import onnx
-    from collections import Counter
-    model_onnx = onnx.load(args.output)
-    ops = Counter(n.op_type for n in model_onnx.graph.node)
-    n_nodes = len(model_onnx.graph.node)
-    print(f"ONNX 匯出完成: {args.output}")
-    print(f"  節點數: {n_nodes}")
-    print(f"  Op: {dict(ops)}")
+    # 2) onnxoptimizer
+    opt_path = args.output.replace('.onnx', '_opt.onnx')
+    optimize_with_onnxoptimizer(raw_path, opt_path)
+    print_stats("onnxoptimizer", opt_path)
+
+    # 3) ORT offline
+    optimize_with_ort_offline(opt_path, args.output)
+    print_stats("ORT offline (final)", args.output)
+
+    # 清理中間檔
+    import os
+    for p in [raw_path, opt_path]:
+        if os.path.exists(p) and p != args.output:
+            os.remove(p)
 
     if args.verify:
         verify_output(model, args.output)
+
+
+def print_stats(stage, path):
+    import onnx
+    from collections import Counter
+    m = onnx.load(path)
+    ops = Counter(n.op_type for n in m.graph.node)
+    print(f"[{stage}] 節點數: {len(m.graph.node)}, Op: {dict(ops)}")
 
 
 def verify_output(model, onnx_path):
@@ -97,7 +193,6 @@ def verify_output(model, onnx_path):
         x = torch.randn(1, 3, N_BANDS)
         h = torch.zeros(1, 1, model.gru_size)
 
-        # PyTorch forward
         with torch.no_grad():
             tmp = x.permute(0, 2, 1)
             tmp = torch.tanh(model.conv1(tmp))
