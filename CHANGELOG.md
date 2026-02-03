@@ -4,6 +4,25 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [2.7.0] - 2026-02-03
+
+### 修正 (Fixed)
+- 🐛 **MCRA Eta 場景轉換偵測修正 (Strategy K)**:
+  - 舊版 sigmoid `η = 0.95 / (1 + e^(slope*(β-θ)))` 上限 0.95 導致語音幀 `tilde_alpha_d` 下降，噪聲更新速度增加 ~10x
+  - 新版: 平滑能量比 + hard threshold
+    - `E_smooth = 0.7 * E_smooth_prev + 0.3 * E_cur`
+    - `β = E_smooth / E_smooth_prev`
+    - `β > θ` → `η = 0.1`（場景突變，加速噪聲更新）
+    - `β ≤ θ` → `η = 1.0`（正常，完全不干擾 α_d）
+  - VCTK/DEMAND 824 files 驗證:
+    - 舊 eta: PESQ +0.085, STOI -0.068
+    - 新 eta: PESQ +0.399, STOI -0.010
+    - 不開 eta: PESQ +0.437, STOI -0.007
+
+### 修改文件
+1. `core/noise_estimators/mcra.py` - `_compute_eta()` 方法重寫
+2. `c_impl/src/mcra_noise_estimator.c` - 對應 C 實作更新
+
 ## [2.5.0] - 2026-01-16
 
 ### 重構 (Refactored)

@@ -73,6 +73,7 @@ class McraNoiseEstimator:
         self.spp = None             # Speech Presence Probability
         # 場景偵測狀態
         self._prev_frame_power = None
+        self._energy_smooth = None
 
         self.is_initialized = False
         self.frame_count = 0
@@ -118,32 +119,30 @@ class McraNoiseEstimator:
 
     def _compute_eta(self, power: np.ndarray) -> float:
         """
-        場景轉換偵測：單幀能量比
+        場景轉換偵測：平滑能量比 + hard threshold
 
-        公式：
-            β = E(n) / E(n-1)
-            if β > 25:  η = 0（硬切，極端能量突增）
-            else:       η = 0.95 / (1 + exp(slope · (β - threshold)))
+        使用平滑後的能量計算 beta，避免語音能量跳變誤觸發。
+        Hard threshold: beta < threshold → eta=1.0（不動 alpha_d）,
+                       beta > threshold → eta=0.1（加速噪聲更新）
 
-        當 β > threshold（能量突增）時，η → 0，加速噪聲更新
-        η 上限為 0.95，確保噪聲估計始終有微量更新
+        v2.0: 修正舊版 0.95 上限導致語音幀噪聲更新速度增加 10x 的問題
         """
         E_cur = np.sum(power)
 
-        if self._prev_frame_power is None:
+        if self._energy_smooth is None:
+            self._energy_smooth = E_cur
             self._prev_frame_power = E_cur
             return 1.0
 
-        beta = E_cur / (self._prev_frame_power + 1e-10)
-        self._prev_frame_power = E_cur
+        # 平滑能量（避免語音瞬態誤觸發）
+        self._energy_smooth = 0.7 * self._energy_smooth + 0.3 * E_cur
 
-        if beta > 25.0:
-            return 0.0
+        beta = self._energy_smooth / (self._prev_frame_power + 1e-10)
+        self._prev_frame_power = self._energy_smooth
 
-        exponent = np.clip(self.eta_slope * (beta - self.eta_beta_threshold), -700, 700)
-        eta = 0.95 / (1.0 + np.exp(exponent))
-
-        return eta
+        if beta > self.eta_beta_threshold:
+            return 0.1  # 場景變化：加速噪聲更新
+        return 1.0  # 正常：不干擾 alpha_d
 
     def update(
         self,
@@ -223,6 +222,7 @@ class McraNoiseEstimator:
         self.min_buffer = None
         self.spp = None
         self._prev_frame_power = None
+        self._energy_smooth = None
         self.is_initialized = False
         self.frame_count = 0
 

@@ -180,6 +180,7 @@ MCRA 噪聲估計的瓶頸是每幀掃描 ring buffer（L=120 幀）找最小值
 
 **mcra_noise_estimator.c** — 6 個獨立 for-k 迴圈 → 2 個：
 - Loop A: S 時間平滑 + min buffer 寫入 + eta 能量累加 + min 追蹤
+- Eta: 平滑能量比 + hard threshold (β > θ → η=0.1, 否則 η=1.0)
 - Loop C: SPP indicator + 噪聲更新
 
 **mmse_lsa_denoiser.c** — 3 個獨立 for-k 迴圈 → 1 個：

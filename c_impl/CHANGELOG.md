@@ -2,6 +2,22 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [v1.4.0] - 2026-02-03
+
+### Eta 場景轉換偵測修正 (Strategy K)
+
+- **檔案**: `src/mcra_noise_estimator.c`
+- **改動**: 將 eta 從 sigmoid 公式改為平滑能量比 + hard threshold
+  - 舊: `eta = 0.95 / (1 + exp(slope * (beta - threshold)))` — 上限 0.95 導致語音幀 tilde_alpha_d 下降，噪聲更新速度增加 ~10x
+  - 新: 平滑能量 `E_smooth = 0.7 * E_smooth_prev + 0.3 * E_cur`，`beta = E_smooth / E_smooth_prev`
+    - `beta > threshold` → `eta = 0.1`（場景突變，加速噪聲更新）
+    - `beta <= threshold` → `eta = 1.0`（正常，不干擾 alpha_d）
+- **新增**: `energy_smooth` 欄位到 `McraNoiseEstimator` struct
+- **驗證** (VCTK/DEMAND 824 files):
+  - 舊 eta: PESQ +0.085, STOI -0.068
+  - 新 eta: PESQ +0.399, STOI -0.010
+  - 不開 eta: PESQ +0.437, STOI -0.007
+
 ## [v1.3.0] - 2026-01-29
 
 ### 嵌入式優化（階段 A+B）
@@ -34,7 +50,7 @@
 - **改動**: `mcra_update()` 原本 6 個獨立 for-k 迴圈合併為 2 個：
   - Loop A: S 平滑 + min_buffer 寫入 + eta 能量累加 + min 追蹤
   - Loop C: SPP indicator + 噪聲更新
-  - eta sigmoid 計算放在兩迴圈之間（純量運算）
+  - eta 場景偵測計算放在兩迴圈之間（純量運算，平滑能量比 + hard threshold）
 - **驗證**: bit-exact（純結構重排）
 
 #### 階段 B4：增量最小值追蹤 (USE_INCREMENTAL_MIN)

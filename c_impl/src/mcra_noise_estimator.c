@@ -51,7 +51,8 @@ struct McraNoiseEstimator {
     bool enable_eta;
     float eta_beta_threshold;
     float eta_slope;
-    float prev_frame_power;     // Previous frame total energy (0 = not yet set)
+    float prev_frame_power;     // Previous smoothed energy (0 = not yet set)
+    float energy_smooth;        // Smoothed frame energy for eta
 
 #ifndef USE_FAST_PERCENTILE
     // Buffer for exact percentile calculation during initialization
@@ -98,6 +99,7 @@ McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config) {
     self->eta_beta_threshold = config->eta_beta_threshold;
     self->eta_slope = config->eta_slope;
     self->prev_frame_power = 0.0f;
+    self->energy_smooth = 0.0f;
 
 #ifndef USE_FAST_PERCENTILE
     // Allocate buffer for exact percentile calculation
@@ -399,21 +401,24 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
     // Advance ring index
     self->ring_idx = (self->ring_idx + 1) % L;
 
-    // Eta scene change detection (scalar)
+    // Eta scene change detection (strategy K: smoothed energy + hard threshold)
+    // v2.0: 修正舊版 0.95 上限導致語音幀噪聲更新速度增加 10x 的問題
     float eta = 1.0f;
     if (self->enable_eta) {
-        if (self->prev_frame_power > 0.0f) {
-            float beta = E_cur / (self->prev_frame_power + 1e-10f);
-            if (beta > 25.0f) {
-                eta = 0.0f;
-            } else {
-                float exponent = self->eta_slope * (beta - self->eta_beta_threshold);
-                if (exponent > 700.0f) exponent = 700.0f;
-                if (exponent < -700.0f) exponent = -700.0f;
-                eta = 0.95f / (1.0f + expf(exponent));
+        if (self->energy_smooth > 0.0f) {
+            // 平滑能量（避免語音瞬態誤觸發）
+            self->energy_smooth = 0.7f * self->energy_smooth + 0.3f * E_cur;
+            float beta = self->energy_smooth / (self->prev_frame_power + 1e-10f);
+            self->prev_frame_power = self->energy_smooth;
+            if (beta > self->eta_beta_threshold) {
+                eta = 0.1f;  // 場景變化：加速噪聲更新
             }
+            // else eta = 1.0 (正常：不干擾 alpha_d)
+        } else {
+            // 首幀初始化
+            self->energy_smooth = E_cur;
+            self->prev_frame_power = E_cur;
         }
-        self->prev_frame_power = E_cur;
     }
 
     // Loop C: Speech indicator + SPP smoothing + noise update
@@ -462,4 +467,5 @@ void mcra_reset(McraNoiseEstimator* self) {
     self->is_initialized = false;
     self->frame_count = 0;
     self->prev_frame_power = 0.0f;
+    self->energy_smooth = 0.0f;
 }

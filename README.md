@@ -568,7 +568,7 @@ test_set = generator.generate_test_set(
   - 需要快速噪聲適應
   - 語音存在機率軟判決
 - **配置**: `config/v3_4_config.yaml`
-- **v2.6 新增**: MCRA 瞬態偵測 (β = E_cur / E_prev, η = 0.95 / (1 + e^(20*(β-10))))
+- **v2.7 新增**: MCRA 場景轉換偵測 (平滑能量比 + hard threshold, β > θ → η=0.1, 否則 η=1.0)
 
 ### 性能對比 (典型值)
 
@@ -1200,7 +1200,12 @@ MIT License
 
 ## 📜 版本歷史
 
-### v2.6.0 (2026-01-22) ✨ 最新
+### v2.7.0 (2026-02-03) ✨ 最新
+- 🐛 **MCRA Eta 場景轉換偵測修正**: sigmoid (η≤0.95) → 平滑能量比 + hard threshold (η=1.0 或 0.1)
+  - 修正舊版語音幀噪聲更新速度增加 ~10x 的問題
+  - VCTK 驗證: PESQ +0.085→+0.399, STOI -0.068→-0.010
+
+### v2.6.0 (2026-01-22)
 - ✨ **V3-4 架構重構**: 從 Laplacian-MMSE 改為 OMLSA-MCRA
   - 使用 MCRA 噪聲估計 + OMLSA 增益函數
   - 新增瞬態偵測 (energy ratio based η)
@@ -1208,10 +1213,11 @@ MIT License
   - 頻率範圍: 300Hz - 3400Hz
   - 映射函數: y = 0.1 + 0.9 * (1 - e^(-3*mean_power))
   - 時間平滑: α_vad = 0.95
-- ✨ **MCRA 瞬態偵測**:
-  - 能量比 β = E_cur / E_prev
-  - 適應因子 η = 0.95 / (1 + e^(20*(β-10)))
-  - β ≈ 1（穩定）→ η ≈ 0.95，β > 10（突增）→ η → 0
+- ✨ **MCRA 場景轉換偵測 (v2.7 更新)**:
+  - 平滑能量: E_smooth = 0.7 * E_smooth_prev + 0.3 * E_cur
+  - 能量比 β = E_smooth / E_smooth_prev
+  - Hard threshold: β > θ → η=0.1（加速噪聲更新），否則 η=1.0（不干擾）
+  - v2.7 修正: 舊版 sigmoid (η=0.95 上限) 導致語音幀噪聲更新速度增加 10x
 - 🔄 **OmlsaMcraDenoiser**: 替換 LaplacianMmseDenoiser
 
 ### v2.5.0 (2026-01-16)
