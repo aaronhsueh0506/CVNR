@@ -46,7 +46,13 @@ ENV/
 
 # 輸出文件
 output/
+output_vctk/
+output_py_v32/
 visualizations/
+
+# C 編譯產物
+c_impl/bin/
+c_impl/obj/
 
 # 測試結果
 benchmark_results/

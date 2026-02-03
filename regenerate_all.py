@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-重新生成所有 7 種方法的原始降噪輸出
+重新生成所有降噪方法的原始輸出
 
 保持原始採樣率，不進行 resample
 用於後續的 improvement 指標計算
@@ -22,7 +22,6 @@ from denoisers import (
     SppMmseDenoiser,
     MmseLsaDenoiser,
     PmmseDenoiser,
-    OmlsaMcraDenoiser,
     ImcraOmlsaDenoiser
 )
 
@@ -61,10 +60,6 @@ methods = {
     'V3-3': {
         'class': PmmseDenoiser,
         'config': 'config/v3_3_config.yaml'
-    },
-    'V3-4': {
-        'class': OmlsaMcraDenoiser,
-        'config': 'config/v3_4_config.yaml'
     },
     'V4': {
         'class': ImcraOmlsaDenoiser,
@@ -156,26 +151,15 @@ def get_denoiser_params_from_config(config, sr, fft_size):
         })
 
     # 噪聲估計參數
-    # V3-4 (OMLSA-MCRA) 直接使用 MCRA 參數，不需要 noise_method
     # V3/V3-2/V3-3 需要 noise_method 參數來選擇噪聲估計器
     gc = config.get('gain_calculation', {})
-    is_v3_4 = gc.get('method') == 'omlsa' and config.get('noise_estimation', {}).get('method') == 'mcra'
-    is_v3_series = 'spp' in config and not is_v3_4
+    is_v3_series = 'spp' in config
 
     if 'noise_estimation' in config:
         ne = config['noise_estimation']
         ne_method = ne.get('method', 'recursive_average')
 
-        if is_v3_4:
-            # V3-4: 直接傳遞 MCRA 參數（OmlsaMcraDenoiser 不接受 noise_method）
-            params.update({
-                'alpha_s': ne.get('alpha_s', 0.9),
-                'alpha_d': ne.get('alpha_d', 0.85),
-                'alpha_p': ne.get('alpha_p', 0.2),
-                'L': ne.get('L', 96),
-                'delta_db': ne.get('delta_db', 5.0)
-            })
-        elif is_v3_series:
+        if is_v3_series:
             if ne_method == 'mcra':
                 # V3/V3-2/V3-3 的 MCRA 噪聲估計參數
                 params.update({

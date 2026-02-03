@@ -70,11 +70,13 @@ class OmlsaGainCalculator:
         g_min: float = None
     ) -> np.ndarray:
         """
-        計算 OMLSA 增益
+        計算 OMLSA 增益 (Cohen 2002)
 
-        v1.5.0 改進：
-        1. 低 SPP 區域使用混合策略（線性+對數）
-        2. 限制幀間變化速率（防止震動）
+        OMLSA = MMSE-LSA + SPP 加權
+        公式: G = G_H1^p × G_min^(1-p)
+
+        這和 MMSE-LSA with SPP weighting 是同一個算法。
+        Cohen 2002 證明這是 signal presence uncertainty 下的最優估計器。
 
         參數:
             spp: 語音存在機率 (n_freqs,)
@@ -89,10 +91,12 @@ class OmlsaGainCalculator:
         g_min_effective = g_min if g_min is not None else self.g_min
 
         # 1. 計算 MMSE-LSA 增益（在 H1 假設下）
+        # G_H1 = (ξ/(1+ξ)) × exp(0.5 × E1(v))
         gain_h1 = self._mmse_lsa_gain(xi, gamma)
 
-        # 2. 對數域 SPP 加權（標準 OMLSA, Cohen 2002）
-        # log(G) = p * log(G_h1) + (1 - p) * log(G_min)
+        # 2. 對數域 SPP 加權（OMLSA, Cohen 2002）
+        # G = G_H1^p × G_min^(1-p)
+        # 等價於: log(G) = p×log(G_H1) + (1-p)×log(G_min)
         log_gain_h1 = np.log(gain_h1 + 1e-10)
         log_g_min_effective = np.log(g_min_effective + 1e-10)
         log_gain = spp * log_gain_h1 + (1 - spp) * log_g_min_effective

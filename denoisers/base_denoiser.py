@@ -29,7 +29,7 @@ class BaseDenoiser(ABC):
         self.n_fft = n_fft
         self.vad_freq_low = 300    # Hz
         self.vad_freq_high = 3400  # Hz
-        self.alpha_vad = 0.95      # VAD 平滑因子
+        self.alpha_vad = 0.5      # VAD 平滑因子
         self.vad_state = 1.0       # VAD 狀態
 
         # 計算頻率 bin 索引
@@ -81,9 +81,9 @@ class BaseDenoiser(ABC):
         基於語音頻帶 (300Hz - 3400Hz) 能量進行軟 VAD 處理。
         非語音幀會被衰減，語音幀保持不變。
 
-        映射函數: y = 0.1 + 0.9 * (1 - exp(-3 * sum_power))
-        - sum_power ≈ 0 → y ≈ 0.1 (非語音，衰減)
-        - sum_power ≈ 2 → y ≈ 1.0 (語音，保持)
+        映射函數: y = 0.1 + 0.9 * (1 - exp(-3 * mean_power))
+        - mean_power ≈ 0 → y ≈ 0.1 (非語音，衰減)
+        - mean_power > 1 → y ≈ 1.0 (語音，保持)
 
         參數:
             enhanced_mag: 增強後的幅度譜 (n_freqs,)
@@ -91,12 +91,12 @@ class BaseDenoiser(ABC):
         返回:
             vad_enhanced_mag: 經 VAD 處理的幅度譜 (n_freqs,)
         """
-        # 1. 提取語音頻帶功率（使用 sum 而非 mean，自然放大到合適範圍）
+        # 1. 提取語音頻帶功率（使用 mean）
         speech_band = enhanced_mag[self.vad_start_bin:self.vad_end_bin]
-        sum_power = np.sum(speech_band ** 2) + 1e-10
-
+        mean_power = np.mean(speech_band ** 2) + 1e-10
+        
         # 2. 映射到 [0.1, 1.0]
-        vad_inst = 0.1 + 0.9 * (1.0 - np.exp(-3.0 * sum_power))
+        vad_inst = 0.1 + 0.9 * (1.0 - np.exp(-3.0 * mean_power))
 
         # 3. 時間平滑
         self.vad_state = self.alpha_vad * self.vad_state + (1 - self.alpha_vad) * vad_inst

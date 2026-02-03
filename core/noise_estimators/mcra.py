@@ -38,6 +38,9 @@ class McraNoiseEstimator:
         L: 最小值窗口長度（幀），約 1 秒 @ 10ms 幀移
         delta_db: 偏差補償（dB），語音檢測閾值
         num_init_frames: 初始化使用的幀數
+        enable_eta: 場景轉換偵測開關（單幀能量比）
+        eta_beta_threshold: 能量比閾值，β > threshold 時觸發（預設 10.0）
+        eta_slope: sigmoid 斜率（預設 20.0）
     """
 
     def __init__(
@@ -47,7 +50,10 @@ class McraNoiseEstimator:
         alpha_p: float = 0.2,
         L: int = 96,
         delta_db: float = 5.0,
-        num_init_frames: int = 20
+        num_init_frames: int = 20,
+        enable_eta: bool = False,
+        eta_beta_threshold: float = 10.0,
+        eta_slope: float = 20.0
     ):
         self.alpha_s = alpha_s
         self.alpha_d = alpha_d
@@ -55,6 +61,9 @@ class McraNoiseEstimator:
         self.L = L
         self.delta = 10 ** (delta_db / 10)  # 線性域的 delta
         self.num_init_frames = num_init_frames
+        self.enable_eta = enable_eta
+        self.eta_beta_threshold = eta_beta_threshold
+        self.eta_slope = eta_slope
 
         # 狀態變量
         self.noise_psd = None       # 噪聲功率譜密度
@@ -62,6 +71,8 @@ class McraNoiseEstimator:
         self.S_min = None           # 最小值
         self.min_buffer = None      # 最小值追蹤緩衝區 (L, n_freqs)
         self.spp = None             # Speech Presence Probability
+        # 場景偵測狀態
+        self._prev_frame_power = None
 
         self.is_initialized = False
         self.frame_count = 0
@@ -104,6 +115,35 @@ class McraNoiseEstimator:
         self.frame_count = self.num_init_frames
 
         return self.noise_psd
+
+    def _compute_eta(self, power: np.ndarray) -> float:
+        """
+        場景轉換偵測：單幀能量比
+
+        公式：
+            β = E(n) / E(n-1)
+            if β > 25:  η = 0（硬切，極端能量突增）
+            else:       η = 0.95 / (1 + exp(slope · (β - threshold)))
+
+        當 β > threshold（能量突增）時，η → 0，加速噪聲更新
+        η 上限為 0.95，確保噪聲估計始終有微量更新
+        """
+        E_cur = np.sum(power)
+
+        if self._prev_frame_power is None:
+            self._prev_frame_power = E_cur
+            return 1.0
+
+        beta = E_cur / (self._prev_frame_power + 1e-10)
+        self._prev_frame_power = E_cur
+
+        if beta > 25.0:
+            return 0.0
+
+        exponent = np.clip(self.eta_slope * (beta - self.eta_beta_threshold), -700, 700)
+        eta = 0.95 / (1.0 + np.exp(exponent))
+
+        return eta
 
     def update(
         self,
@@ -163,6 +203,11 @@ class McraNoiseEstimator:
         # 當 SPP 低（噪聲段）時，α̃_d 接近 α_d，噪聲更新快
         tilde_alpha_d = self.alpha_d + (1 - self.alpha_d) * spp_for_update
 
+        # 8. 場景轉換偵測
+        if self.enable_eta:
+            eta = self._compute_eta(power)
+            tilde_alpha_d = tilde_alpha_d * eta
+
         # N(k,l) = α̃_d·N(k,l-1) + (1-α̃_d)·|Y(k,l)|²
         self.noise_psd = tilde_alpha_d * self.noise_psd + (1 - tilde_alpha_d) * power
 
@@ -177,6 +222,7 @@ class McraNoiseEstimator:
         self.S_min = None
         self.min_buffer = None
         self.spp = None
+        self._prev_frame_power = None
         self.is_initialized = False
         self.frame_count = 0
 

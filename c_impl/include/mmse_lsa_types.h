@@ -41,7 +41,7 @@ typedef struct {
     float g_min_db;         // Minimum gain in dB (-20)
     float alpha_g;          // Gain smoothing (0.7)
     float alpha_attack;     // Asymmetric attack (0.3)
-    float alpha_decay;      // Asymmetric decay (0.7)
+    float alpha_decay;      // Asymmetric decay (0.8 = alpha_g)
 
     // Eta scene change detection (in MCRA)
     bool enable_eta;            // Enable scene change detection (false)
@@ -93,7 +93,7 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
     config.g_min_db = -12.5f;
     config.alpha_g = 0.8f;
     config.alpha_attack = 0.3f;
-    config.alpha_decay = 0.7f;
+    config.alpha_decay = 0.8f;      // Match Python (= alpha_g)
 
     // Eta scene change detection (disabled by default)
     config.enable_eta = false;

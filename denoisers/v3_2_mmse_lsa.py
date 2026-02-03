@@ -70,11 +70,18 @@ class MmseLsaDenoiser(BaseDenoiser):
         L: int = 96,                # MCRA 最小值窗口長度
         delta_db: float = 5.0,      # MCRA 偏差補償 (dB)
         # v2.6 Soft VAD
-        enable_soft_vad: bool = False
+        enable_soft_vad: bool = False,
+        # v2.7 Eta scene change detection (MCRA only)
+        enable_eta: bool = False,
+        eta_beta_threshold: float = 10.0,
+        eta_slope: float = 20.0
     ):
         super().__init__(sample_rate, n_fft=fft_size)
         self.enable_soft_vad = enable_soft_vad
         self.noise_method = noise_method
+        self.enable_eta = enable_eta
+        self.eta_beta_threshold = eta_beta_threshold
+        self.eta_slope = eta_slope
 
         # 創建處理器
         self.processor = FrameProcessor(
@@ -99,7 +106,10 @@ class MmseLsaDenoiser(BaseDenoiser):
                 alpha_p=alpha_p,
                 L=L,
                 delta_db=delta_db,
-                num_init_frames=num_init_frames
+                num_init_frames=num_init_frames,
+                enable_eta=enable_eta,
+                eta_beta_threshold=eta_beta_threshold,
+                eta_slope=eta_slope
             )
         else:
             self.noise_estimator = RecursiveAverageNoiseEstimator(

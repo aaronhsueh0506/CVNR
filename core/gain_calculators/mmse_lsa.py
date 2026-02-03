@@ -12,11 +12,9 @@ MMSE-LSA Gain Calculator (Log-Spectral Amplitude)
     - STSA: 最小化 E[(|X| - |Xhat|)^2] (線性域)
     - LSA:  最小化 E[(log|X| - log|Xhat|)^2] (對數域)
 
-實現特點:
-    - 使用相同的 E1 公式計算基礎增益
-    - 在對數域進行 SPP 加權和時間平滑
-    - 更符合人耳對數感知特性 (Weber-Fechner 定律)
-    - 相比 STSA 產生更少的 musical noise
+兩種模式:
+    - use_spp_weighting=False: 純 MMSE-LSA，G = (ξ/(1+ξ)) × exp(0.5 × E1(v))
+    - use_spp_weighting=True:  OMLSA 風格，G = G_H1^p × G_min^(1-p)
 """
 
 import numpy as np
@@ -34,10 +32,14 @@ class MmseLsaGainCalculator:
     """
     MMSE 對數短時頻譜幅度估計器
 
-    LSA vs STSA 的關鍵區別:
-    1. LSA 在對數域進行 SPP 加權: log(G) = p*log(G_mmse) + (1-p)*log(g_min)
-    2. LSA 在對數域進行時間平滑: log(G_t) = α*log(G_{t-1}) + (1-α)*log(G_t)
-    3. 這使得小增益被抑制更多,大增益變化更平緩
+    兩種模式:
+    1. use_spp_weighting=False (純 MMSE-LSA):
+       G = (ξ/(1+ξ)) × exp(0.5 × E1(v))
+       直接使用 MMSE-LSA 增益，無 SPP 加權
+
+    2. use_spp_weighting=True (OMLSA 風格):
+       G = G_H1^p × G_min^(1-p)
+       使用 SPP 加權的對數域混合
 
     v1.5.0: 支持非對稱平滑
     - Attack (增益上升): 使用 alpha_attack (快速響應)
@@ -46,7 +48,8 @@ class MmseLsaGainCalculator:
     參數:
         g_min_db: 最小增益 (dB), -15 到 -25
         alpha_g: 增益時間平滑因子, 0.6-0.8 (對稱平滑時使用)
-        use_linear_spp_weighting: True=線性域加權(退化為STSA), False=對數域加權(推薦)
+        use_spp_weighting: True=使用SPP加權(OMLSA), False=純MMSE-LSA
+        use_linear_spp_weighting: True=線性域加權, False=對數域加權(僅當use_spp_weighting=True時有效)
         use_asymmetric_smoothing: 是否使用非對稱平滑 (v1.5.0)
         alpha_attack: Attack 平滑因子 (增益上升時使用，預設 0.3)
         alpha_decay: Decay 平滑因子 (增益下降時使用，預設 alpha_g)
@@ -56,6 +59,7 @@ class MmseLsaGainCalculator:
         self,
         g_min_db: float = -20.0,
         alpha_g: float = 0.7,
+        use_spp_weighting: bool = False,
         use_linear_spp_weighting: bool = False,
         use_asymmetric_smoothing: bool = True,
         alpha_attack: float = 0.3,
@@ -64,6 +68,7 @@ class MmseLsaGainCalculator:
         self.g_min = 10 ** (g_min_db / 10)
         self.log_g_min = np.log(self.g_min + 1e-10)
         self.alpha_g = alpha_g
+        self.use_spp_weighting = use_spp_weighting
         self.use_linear_spp_weighting = use_linear_spp_weighting
 
         # v1.5.0: 非對稱平滑參數
@@ -98,6 +103,7 @@ class MmseLsaGainCalculator:
 
         # 基礎 MMSE 增益 (與 MMSE-STSA 簡化版相同公式)
         gain_mmse = self._mmse_gain_base(xi, gamma)
+        gain_mmse = np.clip(gain_mmse, g_min_effective, 1.0)
 
         # 關鍵差異: 對數域 vs 線性域加權
         if self.use_linear_spp_weighting:
