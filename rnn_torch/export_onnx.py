@@ -1,7 +1,7 @@
 """
 RNNoise ONNX 匯出 — 逐幀串流推論
 
-流程: torch.onnx.export → onnxoptimizer (圖清理) → ORT offline (runtime 融合)
+流程: torch.onnx.export → onnxoptimizer (圖清理) → shape inference
 
 用法:
     python export_onnx.py --model output/rnnoise_best.pth --output rnnoise.onnx
@@ -97,32 +97,6 @@ def optimize_with_onnxoptimizer(inp, outp):
     return outp
 
 
-def optimize_with_ort_offline(inp, outp):
-    """ORT offline: runtime 級優化 (Conv+Tanh fusion 等)"""
-    try:
-        import onnxruntime as ort
-    except ImportError:
-        print("[skip] onnxruntime 未安裝，略過 ORT 離線最佳化")
-        import onnx
-        onnx.save(onnx.load(inp), outp)
-        return outp
-
-    import onnx
-    m = onnx.load(inp)
-    before = len(m.graph.node)
-
-    so = ort.SessionOptions()
-    so.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-    so.optimized_model_filepath = outp
-
-    sess = ort.InferenceSession(inp, so, providers=["CPUExecutionProvider"])
-    del sess  # 觸發寫檔
-
-    m2 = onnx.load(outp)
-    after = len(m2.graph.node)
-    print(f"[ORT offline] {before} → {after} nodes")
-    return outp
-
 
 # ============================================================
 # 匯出
@@ -159,19 +133,19 @@ def export(args):
     print_stats("torch.onnx.export", raw_path)
 
     # 2) onnxoptimizer
-    opt_path = args.output.replace('.onnx', '_opt.onnx')
-    optimize_with_onnxoptimizer(raw_path, opt_path)
-    print_stats("onnxoptimizer", opt_path)
+    optimize_with_onnxoptimizer(raw_path, args.output)
+    print_stats("onnxoptimizer", args.output)
 
-    # 3) ORT offline
-    optimize_with_ort_offline(opt_path, args.output)
-    print_stats("ORT offline (final)", args.output)
+    # 3) shape inference — 確保所有中間 tensor 都有 shape 資訊
+    m = onnx.load(args.output)
+    m = onnx.shape_inference.infer_shapes(m)
+    onnx.save(m, args.output)
+    print_stats("shape inference (final)", args.output)
 
     # 清理中間檔
     import os
-    for p in [raw_path, opt_path]:
-        if os.path.exists(p) and p != args.output:
-            os.remove(p)
+    if os.path.exists(raw_path) and raw_path != args.output:
+        os.remove(raw_path)
 
     if args.verify:
         verify_output(model, args.output)
