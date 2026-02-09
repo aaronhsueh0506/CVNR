@@ -1,0 +1,1749 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC VAD 技術分析報告</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Microsoft JhengHei', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.6;
+            font-size: 14pt;
+        }
+
+        .slide {
+            width: 100vw;
+            height: 56.25vw; /* 16:9 ratio */
+            max-height: 100vh;
+            max-width: 177.78vh; /* 16:9 ratio */
+            margin: 0 auto;
+            padding: 50px 70px;
+            background: linear-gradient(135deg, #ffffff 0%, #f8f9fa 100%);
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .slide::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 6px;
+            background: linear-gradient(90deg, #0066cc, #00a8e8);
+        }
+
+        .slide-number {
+            position: absolute;
+            bottom: 25px;
+            right: 40px;
+            font-size: 14px;
+            color: #999;
+            font-weight: 500;
+        }
+
+        .logo {
+            position: absolute;
+            bottom: 25px;
+            left: 40px;
+            font-size: 14pt;
+            color: #999;
+        }
+
+        h1 {
+            font-size: 42pt;
+            color: #0066cc;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+
+        h2 {
+            font-size: 32pt;
+            color: #1a1a1a;
+            margin-bottom: 25px;
+            font-weight: 600;
+            padding-bottom: 12px;
+            border-bottom: 3px solid #0066cc;
+            display: inline-block;
+        }
+
+        h3 {
+            font-size: 18pt;
+            color: #0066cc;
+            margin: 20px 0 12px 0;
+            font-weight: 600;
+        }
+
+        .title-slide {
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            background: linear-gradient(135deg, #ffffff 0%, #e8f4fc 100%);
+        }
+
+        .title-slide h1 {
+            font-size: 56px;
+            margin-bottom: 20px;
+        }
+
+        .title-slide .subtitle {
+            font-size: 24px;
+            color: #666;
+            margin-bottom: 40px;
+            font-weight: 400;
+        }
+
+        .title-slide .divider {
+            width: 120px;
+            height: 4px;
+            background: linear-gradient(90deg, #0066cc, #00a8e8);
+            margin: 0 auto 40px;
+        }
+
+        .title-slide .info {
+            font-size: 16px;
+            color: #888;
+        }
+
+        .content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .two-column {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 40px;
+            flex: 1;
+        }
+
+        .three-column {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 30px;
+            flex: 1;
+        }
+
+        .four-column {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 20px;
+        }
+
+        .box {
+            background: #ffffff;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+
+        .box.primary {
+            border-left: 4px solid #0066cc;
+            background: linear-gradient(135deg, #f0f7ff 0%, #ffffff 100%);
+        }
+
+        .box.success {
+            border-left: 4px solid #28a745;
+            background: linear-gradient(135deg, #f0fff4 0%, #ffffff 100%);
+        }
+
+        .box.warning {
+            border-left: 4px solid #ffc107;
+            background: linear-gradient(135deg, #fffef0 0%, #ffffff 100%);
+        }
+
+        .box.danger {
+            border-left: 4px solid #dc3545;
+            background: linear-gradient(135deg, #fff5f5 0%, #ffffff 100%);
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14pt;
+            background: #fff;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+
+        th, td {
+            padding: 12px 16px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+
+        th {
+            background: #0066cc;
+            color: #fff;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 14pt;
+            letter-spacing: 0.5px;
+        }
+
+        tr:nth-child(even) {
+            background: #f8f9fa;
+        }
+
+        tr:hover {
+            background: #f0f7ff;
+        }
+
+        .code-block {
+            background: #2d3748;
+            color: #e2e8f0;
+            border-radius: 6px;
+            padding: 15px 20px;
+            font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+            font-size: 14pt;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+
+        .diagram {
+            background: #f8f9fa;
+            border: 1px solid #e0e0e0;
+            border-radius: 6px;
+            padding: 20px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 14pt;
+            line-height: 1.5;
+            white-space: pre;
+            overflow-x: auto;
+            color: #333;
+        }
+
+        ul {
+            margin: 10px 0 10px 20px;
+        }
+
+        li {
+            margin: 8px 0;
+            color: #444;
+            font-size: 14pt;
+        }
+
+        .tag {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 4px;
+            font-size: 12pt;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .tag-success { background: #d4edda; color: #155724; }
+        .tag-danger { background: #f8d7da; color: #721c24; }
+        .tag-warning { background: #fff3cd; color: #856404; }
+        .tag-info { background: #cce5ff; color: #004085; }
+
+        .flow-chart {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+            padding: 20px 0;
+            flex-wrap: wrap;
+        }
+
+        .flow-box {
+            background: #fff;
+            border: 2px solid #0066cc;
+            border-radius: 8px;
+            padding: 12px 20px;
+            text-align: center;
+            font-size: 14pt;
+            font-weight: 500;
+            color: #0066cc;
+            min-width: 120px;
+        }
+
+        .flow-box small {
+            display: block;
+            color: #666;
+            font-weight: 400;
+            margin-top: 4px;
+        }
+
+        .flow-arrow {
+            font-size: 20px;
+            color: #0066cc;
+        }
+
+        .key-point {
+            background: linear-gradient(90deg, #e8f4fc, #ffffff);
+            border-left: 4px solid #0066cc;
+            padding: 15px 20px;
+            margin: 15px 0;
+            border-radius: 0 6px 6px 0;
+        }
+
+        .metric-row {
+            display: flex;
+            justify-content: space-around;
+            padding: 20px 0;
+        }
+
+        .metric {
+            text-align: center;
+            padding: 20px 30px;
+            background: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+
+        .metric-value {
+            font-size: 36px;
+            font-weight: 700;
+            color: #0066cc;
+        }
+
+        .metric-label {
+            font-size: 14pt;
+            color: #666;
+            margin-top: 8px;
+        }
+
+        .band-chart {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-around;
+            height: 220px;
+            padding: 15px 20px 45px 20px;
+            background: #fff;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+            position: relative;
+        }
+
+        .band-bar {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            position: relative;
+        }
+
+        .band-value {
+            width: 45px;
+            border-radius: 4px 4px 0 0;
+            transition: height 0.3s;
+            min-height: 8px;
+        }
+
+        .band-value.noise {
+            background: linear-gradient(to top, #dc3545, #ff6b6b);
+        }
+
+        .band-value.speech {
+            background: linear-gradient(to top, #28a745, #5cb85c);
+        }
+
+        .band-value.mixed {
+            background: linear-gradient(to top, #dc3545 40%, #28a745 40%);
+        }
+
+        .band-label {
+            position: absolute;
+            bottom: -40px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 11pt;
+            color: #666;
+            text-align: center;
+            line-height: 1.3;
+            white-space: nowrap;
+        }
+
+        .comparison-table {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+        }
+
+        .vs-badge {
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            background: #0066cc;
+            color: #fff;
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            font-size: 14px;
+            z-index: 10;
+        }
+
+        .timeline {
+            position: relative;
+            padding-left: 25px;
+        }
+
+        .timeline::before {
+            content: '';
+            position: absolute;
+            left: 6px;
+            top: 5px;
+            bottom: 5px;
+            width: 2px;
+            background: #0066cc;
+        }
+
+        .timeline-item {
+            position: relative;
+            padding: 10px 0 10px 20px;
+        }
+
+        .timeline-item::before {
+            content: '';
+            position: absolute;
+            left: -23px;
+            top: 15px;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #0066cc;
+            border: 2px solid #fff;
+            box-shadow: 0 0 0 2px #0066cc;
+        }
+
+        .section-number {
+            display: inline-block;
+            width: 30px;
+            height: 30px;
+            background: #0066cc;
+            color: #fff;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            font-weight: 600;
+            margin-right: 10px;
+            font-size: 14px;
+        }
+
+        .agenda-item {
+            display: flex;
+            align-items: flex-start;
+            padding: 15px;
+            background: #fff;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+
+        .agenda-content {
+            margin-left: 15px;
+        }
+
+        .agenda-title {
+            font-weight: 600;
+            color: #1a1a1a;
+            margin-bottom: 5px;
+        }
+
+        .agenda-desc {
+            font-size: 14pt;
+            color: #666;
+        }
+
+        .highlight-box {
+            background: #fff3cd;
+            border: 1px solid #ffc107;
+            border-radius: 8px;
+            padding: 15px 20px;
+            margin: 15px 0;
+        }
+
+        .conclusion-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 25px;
+        }
+
+        .conclusion-card {
+            background: #fff;
+            border-radius: 12px;
+            padding: 25px;
+            text-align: center;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+            border-top: 4px solid #0066cc;
+        }
+
+        .conclusion-card .snr {
+            font-size: 28px;
+            font-weight: 700;
+            color: #0066cc;
+            margin-bottom: 10px;
+        }
+
+        .page-break {
+            page-break-after: always;
+        }
+
+        @media print {
+            .slide {
+                width: 100%;
+                height: auto;
+                min-height: 100vh;
+                max-height: none;
+                max-width: none;
+                page-break-after: always;
+                box-shadow: none;
+            }
+        }
+
+        @media screen and (max-width: 1200px) {
+            .slide {
+                padding: 30px 40px;
+            }
+            h1 { font-size: 32px; }
+            h2 { font-size: 26px; }
+            .title-slide h1 { font-size: 42px; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- Slide 1: Title -->
+<div class="slide title-slide page-break">
+    <h1>WebRTC VAD 技術分析</h1>
+    <div class="divider"></div>
+    <div class="subtitle">Voice Activity Detection 演算法深度解析</div>
+    <div class="info">
+        <p>基於高斯混合模型 (GMM) 的語音活動檢測技術研究</p>
+    </div>
+    <div class="slide-number">1 / 20</div>
+</div>
+
+<!-- Slide 2: Agenda -->
+<div class="slide page-break">
+    <h2>報告大綱</h2>
+    <div class="content">
+        <div class="two-column">
+            <div>
+                <div class="agenda-item">
+                    <span class="section-number">1</span>
+                    <div class="agenda-content">
+                        <div class="agenda-title">系統架構概述</div>
+                        <div class="agenda-desc">頻帶劃分、特徵擷取、整體流程</div>
+                    </div>
+                </div>
+                <div class="agenda-item">
+                    <span class="section-number">2</span>
+                    <div class="agenda-content">
+                        <div class="agenda-title">GMM 核心演算法</div>
+                        <div class="agenda-desc">機率計算、決策邏輯、模型更新</div>
+                    </div>
+                </div>
+                <div class="agenda-item">
+                    <span class="section-number">3</span>
+                    <div class="agenda-content">
+                        <div class="agenda-title">GMM vs 能量閾值比較</div>
+                        <div class="agenda-desc">技術差異、優劣分析</div>
+                    </div>
+                </div>
+            </div>
+            <div>
+                <div class="agenda-item">
+                    <span class="section-number">4</span>
+                    <div class="agenda-content">
+                        <div class="agenda-title">場景效能分析</div>
+                        <div class="agenda-desc">純噪音、高/低 SNR、環境變化</div>
+                    </div>
+                </div>
+                <div class="agenda-item">
+                    <span class="section-number">5</span>
+                    <div class="agenda-content">
+                        <div class="agenda-title">參數調整指南</div>
+                        <div class="agenda-desc">效能優化、問題排除</div>
+                    </div>
+                </div>
+                <div class="agenda-item">
+                    <span class="section-number">6</span>
+                    <div class="agenda-content">
+                        <div class="agenda-title">結論與建議</div>
+                        <div class="agenda-desc">適用場景、最佳實踐</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">2 / 20</div>
+    <div class="logo">WebRTC VAD Analysis</div>
+</div>
+
+<!-- Slide 3: System Overview -->
+<div class="slide page-break">
+    <h2>系統架構總覽</h2>
+    <div class="content">
+        <div class="flow-chart">
+            <div class="flow-box">音訊輸入<small>8/16/32/48 kHz</small></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-box">降採樣<small>至 8 kHz</small></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-box">濾波器組<small>6 頻帶分解</small></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-box">能量計算<small>log(energy)</small></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-box">GMM 分類<small>機率比較</small></div>
+            <div class="flow-arrow">→</div>
+            <div class="flow-box">VAD 輸出<small>0 / 1</small></div>
+        </div>
+        <div class="two-column" style="margin-top: 30px;">
+            <div class="box primary">
+                <h3>輸入規格</h3>
+                <ul>
+                    <li><strong>取樣率：</strong>8 / 16 / 32 / 48 kHz</li>
+                    <li><strong>幀長度：</strong>10 / 20 / 30 ms</li>
+                    <li><strong>格式：</strong>16-bit PCM mono</li>
+                </ul>
+            </div>
+            <div class="box success">
+                <h3>輸出結果</h3>
+                <ul>
+                    <li><strong>0：</strong>無語音（噪音/靜音）</li>
+                    <li><strong>1：</strong>檢測到語音</li>
+                    <li><strong>2-6：</strong>語音 + 滯後延續</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">3 / 20</div>
+    <div class="logo">WebRTC VAD Analysis</div>
+</div>
+
+<!-- Slide 4: Frequency Bands -->
+<div class="slide page-break">
+    <h2>六頻帶劃分架構</h2>
+    <div class="content">
+        <div class="two-column">
+            <div class="diagram" style="font-size: 14pt;">
+輸入音訊 (8kHz, 0-4000Hz)
+           │
+           ▼
+  ┌────────────────────────┐
+  │  SplitFilter @ 2000 Hz │
+  └────────────────────────┘
+        │              │
+  [2000-4000Hz]   [0-2000Hz]
+        │              │
+        ▼              ▼
+  ┌──────────┐   ┌──────────┐
+  │Split 3kHz│   │Split 1kHz│
+  └──────────┘   └──────────┘
+     │    │         │    │
+     ▼    ▼         ▼    ▼
+  Band5 Band4    Band3  ...
+  3-4k  2-3k     1-2k   │
+                       ▼
+              Band2: 500Hz-1kHz
+              Band1: 250-500Hz
+              Band0: 80-250Hz
+            </div>
+            <div>
+                <table>
+                    <tr>
+                        <th>頻帶</th>
+                        <th>頻率範圍</th>
+                        <th>權重</th>
+                        <th>特性</th>
+                    </tr>
+                    <tr>
+                        <td>Band 0</td>
+                        <td>80-250 Hz</td>
+                        <td>6</td>
+                        <td>基頻區域</td>
+                    </tr>
+                    <tr>
+                        <td>Band 1</td>
+                        <td>250-500 Hz</td>
+                        <td>8</td>
+                        <td>第一共振峰</td>
+                    </tr>
+                    <tr>
+                        <td>Band 2</td>
+                        <td>500-1000 Hz</td>
+                        <td>10</td>
+                        <td>語音主能量</td>
+                    </tr>
+                    <tr>
+                        <td>Band 3</td>
+                        <td>1000-2000 Hz</td>
+                        <td>12</td>
+                        <td>第二共振峰</td>
+                    </tr>
+                    <tr>
+                        <td>Band 4</td>
+                        <td>2000-3000 Hz</td>
+                        <td>14</td>
+                        <td>輔音區域</td>
+                    </tr>
+                    <tr>
+                        <td>Band 5</td>
+                        <td>3000-4000 Hz</td>
+                        <td>16</td>
+                        <td>高頻諧波</td>
+                    </tr>
+                </table>
+                <div class="key-point" style="margin-top: 15px;">
+                    <strong>設計原理：</strong>高頻帶權重較高，因噪音多集中於低頻
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">4 / 20</div>
+    <div class="logo">WebRTC VAD Analysis</div>
+</div>
+
+<!-- Slide 5: GMM Structure -->
+<div class="slide page-break">
+    <h2>GMM 模型結構</h2>
+    <div class="content">
+        <div class="two-column">
+            <div class="box">
+                <h3>模型組成</h3>
+                <div class="diagram" style="font-size: 14pt; margin-top: 10px;">
+每個頻帶有兩組模型：
+
+┌─────────────────────────────┐
+│     Noise Model (H0)        │
+│  ┌──────────┬──────────┐    │
+│  │Gaussian 0│Gaussian 1│    │
+│  │ mean,std │ mean,std │    │
+│  │  weight  │  weight  │    │
+│  └──────────┴──────────┘    │
+└─────────────────────────────┘
+
+┌─────────────────────────────┐
+│    Speech Model (H1)        │
+│  ┌──────────┬──────────┐    │
+│  │Gaussian 0│Gaussian 1│    │
+│  │ mean,std │ mean,std │    │
+│  │  weight  │  weight  │    │
+│  └──────────┴──────────┘    │
+└─────────────────────────────┘
+
+總計: 2 models x 6 bands x 2 Gaussians
+    = 24 組高斯參數
+                </div>
+            </div>
+            <div>
+                <div class="box primary" style="margin-bottom: 20px;">
+                    <h3>參數儲存格式</h3>
+                    <table style="font-size: 14pt; margin-top: 10px;">
+                        <tr>
+                            <th>參數</th>
+                            <th>數量</th>
+                            <th>Q格式</th>
+                        </tr>
+                        <tr>
+                            <td>noise_means</td>
+                            <td>12</td>
+                            <td>Q7</td>
+                        </tr>
+                        <tr>
+                            <td>noise_stds</td>
+                            <td>12</td>
+                            <td>Q7</td>
+                        </tr>
+                        <tr>
+                            <td>speech_means</td>
+                            <td>12</td>
+                            <td>Q7</td>
+                        </tr>
+                        <tr>
+                            <td>speech_stds</td>
+                            <td>12</td>
+                            <td>Q7</td>
+                        </tr>
+                    </table>
+                </div>
+                <div class="box">
+                    <h3>Q7 定點數轉換</h3>
+                    <p style="margin-top: 10px; font-size: 14px;">
+                        <strong>實際值 = 儲存值 / 128</strong><br>
+                        <span style="color: #666;">例: mean = 8306 → 64.9 dB</span>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">5 / 20</div>
+    <div class="logo">WebRTC VAD Analysis</div>
+</div>
+
+<!-- Slide 6: Probability Calculation -->
+<div class="slide page-break">
+    <h2>機率計算與決策流程</h2>
+    <div class="content">
+        <div class="two-column">
+            <div>
+                <h3>機率計算公式</h3>
+                <div class="code-block" style="font-size: 14pt;">
+// 高斯機率密度函數
+P(x|μ,σ) = (1/σ) × exp(-(x-μ)²/(2σ²))
+
+// 對每個頻帶計算
+P(noise)  = Σ weight[k] × P(feature|noise)
+P(speech) = Σ weight[k] × P(feature|speech)
+
+// 對數似然比 (LLR)
+LLR = log₂(P(speech)) - log₂(P(noise))
+                </div>
+                <h3 style="margin-top: 20px;">LLR 解讀</h3>
+                <div class="box" style="padding: 15px;">
+                    <p><strong>LLR > 0</strong> → 偏向語音</p>
+                    <p><strong>LLR < 0</strong> → 偏向噪音</p>
+                    <p><strong>LLR = 0</strong> → 不確定</p>
+                </div>
+            </div>
+            <div>
+                <h3>決策邏輯</h3>
+                <div class="box primary" style="margin-bottom: 15px;">
+                    <h3>局部測試 (Local Test)</h3>
+                    <div class="code-block" style="font-size: 14pt;">
+if (LLR[band] × 4 > localThreshold)
+    vadflag = 1;  // 單頻帶判定
+                    </div>
+                </div>
+                <div class="box success">
+                    <h3>全局測試 (Global Test)</h3>
+                    <div class="code-block" style="font-size: 14pt;">
+sum = Σ (LLR[i] × weight[i]);
+if (sum >= globalThreshold)
+    vadflag = 1;  // 全局判定
+                    </div>
+                </div>
+                <div class="key-point" style="margin-top: 15px; font-size: 14pt;">
+                    任一測試通過即判定為語音
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">6 / 20</div>
+    <div class="logo">WebRTC VAD Analysis</div>
+</div>
+
+<!-- Slide 7: Mode Settings -->
+<div class="slide page-break">
+    <h2>四種積極模式設定</h2>
+    <div class="content">
+        <table>
+            <tr>
+                <th>Mode</th>
+                <th>名稱</th>
+                <th>Local Threshold</th>
+                <th>Global Threshold</th>
+                <th>適用場景</th>
+                <th>特性</th>
+            </tr>
+            <tr>
+                <td><span class="tag tag-info">0</span></td>
+                <td>Quality</td>
+                <td>24</td>
+                <td>57</td>
+                <td>高品質通話</td>
+                <td>避免漏檢，可能有誤檢</td>
+            </tr>
+            <tr>
+                <td><span class="tag tag-success">1</span></td>
+                <td>Low Bitrate</td>
+                <td>37</td>
+                <td>100</td>
+                <td>一般使用</td>
+                <td>平衡模式</td>
+            </tr>
+            <tr>
+                <td><span class="tag tag-warning">2</span></td>
+                <td>Aggressive</td>
+                <td>82</td>
+                <td>285</td>
+                <td>過濾背景噪音</td>
+                <td>較嚴格判定</td>
+            </tr>
+            <tr>
+                <td><span class="tag tag-danger">3</span></td>
+                <td>Very Aggressive</td>
+                <td>94</td>
+                <td>1100</td>
+                <td>嚴格過濾</td>
+                <td>可能漏檢部分語音</td>
+            </tr>
+        </table>
+        <div class="two-column" style="margin-top: 30px;">
+            <div class="box warning">
+                <h3>閾值越低</h3>
+                <ul>
+                    <li>更容易判定為語音</li>
+                    <li>減少漏檢 (False Negative)</li>
+                    <li>可能增加誤檢 (False Positive)</li>
+                </ul>
+            </div>
+            <div class="box primary">
+                <h3>閾值越高</h3>
+                <ul>
+                    <li>更嚴格的語音判定</li>
+                    <li>減少誤檢 (False Positive)</li>
+                    <li>可能增加漏檢 (False Negative)</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">7 / 20</div>
+    <div class="logo">WebRTC VAD Analysis</div>
+</div>
+
+<!-- Slide 8: Model Update -->
+<div class="slide page-break">
+    <h2>模型更新機制</h2>
+    <div class="content">
+        <div class="two-column">
+            <div class="box danger">
+                <h3>噪音模型更新</h3>
+                <p style="margin: 10px 0;"><strong>條件：</strong>vadflag = 0 (判定為噪音)</p>
+                <div class="code-block" style="font-size: 14pt;">
+// 更新速率 (較慢)
+kNoiseUpdateConst = 655  // ≈ 2%
+
+// 均值更新
+nmk_new = nmk_old + delta × 0.02
+
+// 長期背景修正 (追蹤最小值)
+nmk = nmk + (min_100frames - nmk) × 0.6
+                </div>
+                <div class="key-point" style="margin-top: 15px; font-size: 14pt;">
+                    更新較慢，保持穩定性
+                </div>
+            </div>
+            <div class="box success">
+                <h3>語音模型更新</h3>
+                <p style="margin: 10px 0;"><strong>條件：</strong>vadflag = 1 (判定為語音)</p>
+                <div class="code-block" style="font-size: 14pt;">
+// 更新速率 (較快)
+kSpeechUpdateConst = 6554  // ≈ 20%
+
+// 均值更新
+smk_new = smk_old + delta × 0.2
+
+// 方差更新
+ssk_new = ssk_old + correction
+                </div>
+                <div class="key-point" style="margin-top: 15px; font-size: 14pt;">
+                    更新較快，適應不同說話者
+                </div>
+            </div>
+        </div>
+        <div class="highlight-box" style="margin-top: 20px;">
+            <strong>模型分離保護：</strong>當語音與噪音模型過於接近時，系統自動將語音模型上推 80%，噪音模型下推 20%，確保區分能力。
+        </div>
+    </div>
+    <div class="slide-number">8 / 20</div>
+    <div class="logo">WebRTC VAD Analysis</div>
+</div>
+
+<!-- Slide 9: GMM vs Energy Threshold -->
+<div class="slide page-break">
+    <h2>GMM vs 簡單能量閾值</h2>
+    <div class="content">
+        <div class="comparison-table" style="position: relative;">
+            <div class="box primary">
+                <h3 style="text-align: center;">GMM VAD</h3>
+                <div class="diagram" style="font-size: 14pt; text-align: center;">
+輸入 → 6頻帶分解 → 各頻帶能量
+              ↓
+      GMM 機率計算
+    P(speech), P(noise)
+              ↓
+      LLR = log(Ps/Pn)
+              ↓
+    加權決策 + 閾值比較
+              ↓
+         VAD 輸出
+                </div>
+            </div>
+            <div class="box">
+                <h3 style="text-align: center;">簡單能量閾值</h3>
+                <div class="diagram" style="font-size: 14pt; text-align: center;">
+輸入 → 計算總能量
+              ↓
+        E = Σ x[n]²
+              ↓
+   if (E > threshold)
+              ↓
+         VAD 輸出
+                </div>
+            </div>
+        </div>
+        <table style="margin-top: 25px;">
+            <tr>
+                <th>特性</th>
+                <th>GMM VAD</th>
+                <th>簡單能量閾值</th>
+            </tr>
+            <tr>
+                <td>特徵維度</td>
+                <td>6 維 (各頻帶)</td>
+                <td>1 維 (總能量)</td>
+            </tr>
+            <tr>
+                <td>頻譜資訊</td>
+                <td><span class="tag tag-success">保留</span></td>
+                <td><span class="tag tag-danger">丟失</span></td>
+            </tr>
+            <tr>
+                <td>適應性</td>
+                <td><span class="tag tag-success">自動更新</span></td>
+                <td><span class="tag tag-warning">需手動調整</span></td>
+            </tr>
+            <tr>
+                <td>計算複雜度</td>
+                <td>中</td>
+                <td>低</td>
+            </tr>
+        </table>
+    </div>
+    <div class="slide-number">9 / 20</div>
+    <div class="logo">WebRTC VAD Analysis</div>
+</div>
+
+<!-- Slide 10: Why Spectrum Matters -->
+<div class="slide page-break">
+    <h2>為什麼頻譜分解很重要</h2>
+    <div class="content">
+        <div class="two-column">
+            <div>
+                <h3>風扇噪音 vs 人聲頻譜</h3>
+                <div class="band-chart">
+                    <div class="band-bar">
+                        <div class="band-value noise" style="height: 120px;"></div>
+                        <div class="band-label">Band0<br>噪音</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value noise" style="height: 90px;"></div>
+                        <div class="band-label">Band1</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value noise" style="height: 60px;"></div>
+                        <div class="band-label">Band2</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value noise" style="height: 38px;"></div>
+                        <div class="band-label">Band3</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value noise" style="height: 20px;"></div>
+                        <div class="band-label">Band4</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value noise" style="height: 12px;"></div>
+                        <div class="band-label">Band5</div>
+                    </div>
+                </div>
+                <p style="text-align: center; color: #dc3545; font-size: 14pt; margin-top: 50px;">
+                    ■ 風扇噪音：能量集中在低頻
+                </p>
+            </div>
+            <div>
+                <h3>&nbsp;</h3>
+                <div class="band-chart">
+                    <div class="band-bar">
+                        <div class="band-value speech" style="height: 55px;"></div>
+                        <div class="band-label">Band0<br>語音</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value speech" style="height: 95px;"></div>
+                        <div class="band-label">Band1</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value speech" style="height: 115px;"></div>
+                        <div class="band-label">Band2</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value speech" style="height: 105px;"></div>
+                        <div class="band-label">Band3</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value speech" style="height: 75px;"></div>
+                        <div class="band-label">Band4</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value speech" style="height: 55px;"></div>
+                        <div class="band-label">Band5</div>
+                    </div>
+                </div>
+                <p style="text-align: center; color: #28a745; font-size: 14pt; margin-top: 50px;">
+                    ■ 人聲：能量分佈均勻，中頻較高
+                </p>
+            </div>
+        </div>
+        <div class="two-column" style="margin-top: 25px;">
+            <div class="box danger">
+                <h3>簡單能量閾值的問題</h3>
+                <ul>
+                    <li>風扇噪音和人聲總能量可能相近</li>
+                    <li>只看總能量無法區分</li>
+                    <li>容易誤判</li>
+                </ul>
+            </div>
+            <div class="box success">
+                <h3>GMM 的優勢</h3>
+                <ul>
+                    <li>學習語音在各頻帶的分佈模式</li>
+                    <li>學習噪音在各頻帶的分佈模式</li>
+                    <li>透過頻譜差異區分</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">10 / 20</div>
+    <div class="logo">WebRTC VAD Analysis</div>
+</div>
+
+<!-- Slide 11: Scenario 1 - Pure Noise -->
+<div class="slide page-break">
+    <h2>場景分析 (1)：純噪音</h2>
+    <div class="content">
+        <div class="two-column" style="gap: 25px;">
+            <div>
+                <h3 style="margin-bottom: 8px;">頻譜特徵 - 辦公室背景噪音</h3>
+                <div class="band-chart" style="height: 180px; padding-bottom: 35px;">
+                    <div class="band-bar">
+                        <div class="band-value noise" style="height: 100px;"></div>
+                        <div class="band-label">Band0<br>45dB</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value noise" style="height: 78px;"></div>
+                        <div class="band-label">Band1<br>38dB</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value noise" style="height: 58px;"></div>
+                        <div class="band-label">Band2<br>30dB</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value noise" style="height: 40px;"></div>
+                        <div class="band-label">Band3<br>22dB</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value noise" style="height: 28px;"></div>
+                        <div class="band-label">Band4<br>15dB</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value noise" style="height: 20px;"></div>
+                        <div class="band-label">Band5<br>12dB</div>
+                    </div>
+                </div>
+                <table style="font-size: 13pt; margin-top: 45px;">
+                    <tr><th>頻帶</th><th>P(noise)</th><th>P(speech)</th><th>LLR</th></tr>
+                    <tr><td>Band 0</td><td style="color:#dc3545;">0.85</td><td>0.12</td><td style="color:#dc3545;">-2.8</td></tr>
+                    <tr><td>Band 1</td><td style="color:#dc3545;">0.78</td><td>0.18</td><td style="color:#dc3545;">-2.1</td></tr>
+                    <tr><td>Band 2</td><td style="color:#dc3545;">0.72</td><td>0.25</td><td style="color:#dc3545;">-1.5</td></tr>
+                    <tr><td>Band 3</td><td style="color:#dc3545;">0.68</td><td>0.28</td><td style="color:#dc3545;">-1.3</td></tr>
+                    <tr><td>Band 4</td><td style="color:#dc3545;">0.65</td><td>0.30</td><td style="color:#dc3545;">-1.1</td></tr>
+                    <tr><td>Band 5</td><td style="color:#dc3545;">0.62</td><td>0.32</td><td style="color:#dc3545;">-0.9</td></tr>
+                </table>
+            </div>
+            <div>
+                <div class="box success" style="margin-bottom: 12px; padding: 12px 15px;">
+                    <h3 style="margin: 0 0 8px 0; font-size: 16pt;">GMM 判定</h3>
+                    <p style="margin: 5px 0;"><strong>sum_LLR</strong> = -58 (加權)</p>
+                    <p style="margin: 5px 0;"><strong>globalThreshold</strong> = 57 (mode 0)</p>
+                    <p style="margin: 5px 0;"><strong>結果</strong>：-58 < 57 → <span class="tag tag-success">VAD = 0</span></p>
+                </div>
+                <div class="box warning" style="margin-bottom: 12px; padding: 12px 15px;">
+                    <h3 style="margin: 0 0 8px 0; font-size: 16pt;">簡單能量閾值</h3>
+                    <p style="margin: 5px 0;"><strong>總能量</strong> = 52 dB (中等)</p>
+                    <p style="margin: 5px 0;">閾值設 50dB → <span class="tag tag-danger">誤判</span></p>
+                    <p style="margin: 5px 0;">閾值設 55dB → <span class="tag tag-success">正確</span></p>
+                </div>
+                <div class="box primary" style="padding: 12px 15px;">
+                    <h3 style="margin: 0 0 8px 0; font-size: 16pt;">比較結論</h3>
+                    <table style="font-size: 13pt; margin: 0;">
+                        <tr><th>方法</th><th>結果</th><th>穩定性</th></tr>
+                        <tr><td>GMM</td><td style="color:#28a745;">正確</td><td style="color:#28a745;">高</td></tr>
+                        <tr><td>能量閾值</td><td style="color:#ffc107;">依閾值</td><td style="color:#dc3545;">低</td></tr>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">11 / 20</div>
+    <div class="logo">WebRTC VAD Analysis</div>
+</div>
+
+<!-- Slide 12: Scenario 2 - High SNR -->
+<div class="slide page-break">
+    <h2>場景分析 (2)：高 SNR 語音 (> 20dB)</h2>
+    <div class="content">
+        <div class="two-column" style="gap: 25px;">
+            <div>
+                <h3 style="margin-bottom: 8px;">頻譜特徵 - 安靜房間近距離說話</h3>
+                <div class="band-chart" style="height: 180px; padding-bottom: 35px;">
+                    <div class="band-bar">
+                        <div class="band-value speech" style="height: 70px;"></div>
+                        <div class="band-label">Band0<br>55dB</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value speech" style="height: 100px;"></div>
+                        <div class="band-label">Band1<br>72dB</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value speech" style="height: 110px;"></div>
+                        <div class="band-label">Band2<br>75dB</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value speech" style="height: 120px;"></div>
+                        <div class="band-label">Band3<br>78dB</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value speech" style="height: 88px;"></div>
+                        <div class="band-label">Band4<br>65dB</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value speech" style="height: 68px;"></div>
+                        <div class="band-label">Band5<br>58dB</div>
+                    </div>
+                </div>
+                <table style="font-size: 13pt; margin-top: 45px;">
+                    <tr><th>頻帶</th><th>P(noise)</th><th>P(speech)</th><th>LLR</th></tr>
+                    <tr><td>Band 0</td><td>0.15</td><td style="color:#28a745;">0.82</td><td style="color:#28a745;">+2.4</td></tr>
+                    <tr><td>Band 1</td><td>0.08</td><td style="color:#28a745;">0.91</td><td style="color:#28a745;">+3.5</td></tr>
+                    <tr><td>Band 2</td><td>0.05</td><td style="color:#28a745;">0.94</td><td style="color:#28a745;">+4.2</td></tr>
+                    <tr><td>Band 3</td><td>0.04</td><td style="color:#28a745;">0.95</td><td style="color:#28a745;">+4.6</td></tr>
+                    <tr><td>Band 4</td><td>0.10</td><td style="color:#28a745;">0.88</td><td style="color:#28a745;">+3.1</td></tr>
+                    <tr><td>Band 5</td><td>0.12</td><td style="color:#28a745;">0.85</td><td style="color:#28a745;">+2.8</td></tr>
+                </table>
+            </div>
+            <div>
+                <div class="box success" style="margin-bottom: 12px; padding: 12px 15px;">
+                    <h3 style="margin: 0 0 8px 0; font-size: 16pt;">GMM 判定</h3>
+                    <p style="margin: 5px 0;"><strong>sum_LLR</strong> = +245 (加權)</p>
+                    <p style="margin: 5px 0;"><strong>globalThreshold</strong> = 57 (mode 0)</p>
+                    <p style="margin: 5px 0;"><strong>結果</strong>：+245 >> 57 → <span class="tag tag-success">VAD = 1</span></p>
+                </div>
+                <div class="box success" style="margin-bottom: 12px; padding: 12px 15px;">
+                    <h3 style="margin: 0 0 8px 0; font-size: 16pt;">簡單能量閾值</h3>
+                    <p style="margin: 5px 0;"><strong>總能量</strong> = 78 dB (高)</p>
+                    <p style="margin: 5px 0;">閾值設 50dB → <span class="tag tag-success">正確</span></p>
+                    <p style="margin: 5px 0;">閾值設 60dB → <span class="tag tag-success">正確</span></p>
+                </div>
+                <div class="box primary" style="padding: 12px 15px;">
+                    <h3 style="margin: 0 0 8px 0; font-size: 16pt;">比較結論</h3>
+                    <table style="font-size: 13pt; margin: 0;">
+                        <tr><th>方法</th><th>結果</th><th>計算成本</th></tr>
+                        <tr><td>GMM</td><td style="color:#28a745;">正確</td><td>中</td></tr>
+                        <tr><td>能量閾值</td><td style="color:#28a745;">正確</td><td style="color:#28a745;">低</td></tr>
+                    </table>
+                    <p style="font-size: 12pt; color: #666; margin: 8px 0 0 0;">高SNR下兩者效果相近，簡單方法成本更低</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">12 / 20</div>
+    <div class="logo">WebRTC VAD Analysis</div>
+</div>
+
+<!-- Slide 13: Scenario 3 - Low SNR -->
+<div class="slide page-break">
+    <h2>場景分析 (3)：低 SNR 語音 (5-15dB)</h2>
+    <div class="content">
+        <div class="two-column" style="gap: 25px;">
+            <div>
+                <h3 style="margin-bottom: 8px;">頻譜特徵（語音+噪音混合）</h3>
+                <div class="band-chart" style="height: 180px; padding-bottom: 35px;">
+                    <div class="band-bar">
+                        <div class="band-value" style="height: 95px; background: linear-gradient(to top, #dc3545 70%, #28a745 70%);"></div>
+                        <div class="band-label">Band0<br>噪音主導</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value" style="height: 88px; background: linear-gradient(to top, #dc3545 50%, #28a745 50%);"></div>
+                        <div class="band-label">Band1<br>混合</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value" style="height: 108px; background: linear-gradient(to top, #dc3545 25%, #28a745 25%);"></div>
+                        <div class="band-label">Band2<br>語音明顯</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value" style="height: 115px; background: linear-gradient(to top, #dc3545 20%, #28a745 20%);"></div>
+                        <div class="band-label">Band3<br>語音明顯</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value" style="height: 82px; background: linear-gradient(to top, #dc3545 15%, #28a745 15%);"></div>
+                        <div class="band-label">Band4<br>語音可見</div>
+                    </div>
+                    <div class="band-bar">
+                        <div class="band-value" style="height: 62px; background: linear-gradient(to top, #dc3545 20%, #28a745 20%);"></div>
+                        <div class="band-label">Band5<br>語音可見</div>
+                    </div>
+                </div>
+                <table style="font-size: 12pt; margin-top: 45px;">
+                    <tr><th>頻帶</th><th>P(noise)</th><th>P(speech)</th><th>LLR</th><th>權重</th></tr>
+                    <tr><td>Band 0</td><td style="color:#dc3545;">0.55</td><td>0.42</td><td style="color:#999;">-0.4</td><td>6</td></tr>
+                    <tr><td>Band 1</td><td>0.40</td><td>0.58</td><td style="color:#ffc107;">+0.5</td><td>8</td></tr>
+                    <tr><td>Band 2</td><td>0.22</td><td style="color:#28a745;">0.76</td><td style="color:#28a745;">+1.8</td><td>10</td></tr>
+                    <tr><td>Band 3</td><td>0.18</td><td style="color:#28a745;">0.80</td><td style="color:#28a745;">+2.2</td><td>12</td></tr>
+                    <tr><td>Band 4</td><td>0.25</td><td style="color:#28a745;">0.72</td><td style="color:#28a745;">+1.5</td><td>14</td></tr>
+                    <tr><td>Band 5</td><td>0.28</td><td style="color:#28a745;">0.68</td><td style="color:#28a745;">+1.3</td><td>16</td></tr>
+                </table>
+            </div>
+            <div>
+                <div class="box success" style="margin-bottom: 12px; padding: 12px 15px;">
+                    <h3 style="margin: 0 0 8px 0; font-size: 16pt;">GMM 判定</h3>
+                    <p style="margin: 5px 0;"><strong>sum_LLR</strong> = +78 (加權後)</p>
+                    <p style="margin: 5px 0;"><strong>globalThreshold</strong> = 57 (mode 0)</p>
+                    <p style="margin: 5px 0;"><strong>結果</strong>：+78 > 57 → <span class="tag tag-success">VAD = 1</span></p>
+                </div>
+                <div class="box warning" style="margin-bottom: 12px; padding: 12px 15px;">
+                    <h3 style="margin: 0 0 8px 0; font-size: 16pt;">簡單能量閾值</h3>
+                    <p style="margin: 5px 0;"><strong>總能量</strong> = 58 dB (中等)</p>
+                    <p style="margin: 5px 0;">閾值設 50dB → <span class="tag tag-success">勉強正確</span></p>
+                    <p style="margin: 5px 0;">閾值設 60dB → <span class="tag tag-danger">漏檢</span></p>
+                </div>
+                <div class="box primary" style="padding: 12px 15px;">
+                    <h3 style="margin: 0 0 8px 0; font-size: 16pt;">GMM 優勢解析</h3>
+                    <ul style="font-size: 13pt; margin: 5px 0 0 15px;">
+                        <li>低頻被噪音掩蓋，但權重最低 (6)</li>
+                        <li>中高頻語音明顯，權重最高 (12-16)</li>
+                        <li>加權後仍能正確判定</li>
+                    </ul>
+                </div>
+                <p style="text-align: center; font-size: 13pt; margin-top: 12px;">
+                    <span style="color: #dc3545;">■</span> 噪音成分
+                    <span style="color: #28a745; margin-left: 15px;">■</span> 語音成分
+                </p>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">13 / 20</div>
+    <div class="logo">WebRTC VAD Analysis</div>
+</div>
+
+<!-- Slide 14: Scenario 4 - Noise Change -->
+<div class="slide page-break">
+    <h2>場景分析 (4)：噪音環境變化</h2>
+    <div class="content">
+        <div class="timeline">
+            <div class="timeline-item">
+                <strong>階段 A：初始安靜環境</strong>
+                <p style="color: #666; font-size: 14pt;">GMM 與能量閾值均正常運作</p>
+            </div>
+            <div class="timeline-item">
+                <strong>階段 B：噪音突然增大（開風扇）</strong>
+                <div class="two-column" style="margin-top: 10px; gap: 20px;">
+                    <div class="box danger" style="padding: 12px;">
+                        <strong>簡單能量閾值：</strong>
+                        <p style="font-size: 14pt; margin-top: 5px;">新噪音能量 > threshold → 持續誤判</p>
+                    </div>
+                    <div class="box success" style="padding: 12px;">
+                        <strong>GMM VAD：</strong>
+                        <p style="font-size: 14pt; margin-top: 5px;">短暫誤判 → 100-500ms 內自動適應</p>
+                    </div>
+                </div>
+            </div>
+            <div class="timeline-item">
+                <strong>階段 C：噪音環境中說話</strong>
+                <div class="two-column" style="margin-top: 10px; gap: 20px;">
+                    <div class="box warning" style="padding: 12px;">
+                        <strong>簡單能量閾值：</strong>
+                        <p style="font-size: 14pt; margin-top: 5px;">語音/噪音比僅 1.75x，閾值調整空間小</p>
+                    </div>
+                    <div class="box success" style="padding: 12px;">
+                        <strong>GMM VAD：</strong>
+                        <p style="font-size: 14pt; margin-top: 5px;">比較「當前」vs「已適應噪音模型」，正確區分</p>
+                    </div>
+                </div>
+            </div>
+            <div class="timeline-item">
+                <strong>階段 D：噪音突然降低（關風扇）</strong>
+                <div class="two-column" style="margin-top: 10px; gap: 20px;">
+                    <div class="box danger" style="padding: 12px;">
+                        <strong>簡單能量閾值：</strong>
+                        <p style="font-size: 14pt; margin-top: 5px;">需再次手動調整閾值</p>
+                    </div>
+                    <div class="box success" style="padding: 12px;">
+                        <strong>GMM VAD：</strong>
+                        <p style="font-size: 14pt; margin-top: 5px;">透過最小值追蹤自動適應</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">14 / 20</div>
+    <div class="logo">WebRTC VAD Analysis</div>
+</div>
+
+<!-- Slide 15: Comparison Summary -->
+<div class="slide page-break">
+    <h2>場景比較總結</h2>
+    <div class="content">
+        <table>
+            <tr>
+                <th>場景</th>
+                <th>頻帶能量分佈</th>
+                <th>GMM 結果</th>
+                <th>能量閾值結果</th>
+                <th>勝出者</th>
+            </tr>
+            <tr>
+                <td>純噪音</td>
+                <td>低頻高，高頻低</td>
+                <td><span class="tag tag-success">VAD=0 正確</span></td>
+                <td><span class="tag tag-warning">取決於閾值</span></td>
+                <td>GMM</td>
+            </tr>
+            <tr>
+                <td>高 SNR 語音</td>
+                <td>全頻帶都高</td>
+                <td><span class="tag tag-success">VAD=1 正確</span></td>
+                <td><span class="tag tag-success">VAD=1 正確</span></td>
+                <td>平手</td>
+            </tr>
+            <tr>
+                <td>低 SNR 語音</td>
+                <td>低頻混濁，中高頻有特徵</td>
+                <td><span class="tag tag-success">VAD=1 正確</span></td>
+                <td><span class="tag tag-danger">可能誤判</span></td>
+                <td><strong>GMM</strong></td>
+            </tr>
+            <tr>
+                <td>噪音突然增大</td>
+                <td>全頻帶上升</td>
+                <td><span class="tag tag-success">短暫後恢復</span></td>
+                <td><span class="tag tag-danger">持續誤判</span></td>
+                <td><strong>GMM</strong></td>
+            </tr>
+            <tr>
+                <td>噪音突然降低</td>
+                <td>全頻帶下降</td>
+                <td><span class="tag tag-success">自動追蹤</span></td>
+                <td><span class="tag tag-danger">可能漏檢</span></td>
+                <td><strong>GMM</strong></td>
+            </tr>
+            <tr>
+                <td>噪音持續變化</td>
+                <td>動態變化</td>
+                <td><span class="tag tag-success">持續追蹤</span></td>
+                <td><span class="tag tag-danger">無法應對</span></td>
+                <td><strong>GMM</strong></td>
+            </tr>
+        </table>
+    </div>
+    <div class="slide-number">15 / 20</div>
+    <div class="logo">WebRTC VAD Analysis</div>
+</div>
+
+<!-- Slide 16: Why GMM Better -->
+<div class="slide page-break">
+    <h2>GMM 設計精髓</h2>
+    <div class="content">
+        <div class="three-column">
+            <div class="box primary">
+                <h3>頻帶權重設計</h3>
+                <div class="code-block" style="font-size: 14pt;">
+kSpectrumWeight =
+  { 6, 8, 10, 12, 14, 16 }
+    ↑              ↑
+  低頻           高頻
+  權重低         權重高
+                </div>
+                <p style="margin-top: 12px; font-size: 14pt;">
+                    <strong>原理：</strong>噪音集中在低頻，語音高頻諧波更具區分度
+                </p>
+            </div>
+            <div class="box success">
+                <h3>自適應噪音模型</h3>
+                <div class="code-block" style="font-size: 14pt;">
+// 持續追蹤環境
+noise_mean → 自動更新
+
+// 最小值追蹤
+FindMinimum(100幀)
+
+// 長期修正
+kBackEta = 0.6
+                </div>
+                <p style="margin-top: 12px; font-size: 14pt;">
+                    <strong>效果：</strong>自動適應環境變化
+                </p>
+            </div>
+            <div class="box warning">
+                <h3>機率決策</h3>
+                <div class="code-block" style="font-size: 14pt;">
+GMM:
+  P(speech) vs P(noise)
+  → 軟決策，綜合證據
+
+閾值:
+  if (E > threshold)
+  → 硬決策，一刀切
+                </div>
+                <p style="margin-top: 12px; font-size: 14pt;">
+                    <strong>優勢：</strong>可輸出置信度
+                </p>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">16 / 20</div>
+    <div class="logo">WebRTC VAD Analysis</div>
+</div>
+
+<!-- Slide 17: Parameter Tuning -->
+<div class="slide page-break">
+    <h2>參數調整指南</h2>
+    <div class="content">
+        <div class="two-column">
+            <div class="box danger">
+                <h3>問題：語音漏檢 (False Negative)</h3>
+                <p style="margin: 8px 0; font-size: 14pt;"><strong>症狀：</strong>說話時 VAD 經常返回 0</p>
+                <p style="font-size: 14pt;"><strong>解決方案：</strong></p>
+                <ul style="font-size: 14pt;">
+                    <li>降低 localThreshold</li>
+                    <li>降低 globalThreshold</li>
+                    <li>增加 OverHang 時間</li>
+                    <li>使用 mode = 0 (Quality)</li>
+                </ul>
+            </div>
+            <div class="box warning">
+                <h3>問題：噪音誤檢 (False Positive)</h3>
+                <p style="margin: 8px 0; font-size: 14pt;"><strong>症狀：</strong>沒說話時 VAD 經常返回 1</p>
+                <p style="font-size: 14pt;"><strong>解決方案：</strong></p>
+                <ul style="font-size: 14pt;">
+                    <li>提高 localThreshold</li>
+                    <li>提高 globalThreshold</li>
+                    <li>加快 kNoiseUpdateConst</li>
+                    <li>使用 mode = 2 或 3</li>
+                </ul>
+            </div>
+        </div>
+        <h3 style="margin-top: 20px;">關鍵常數參考</h3>
+        <table style="font-size: 14pt;">
+            <tr>
+                <th>常數</th>
+                <th>預設值</th>
+                <th>說明</th>
+                <th>調整效果</th>
+            </tr>
+            <tr>
+                <td>kNoiseUpdateConst</td>
+                <td>655 (≈2%)</td>
+                <td>噪音模型更新速率</td>
+                <td>增大 → 更快適應噪音變化</td>
+            </tr>
+            <tr>
+                <td>kSpeechUpdateConst</td>
+                <td>6554 (≈20%)</td>
+                <td>語音模型更新速率</td>
+                <td>增大 → 更快適應不同說話者</td>
+            </tr>
+            <tr>
+                <td>kMinStd</td>
+                <td>384</td>
+                <td>最小標準差</td>
+                <td>防止模型過窄</td>
+            </tr>
+        </table>
+    </div>
+    <div class="slide-number">17 / 20</div>
+    <div class="logo">WebRTC VAD Analysis</div>
+</div>
+
+<!-- Slide 18: Long-term Stability -->
+<div class="slide page-break">
+    <h2>長期穩定性分析</h2>
+    <div class="content">
+        <h3>問題：寬鬆閾值 + 持續更新 Speech GMM 會導致退化嗎？</h3>
+        <div class="two-column" style="margin-top: 20px;">
+            <div class="box danger">
+                <h3>潛在退化問題</h3>
+                <ul style="font-size: 14px;">
+                    <li><strong>語音模型均值漂移：</strong>噪音樣本被錯誤用於更新</li>
+                    <li><strong>語音模型方差增大：</strong>混入異質樣本</li>
+                    <li><strong>區分能力下降：</strong>兩模型逐漸相似</li>
+                    <li><strong>噪音模型過時：</strong>vadflag=1 時不更新</li>
+                </ul>
+            </div>
+            <div class="box success">
+                <h3>內建保護機制</h3>
+                <ul style="font-size: 14px;">
+                    <li><strong>模型分離強制：</strong>自動維持最小距離</li>
+                    <li><strong>均值範圍限制：</strong>防止無限漂移</li>
+                    <li><strong>標準差下限：</strong>防止模型崩塌</li>
+                    <li><strong>最小值追蹤：</strong>長期背景修正</li>
+                </ul>
+            </div>
+        </div>
+        <h3 style="margin-top: 25px;">建議解決方案</h3>
+        <div class="four-column" style="margin-top: 15px;">
+            <div class="box" style="text-align: center; padding: 15px;">
+                <strong>定期重置</strong>
+                <p style="font-size: 14pt; color: #666; margin-top: 5px;">每 N 幀重置</p>
+            </div>
+            <div class="box" style="text-align: center; padding: 15px;">
+                <strong>高置信度更新</strong>
+                <p style="font-size: 14pt; color: #666; margin-top: 5px;">LLR 夠高才更新</p>
+            </div>
+            <div class="box" style="text-align: center; padding: 15px;">
+                <strong>能量門檻</strong>
+                <p style="font-size: 14pt; color: #666; margin-top: 5px;">能量夠高才更新</p>
+            </div>
+            <div class="box" style="text-align: center; padding: 15px;">
+                <strong>凍結模型</strong>
+                <p style="font-size: 14pt; color: #666; margin-top: 5px;">設定更新率為 0</p>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">18 / 20</div>
+    <div class="logo">WebRTC VAD Analysis</div>
+</div>
+
+<!-- Slide 19: Conclusions -->
+<div class="slide page-break">
+    <h2>結論與建議</h2>
+    <div class="content">
+        <div class="conclusion-grid">
+            <div class="conclusion-card">
+                <div class="snr">> 20 dB</div>
+                <h3>高 SNR 環境</h3>
+                <ul style="text-align: left; font-size: 14pt; margin-top: 15px;">
+                    <li>簡單能量閾值可能足夠</li>
+                    <li>計算成本更低</li>
+                    <li>需手動調整閾值</li>
+                </ul>
+            </div>
+            <div class="conclusion-card" style="border-top-color: #ffc107;">
+                <div class="snr" style="color: #ffc107;">10-20 dB</div>
+                <h3>中 SNR 環境</h3>
+                <ul style="text-align: left; font-size: 14pt; margin-top: 15px;">
+                    <li>GMM 開始發揮優勢</li>
+                    <li>頻譜分解價值顯現</li>
+                    <li>自適應機制有幫助</li>
+                </ul>
+            </div>
+            <div class="conclusion-card" style="border-top-color: #28a745;">
+                <div class="snr" style="color: #28a745;">< 10 dB</div>
+                <h3>低 SNR 環境</h3>
+                <ul style="text-align: left; font-size: 14pt; margin-top: 15px;">
+                    <li>GMM 明顯更好</li>
+                    <li>頻譜分解必要</li>
+                    <li>但效果也會下降</li>
+                </ul>
+            </div>
+        </div>
+        <div class="highlight-box" style="margin-top: 30px; text-align: center;">
+            <strong style="font-size: 18px;">核心價值：</strong>
+            <span style="font-size: 16px;">GMM VAD 的優勢在於 (1) 頻譜分解 (2) 機率模型 (3) 自適應更新</span>
+        </div>
+    </div>
+    <div class="slide-number">19 / 20</div>
+    <div class="logo">WebRTC VAD Analysis</div>
+</div>
+
+<!-- Slide 20: File Reference -->
+<div class="slide page-break">
+    <h2>附錄：程式碼檔案參考</h2>
+    <div class="content">
+        <table>
+            <tr>
+                <th>檔案</th>
+                <th>功能</th>
+                <th>關鍵函數 / 常數</th>
+            </tr>
+            <tr>
+                <td>vad_core.c</td>
+                <td>核心 VAD 邏輯</td>
+                <td>GmmProbability(), WebRtcVad_CalcVad8khz()</td>
+            </tr>
+            <tr>
+                <td>vad_core.h</td>
+                <td>結構體定義</td>
+                <td>VadInstT, kNumChannels, kNumGaussians</td>
+            </tr>
+            <tr>
+                <td>vad_filterbank.c</td>
+                <td>濾波器組</td>
+                <td>WebRtcVad_CalculateFeatures(), SplitFilter()</td>
+            </tr>
+            <tr>
+                <td>vad_gmm.c</td>
+                <td>高斯機率計算</td>
+                <td>WebRtcVad_GaussianProbability()</td>
+            </tr>
+            <tr>
+                <td>vad_sp.c</td>
+                <td>信號處理</td>
+                <td>WebRtcVad_FindMinimum(), WebRtcVad_Downsampling()</td>
+            </tr>
+            <tr>
+                <td>webrtc_vad.c</td>
+                <td>公開 API</td>
+                <td>WebRtcVad_Create(), WebRtcVad_Process()</td>
+            </tr>
+        </table>
+        <div style="text-align: center; margin-top: 50px; color: #666;">
+            <p style="font-size: 18px; font-weight: 600;">WebRTC VAD Technical Analysis Report</p>
+            <p style="margin-top: 10px;">Voice Activity Detection Implementation Study</p>
+        </div>
+    </div>
+    <div class="slide-number">20 / 20</div>
+    <div class="logo">WebRTC VAD Analysis</div>
+</div>
+
+<script>
+    // Keyboard navigation
+    let currentSlide = 0;
+    const slides = document.querySelectorAll('.slide');
+
+    function goToSlide(n) {
+        if (n >= 0 && n < slides.length) {
+            currentSlide = n;
+            slides[n].scrollIntoView({ behavior: 'smooth' });
+        }
+    }
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === 'PageDown' || e.key === ' ') {
+            e.preventDefault();
+            goToSlide(currentSlide + 1);
+        } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp' || e.key === 'PageUp') {
+            e.preventDefault();
+            goToSlide(currentSlide - 1);
+        } else if (e.key === 'Home') {
+            e.preventDefault();
+            goToSlide(0);
+        } else if (e.key === 'End') {
+            e.preventDefault();
+            goToSlide(slides.length - 1);
+        }
+    });
+
+    // Update current slide on scroll
+    const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                currentSlide = Array.from(slides).indexOf(entry.target);
+            }
+        });
+    }, { threshold: 0.5 });
+
+    slides.forEach(slide => observer.observe(slide));
+</script>
+
+</body>
+</html>
