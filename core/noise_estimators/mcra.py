@@ -119,12 +119,19 @@ class McraNoiseEstimator:
 
     def _compute_eta(self, power: np.ndarray) -> float:
         """
-        場景轉換偵測：平滑能量比 + hard threshold
+        場景轉換偵測：平滑能量比 + configurable response
 
         使用平滑後的能量計算 beta，避免語音能量跳變誤觸發。
-        Hard threshold: beta < threshold → eta=1.0（不動 alpha_d）,
-                       beta > threshold → eta=0.1（加速噪聲更新）
 
+        模式說明 (由 eta_slope 控制):
+        - eta_slope > 0: Sigmoid 模式 - 連續平滑響應
+          eta = 1.0 / (1.0 + exp(slope * (beta - threshold)))
+          當 beta < threshold 時 eta → 1.0，beta > threshold 時 eta → 0.0
+
+        - eta_slope = 0: Hard threshold 模式 - 二值響應
+          beta < threshold → eta=1.0, beta > threshold → eta=0.1
+
+        v2.1: 添加 sigmoid 模式，連續響應避免階梯效應
         v2.0: 修正舊版 0.95 上限導致語音幀噪聲更新速度增加 10x 的問題
         """
         E_cur = np.sum(power)
@@ -140,9 +147,18 @@ class McraNoiseEstimator:
         beta = self._energy_smooth / (self._prev_frame_power + 1e-10)
         self._prev_frame_power = self._energy_smooth
 
-        if beta > self.eta_beta_threshold:
-            return 0.1  # 場景變化：加速噪聲更新
-        return 1.0  # 正常：不干擾 alpha_d
+        if self.eta_slope > 0:
+            # Sigmoid 模式：連續平滑響應
+            # eta = 1 / (1 + exp(slope * (beta - threshold)))
+            # beta < threshold → eta → 1.0
+            # beta > threshold → eta → 0.0
+            eta = 1.0 / (1.0 + np.exp(self.eta_slope * (beta - self.eta_beta_threshold)))
+            return max(eta, 0.01)  # 最小值 0.01 避免 alpha_d 變成 0
+        else:
+            # Hard threshold 模式：二值響應
+            if beta > self.eta_beta_threshold:
+                return 0.1  # 場景變化：加速噪聲更新
+            return 1.0  # 正常：不干擾 alpha_d
 
     def update(
         self,

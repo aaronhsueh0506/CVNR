@@ -18,10 +18,12 @@ noise_estimation:
   L: 120                    # 最小值窗口長度
   delta_db: 5.0             # 偏差補償
   num_init_frames: 20       # 初始噪聲估計幀數
-  # eta 場景轉換偵測（穩定噪聲環境下不會觸發，可保持 False）
-  enable_eta: true          # 開關
-  eta_beta_threshold: 3.0   # 能量比閾值，β > threshold 時觸發（原 10.0，降低以適應實際數據）
-  eta_slope: 20.0           # sigmoid 斜率（目前未使用）
+  # eta 場景轉換偵測
+  # 當噪聲環境突然改變時（如從安靜變吵雜），加速噪聲估計更新
+  # 穩定噪聲環境下不會觸發，可保持 enable_eta: false
+  enable_eta: false         # 開關（測試顯示對 PESQ/STOI 影響極小，建議關閉以減少複雜度）
+  eta_beta_threshold: 10.0  # 能量比閾值，β > threshold 時觸發
+  eta_slope: 20.0           # sigmoid 斜率（>0: sigmoid 模式, =0: hard threshold 模式）
 noise_tracking:
   enable: true
 spp:
