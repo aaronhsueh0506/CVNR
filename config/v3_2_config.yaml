@@ -19,8 +19,8 @@ noise_estimation:
   delta_db: 5.0             # 偏差補償
   num_init_frames: 20       # 初始噪聲估計幀數
   # eta 場景轉換偵測（穩定噪聲環境下不會觸發，可保持 False）
-  enable_eta: false         # 開關
-  eta_beta_threshold: 10.0  # 能量比閾值，β > threshold 時觸發
+  enable_eta: true          # 開關
+  eta_beta_threshold: 3.0   # 能量比閾值，β > threshold 時觸發（原 10.0，降低以適應實際數據）
   eta_slope: 20.0           # sigmoid 斜率（目前未使用）
 noise_tracking:
   enable: true
