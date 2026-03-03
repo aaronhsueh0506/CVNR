@@ -71,10 +71,11 @@ from denoisers import (
     SpectralSubtractionDenoiser,
     WienerDenoiser,
     SppMmseDenoiser,
-    ImcraOmlsaDenoiser,
     MmseLsaDenoiser,
     PmmseDenoiser
 )
+# V4 IMCRA-OMLSA archived to archived_v4_imcra/
+# from denoisers import ImcraOmlsaDenoiser
 
 
 def load_config(config_file: str) -> dict:
@@ -112,7 +113,7 @@ def create_denoiser_from_config(
     根據配置文件創建降噪器
 
     Args:
-        version: 版本名稱 (V1, V2, V3, V3-2, V3-3, V3-4, V4)
+        version: 版本名稱 (V1, V2, V3, V3-2, V3-3)。V4 merged to V3-2, V3-4 removed
         config_dir: 配置文件目錄
         sample_rate: 採樣率
 
@@ -311,59 +312,13 @@ def create_denoiser_from_config(
 
         return PmmseDenoiser(**params)
 
-    elif version == 'V3-4':
-        # V3-4: OMLSA-MCRA (Cohen 2003)
-        spp_config = config.get('spp', {})
-        gain_config = config.get('gain_calculation', {})
-        noise_config = config.get('noise_estimation', {})
-
-        # 基本參數
-        params = {
-            'sample_rate': sample_rate,
-            'frame_size_ms': frame_size_ms,
-            'frame_shift_ms': frame_shift_ms,
-            'fft_size': fft_size,
-            'alpha_xi': spp_config.get('alpha_xi', 0.98),
-            'q': spp_config.get('q', 0.5),
-            'xi_min_db': spp_config.get('xi_min_db', -25.0),
-            'g_min_db': gain_config.get('g_min_db', -20.0),
-            'alpha_g': gain_config.get('alpha_g', 0.7),
-            'num_init_frames': noise_config.get('num_init_frames', 20)
-        }
-
-        # MCRA 噪聲估計參數
-        params.update({
-            'alpha_s': noise_config.get('alpha_s', 0.9),
-            'alpha_d': noise_config.get('alpha_d', 0.85),
-            'alpha_p': noise_config.get('alpha_p', 0.2),
-            'L': noise_config.get('L', 96),
-            'delta_db': noise_config.get('delta_db', 5.0)
-        })
-
-        return OmlsaMcraDenoiser(**params)
+    # V3-4 removed (test results not better than V3-2)
 
     elif version == 'V4':
-        # V4: IMCRA-OMLSA
-        noise_config = config.get('noise_estimation', {})
-        spp_config = config.get('spp', {})
-        gain_config = config.get('gain_calculation', {})
-
-        return ImcraOmlsaDenoiser(
-            sample_rate=sample_rate,
-            frame_size_ms=frame_size_ms,
-            frame_shift_ms=frame_shift_ms,
-            fft_size=fft_size,
-            alpha_s=noise_config.get('alpha_s', 0.9),
-            alpha_d=noise_config.get('alpha_d', 0.85),
-            L=noise_config.get('L', 150),
-            delta_db=noise_config.get('delta_db', 5.0),
-            alpha_xi=spp_config.get('alpha_xi', 0.98),
-            q=spp_config.get('q', 0.5),
-            xi_min_db=spp_config.get('xi_min_db', -25.0),
-            g_min_db=gain_config.get('g_min_db', -20.0),
-            alpha_g=gain_config.get('alpha_g', 0.7),
-            num_init_frames=noise_config.get('num_init_frames', 20)
-        )
+        # V4: Merged to V3-2 (MCRA-MMSE-LSA with optimized parameters)
+        # V4 IMCRA-OMLSA archived to archived_v4_imcra/
+        # V4 now uses same implementation as V3-2 with config differences
+        return create_denoiser('V3-2', config)
 
     else:
         raise ValueError(f"Unknown version: {version}")
@@ -667,9 +622,9 @@ def main():
     parser.add_argument(
         '--versions',
         nargs='+',
-        default=['V1', 'V2', 'V3', 'V4'],
-        choices=['V1', 'V2', 'V3', 'V3-2', 'V3-3', 'V3-4', 'V4'],
-        help='要使用的版本（默認: V1 V2 V3 V4）'
+        default=['V1', 'V2', 'V3', 'V3-2'],
+        choices=['V1', 'V2', 'V3', 'V3-2', 'V3-3'],
+        help='要使用的版本（默認: V1 V2 V3 V3-2）。V4 已 merge 至 V3-2, V3-4 已移除'
     )
 
     parser.add_argument(

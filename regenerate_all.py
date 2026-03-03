@@ -21,9 +21,10 @@ from denoisers import (
     WienerDenoiser,
     SppMmseDenoiser,
     MmseLsaDenoiser,
-    PmmseDenoiser,
-    ImcraOmlsaDenoiser
+    PmmseDenoiser
 )
+# V4 IMCRA-OMLSA archived to archived_v4_imcra/
+# V4 now uses same implementation as V3-2 (merged)
 
 def load_config(config_path):
     """加載配置文件"""
@@ -61,10 +62,11 @@ methods = {
         'class': PmmseDenoiser,
         'config': 'config/v3_3_config.yaml'
     },
-    'V4': {
-        'class': ImcraOmlsaDenoiser,
-        'config': 'config/v4_config.yaml'
-    }
+    # V4 merged to V3-2 (same implementation with optimized parameters)
+    # 'V4': {
+    #     'class': MmseLsaDenoiser,
+    #     'config': 'config/v3_2_config.yaml'
+    # }
 }
 
 def get_denoiser_params_from_config(config, sr, fft_size):

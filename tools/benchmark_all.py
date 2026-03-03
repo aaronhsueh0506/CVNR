@@ -29,11 +29,10 @@ from denoisers import (
     SpectralSubtractionDenoiser,
     WienerDenoiser,
     SppMmseDenoiser,
-    ImcraOmlsaDenoiser,
     MmseLsaDenoiser,
-    PmmseDenoiser,
-    OmlsaMcraDenoiser
+    PmmseDenoiser
 )
+# V4 IMCRA-OMLSA archived, V3-4 removed (not better than V3-2)
 
 
 class BenchmarkRunner:
@@ -65,15 +64,15 @@ class BenchmarkRunner:
         )
 
     def create_denoisers(self) -> Dict[str, Any]:
-        """創建所有降噪器（v1.5.0: 包含 MMSE 變體）"""
+        """創建所有降噪器（v4.0: V4 merged to V3-2, V3-4 removed）"""
         return {
             'V1': SpectralSubtractionDenoiser(sample_rate=self.sample_rate),
             'V2': WienerDenoiser(sample_rate=self.sample_rate, enable_noise_tracking=True),
             'V3': SppMmseDenoiser(sample_rate=self.sample_rate, enable_noise_tracking=True),
             'V3-2': MmseLsaDenoiser(sample_rate=self.sample_rate, enable_noise_tracking=True),
             'V3-3': PmmseDenoiser(sample_rate=self.sample_rate, enable_noise_tracking=True),
-            'V3-4': OmlsaMcraDenoiser(sample_rate=self.sample_rate),
-            'V4': ImcraOmlsaDenoiser(sample_rate=self.sample_rate, enable_noise_tracking=True)
+            # V3-4 removed (test results not better than V3-2)
+            # V4 merged to V3-2 (same implementation with optimized parameters)
         }
 
     def generate_test_cases(

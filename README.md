@@ -6,7 +6,7 @@
 
 ## 📋 項目概述
 
-本項目實現了 7 個版本的語音降噪算法，從基礎到先進：
+本項目實現了 5 個語音降噪算法，從基礎到先進：
 
 **基礎版本**：
 1. **V1: 頻譜減法 (Spectral Subtraction)** - 最經典的方法
@@ -27,15 +27,9 @@
    - 特點: 感知動機的成本函數，優異的 STOI 表現
    - v2.1.1: alpha_xi=0.96 同步優化
 
-6. **V3-4: OMLSA-MCRA (OMLSA + MCRA 噪聲估計)**
-   - OMLSA 增益函數 + MCRA 噪聲估計（含瞬態偵測）
-   - 適合: 非穩態噪聲環境
-   - 特點: **MCRA 瞬態偵測** (energy ratio)，快速適應噪聲變化
-   - v2.6: 新架構替換 Laplacian-MMSE
-
 ## 🎯 特點
 
-- ✅ **七個演算法版本**：V1-V4 基礎版本 + V3-2/V3-3/V3-4 MMSE 變體
+- ✅ **五個演算法版本**：V1-V3 基礎版本 + V3-2/V3-3 MMSE 變體
 - ✅ **v2.6**: Human Voice Band Soft VAD 後處理 + MCRA 瞬態偵測 (energy ratio)
 - ✅ **v2.5**: MCRA 雙視窗最小值追蹤（內建場景變化適應）
 - ✅ **v2.2**: V2 Wiener 使用 Bayesian SPP、DD 使用 enhanced_mag_prev、MCRA 支持
