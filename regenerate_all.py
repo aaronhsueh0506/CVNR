@@ -168,7 +168,11 @@ def get_denoiser_params_from_config(config, sr, fft_size):
                     'alpha_noise': ne.get('alpha_d', 0.85),
                     'alpha_p': ne.get('alpha_p', 0.2),
                     'L': ne.get('L', 96),
-                    'delta_db': ne.get('delta_db', 5.0)
+                    'delta_db': ne.get('delta_db', 5.0),
+                    # eta 場景轉換偵測參數
+                    'enable_eta': ne.get('enable_eta', False),
+                    'eta_beta_threshold': ne.get('eta_beta_threshold', 10.0),
+                    'eta_slope': ne.get('eta_slope', 20.0)
                 })
             elif ne_method == 'recursive_average':
                 # RecursiveAverage 噪聲估計參數

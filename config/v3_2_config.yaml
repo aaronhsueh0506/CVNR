@@ -13,11 +13,15 @@ name: MMSE-LSA
 noise_estimation:
   method: mcra              # v2.2: 改用 MCRA 噪聲估計
   alpha_s: 0.8              # 時間平滑因子
-  alpha_d: 0.95              # 噪聲更新基礎速率
+  alpha_d: 0.95             # 噪聲更新基礎速率
   alpha_p: 0.2              # SPP 平滑因子
-  L: 120                     # 最小值窗口長度
+  L: 120                    # 最小值窗口長度
   delta_db: 5.0             # 偏差補償
   num_init_frames: 20       # 初始噪聲估計幀數
+  # eta 場景轉換偵測（穩定噪聲環境下不會觸發，可保持 False）
+  enable_eta: false         # 開關
+  eta_beta_threshold: 10.0  # 能量比閾值，β > threshold 時觸發
+  eta_slope: 20.0           # sigmoid 斜率（目前未使用）
 noise_tracking:
   enable: true
 spp:
