@@ -211,10 +211,8 @@ def create_denoiser_from_config(
                 'alpha_p': noise_config.get('alpha_p', 0.2),
                 'L': noise_config.get('L', 96),
                 'delta_db': noise_config.get('delta_db', 5.0),
-                # eta 場景轉換偵測參數
-                'enable_eta': noise_config.get('enable_eta', False),
-                'eta_beta_threshold': noise_config.get('eta_beta_threshold', 10.0),
-                'eta_slope': noise_config.get('eta_slope', 20.0)
+                'enable_eta': noise_config.get('enable_eta', False)
+                # Note: eta_beta_threshold and eta_slope only supported by V3-2
             })
         else:
             params.update({
@@ -299,10 +297,8 @@ def create_denoiser_from_config(
                 'alpha_p': noise_config.get('alpha_p', 0.2),
                 'L': noise_config.get('L', 96),
                 'delta_db': noise_config.get('delta_db', 5.0),
-                # eta 場景轉換偵測參數
-                'enable_eta': noise_config.get('enable_eta', False),
-                'eta_beta_threshold': noise_config.get('eta_beta_threshold', 10.0),
-                'eta_slope': noise_config.get('eta_slope', 20.0)
+                'enable_eta': noise_config.get('enable_eta', False)
+                # Note: eta_beta_threshold and eta_slope only supported by V3-2
             })
         else:
             params.update({
