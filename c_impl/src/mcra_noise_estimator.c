@@ -47,12 +47,7 @@ struct McraNoiseEstimator {
     bool is_initialized;
     int frame_count;
 
-    // Eta scene change detection
-    bool enable_eta;
-    float eta_beta_threshold;
-    float eta_slope;
-    float prev_frame_power;     // Previous smoothed energy (0 = not yet set)
-    float energy_smooth;        // Smoothed frame energy for eta
+    // v4.1: Eta scene change detection removed
 
 #ifndef USE_FAST_PERCENTILE
     // Buffer for exact percentile calculation during initialization
@@ -94,12 +89,7 @@ McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config) {
     self->is_initialized = false;
     self->frame_count = 0;
 
-    // Eta scene change detection
-    self->enable_eta = config->enable_eta;
-    self->eta_beta_threshold = config->eta_beta_threshold;
-    self->eta_slope = config->eta_slope;
-    self->prev_frame_power = 0.0f;
-    self->energy_smooth = 0.0f;
+    // v4.1: Eta scene change detection removed
 
 #ifndef USE_FAST_PERCENTILE
     // Allocate buffer for exact percentile calculation
@@ -249,7 +239,7 @@ void mcra_init_noise(McraNoiseEstimator* self, const float* power_sum, int n_fra
     // This is an empirical approximation for power spectrum distribution
     for (int k = 0; k < n_freqs; k++) {
         float avg_power = power_sum[k] / (float)n_frames;
-        float init_psd = avg_power * 0.17f;
+        float init_psd = avg_power * 0.23f;  // v4.0: 30th percentile (more accurate)
 
         if (init_psd < 1e-10f) init_psd = 1e-10f;
 
@@ -259,7 +249,7 @@ void mcra_init_noise(McraNoiseEstimator* self, const float* power_sum, int n_fra
         self->spp[k] = 0.0f;
     }
 #else
-    // Exact 20th percentile using quickselect
+    // Exact 30th percentile using quickselect (v4.0 optimized)
     // Requires init_power_buffer to be filled via mcra_accumulate_init_power()
 
     // Temporary buffer to hold power values for one frequency bin
@@ -268,7 +258,7 @@ void mcra_init_noise(McraNoiseEstimator* self, const float* power_sum, int n_fra
         // Fallback to approximation if allocation fails
         for (int k = 0; k < n_freqs; k++) {
             float avg_power = power_sum[k] / (float)n_frames;
-            self->noise_psd[k] = avg_power * 0.17f;
+            self->noise_psd[k] = avg_power * 0.23f;  // v4.0: 30th percentile
             self->S[k] = avg_power;
             self->S_min[k] = self->noise_psd[k];
             self->spp[k] = 0.0f;
@@ -280,8 +270,8 @@ void mcra_init_noise(McraNoiseEstimator* self, const float* power_sum, int n_fra
                 freq_powers[f] = self->init_power_buffer[f * n_freqs + k];
             }
 
-            // Calculate exact 20th percentile
-            float init_psd = calculate_percentile(freq_powers, n_frames, 20);
+            // Calculate exact 30th percentile (v4.0 optimized)
+            float init_psd = calculate_percentile(freq_powers, n_frames, 30);
 
             if (init_psd < 1e-10f) init_psd = 1e-10f;
 
@@ -330,8 +320,8 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
     float delta = self->delta;
 
     // Loop A+B: Time smoothing + min buffer write + incremental min tracking
+    // v4.1: Eta energy accumulation removed
     int ring_pos = self->ring_idx;
-    float E_cur = 0.0f;
     for (int k = 0; k < n_freqs; k++) {
         // S(k,l) = α_s·S(k,l-1) + (1-α_s)·|Y(k,l)|²
         float new_S = alpha_s * self->S[k] + (1.0f - alpha_s) * power[k];
@@ -393,33 +383,12 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
         }
 #endif
 #endif  // USE_INCREMENTAL_MIN
-
-        // Accumulate total power for eta
-        E_cur += power[k];
     }
 
     // Advance ring index
     self->ring_idx = (self->ring_idx + 1) % L;
 
-    // Eta scene change detection (strategy K: smoothed energy + hard threshold)
-    // v2.0: 修正舊版 0.95 上限導致語音幀噪聲更新速度增加 10x 的問題
-    float eta = 1.0f;
-    if (self->enable_eta) {
-        if (self->energy_smooth > 0.0f) {
-            // 平滑能量（避免語音瞬態誤觸發）
-            self->energy_smooth = 0.7f * self->energy_smooth + 0.3f * E_cur;
-            float beta = self->energy_smooth / (self->prev_frame_power + 1e-10f);
-            self->prev_frame_power = self->energy_smooth;
-            if (beta > self->eta_beta_threshold) {
-                eta = 0.1f;  // 場景變化：加速噪聲更新
-            }
-            // else eta = 1.0 (正常：不干擾 alpha_d)
-        } else {
-            // 首幀初始化
-            self->energy_smooth = E_cur;
-            self->prev_frame_power = E_cur;
-        }
-    }
+    // v4.1: Eta scene change detection removed (L=5 optimization replaces it)
 
     // Loop C: Speech indicator + SPP smoothing + noise update
     const float* spp_for_update = spp_ext ? spp_ext : self->spp;
@@ -432,7 +401,8 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
         self->spp[k] = alpha_p * self->spp[k] + (1.0f - alpha_p) * indicator;
 
         // Noise update with SPP gating (uses external SPP if provided, else internal)
-        float tilde_alpha_d = (alpha_d + (1.0f - alpha_d) * spp_for_update[k]) * eta;
+        // v4.1: Eta multiplication removed
+        float tilde_alpha_d = alpha_d + (1.0f - alpha_d) * spp_for_update[k];
         self->noise_psd[k] = tilde_alpha_d * self->noise_psd[k] +
                             (1.0f - tilde_alpha_d) * power[k];
     }
@@ -466,6 +436,5 @@ void mcra_reset(McraNoiseEstimator* self) {
     self->ring_idx = 0;
     self->is_initialized = false;
     self->frame_count = 0;
-    self->prev_frame_power = 0.0f;
-    self->energy_smooth = 0.0f;
+    // v4.1: Eta state removed
 }

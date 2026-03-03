@@ -43,10 +43,7 @@ typedef struct {
     float alpha_attack;     // Asymmetric attack (0.3)
     float alpha_decay;      // Asymmetric decay (0.8 = alpha_g)
 
-    // Eta scene change detection (in MCRA)
-    bool enable_eta;            // Enable scene change detection (false)
-    float eta_beta_threshold;   // Energy ratio threshold (10.0)
-    float eta_slope;            // Sigmoid slope (20.0)
+    // v4.1: Eta scene change detection removed (L=5 optimization replaces it)
 
     // Soft VAD (post-processing)
     bool enable_soft_vad;       // Enable soft VAD gating (false)
@@ -81,11 +78,11 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
     config.q = 0.5f;
     config.xi_min_db = -20.0f;
 
-    // MCRA parameters (Optuna-tuned to match Python v3_2_config.yaml)
-    config.alpha_s = 0.8f;
+    // MCRA parameters (v4.0 optimized, sync with Python v3_2_config.yaml)
+    config.alpha_s = 0.7f;       // v4.0: 0.8 → 0.7 (faster response, no PESQ degradation)
     config.alpha_d = 0.95f;
     config.alpha_p = 0.2f;
-    config.L = 120;
+    config.L = 5;                // v4.0: 120 → 5 (50ms scene adaptation, replaces eta)
     config.delta_db = 5.0f;
     config.num_init_frames = 20;
 
@@ -95,10 +92,7 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
     config.alpha_attack = 0.3f;
     config.alpha_decay = 0.8f;      // Match Python (= alpha_g)
 
-    // Eta scene change detection (disabled by default)
-    config.enable_eta = false;
-    config.eta_beta_threshold = 10.0f;
-    config.eta_slope = 20.0f;
+    // v4.1: Eta scene change detection removed
 
     // Soft VAD (disabled by default)
     config.enable_soft_vad = false;
