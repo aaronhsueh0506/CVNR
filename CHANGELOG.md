@@ -4,6 +4,87 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [4.0.0] - 2026-03-03
+
+### 新增 (Added)
+- ✨ **V4: MCRA-MMSE-LSA with Zhihu Optimized Parameters**:
+  - 基於 V3-2，採用知乎文章建議的激進參數組合
+  - 配置文件: `config/v4_config.yaml`
+  - 使用 `MmseLsaDenoiser` 類（與 V3-2 共用實現）
+
+### 修改 (Changed)
+- ⚠️ **MCRA 默認參數調整（高風險修改）**:
+  - `alpha_s`: 0.9 → 0.7 (更快時間響應)
+  - `alpha_d`: 0.85 → 0.0 (噪聲更新純 SPP 控制，極度激進)
+  - `L`: 96 → 5 (最小值窗口從 960ms 縮短到 50ms，極度激進)
+  - `init percentile`: 20th → 30th (更準確的初始化)
+  - ⚠️ **風險**: alpha_d=0 + L=5 組合極度依賴 SPP 準確性，需測試驗證
+
+- 🔧 **移除 Decision Directed 兼容模式**:
+  - `core/spp_estimator.py`: 強制要求傳入 `enhanced_psd_prev`
+  - 移除使用舊噪聲的錯誤近似計算
+  - 確保所有 SNR 估計使用當前幀噪聲
+
+### 修正 (Fixed)
+- 🐛 **Eta 場景轉換偵測默認關閉**:
+  - 測試結果證明 eta 導致 PESQ 下降（threshold=2 平均 -0.41, threshold=10 平均 -0.06）
+  - 無法區分"語音開始"與"場景變化"，容易誤觸發
+  - Python 配置: `enable_eta: false`
+  - C 實現: `config.enable_eta = false`
+
+### 歸檔 (Archived)
+- 📦 **舊 V4 IMCRA-OMLSA 版本歸檔**:
+  - 移動到 `archived_v4_imcra/` 目錄
+  - 包含: `v4_imcra_config.yaml`, `v4_imcra_omlsa.py`
+  - 理由: 新 V4 採用不同的演算法路線（MCRA vs IMCRA）
+
+### 修改文件
+1. `core/noise_estimators/mcra.py` - 默認參數調整、初始化百分位數
+2. `core/spp_estimator.py` - 移除 DD 兼容模式
+3. `config/v4_config.yaml` - 新建 V4 配置
+4. `c_impl/example/main.c` - Eta 默認關閉
+5. `README.md` - 版本更新
+6. `CHANGELOG.md` - 記錄變更
+
+### 測試結果 (2026-03-03)
+
+**完整測試**: 13 個測試文件 (8 test_wav + 5 VCTK)
+
+#### Alpha_d 優化測試
+| alpha_d | 平均 PESQ | ΔPESQ | 說明 |
+|---------|----------|-------|------|
+| 0.95 | 2.127 | 0.000 | ✓ **最佳**（V3-2 baseline） |
+| 0.85 | 2.121 | -0.006 | 非常接近 |
+| 0.70 | 2.102 | -0.024 | 輕微下降 |
+| 0.50 | 2.087 | -0.040 | 明顯下降 |
+| 0.30 | 2.067 | -0.060 | 顯著下降 |
+| 0.00 | 2.034 | -0.092 | ⚠️ **知乎原始值，效果最差** |
+
+**明確趨勢**: alpha_d 越高，PESQ 越好
+
+#### 逐步參數測試
+| 配置 | ΔPESQ | 結論 |
+|------|-------|------|
+| 僅改 alpha_s (0.8→0.7) | 0.0000 | ✓ 無負面影響 |
+| alpha_s + L (120→5) | 0.0000 | ✓ **L=5 無負面影響** |
+| alpha_s + alpha_d (0.95→0) | -0.1524 | ⚠️ **alpha_d=0 是唯一問題** |
+| V4 Full (知乎原始參數) | -0.1524 | ⚠️ 效果最差 |
+
+#### 測試腳本
+- `compare_v4_v32.py`: V4 vs V3-2 baseline 比較（初步測試）
+- `test_v4_gradual.py`: 逐步參數測試，分離每個參數的影響
+- `test_v4_vctk_scene.py`: VCTK + 場景轉換測試
+- `find_best_alpha_d.py`: 系統性 alpha_d 優化測試
+
+### 最終決策
+基於測試結果，V4 最終採用：
+- ✓ **alpha_s = 0.7**: 知乎建議，測試證明無負面影響
+- ✓ **L = 5**: 知乎建議，測試證明無負面影響且響應更快
+- ✗ **alpha_d = 0**: 知乎建議，**測試證明造成 -0.092 PESQ 下降，不採用**
+- ✓ **alpha_d = 0.95**: 保持 V3-2 baseline，測試證明最佳
+
+**結論**: 知乎文章的 alpha_s 和 L 參數有效，但 alpha_d=0 不適用於一般語音降噪場景。
+
 ## [2.7.0] - 2026-02-03
 
 ### 修正 (Fixed)

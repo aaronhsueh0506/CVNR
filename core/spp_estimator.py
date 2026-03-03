@@ -69,17 +69,13 @@ class SppEstimator:
             # 初始化：使用直接估計
             xi = np.maximum(gamma - 1, 0)
         else:
-            # v1.5.0: 修正 DD 公式
+            # v4.0: 移除 DD 兼容模式，強制使用正確的當前噪聲
             # 正確公式: ξ(k,l) = α · |X̂(k,l-1)|² / λ_n(k,l) + (1-α) · max(γ(k,l)-1, 0)
             # 使用當前幀噪聲 λ_n 而非上一幀 λ_{n-1}
-            if enhanced_psd_prev is not None:
-                # 使用傳入的增強功率譜 (推薦方式)
-                xi_dd_term1 = enhanced_psd_prev / (noise_psd + 1e-10)
-            else:
-                # 向後兼容：使用 gain_prev² * Y_prev_psd (近似)
-                # 注意：這仍然使用 gamma_prev 中的舊噪聲
-                xi_dd_term1 = gain_prev ** 2 * self.gamma_prev
+            assert enhanced_psd_prev is not None, \
+                "enhanced_psd_prev must be provided for correct Decision Directed estimation"
 
+            xi_dd_term1 = enhanced_psd_prev / (noise_psd + 1e-10)
             xi_dd = self.alpha * xi_dd_term1 + \
                     (1 - self.alpha) * np.maximum(gamma - 1, 0)
             xi = np.maximum(xi_dd, self.xi_min)

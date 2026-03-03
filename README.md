@@ -1,6 +1,6 @@
 # 語音降噪系統 (Speech Denoising System)
 
-**版本**: v2.6
+**版本**: v4.0
 
 傳統信號處理方法的實時語音降噪系統，採用漸進式學習路徑。
 
@@ -12,22 +12,22 @@
 1. **V1: 頻譜減法 (Spectral Subtraction)** - 最經典的方法
 2. **V2: Wiener 濾波** - 基於 MMSE 的最優濾波
 3. **V3: MMSE-STSA** ⭐ - 概率軟判決方法 (v1.5.0 整合 V3-1，支持公式切換)
-4. **V4: IMCRA + OMLSA** - 產品級先進方案 (segSNR +4.60dB，但有過度抑制問題)
 
 **MMSE 變體 (v1.4.0)**：
 
-5. **V3-2: MMSE-LSA (對數域 MMSE)**
+4. **V3-2: MMSE-LSA (對數域 MMSE)** 🏆 **推薦**
    - 對數域最小均方誤差估計，減少 Musical Noise
    - 適合: 高質量語音增強，對音質要求高的場景
    - 特點: 更少的音樂噪聲，頻譜更平滑
+   - **v4.0 優化**: alpha_s=0.7, L=5 (50ms 快速場景適應)
 
-6. **V3-3: PMMSE (感知動機 MMSE)**
+5. **V3-3: PMMSE (感知動機 MMSE)**
    - 基於 Gaussian 先驗 + IS 距離的感知優化
    - 適合: 學術研究，感知質量優化實驗
    - 特點: 感知動機的成本函數，優異的 STOI 表現
    - v2.1.1: alpha_xi=0.96 同步優化
 
-7. **V3-4: OMLSA-MCRA (OMLSA + MCRA 噪聲估計)**
+6. **V3-4: OMLSA-MCRA (OMLSA + MCRA 噪聲估計)**
    - OMLSA 增益函數 + MCRA 噪聲估計（含瞬態偵測）
    - 適合: 非穩態噪聲環境
    - 特點: **MCRA 瞬態偵測** (energy ratio)，快速適應噪聲變化
