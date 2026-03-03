@@ -49,6 +49,7 @@ output/
 output_vctk/
 output_py_v32/
 visualizations/
+test_output*/
 
 # C 編譯產物
 c_impl/bin/
