@@ -164,18 +164,24 @@ def get_denoiser_params_from_config(config, sr, fft_size):
         if is_v3_series:
             if ne_method == 'mcra':
                 # V3/V3-2/V3-3 的 MCRA 噪聲估計參數
-                params.update({
+                mcra_params = {
                     'noise_method': 'mcra',
                     'alpha_s': ne.get('alpha_s', 0.9),
                     'alpha_noise': ne.get('alpha_d', 0.85),
                     'alpha_p': ne.get('alpha_p', 0.2),
                     'L': ne.get('L', 96),
                     'delta_db': ne.get('delta_db', 5.0),
-                    # eta 場景轉換偵測參數
-                    'enable_eta': ne.get('enable_eta', False),
-                    'eta_beta_threshold': ne.get('eta_beta_threshold', 10.0),
-                    'eta_slope': ne.get('eta_slope', 20.0)
-                })
+                    'enable_eta': ne.get('enable_eta', False)
+                }
+
+                # eta_beta_threshold 和 eta_slope 只有 V3-2 (mmse_lsa) 支持
+                if gc.get('method') == 'mmse_lsa':
+                    mcra_params.update({
+                        'eta_beta_threshold': ne.get('eta_beta_threshold', 10.0),
+                        'eta_slope': ne.get('eta_slope', 20.0)
+                    })
+
+                params.update(mcra_params)
             elif ne_method == 'recursive_average':
                 # RecursiveAverage 噪聲估計參數
                 params.update({

@@ -18,13 +18,7 @@ noise_estimation:
   L: 5                      # v4.0: 120 → 5 (50ms 快速場景適應，測試證明無負面影響)
   delta_db: 5.0
   num_init_frames: 20
-  # eta 場景轉換偵測
-  # v4.0 測試結果: L=5 已提供快速場景適應（50ms），無需 eta
-  # test_wav: enable_eta 降低 PESQ 0.06-0.41
-  # VCTK: enable_eta 收益僅 0.006 PESQ（可忽略）
-  enable_eta: false
-  eta_beta_threshold: 10.0
-  eta_slope: 20.0
+  # v4.1: Eta 場景轉換偵測已完全移除，L=5 優化已替代其功能
 noise_tracking:
   enable: true
 spp:

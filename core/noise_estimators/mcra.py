@@ -50,10 +50,7 @@ class McraNoiseEstimator:
         alpha_p: float = 0.2,
         L: int = 96,
         delta_db: float = 5.0,
-        num_init_frames: int = 20,
-        enable_eta: bool = False,
-        eta_beta_threshold: float = 10.0,
-        eta_slope: float = 20.0
+        num_init_frames: int = 20
     ):
         self.alpha_s = alpha_s
         self.alpha_d = alpha_d
@@ -61,9 +58,6 @@ class McraNoiseEstimator:
         self.L = L
         self.delta = 10 ** (delta_db / 10)  # 線性域的 delta
         self.num_init_frames = num_init_frames
-        self.enable_eta = enable_eta
-        self.eta_beta_threshold = eta_beta_threshold
-        self.eta_slope = eta_slope
 
         # 狀態變量
         self.noise_psd = None       # 噪聲功率譜密度
@@ -71,11 +65,6 @@ class McraNoiseEstimator:
         self.S_min = None           # 最小值
         self.min_buffer = None      # 最小值追蹤緩衝區 (L, n_freqs)
         self.spp = None             # Speech Presence Probability
-        # 場景偵測狀態
-        self._prev_frame_power = None
-        self._energy_smooth = None
-        self._spp_history = []  # 保存最近 N 幀的 SPP 用於語音過濾
-        self._eta_cooldown = 0  # 冷卻計數器：觸發後暫停一段時間
 
         self.is_initialized = False
         self.frame_count = 0
@@ -118,50 +107,6 @@ class McraNoiseEstimator:
         self.frame_count = self.num_init_frames
 
         return self.noise_psd
-
-    def _compute_eta_from_ratio(self) -> float:
-        """
-        場景轉換偵測：使用 S/S_min 比值 + SPP 過濾
-
-        原理：
-        - 場景變化：β 高 + SPP 低（純噪聲增加）
-        - 語音：β 高 + SPP 高（有語音活動）
-
-        條件：只有當 β > threshold 且 SPP < 0.3 時才觸發
-        這樣可以避免語音段誤觸發
-
-        v4.1: 加入 SPP 過濾條件
-        v4.0: 改用 S/S_min 比值
-        """
-        if self.S is None or self.S_min is None:
-            return 1.0
-
-        # 計算平均 beta = mean(S / S_min)
-        beta = np.mean(self.S / (self.S_min + 1e-10))
-
-        # 冷卻機制：觸發後暫停 50 幀（0.5秒）
-        if self._eta_cooldown > 0:
-            self._eta_cooldown -= 1
-            return 1.0
-
-        # 條件1: β 要夠大
-        if beta <= self.eta_beta_threshold:
-            return 1.0
-
-        # 條件2: SPP 要低（確認不是語音）
-        if self.spp is not None:
-            mean_spp = np.mean(self.spp)
-            if mean_spp > 0.3:
-                return 1.0  # SPP 高 = 有語音，不觸發
-
-        # 同時滿足：β 高 + SPP 低 = 場景變化
-        self._eta_cooldown = 50
-
-        if self.eta_slope > 0:
-            eta = 1.0 / (1.0 + np.exp(self.eta_slope * (beta - self.eta_beta_threshold)))
-            return max(eta, 0.01)
-        else:
-            return 0.1
 
     def update(
         self,
@@ -212,11 +157,6 @@ class McraNoiseEstimator:
         # p(k,l) = α_p·p(k,l-1) + (1-α_p)·I(k,l)
         self.spp = self.alpha_p * self.spp + (1 - self.alpha_p) * indicator
 
-        # 6.5 保存 SPP 歷史用於語音過濾
-        self._spp_history.append(np.mean(self.spp))
-        if len(self._spp_history) > 20:  # 保留最近 20 幀
-            self._spp_history.pop(0)
-
         # 7. 噪聲更新（SPP 門控）
         # v2.0: 若提供外部 SPP，使用外部 SPP；否則使用內部 SPP
         spp_for_update = spp if spp is not None else self.spp
@@ -226,12 +166,8 @@ class McraNoiseEstimator:
         # 當 SPP 低（噪聲段）時，α̃_d 接近 α_d，噪聲更新快
         tilde_alpha_d = self.alpha_d + (1 - self.alpha_d) * spp_for_update
 
-        # 8. 場景轉換偵測（使用 S/S_min 比值）
-        if self.enable_eta:
-            eta = self._compute_eta_from_ratio()
-            tilde_alpha_d = tilde_alpha_d * eta
-
         # N(k,l) = α̃_d·N(k,l-1) + (1-α̃_d)·|Y(k,l)|²
+        # v4.1: Eta 場景轉換偵測已移除，L=5 優化已替代其功能
         self.noise_psd = tilde_alpha_d * self.noise_psd + (1 - tilde_alpha_d) * power
 
         self.frame_count += 1
@@ -245,10 +181,6 @@ class McraNoiseEstimator:
         self.S_min = None
         self.min_buffer = None
         self.spp = None
-        self._prev_frame_power = None
-        self._energy_smooth = None
-        self._spp_history = []
-        self._eta_cooldown = 0
         self.is_initialized = False
         self.frame_count = 0
 

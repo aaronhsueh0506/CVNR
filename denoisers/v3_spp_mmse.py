@@ -76,7 +76,6 @@ class SppMmseDenoiser(BaseDenoiser):
         alpha_p: float = 0.2,       # MCRA SPP 平滑因子
         L: int = 96,                # MCRA 最小值窗口長度
         delta_db: float = 5.0,      # MCRA 偏差補償 (dB)
-        enable_eta: bool = False,   # MCRA 瞬態偵測開關
         # v2.6 Soft VAD
         enable_soft_vad: bool = False
     ):
@@ -100,6 +99,7 @@ class SppMmseDenoiser(BaseDenoiser):
         )
 
         # 創建噪聲估計器（根據配置選擇）
+        # v4.1: Eta 場景轉換偵測已移除
         if noise_method == 'mcra':
             self.noise_estimator = McraNoiseEstimator(
                 alpha_s=alpha_s,
@@ -107,8 +107,7 @@ class SppMmseDenoiser(BaseDenoiser):
                 alpha_p=alpha_p,
                 L=L,
                 delta_db=delta_db,
-                num_init_frames=num_init_frames,
-                enable_eta=enable_eta
+                num_init_frames=num_init_frames
             )
         else:
             self.noise_estimator = RecursiveAverageNoiseEstimator(
