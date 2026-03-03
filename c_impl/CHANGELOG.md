@@ -2,6 +2,109 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [v1.5.0] - 2026-03-04
+
+### 重大變更 (Breaking Changes)
+
+**同步 Python V3-2 (v4.0) 優化參數**
+- **檔案**: `include/mmse_lsa_types.h`
+- **改動**: 更新默認配置以匹配 Python v4.0 優化
+  - `alpha_s`: 0.8f → 0.7f (更快時間響應，無 PESQ 損失)
+  - `L`: 120 → 5 (場景適應時間從 1.2s 降至 50ms，提升 24 倍)
+  - `init_percentile`: 20 → 30 (更準確的噪聲初始化)
+- **影響**: 與 Python V3-2 (v4.0) 完全一致
+
+**完全移除 Eta 場景轉換偵測**
+- **檔案**:
+  - `include/mmse_lsa_types.h` - 移除 eta 配置成員
+  - `src/mcra_noise_estimator.c` - 移除 eta 計算邏輯
+  - `example/main.c` - 移除 eta 配置代碼
+- **移除內容**:
+  - `MmseLsaConfig` 結構體的 `enable_eta`, `eta_beta_threshold`, `eta_slope` 成員
+  - `McraNoiseEstimator` 結構體的 eta 狀態變量（`prev_frame_power`, `energy_smooth`）
+  - 能量累加和 eta 計算邏輯
+  - 噪聲更新公式中的 eta 乘法
+- **原因**:
+  - L=5 優化已提供 50ms 快速場景適應，無需 eta 機制
+  - 測試證明 eta 導致 PESQ 降低 0.06-0.41（test_wav）
+  - eta 收益僅 0.006 PESQ（VCTK/DEMAND），可忽略不計
+  - 誤觸發風險大於收益
+
+### 性能提升 (Performance)
+
+- 場景轉換適應時間: 1.2s → 50ms（提升 24 倍）
+- MCRA 最小值緩衝記憶體:
+  - 16kHz: 240KB → **10KB** (L×513×4 = 5×513×4，節省 96%)
+  - 48kHz: 240KB → **10KB** (L×513×4 = 5×513×4，節省 96%)
+- 代碼簡化: 移除約 100 行 eta 相關代碼
+
+### 修改詳情
+
+#### 頭文件 (mmse_lsa_types.h)
+```c
+// 移除:
+bool enable_eta;
+float eta_beta_threshold;
+float eta_slope;
+
+// 更新默認值:
+config.alpha_s = 0.7f;  // was 0.8f
+config.L = 5;           // was 120
+```
+
+#### MCRA 噪聲估計器 (mcra_noise_estimator.c)
+```c
+// 移除結構體成員:
+bool enable_eta;
+float eta_beta_threshold;
+float eta_slope;
+float prev_frame_power;
+float energy_smooth;
+
+// 更新初始化百分位數:
+float init_psd = avg_power * 0.23f;  // 30th percentile (was 0.17f for 20th)
+float init_psd = calculate_percentile(..., 30);  // was 20
+
+// 簡化噪聲更新公式:
+float tilde_alpha_d = alpha_d + (1.0f - alpha_d) * spp_for_update[k];
+// 移除: * eta
+```
+
+#### 示例程序 (main.c)
+```c
+// 移除:
+config.enable_eta = false;
+
+// 添加注釋說明 v4.1 優化:
+// v4.1: Eta scene change detection removed (L=5 optimization replaces it)
+// v4.0 optimizations (sync with Python V3-2):
+// - alpha_s = 0.7 (faster response, no PESQ degradation)
+// - L = 5 (50ms scene adaptation)
+// - init_percentile = 30th (improved initialization)
+```
+
+### 技術細節
+
+**為什麼 L=5 足以替代 Eta？**
+
+1. **追蹤速度**: L=5 的 S_min 追蹤僅需 50ms，遠快於噪聲估計收斂時間（195ms with alpha_d=0.95）
+2. **SPP 自動調整**: 場景變化時 SPP 自動降低，噪聲更新自動加速至 alpha_d
+3. **Eta 收益極小**: 理論可節省 ~150ms，但實際 PESQ 收益僅 0.006
+4. **Eta 風險大**: 無法區分"語音開始"與"場景變化"，誤觸發率高
+
+**測試驗證** (Python 測試結果):
+- ✅ L 從 120→5: ΔPESQ = 0.0000 (完全無負面影響)
+- ❌ enable_eta: ΔPESQ = -0.06 到 -0.41 (明顯降低性能)
+
+### 文檔更新
+
+- `README.md`: 添加 v4.0/v4.1 同步說明
+- 更新配置參數表（alpha_s, L 的默認值和註釋）
+- 更新記憶體使用量（MCRA 緩衝從 240KB 降至 10KB）
+- 更新迴圈合併說明（移除 eta 能量累加）
+
+---
+
 ## [v1.4.0] - 2026-02-03
 
 ### Eta 場景轉換偵測修正 (Strategy K)

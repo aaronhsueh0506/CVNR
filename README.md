@@ -20,6 +20,7 @@
    - 適合: 高質量語音增強，對音質要求高的場景
    - 特點: 更少的音樂噪聲，頻譜更平滑
    - **v4.0 優化**: alpha_s=0.7, L=5 (50ms 快速場景適應)
+   - **v4.1 優化**: 完全移除 eta 機制（L=5 已替代其功能）
 
 5. **V3-3: PMMSE (感知動機 MMSE)**
    - 基於 Gaussian 先驗 + IS 距離的感知優化
@@ -563,6 +564,7 @@ test_set = generator.generate_test_set(
   - 語音存在機率軟判決
 - **配置**: `config/v3_4_config.yaml`
 - **v2.7 新增**: MCRA 場景轉換偵測 (平滑能量比 + hard threshold, β > θ → η=0.1, 否則 η=1.0)
+  > **⚠️ v4.1 已棄用**: Eta 機制已完全移除，L=5 優化提供更快且可靠的場景適應（詳見 `MCRA_SCENE_CHANGE_ANALYSIS.md`）
 
 ### 性能對比 (典型值)
 
@@ -1194,8 +1196,20 @@ MIT License
 
 ## 📜 版本歷史
 
-### v2.7.0 (2026-02-03) ✨ 最新
+### v4.1.0 (2026-03-04) ✨ 最新
+- 🚨 **Eta 機制完全移除**: 測試證明 L=5 優化已替代 eta 功能
+  - test_wav: enable_eta 降低 PESQ 0.06-0.41
+  - VCTK: enable_eta 收益僅 0.006 PESQ（可忽略不計）
+  - Python + C 實現完全同步
+- ✅ **C 實現同步 Python V3-2 (v4.0)**:
+  - alpha_s: 0.8 → 0.7 (更快時間響應)
+  - L: 120 → 5 (場景適應速度提升 24 倍)
+  - init_percentile: 20th → 30th (更準確初始化)
+- 📚 **文檔更新**: 所有 eta 相關內容標記為已棄用
+
+### v2.7.0 (2026-02-03)
 - 🐛 **MCRA Eta 場景轉換偵測修正**: sigmoid (η≤0.95) → 平滑能量比 + hard threshold (η=1.0 或 0.1)
+  > **⚠️ v4.1 注記**: 此機制已在 v4.1 完全移除，L=5 優化已提供更好的場景適應
   - 修正舊版語音幀噪聲更新速度增加 ~10x 的問題
   - VCTK 驗證: PESQ +0.085→+0.399, STOI -0.068→-0.010
 
@@ -1207,11 +1221,12 @@ MIT License
   - 頻率範圍: 300Hz - 3400Hz
   - 映射函數: y = 0.1 + 0.9 * (1 - e^(-3*mean_power))
   - 時間平滑: α_vad = 0.95
-- ✨ **MCRA 場景轉換偵測 (v2.7 更新)**:
+- ✨ **MCRA 場景轉換偵測 (v2.7 更新)** ⚠️ **已在 v4.1 棄用**:
   - 平滑能量: E_smooth = 0.7 * E_smooth_prev + 0.3 * E_cur
   - 能量比 β = E_smooth / E_smooth_prev
   - Hard threshold: β > θ → η=0.1（加速噪聲更新），否則 η=1.0（不干擾）
   - v2.7 修正: 舊版 sigmoid (η=0.95 上限) 導致語音幀噪聲更新速度增加 10x
+  - **v4.1 移除原因**: L=5 優化已提供 50ms 快速場景適應，無需 eta 機制
 - 🔄 **OmlsaMcraDenoiser**: 替換 LaplacianMmseDenoiser
 
 ### v2.5.0 (2026-01-16)

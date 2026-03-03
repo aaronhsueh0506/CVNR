@@ -4,6 +4,100 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [4.1.0] - 2026-03-04
+
+### 重大變更 (Breaking Changes) 🚨
+
+**Eta 機制完全移除**
+- 測試證明 L=5 優化已替代 eta 功能，無需額外的場景轉換偵測
+- test_wav (穩定噪聲): enable_eta 降低 PESQ 0.06-0.41
+- VCTK/DEMAND (非穩態噪聲): enable_eta 收益僅 0.006 PESQ（可忽略不計）
+- 移除所有 eta 相關代碼和配置參數（Python + C）
+
+**C 實現同步 Python V3-2 (v4.0) 優化參數**
+- `alpha_s`: 0.8 → 0.7 (更快時間響應，無 PESQ 損失)
+- `L`: 120 → 5 (場景適應速度提升 24 倍：1.2s → 50ms)
+- `init_percentile`: 20th → 30th (更準確的噪聲初始化)
+- 與 Python 實現完全一致，消除參數差異
+
+### 移除 (Removed)
+
+**Python 代碼**:
+- `core/noise_estimators/mcra.py`:
+  - 移除 `enable_eta`, `eta_beta_threshold`, `eta_slope` 參數
+  - 移除 `_compute_eta_from_ratio()` 方法
+  - 移除 SPP 歷史追蹤和 eta 計算邏輯
+  - 移除 eta 狀態變量（`_prev_frame_power`, `_energy_smooth`, `_spp_history`, `_eta_cooldown`）
+- `denoisers/v3_spp_mmse.py`, `v3_2_mmse_lsa.py`, `v3_3_pmmse.py`:
+  - 移除所有 eta 參數傳遞
+- `config/v3_2_config.yaml`:
+  - 移除 eta 配置塊
+- `process_audio.py`, `regenerate_all.py`:
+  - 移除 eta 參數處理代碼
+
+**C 代碼**:
+- `c_impl/include/mmse_lsa_types.h`:
+  - 移除 `enable_eta`, `eta_beta_threshold`, `eta_slope` 配置成員
+  - 更新默認配置為 v4.0 參數
+- `c_impl/src/mcra_noise_estimator.c`:
+  - 移除 eta 結構體成員和狀態變量
+  - 移除能量累加和 eta 計算邏輯
+  - 簡化噪聲更新公式（移除 eta 乘法）
+  - 更新初始化百分位數（20 → 30）
+- `c_impl/example/main.c`:
+  - 移除 `enable_eta` 設置
+
+**測試腳本（已歸檔至 `archived_eta_tests/`）**:
+- `compare_eta_full.py`
+- `compare_spp_eta.py`
+- `test_eta_configs.py`
+- `test_eta_params.py`
+- `test_eta_vad_comparison.py`
+- `diagnose_eta.py`
+- `visualize_eta_curve.py`
+
+### 性能提升 (Performance)
+
+- 場景轉換適應時間: 1.2s → 50ms（提升 24 倍）
+- MCRA 最小值緩衝記憶體: 240KB → 10KB（48kHz，節省 96%）
+- 代碼簡化: 移除約 200 行 eta 相關代碼
+- 維護性提升: 消除 Python/C 參數差異
+
+### 文檔更新 (Documentation)
+
+- `README.md`: 添加 v4.1 條目，標記 eta 機制為已棄用
+- `c_impl/README.md`: 添加 v4.0/v4.1 同步說明，更新默認參數表
+- `ALGORITHMS_EXPLANATION.md`: 標記 eta 章節為已棄用（保留作為歷史參考）
+- `parameter_adjust_guide.md`: 更新 v4.0 最終參數表
+- `ETA_ANALYSIS.md`: 保留作為測試結果歷史記錄
+- `MCRA_SCENE_CHANGE_ANALYSIS.md`: 記錄 L=5 優化原理
+
+### 技術細節 (Technical Details)
+
+**為什麼移除 Eta？**
+
+1. **L=5 追蹤極快**: S_min 僅需 50ms 即可追蹤新噪聲，遠快於噪聲估計收斂時間（195ms）
+2. **SPP 自動調整**: 場景變化時 SPP 自動降低，噪聲更新自動加速
+3. **Eta 收益極小**: 理論上可節省 ~150ms，但實際 PESQ 收益僅 0.006（可忽略）
+4. **Eta 風險更大**: 誤觸發導致 PESQ 下降 0.06-0.41，場景轉換罕見不值得增加風險
+
+**測試驗證**:
+- ✅ L 從 120→5: ΔPESQ = 0.0000（完全無負面影響）
+- ❌ enable_eta: ΔPESQ = -0.06 到 -0.41（明顯降低性能）
+
+### 修改文件
+
+1. `core/noise_estimators/mcra.py`
+2. `denoisers/v3_spp_mmse.py`, `v3_2_mmse_lsa.py`, `v3_3_pmmse.py`
+3. `config/v3_2_config.yaml`
+4. `process_audio.py`, `regenerate_all.py`
+5. `c_impl/include/mmse_lsa_types.h`
+6. `c_impl/src/mcra_noise_estimator.c`
+7. `c_impl/example/main.c`
+8. `README.md`, `c_impl/README.md`, `CHANGELOG.md`, `c_impl/CHANGELOG.md`
+
+---
+
 ## [4.0.0] - 2026-03-03
 
 ### 新增 (Added)

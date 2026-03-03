@@ -9,6 +9,24 @@
 - **SPP 語音存在機率**：Decision Directed 方法
 - **非對稱增益平滑**：Attack/Decay 分離控制
 - **可配置優化開關**：透過編譯開關選擇精度/速度權衡
+- **v4.0/v4.1 同步**: 與 Python V3-2 實現完全一致的參數優化
+
+## v4.0/v4.1 優化同步
+
+C 實現已同步 Python V3-2 的優化參數：
+
+| 參數 | 舊值 | v4.0 新值 | 改進 |
+|------|------|----------|------|
+| `alpha_s` | 0.8 | **0.7** | 更快時間響應，無 PESQ 損失 |
+| `L` | 120 | **5** | 場景適應時間從 1.2s 降至 50ms（提升 24 倍）|
+| `init_percentile` | 20th | **30th** | 更準確的噪聲初始化 |
+| `enable_eta` | 可配置 | **已移除** | L=5 優化已替代 eta 場景轉換偵測功能 |
+
+**v4.1 重大變更**：
+- 完全移除 Eta 場景轉換偵測機制
+- 測試證明 L=5 提供更快且可靠的場景適應（50ms vs eta 的 ~195ms）
+- 消除誤觸發風險（test_wav 顯示 eta 降低 PESQ 0.06-0.41）
+- 代碼簡化，與 Python 實現完全一致
 
 ## 算法流程
 
@@ -179,8 +197,8 @@ MCRA 噪聲估計的瓶頸是每幀掃描 ring buffer（L=120 幀）找最小值
 ### 化簡 3：迴圈合併
 
 **mcra_noise_estimator.c** — 6 個獨立 for-k 迴圈 → 2 個：
-- Loop A: S 時間平滑 + min buffer 寫入 + eta 能量累加 + min 追蹤
-- Eta: 平滑能量比 + hard threshold (β > θ → η=0.1, 否則 η=1.0)
+- Loop A: S 時間平滑 + min buffer 寫入 + min 追蹤
+  > **v4.1 更新**: Eta 能量累加已移除，L=5 優化已替代場景轉換偵測功能
 - Loop C: SPP indicator + 噪聲更新
 
 **mmse_lsa_denoiser.c** — 3 個獨立 for-k 迴圈 → 1 個：
@@ -251,9 +269,9 @@ free(out_buf);
 | `alpha_xi` | 0.92 | 先驗 SNR 平滑因子 |
 | `q` | 0.5 | 語音先驗機率 |
 | `xi_min_db` | -20 | 先驗 SNR 下限 (dB) |
-| `alpha_s` | 0.8 | MCRA 時間平滑 |
+| `alpha_s` | 0.7 | MCRA 時間平滑 (v4.0: 0.8→0.7) |
 | `alpha_d` | 0.95 | MCRA 噪聲更新率 |
-| `L` | 120 | MCRA 最小值窗口 |
+| `L` | 5 | MCRA 最小值窗口 (v4.0: 120→5，50ms 快速場景適應) |
 | `num_init_frames` | 20 | 噪聲初始化幀數 |
 | `g_min_db` | -12.5 | 最小增益 (dB) |
 | `alpha_g` | 0.8 | 增益平滑因子 |
@@ -303,7 +321,8 @@ c_impl/
 
 - 基本使用: ~50KB (取決於 FFT size 和 n_freqs)
 - 精確 percentile (無 USE_FAST_PERCENTILE): +20KB
-- MCRA 最小值緩衝: L × n_freqs × 4 = 120 × 513 × 4 ≈ 240KB (48kHz)
+- MCRA 最小值緩衝: L × n_freqs × 4 = 5 × 513 × 4 ≈ **10KB** (48kHz)
+  > **v4.0 更新**: L 從 120→5，記憶體從 240KB 降至 10KB（節省 96%）
 
 ## 參考文獻
 
