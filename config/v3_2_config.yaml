@@ -5,19 +5,19 @@ audio:
   sample_rate: 16000
   window_type: hanning
 gain_calculation:
-  alpha_g: 0.85
+  alpha_g: 0.92
   g_min_db: -12.5
   method: mmse_lsa
 name: MMSE-LSA
 noise_estimation:
   method: mcra
-  alpha_s: 0.7
-  alpha_d: 0.85
+  alpha_s: 0.9
+  alpha_d: 0.7
   alpha_p: 0.2
-  L: 5                      # 50ms 快速場景適應
-  delta_db: 5.0
+  L: 48                     # 480ms 場景追蹤
+  delta_db: 10.0
   num_init_frames: 20
-  broadband_threshold: 0.8  # 寬頻場景偵測閾值（SPP>0.5 的 bin 比例）
+  broadband_threshold: 0.75  # 寬頻場景偵測閾值（SPP>0.5 的 bin 比例）
 noise_tracking:
   enable: true
 soft_vad:
@@ -25,6 +25,6 @@ soft_vad:
   method: flatness             # spp / flatness / energy_ratio
 spp:
   alpha_xi: 0.88
-  q: 0.40
+  q: 0.50
   xi_min_db: -20.0
 version: 3-2
