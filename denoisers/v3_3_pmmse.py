@@ -74,6 +74,7 @@ class PmmseDenoiser(BaseDenoiser):
         alpha_p: float = 0.2,       # MCRA SPP 平滑因子
         L: int = 96,                # MCRA 最小值窗口長度
         delta_db: float = 5.0,      # MCRA 偏差補償 (dB)
+        broadband_threshold: float = 0.8,  # 寬頻場景轉換偵測閾值
         # v2.6 Soft VAD
         enable_soft_vad: bool = False
     ):
@@ -97,7 +98,6 @@ class PmmseDenoiser(BaseDenoiser):
         )
 
         # 創建噪聲估計器（根據配置選擇）
-        # v4.1: Eta 場景轉換偵測已移除
         if noise_method == 'mcra':
             self.noise_estimator = McraNoiseEstimator(
                 alpha_s=alpha_s,
@@ -105,7 +105,8 @@ class PmmseDenoiser(BaseDenoiser):
                 alpha_p=alpha_p,
                 L=L,
                 delta_db=delta_db,
-                num_init_frames=num_init_frames
+                num_init_frames=num_init_frames,
+                broadband_threshold=broadband_threshold
             )
         else:
             self.noise_estimator = RecursiveAverageNoiseEstimator(

@@ -388,8 +388,6 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
     // Advance ring index
     self->ring_idx = (self->ring_idx + 1) % L;
 
-    // v4.1: Eta scene change detection removed (L=5 optimization replaces it)
-
     // Loop C: Speech indicator + SPP smoothing + noise update
     const float* spp_for_update = spp_ext ? spp_ext : self->spp;
     for (int k = 0; k < n_freqs; k++) {
@@ -401,7 +399,6 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
         self->spp[k] = alpha_p * self->spp[k] + (1.0f - alpha_p) * indicator;
 
         // Noise update with SPP gating (uses external SPP if provided, else internal)
-        // v4.1: Eta multiplication removed
         float tilde_alpha_d = alpha_d + (1.0f - alpha_d) * spp_for_update[k];
         self->noise_psd[k] = tilde_alpha_d * self->noise_psd[k] +
                             (1.0f - tilde_alpha_d) * power[k];

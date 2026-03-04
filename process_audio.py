@@ -1,7 +1,7 @@
 """
 音頻文件降噪處理工具
 
-使用 V1-V4 四個版本的降噪算法處理真實音頻文件。
+使用 V1-V3 系列降噪算法處理真實音頻文件。
 
 用法：
     # 基本用法
@@ -26,16 +26,9 @@
     - input_v1.wav（頻譜減法）
     - input_v2.wav（Wiener 濾波）
     - input_v3.wav（SPP-MMSE）
-    - input_v4.wav（IMCRA-OMLSA）
 
 配置文件：
-    從 config/ 目錄讀取：
-    - v1_config.yaml
-    - v2_config.yaml
-    - v3_config.yaml
-    - v4_config.yaml
-
-    可以修改這些文件來調整降噪參數。
+    從 config/ 目錄讀取對應版本的 YAML 配置。
 """
 
 import sys
@@ -74,8 +67,6 @@ from denoisers import (
     MmseLsaDenoiser,
     PmmseDenoiser
 )
-# V4 IMCRA-OMLSA archived to archived_v4_imcra/
-# from denoisers import ImcraOmlsaDenoiser
 
 
 def load_config(config_file: str) -> dict:
@@ -113,7 +104,7 @@ def create_denoiser_from_config(
     根據配置文件創建降噪器
 
     Args:
-        version: 版本名稱 (V1, V2, V3, V3-2, V3-3)。V4 merged to V3-2, V3-4 removed
+        version: 版本名稱 (V1, V2, V3, V3-2, V3-3)
         config_dir: 配置文件目錄
         sample_rate: 採樣率
 
@@ -210,8 +201,8 @@ def create_denoiser_from_config(
                 'alpha_noise': noise_config.get('alpha_d', 0.85),
                 'alpha_p': noise_config.get('alpha_p', 0.2),
                 'L': noise_config.get('L', 96),
-                'delta_db': noise_config.get('delta_db', 5.0)
-                # Note: eta parameters removed in v4.1
+                'delta_db': noise_config.get('delta_db', 5.0),
+                'broadband_threshold': noise_config.get('broadband_threshold', 0.8)
             })
         else:
             params.update({
@@ -251,8 +242,8 @@ def create_denoiser_from_config(
                 'alpha_noise': noise_config.get('alpha_d', 0.85),
                 'alpha_p': noise_config.get('alpha_p', 0.2),
                 'L': noise_config.get('L', 96),
-                'delta_db': noise_config.get('delta_db', 5.0)
-                # Note: eta parameters removed in v4.1
+                'delta_db': noise_config.get('delta_db', 5.0),
+                'broadband_threshold': noise_config.get('broadband_threshold', 0.8)
             })
         else:
             params.update({
@@ -292,8 +283,8 @@ def create_denoiser_from_config(
                 'alpha_noise': noise_config.get('alpha_d', 0.85),
                 'alpha_p': noise_config.get('alpha_p', 0.2),
                 'L': noise_config.get('L', 96),
-                'delta_db': noise_config.get('delta_db', 5.0)
-                # Note: eta parameters removed in v4.1
+                'delta_db': noise_config.get('delta_db', 5.0),
+                'broadband_threshold': noise_config.get('broadband_threshold', 0.8)
             })
         else:
             params.update({
@@ -302,14 +293,6 @@ def create_denoiser_from_config(
             })
 
         return PmmseDenoiser(**params)
-
-    # V3-4 removed (test results not better than V3-2)
-
-    elif version == 'V4':
-        # V4: Merged to V3-2 (MCRA-MMSE-LSA with optimized parameters)
-        # V4 IMCRA-OMLSA archived to archived_v4_imcra/
-        # V4 now uses same implementation as V3-2 with config differences
-        return create_denoiser('V3-2', config)
 
     else:
         raise ValueError(f"Unknown version: {version}")
@@ -591,8 +574,8 @@ def main():
   # 指定輸出目錄
   python process_audio.py input.wav --output-dir ./output
 
-  # 只使用 V3 和 V4
-  python process_audio.py input.wav --versions V3 V4
+  # 只使用 V3 系列
+  python process_audio.py input.wav --versions V3 V3-2
 
   # 使用自定義配置
   python process_audio.py input.wav --config-dir ./my_configs

@@ -38,9 +38,6 @@ class McraNoiseEstimator:
         L: 最小值窗口長度（幀），約 1 秒 @ 10ms 幀移
         delta_db: 偏差補償（dB），語音檢測閾值
         num_init_frames: 初始化使用的幀數
-        enable_eta: 場景轉換偵測開關（單幀能量比）
-        eta_beta_threshold: 能量比閾值，β > threshold 時觸發（預設 10.0）
-        eta_slope: sigmoid 斜率（預設 20.0）
     """
 
     def __init__(
@@ -50,7 +47,8 @@ class McraNoiseEstimator:
         alpha_p: float = 0.2,
         L: int = 96,
         delta_db: float = 5.0,
-        num_init_frames: int = 20
+        num_init_frames: int = 20,
+        broadband_threshold: float = 0.8
     ):
         self.alpha_s = alpha_s
         self.alpha_d = alpha_d
@@ -58,6 +56,7 @@ class McraNoiseEstimator:
         self.L = L
         self.delta = 10 ** (delta_db / 10)  # 線性域的 delta
         self.num_init_frames = num_init_frames
+        self.broadband_threshold = broadband_threshold
 
         # 狀態變量
         self.noise_psd = None       # 噪聲功率譜密度
@@ -161,13 +160,23 @@ class McraNoiseEstimator:
         # v2.0: 若提供外部 SPP，使用外部 SPP；否則使用內部 SPP
         spp_for_update = spp if spp is not None else self.spp
 
+        # 寬頻場景轉換偵測：
+        # 語音是頻率選擇性的（諧波、共振峰），SPP 只在特定頻段高
+        # 場景轉換是全頻段的，SPP 在所有頻率 bin 同時飆高
+        # 當全頻段 SPP 同時過高時，按比例縮小 spp_for_update 讓噪聲估計加速更新
+        if self.broadband_threshold < 1.0:
+            high_spp_ratio = np.mean(self.spp > 0.5)
+            if high_spp_ratio > self.broadband_threshold:
+                scale = max(0.0, 1.0 - (high_spp_ratio - self.broadband_threshold)
+                            / (1.0 - self.broadband_threshold))
+                spp_for_update = spp_for_update * scale
+
         # α̃_d(k,l) = α_d + (1-α_d)·p(k,l)
         # 當 SPP 高（語音段）時，α̃_d 接近 1，噪聲更新慢
         # 當 SPP 低（噪聲段）時，α̃_d 接近 α_d，噪聲更新快
         tilde_alpha_d = self.alpha_d + (1 - self.alpha_d) * spp_for_update
 
         # N(k,l) = α̃_d·N(k,l-1) + (1-α̃_d)·|Y(k,l)|²
-        # v4.1: Eta 場景轉換偵測已移除，L=5 優化已替代其功能
         self.noise_psd = tilde_alpha_d * self.noise_psd + (1 - tilde_alpha_d) * power
 
         self.frame_count += 1

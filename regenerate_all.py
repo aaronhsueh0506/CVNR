@@ -23,8 +23,6 @@ from denoisers import (
     MmseLsaDenoiser,
     PmmseDenoiser
 )
-# V4 IMCRA-OMLSA archived to archived_v4_imcra/
-# V4 now uses same implementation as V3-2 (merged)
 
 def load_config(config_path):
     """加載配置文件"""
@@ -62,11 +60,6 @@ methods = {
         'class': PmmseDenoiser,
         'config': 'config/v3_3_config.yaml'
     },
-    # V4 merged to V3-2 (same implementation with optimized parameters)
-    # 'V4': {
-    #     'class': MmseLsaDenoiser,
-    #     'config': 'config/v3_2_config.yaml'
-    # }
 }
 
 def get_denoiser_params_from_config(config, sr, fft_size):
@@ -136,12 +129,6 @@ def get_denoiser_params_from_config(config, sr, fft_size):
                 'alpha_g': gc.get('alpha_g', 0.5),
                 'use_spp_weighting': gc.get('use_spp_weighting', True)
             })
-        # V3-4 (OMLSA-MCRA) 和 V4 (IMCRA-OMLSA) 都使用 omlsa 增益（標準對數域 SPP 加權）
-        elif gc.get('method') == 'omlsa':
-            params.update({
-                'g_min_db': gc.get('g_min_db', -20.0),
-                'alpha_g': gc.get('alpha_g', 0.7)
-            })
 
     # SPP 參數
     if 'spp' in config:
@@ -164,24 +151,15 @@ def get_denoiser_params_from_config(config, sr, fft_size):
         if is_v3_series:
             if ne_method == 'mcra':
                 # V3/V3-2/V3-3 的 MCRA 噪聲估計參數
-                mcra_params = {
+                params.update({
                     'noise_method': 'mcra',
                     'alpha_s': ne.get('alpha_s', 0.9),
                     'alpha_noise': ne.get('alpha_d', 0.85),
                     'alpha_p': ne.get('alpha_p', 0.2),
                     'L': ne.get('L', 96),
                     'delta_db': ne.get('delta_db', 5.0),
-                    'enable_eta': ne.get('enable_eta', False)
-                }
-
-                # eta_beta_threshold 和 eta_slope 只有 V3-2 (mmse_lsa) 支持
-                if gc.get('method') == 'mmse_lsa':
-                    mcra_params.update({
-                        'eta_beta_threshold': ne.get('eta_beta_threshold', 10.0),
-                        'eta_slope': ne.get('eta_slope', 20.0)
-                    })
-
-                params.update(mcra_params)
+                    'broadband_threshold': ne.get('broadband_threshold', 0.8)
+                })
             elif ne_method == 'recursive_average':
                 # RecursiveAverage 噪聲估計參數
                 params.update({
@@ -189,26 +167,12 @@ def get_denoiser_params_from_config(config, sr, fft_size):
                     'alpha_noise': ne.get('alpha', 0.95)
                 })
 
-    # IMCRA 噪聲估計參數（V4, Cohen 2003 兩階段實現）
-    if 'noise_estimation' in config and config['noise_estimation'].get('method') == 'imcra':
-        ne = config['noise_estimation']
-        params.update({
-            'freq_smooth_width': ne.get('freq_smooth_width', 1),
-            'alpha_s': ne.get('alpha_s', 0.9),
-            'alpha_d': ne.get('alpha_d', 0.85),
-            'L': ne.get('L', 96),
-            'V': ne.get('V', 15),
-            'U': ne.get('U', 8),
-            'delta_db': ne.get('delta_db', 5.0),
-            'delta_s_db': ne.get('delta_s_db', 3.0)
-        })
-
     return params
 
 def main():
     parser = argparse.ArgumentParser(description='重新生成降噪輸出')
     parser.add_argument('--version', type=str, nargs='+',
-                        help='指定版本 (例: V3 V3-2 V4)，不指定則處理全部')
+                        help='指定版本 (例: V3 V3-2 V3-3)，不指定則處理全部')
     parser.add_argument('--config', type=str,
                         help='使用自定義配置文件 (需配合 --version 使用單一版本)')
     args = parser.parse_args()

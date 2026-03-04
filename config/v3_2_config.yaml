@@ -12,13 +12,13 @@ gain_calculation:
 name: MMSE-LSA
 noise_estimation:
   method: mcra
-  alpha_s: 0.7              # v4.0: 0.8 → 0.7 (更快響應，測試證明無負面影響)
-  alpha_d: 0.95             # 噪聲更新基礎速率（測試證明最佳）
+  alpha_s: 0.7
+  alpha_d: 0.95
   alpha_p: 0.2
-  L: 5                      # v4.0: 120 → 5 (50ms 快速場景適應，測試證明無負面影響)
+  L: 5                      # 50ms 快速場景適應
   delta_db: 5.0
   num_init_frames: 20
-  # v4.1: Eta 場景轉換偵測已完全移除，L=5 優化已替代其功能
+  broadband_threshold: 0.8  # 寬頻場景偵測閾值（SPP>0.5 的 bin 比例）
 noise_tracking:
   enable: true
 spp:

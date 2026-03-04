@@ -43,8 +43,6 @@ typedef struct {
     float alpha_attack;     // Asymmetric attack (0.3)
     float alpha_decay;      // Asymmetric decay (0.8 = alpha_g)
 
-    // v4.1: Eta scene change detection removed (L=5 optimization replaces it)
-
     // Soft VAD (post-processing)
     bool enable_soft_vad;       // Enable soft VAD gating (false)
     float vad_freq_low;         // VAD band low frequency Hz (300.0)
@@ -79,10 +77,10 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
     config.xi_min_db = -20.0f;
 
     // MCRA parameters (v4.0 optimized, sync with Python v3_2_config.yaml)
-    config.alpha_s = 0.7f;       // v4.0: 0.8 → 0.7 (faster response, no PESQ degradation)
+    config.alpha_s = 0.7f;
     config.alpha_d = 0.95f;
     config.alpha_p = 0.2f;
-    config.L = 5;                // v4.0: 120 → 5 (50ms scene adaptation, replaces eta)
+    config.L = 5;                // 50ms scene adaptation
     config.delta_db = 5.0f;
     config.num_init_frames = 20;
 
@@ -91,8 +89,6 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
     config.alpha_g = 0.8f;
     config.alpha_attack = 0.3f;
     config.alpha_decay = 0.8f;      // Match Python (= alpha_g)
-
-    // v4.1: Eta scene change detection removed
 
     // Soft VAD (disabled by default)
     config.enable_soft_vad = false;
