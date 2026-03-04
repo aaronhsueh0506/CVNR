@@ -119,8 +119,7 @@ def get_denoiser_params_from_config(config, sr, fft_size):
         elif gc.get('method') == 'mmse_lsa':
             params.update({
                 'g_min_db': gc.get('g_min_db', -20.0),
-                'alpha_g': gc.get('alpha_g', 0.7),
-                'use_linear_spp_weighting': gc.get('use_linear_spp_weighting', False)
+                'alpha_g': gc.get('alpha_g', 0.7)
             })
         # V3-3 (PMMSE - Wolfe & Godsill β=0.5)
         elif gc.get('method') == 'pmmse':

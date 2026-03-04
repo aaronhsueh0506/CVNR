@@ -49,7 +49,6 @@ class MmseLsaGainCalculator:
         g_min_db: 最小增益 (dB), -15 到 -25
         alpha_g: 增益時間平滑因子, 0.6-0.8 (對稱平滑時使用)
         use_spp_weighting: True=使用SPP加權(OMLSA), False=純MMSE-LSA
-        use_linear_spp_weighting: True=線性域加權, False=對數域加權(僅當use_spp_weighting=True時有效)
         use_asymmetric_smoothing: 是否使用非對稱平滑 (v1.5.0)
         alpha_attack: Attack 平滑因子 (增益上升時使用，預設 0.3)
         alpha_decay: Decay 平滑因子 (增益下降時使用，預設 alpha_g)
@@ -60,7 +59,6 @@ class MmseLsaGainCalculator:
         g_min_db: float = -20.0,
         alpha_g: float = 0.7,
         use_spp_weighting: bool = False,
-        use_linear_spp_weighting: bool = False,
         use_asymmetric_smoothing: bool = True,
         alpha_attack: float = 0.3,
         alpha_decay: float = None
@@ -69,7 +67,6 @@ class MmseLsaGainCalculator:
         self.log_g_min = np.log(self.g_min + 1e-10)
         self.alpha_g = alpha_g
         self.use_spp_weighting = use_spp_weighting
-        self.use_linear_spp_weighting = use_linear_spp_weighting
 
         # v1.5.0: 非對稱平滑參數
         self.use_asymmetric_smoothing = use_asymmetric_smoothing
@@ -105,15 +102,9 @@ class MmseLsaGainCalculator:
         gain_mmse = self._mmse_gain_base(xi, gamma)
         gain_mmse = np.clip(gain_mmse, g_min_effective, 1.0)
 
-        # 關鍵差異: 對數域 vs 線性域加權
-        if self.use_linear_spp_weighting:
-            # 線性域加權 (退化為 MMSE-STSA 行為)
-            gain = spp * gain_mmse + (1 - spp) * g_min_effective
-            log_gain = np.log(gain + 1e-10)
-        else:
-            # 對數域加權 (真正的 MMSE-LSA)
-            log_gain_mmse = np.log(gain_mmse + 1e-10)
-            log_gain = spp * log_gain_mmse + (1 - spp) * log_g_min_effective
+        # 對數域加權 (MMSE-LSA 核心)
+        log_gain_mmse = np.log(gain_mmse + 1e-10)
+        log_gain = spp * log_gain_mmse + (1 - spp) * log_g_min_effective
 
         # 對數域時間平滑 (LSA 的核心特徵)
         # v1.5.0: 支持非對稱平滑
@@ -219,11 +210,9 @@ class MmseLsaGainCalculator:
         self.log_gain_prev = None
 
     def __repr__(self):
-        mode = "Linear SPP" if self.use_linear_spp_weighting else "Log-domain SPP (LSA)"
         return (f"MmseLsaGainCalculator("
                 f"g_min={10*np.log10(self.g_min):.1f} dB, "
-                f"alpha_g={self.alpha_g}, "
-                f"mode={mode})")
+                f"alpha_g={self.alpha_g})")
 
 
 if __name__ == "__main__":

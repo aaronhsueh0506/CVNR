@@ -5,10 +5,9 @@ audio:
   sample_rate: 16000
   window_type: hanning
 gain_calculation:
-  alpha_g: 0.80
+  alpha_g: 0.85
   g_min_db: -12.5
   method: mmse_lsa
-  use_linear_spp_weighting: false
 name: MMSE-LSA
 noise_estimation:
   method: mcra
@@ -22,10 +21,10 @@ noise_estimation:
 noise_tracking:
   enable: true
 soft_vad:
-  enable: true
+  enable: false
   method: flatness             # spp / flatness / energy_ratio
 spp:
-  alpha_xi: 0.92
-  q: 0.50
+  alpha_xi: 0.88
+  q: 0.40
   xi_min_db: -20.0
 version: 3-2

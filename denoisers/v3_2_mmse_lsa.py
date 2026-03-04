@@ -44,7 +44,6 @@ class MmseLsaDenoiser(BaseDenoiser):
         xi_min_db: 先驗 SNR 下限（dB）
         g_min_db: 最小增益（dB）
         alpha_g: 增益時間平滑因子
-        use_linear_spp_weighting: True=線性域加權(退化為STSA), False=對數域加權(推薦)
         num_init_frames: 初始噪聲估計幀數
         enable_noise_tracking: 是否啟用噪聲場景追蹤
     """
@@ -61,7 +60,6 @@ class MmseLsaDenoiser(BaseDenoiser):
         xi_min_db: float = -25.0,
         g_min_db: float = -20.0,
         alpha_g: float = 0.7,
-        use_linear_spp_weighting: bool = False,
         num_init_frames: int = 20,
         # v2.0 MCRA 噪聲估計參數
         noise_method: str = 'recursive_average',  # 'recursive_average' 或 'mcra'
@@ -122,8 +120,7 @@ class MmseLsaDenoiser(BaseDenoiser):
         # 創建 MMSE-LSA 增益計算器
         self.gain_calculator = MmseLsaGainCalculator(
             g_min_db=g_min_db,
-            alpha_g=alpha_g,
-            use_linear_spp_weighting=use_linear_spp_weighting
+            alpha_g=alpha_g
         )
 
         # 存儲上一幀的增益（Decision Directed）
@@ -270,7 +267,6 @@ class MmseLsaDenoiser(BaseDenoiser):
             'xi_min_db': 10 * np.log10(self.spp_estimator.xi_min),
             'g_min_db': 10 * np.log10(self.gain_calculator.g_min),
             'alpha_g': self.gain_calculator.alpha_g,
-            'use_linear_spp_weighting': self.gain_calculator.use_linear_spp_weighting,
             'num_init_frames': self.noise_estimator.num_init_frames
         }
         if self.noise_method == 'mcra':
@@ -284,8 +280,6 @@ class MmseLsaDenoiser(BaseDenoiser):
 
     def __repr__(self):
         params = self.get_params()
-        mode = "Linear SPP" if params['use_linear_spp_weighting'] else "Log-domain SPP (LSA)"
         return (f"MmseLsaDenoiser("
                 f"alpha_xi={params['alpha_xi']}, "
-                f"g_min={params['g_min_db']:.1f}dB, "
-                f"mode={mode})")
+                f"g_min={params['g_min_db']:.1f}dB)")
