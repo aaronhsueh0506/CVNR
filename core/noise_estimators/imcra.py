@@ -177,7 +177,8 @@ class ImcraNoiseEstimator:
         S_smoothed: np.ndarray,
         S_min_sw: np.ndarray,
         S_min_buffer: np.ndarray,
-        S_min: np.ndarray
+        S_min: np.ndarray,
+        should_update: bool = False
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         更新最小值追蹤（週期性方法）
@@ -192,6 +193,7 @@ class ImcraNoiseEstimator:
             S_min_sw: 當前子窗口內的最小值
             S_min_buffer: 歷史子窗口最小值緩衝區 (U, n_freqs)
             S_min: 當前全局最小值
+            should_update: 是否到達更新週期（由外部統一判斷）
 
         返回:
             (updated_S_min_sw, updated_S_min_buffer, updated_S_min)
@@ -199,8 +201,8 @@ class ImcraNoiseEstimator:
         # 更新子窗口內的最小值
         S_min_sw = np.minimum(S_min_sw, S_smoothed)
 
-        # 檢查是否到達更新週期
-        if self.subwin_count >= self.V:
+        # 到達更新週期時，更新緩衝區
+        if should_update:
             # 滾動緩衝區，將最舊的子窗口移除
             S_min_buffer = np.roll(S_min_buffer, -1, axis=0)
             # 將當前子窗口最小值存入最新位置
@@ -211,9 +213,6 @@ class ImcraNoiseEstimator:
 
             # 重置子窗口最小值為當前值
             S_min_sw = S_smoothed.copy()
-
-            # 重置子窗口計數
-            self.subwin_count = 0
 
         return S_min_sw, S_min_buffer, S_min
 
@@ -232,22 +231,23 @@ class ImcraNoiseEstimator:
 
         n_freqs = magnitude_spectrum.shape[1]
 
-        # 使用前 N 幀的平均功率初始化
+        # 使用 30th percentile 初始化噪聲估計（與 MCRA 一致，避免語音幀污染）
         init_frames = magnitude_spectrum[:self.num_init_frames]
         power_spectrum = init_frames ** 2
-        init_psd = np.mean(power_spectrum, axis=0)
+        init_psd = np.percentile(power_spectrum, 30, axis=0)
+        mean_psd = np.mean(power_spectrum, axis=0)
 
-        # 初始化噪聲估計
+        # 噪聲估計使用 30th percentile（穩健）
         self.noise_psd = init_psd.copy()
 
-        # 初始化第一階段狀態
-        self.S = init_psd.copy()
+        # 第一階段：S 用 mean（功率譜平滑），min trackers 用 percentile
+        self.S = mean_psd.copy()
         self.S_min = init_psd.copy()
         self.S_min_sw = init_psd.copy()
         self.S_min_buffer = np.tile(init_psd, (self.U, 1))
 
-        # 初始化第二階段狀態
-        self.S_tilde = init_psd.copy()
+        # 第二階段：同樣模式
+        self.S_tilde = mean_psd.copy()
         self.S_tilde_min = init_psd.copy()
         self.S_tilde_min_sw = init_psd.copy()
         self.S_tilde_min_buffer = np.tile(init_psd, (self.U, 1))
@@ -276,6 +276,9 @@ class ImcraNoiseEstimator:
         if not self.is_initialized:
             raise RuntimeError("Noise estimator not initialized. Call estimate() first.")
 
+        # 統一判斷是否到達子窗口更新週期（修復：Stage 1 和 Stage 2 共用同一判斷）
+        should_update = self.subwin_count >= self.V
+
         # ==================== 第一階段：粗略 VAD ====================
 
         # 1. 計算功率譜
@@ -289,7 +292,7 @@ class ImcraNoiseEstimator:
 
         # 4. 最小值追蹤
         self.S_min_sw, self.S_min_buffer, self.S_min = self._update_minimum_tracking(
-            self.S, self.S_min_sw, self.S_min_buffer, self.S_min
+            self.S, self.S_min_sw, self.S_min_buffer, self.S_min, should_update
         )
 
         # 5. 粗略語音指示（非語音 = 1，語音 = 0）
@@ -309,7 +312,7 @@ class ImcraNoiseEstimator:
         self.S_tilde_min_sw, self.S_tilde_min_buffer, self.S_tilde_min = \
             self._update_minimum_tracking(
                 self.S_tilde, self.S_tilde_min_sw,
-                self.S_tilde_min_buffer, self.S_tilde_min
+                self.S_tilde_min_buffer, self.S_tilde_min, should_update
             )
 
         # 9. 計算精細 SPP（用於噪聲更新）
@@ -331,8 +334,10 @@ class ImcraNoiseEstimator:
         # λ_d = tilde_α_d * λ_d + (1 - tilde_α_d) * |Y|²
         self.noise_psd = tilde_alpha_d * self.noise_psd + (1 - tilde_alpha_d) * power
 
-        # 更新計數器
+        # 更新計數器（統一管理）
         self.frame_count += 1
+        if should_update:
+            self.subwin_count = 0
         self.subwin_count += 1
 
         return self.noise_psd

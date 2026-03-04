@@ -21,7 +21,8 @@ from denoisers import (
     WienerDenoiser,
     SppMmseDenoiser,
     MmseLsaDenoiser,
-    PmmseDenoiser
+    PmmseDenoiser,
+    ImcraOmlsaDenoiser
 )
 
 def load_config(config_path):
@@ -59,6 +60,10 @@ methods = {
     'V3-3': {
         'class': PmmseDenoiser,
         'config': 'config/v3_3_config.yaml'
+    },
+    'V4': {
+        'class': ImcraOmlsaDenoiser,
+        'config': 'config/v4_config.yaml'
     },
 }
 
@@ -128,6 +133,14 @@ def get_denoiser_params_from_config(config, sr, fft_size):
                 'alpha_g': gc.get('alpha_g', 0.5),
                 'use_spp_weighting': gc.get('use_spp_weighting', True)
             })
+        # V4 (OMLSA - Cohen 2002)
+        elif gc.get('method') == 'omlsa':
+            params.update({
+                'g_min_db': gc.get('g_min_db', -12.5),
+                'alpha_g': gc.get('alpha_g', 0.92),
+                'use_asymmetric_smoothing': gc.get('use_asymmetric_smoothing', True),
+                'alpha_attack': gc.get('alpha_attack', 0.3),
+            })
 
     # SPP 參數
     if 'spp' in config:
@@ -148,7 +161,19 @@ def get_denoiser_params_from_config(config, sr, fft_size):
         ne_method = ne.get('method', 'recursive_average')
 
         if is_v3_series:
-            if ne_method == 'mcra':
+            if ne_method == 'imcra':
+                # V4 IMCRA 噪聲估計參數
+                params.update({
+                    'freq_smooth_width': ne.get('freq_smooth_width', 1),
+                    'alpha_s': ne.get('alpha_s', 0.9),
+                    'alpha_d': ne.get('alpha_d', 0.7),
+                    'L': ne.get('L', 48),
+                    'V': ne.get('V', 8),
+                    'U': ne.get('U', 6),
+                    'delta_db': ne.get('delta_db', 10.0),
+                    'delta_s_db': ne.get('delta_s_db', 3.0),
+                })
+            elif ne_method == 'mcra':
                 # V3/V3-2/V3-3 的 MCRA 噪聲估計參數
                 params.update({
                     'noise_method': 'mcra',
