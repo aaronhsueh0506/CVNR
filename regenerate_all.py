@@ -167,6 +167,12 @@ def get_denoiser_params_from_config(config, sr, fft_size):
                     'alpha_noise': ne.get('alpha', 0.95)
                 })
 
+    # Soft VAD
+    vad_config = config.get('soft_vad', {})
+    if vad_config.get('enable', False):
+        params['enable_soft_vad'] = True
+        params['vad_method'] = vad_config.get('method', 'spp')
+
     return params
 
 def main():

@@ -210,6 +210,12 @@ def create_denoiser_from_config(
                 'alpha_noise': noise_config.get('alpha', 0.95)
             })
 
+        # Soft VAD
+        vad_config = config.get('soft_vad', {})
+        if vad_config.get('enable', False):
+            params['enable_soft_vad'] = True
+            params['vad_method'] = vad_config.get('method', 'spp')
+
         return SppMmseDenoiser(**params)
 
     elif version == 'V3-2':
@@ -251,6 +257,12 @@ def create_denoiser_from_config(
                 'alpha_noise': noise_config.get('alpha', 0.95)
             })
 
+        # Soft VAD
+        vad_config = config.get('soft_vad', {})
+        if vad_config.get('enable', False):
+            params['enable_soft_vad'] = True
+            params['vad_method'] = vad_config.get('method', 'spp')
+
         return MmseLsaDenoiser(**params)
 
     elif version == 'V3-3':
@@ -291,6 +303,12 @@ def create_denoiser_from_config(
                 'noise_method': 'recursive_average',
                 'alpha_noise': noise_config.get('alpha', 0.95)
             })
+
+        # Soft VAD
+        vad_config = config.get('soft_vad', {})
+        if vad_config.get('enable', False):
+            params['enable_soft_vad'] = True
+            params['vad_method'] = vad_config.get('method', 'spp')
 
         return PmmseDenoiser(**params)
 

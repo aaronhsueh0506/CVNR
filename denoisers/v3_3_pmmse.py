@@ -76,10 +76,12 @@ class PmmseDenoiser(BaseDenoiser):
         delta_db: float = 5.0,      # MCRA 偏差補償 (dB)
         broadband_threshold: float = 0.8,  # 寬頻場景轉換偵測閾值
         # v2.6 Soft VAD
-        enable_soft_vad: bool = False
+        enable_soft_vad: bool = False,
+        vad_method: str = 'spp'
     ):
         super().__init__(sample_rate, n_fft=fft_size)
         self.enable_soft_vad = enable_soft_vad
+        self.vad_method = vad_method
         self.noise_method = noise_method
 
         # 創建處理器
@@ -237,9 +239,9 @@ class PmmseDenoiser(BaseDenoiser):
             # 應用增益
             enhanced_magnitude[i] = gain * noisy_magnitude[i]
 
-            # v2.6: 套用 Soft VAD 後處理
+            # v2.6: 套用 Soft VAD 後處理（使用 SPP 作為 VAD 指標）
             if self.enable_soft_vad:
-                enhanced_magnitude[i] = self._apply_soft_vad(enhanced_magnitude[i])
+                enhanced_magnitude[i] = self._apply_soft_vad(enhanced_magnitude[i], spp=spp)
 
             # 保存增益供下一幀使用
             self.gain_prev = gain.copy()

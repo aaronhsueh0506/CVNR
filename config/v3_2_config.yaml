@@ -13,7 +13,7 @@ name: MMSE-LSA
 noise_estimation:
   method: mcra
   alpha_s: 0.7
-  alpha_d: 0.95
+  alpha_d: 0.85
   alpha_p: 0.2
   L: 5                      # 50ms 快速場景適應
   delta_db: 5.0
@@ -21,6 +21,9 @@ noise_estimation:
   broadband_threshold: 0.8  # 寬頻場景偵測閾值（SPP>0.5 的 bin 比例）
 noise_tracking:
   enable: true
+soft_vad:
+  enable: true
+  method: flatness             # spp / flatness / energy_ratio
 spp:
   alpha_xi: 0.92
   q: 0.50
