@@ -3,7 +3,7 @@
 
 CC = gcc
 CFLAGS = -Wall -Wextra -O2 -std=c99
-CFLAGS += -I./include -I./lib/kiss_fft -I./example
+CFLAGS += -I./include -I./example
 CFLAGS += $(EXTRA_CFLAGS)
 
 # =============================================================================
@@ -72,9 +72,33 @@ CFLAGS += -DUSE_INCREMENTAL_MIN
 
 LDFLAGS = -lm
 
+# =============================================================================
+# FFT Backend Selection
+# =============================================================================
+# Default: KISS FFT (portable, compiled from source)
+# NE10:    Pass NE10_DIR=<path> to use NE10 R2C/C2R (ARM NEON optimized)
+#
+# Example: make NE10_DIR=/path/to/Ne10 CC=aarch64-linux-gnu-gcc
+# =============================================================================
+
+ifdef NE10_DIR
+  # NE10 R2C/C2R backend (ARM NEON)
+  FFT_SRC = $(SRC_DIR)/fft_wrapper_ne10.c
+  CFLAGS += -I$(NE10_DIR)/inc
+  LDFLAGS += -L$(NE10_DIR)/lib -lNE10
+  LIB_SRCS =
+  LIB_OBJS =
+else
+  # KISS FFT backend (portable)
+  FFT_SRC = $(SRC_DIR)/fft_wrapper.c
+  CFLAGS += -I./lib/kiss_fft
+  LIB_DIR = lib/kiss_fft
+  LIB_SRCS = $(LIB_DIR)/kiss_fft.c
+  LIB_OBJS = $(patsubst $(LIB_DIR)/%.c,$(OBJ_DIR)/%.o,$(LIB_SRCS))
+endif
+
 # Directories
 SRC_DIR = src
-LIB_DIR = lib/kiss_fft
 EXAMPLE_DIR = example
 OBJ_DIR = obj
 BIN_DIR = bin
@@ -83,15 +107,12 @@ BIN_DIR = bin
 SRCS = $(SRC_DIR)/mmse_lsa_denoiser.c \
        $(SRC_DIR)/mcra_noise_estimator.c \
        $(SRC_DIR)/spp_estimator.c \
-       $(SRC_DIR)/fft_wrapper.c
-
-LIB_SRCS = $(LIB_DIR)/kiss_fft.c
+       $(FFT_SRC)
 
 EXAMPLE_SRCS = $(EXAMPLE_DIR)/main.c
 
 # Object files
 OBJS = $(patsubst $(SRC_DIR)/%.c,$(OBJ_DIR)/%.o,$(SRCS))
-LIB_OBJS = $(patsubst $(LIB_DIR)/%.c,$(OBJ_DIR)/%.o,$(LIB_SRCS))
 EXAMPLE_OBJS = $(patsubst $(EXAMPLE_DIR)/%.c,$(OBJ_DIR)/%.o,$(EXAMPLE_SRCS))
 
 # Target binary
@@ -113,9 +134,11 @@ $(TARGET): $(OBJS) $(LIB_OBJS) $(EXAMPLE_OBJS)
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
-# Compile library files
+# Compile library files (KISS FFT only, skipped when using NE10)
+ifndef NE10_DIR
 $(OBJ_DIR)/%.o: $(LIB_DIR)/%.c
 	$(CC) $(CFLAGS) -c -o $@ $<
+endif
 
 # Compile example files
 $(OBJ_DIR)/%.o: $(EXAMPLE_DIR)/%.c
@@ -172,7 +195,9 @@ help:
 	@echo "  help     - Show this help"
 	@echo ""
 	@echo "Build Configurations:"
-	@echo "  make                                          - Standard build (fast math + exact percentile)"
+	@echo "  make                                          - Standard build (KISS FFT, fast math)"
+	@echo "  make NE10_DIR=/path/to/Ne10                   - NE10 R2C/C2R build (ARM NEON)"
+	@echo "  make NE10_DIR=/path CC=aarch64-linux-gnu-gcc  - Cross-compile with NE10"
 	@echo "  make EXTRA_CFLAGS=\"-DUSE_STANDARD_MATH\"      - Debug build (matches Python output)"
 	@echo "  make EXTRA_CFLAGS=\"-DUSE_FAST_PERCENTILE\"    - Optimized build (all approximations)"
 	@echo ""

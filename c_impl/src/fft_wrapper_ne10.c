@@ -1,28 +1,28 @@
 /**
- * fft_wrapper.c - FFT Wrapper Implementation using KISS FFT
+ * fft_wrapper_ne10.c - FFT Wrapper Implementation using NE10 R2C/C2R
  *
- * Real-to-complex FFT using KISS FFT's complex FFT internally.
- * Portable C implementation (no SIMD).
+ * ARM NEON optimized FFT for real signals.
+ * Uses ne10_fft_r2c (forward) and ne10_fft_c2r (inverse).
  *
- * For ARM NEON optimized version, see fft_wrapper_ne10.c
+ * For portable KISS FFT version, see fft_wrapper.c
  */
 
 #include "fft_wrapper.h"
-#include "kiss_fft.h"
+#include "NE10.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
+static int ne10_initialized = 0;
+
 // Internal FFT handle structure
 struct FftHandle {
     int fft_size;
-    int n_freqs;            // fft_size/2 + 1
+    int n_freqs;                        // fft_size/2 + 1
 
-    kiss_fft_cfg fft_cfg;   // Forward FFT config
-    kiss_fft_cfg ifft_cfg;  // Inverse FFT config
-
-    kiss_fft_cpx* fft_in;   // Complex input buffer [fft_size]
-    kiss_fft_cpx* fft_out;  // Complex output buffer [fft_size]
+    ne10_fft_r2c_cfg_float32_t r2c_cfg; // Single config (forward & inverse)
+    ne10_float32_t*            real_buf; // [fft_size] real work buffer
+    ne10_fft_cpx_float32_t*    cpx_buf;  // [n_freqs] complex work buffer
 };
 
 FftHandle* fft_create(int fft_size) {
@@ -31,26 +31,32 @@ FftHandle* fft_create(int fft_size) {
         return NULL;
     }
 
+    // One-time NE10 initialization
+    if (!ne10_initialized) {
+        if (ne10_init() != NE10_OK) {
+            return NULL;
+        }
+        ne10_initialized = 1;
+    }
+
     FftHandle* h = (FftHandle*)calloc(1, sizeof(FftHandle));
     if (!h) return NULL;
 
     h->fft_size = fft_size;
     h->n_freqs = fft_size / 2 + 1;
 
-    // Allocate KISS FFT configs
-    h->fft_cfg = kiss_fft_alloc(fft_size, 0, NULL, NULL);  // Forward
-    h->ifft_cfg = kiss_fft_alloc(fft_size, 1, NULL, NULL); // Inverse
-
-    if (!h->fft_cfg || !h->ifft_cfg) {
+    // Allocate R2C config
+    h->r2c_cfg = ne10_fft_alloc_r2c_float32(fft_size);
+    if (!h->r2c_cfg) {
         fft_destroy(h);
         return NULL;
     }
 
     // Allocate work buffers
-    h->fft_in = (kiss_fft_cpx*)calloc(fft_size, sizeof(kiss_fft_cpx));
-    h->fft_out = (kiss_fft_cpx*)calloc(fft_size, sizeof(kiss_fft_cpx));
+    h->real_buf = (ne10_float32_t*)calloc(fft_size, sizeof(ne10_float32_t));
+    h->cpx_buf = (ne10_fft_cpx_float32_t*)calloc(h->n_freqs, sizeof(ne10_fft_cpx_float32_t));
 
-    if (!h->fft_in || !h->fft_out) {
+    if (!h->real_buf || !h->cpx_buf) {
         fft_destroy(h);
         return NULL;
     }
@@ -61,10 +67,9 @@ FftHandle* fft_create(int fft_size) {
 void fft_destroy(FftHandle* h) {
     if (!h) return;
 
-    if (h->fft_cfg) kiss_fft_free(h->fft_cfg);
-    if (h->ifft_cfg) kiss_fft_free(h->ifft_cfg);
-    if (h->fft_in) free(h->fft_in);
-    if (h->fft_out) free(h->fft_out);
+    if (h->r2c_cfg) ne10_fft_destroy_r2c_float32(h->r2c_cfg);
+    if (h->real_buf) free(h->real_buf);
+    if (h->cpx_buf) free(h->cpx_buf);
 
     free(h);
 }
@@ -80,50 +85,29 @@ int fft_get_n_freqs(const FftHandle* h) {
 void fft_forward(FftHandle* h, const float* real_in, Complex* complex_out) {
     if (!h || !real_in || !complex_out) return;
 
-    int n = h->fft_size;
+    // Copy input to work buffer (NE10 R2C may modify input)
+    memcpy(h->real_buf, real_in, h->fft_size * sizeof(float));
 
-    // Copy real input to complex buffer (imaginary = 0)
-    for (int i = 0; i < n; i++) {
-        h->fft_in[i].r = real_in[i];
-        h->fft_in[i].i = 0.0f;
-    }
+    // Forward R2C FFT: real[fft_size] -> complex[n_freqs]
+    ne10_fft_r2c_1d_float32_neon(h->cpx_buf, h->real_buf, h->r2c_cfg);
 
-    // Perform FFT
-    kiss_fft(h->fft_cfg, h->fft_in, h->fft_out);
-
-    // Copy first n_freqs bins to output
-    for (int k = 0; k < h->n_freqs; k++) {
-        complex_out[k].r = h->fft_out[k].r;
-        complex_out[k].i = h->fft_out[k].i;
-    }
+    // Copy output (ne10_fft_cpx_float32_t has same layout as Complex: {float r, float i})
+    memcpy(complex_out, h->cpx_buf, h->n_freqs * sizeof(Complex));
 }
 
 void fft_inverse(FftHandle* h, const Complex* complex_in, float* real_out) {
     if (!h || !complex_in || !real_out) return;
 
-    int n = h->fft_size;
-    int n_freqs = h->n_freqs;
+    // Copy n_freqs bins to work buffer (NE10 C2R may modify input)
+    memcpy(h->cpx_buf, complex_in, h->n_freqs * sizeof(ne10_fft_cpx_float32_t));
 
-    // Reconstruct full spectrum with conjugate symmetry
-    // X[k] = conj(X[N-k]) for real signals
-    for (int k = 0; k < n_freqs; k++) {
-        h->fft_in[k].r = complex_in[k].r;
-        h->fft_in[k].i = complex_in[k].i;
-    }
+    // Inverse C2R FFT: complex[n_freqs] -> real[fft_size]
+    ne10_fft_c2r_1d_float32_neon(h->real_buf, h->cpx_buf, h->r2c_cfg);
 
-    // Fill conjugate symmetric part
-    for (int k = 1; k < n_freqs - 1; k++) {
-        h->fft_in[n - k].r = complex_in[k].r;
-        h->fft_in[n - k].i = -complex_in[k].i;  // Conjugate
-    }
-
-    // Perform IFFT
-    kiss_fft(h->ifft_cfg, h->fft_in, h->fft_out);
-
-    // KISS FFT doesn't scale, so divide by N
-    float scale = 1.0f / (float)n;
-    for (int i = 0; i < n; i++) {
-        real_out[i] = h->fft_out[i].r * scale;
+    // NE10 does NOT auto-scale IFFT, divide by N
+    float scale = 1.0f / (float)h->fft_size;
+    for (int i = 0; i < h->fft_size; i++) {
+        real_out[i] = h->real_buf[i] * scale;
     }
 }
 

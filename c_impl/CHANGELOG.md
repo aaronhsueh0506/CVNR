@@ -2,6 +2,21 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [v1.7.0] - 2026-03-05
+
+### 新增功能
+
+**FFT 後端：NE10 R2C/C2R 支援（ARM NEON 加速）**
+
+- **檔案**: `src/fft_wrapper.c`（KISS FFT）、`src/fft_wrapper_ne10.c`（NE10）、`Makefile`
+- **架構**: 兩個獨立 .c 檔案，Makefile 選擇編譯哪一個
+  - `make`（預設）→ `fft_wrapper.c`（KISS FFT C2C，可攜式）
+  - `make NE10_DIR=/path/to/ne10` → `fft_wrapper_ne10.c`（NE10 R2C/C2R NEON）
+- **API 不變**: `fft_wrapper.h` 公開介面完全不變，呼叫端零修改
+- **NE10 使用 R2C/C2R**: 訊號為實數，省去手動 real→complex 複製和共軛對稱重建
+- **記憶體節省**: FFT 工作緩衝從 ~16KB 降至 ~6KB（16kHz, fft_size=512）
+- **NE10 初始化**: `ne10_init()` 在首次 `fft_create()` 時自動呼叫
+
 ## [v1.6.0] - 2026-03-05
 
 ### 重大變更 (Breaking Changes)
