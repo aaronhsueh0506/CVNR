@@ -9,24 +9,8 @@
 - **SPP 語音存在機率**：Decision Directed 方法
 - **非對稱增益平滑**：Attack/Decay 分離控制
 - **可配置優化開關**：透過編譯開關選擇精度/速度權衡
-- **v4.0/v4.1 同步**: 與 Python V3-2 實現完全一致的參數優化
-
-## v4.0/v4.1 優化同步
-
-C 實現已同步 Python V3-2 的優化參數：
-
-| 參數 | 舊值 | v4.0 新值 | 改進 |
-|------|------|----------|------|
-| `alpha_s` | 0.8 | **0.7** | 更快時間響應，無 PESQ 損失 |
-| `L` | 120 | **5** | 場景適應時間從 1.2s 降至 50ms（提升 24 倍）|
-| `init_percentile` | 20th | **30th** | 更準確的噪聲初始化 |
-| `enable_eta` | 可配置 | **已移除** | L=5 優化已替代 eta 場景轉換偵測功能 |
-
-**v4.1 重大變更**：
-- 完全移除 Eta 場景轉換偵測機制
-- 測試證明 L=5 提供更快且可靠的場景適應（50ms vs eta 的 ~195ms）
-- 消除誤觸發風險（test_wav 顯示 eta 降低 PESQ 0.06-0.41）
-- 代碼簡化，與 Python 實現完全一致
+- **場景轉換偵測**：高頻 gamma + spectral flatness 雙重條件，自動追蹤噪聲環境變化
+- **與 Python V3-2 完全同步**：參數、場景偵測邏輯一致
 
 ## 算法流程
 
@@ -173,14 +157,13 @@ make EXTRA_CFLAGS="-DUSE_FAST_PERCENTILE"
   enhanced_psd[k]    = gain[k]² × power[k]           // 直接算
 ```
 
-同理，VAD 能量計算也從 `Σ enhanced_mag²` 改為 `Σ gain² × power`。
 最終音訊重建用 `fft_apply_gain(spectrum, gain)` 直接乘 complex spectrum，不需要 magnitude。
 **magnitude 陣列只在 `#ifdef DEBUG_DUMP` 時計算**。
 
 ### 化簡 2：MCRA 增量最小值追蹤
 
-MCRA 噪聲估計的瓶頸是每幀掃描 ring buffer（L=120 幀）找最小值：
-513 頻點 × 120 幀 = **61,560 次比較/幀**。
+MCRA 噪聲估計的瓶頸是每幀掃描 ring buffer（L=32 幀）找最小值：
+513 頻點 × 32 幀 = **16,416 次比較/幀**。
 
 增量追蹤利用 ring buffer 的特性，只在必要時重掃描：
 
@@ -196,13 +179,12 @@ MCRA 噪聲估計的瓶頸是每幀掃描 ring buffer（L=120 幀）找最小值
 
 ### 化簡 3：迴圈合併
 
-**mcra_noise_estimator.c** — 6 個獨立 for-k 迴圈 → 2 個：
+**mcra_noise_estimator.c** — 6 個獨立 for-k 迴圈 → 2 個 + 場景偵測：
 - Loop A: S 時間平滑 + min buffer 寫入 + min 追蹤
-  > **v4.1 更新**: Eta 能量累加已移除，L=5 優化已替代場景轉換偵測功能
 - Loop C: SPP indicator + 噪聲更新
+- 場景轉換偵測：高頻 gamma + spectral flatness（迴圈後純量判斷）
 
-**mmse_lsa_denoiser.c** — 3 個獨立 for-k 迴圈 → 1 個：
-- VAD gain apply + gain_prev save + enhanced_psd_prev save
+**mmse_lsa_denoiser.c** — gain_prev save + enhanced_psd_prev save
 
 純結構重排，改善 cache locality，bit-exact。
 
@@ -212,7 +194,6 @@ MCRA 噪聲估計的瓶頸是每幀掃描 ring buffer（L=120 幀）找最小值
 |------|--------------|
 | 預設啟用 6 flag | ~138K |
 | 消除 sqrtf (513 次) | ~25K |
-| VAD fast_exp | ~50 |
 | MCRA 迴圈合併 | ~5K |
 | 增量 min tracking | ~59K |
 | process_frame 迴圈合併 | ~3K |
@@ -266,17 +247,20 @@ free(out_buf);
 | `frame_size_ms` | 20 | 幀長 (ms) |
 | `frame_shift_ms` | 10 | 幀移/hop size (ms) |
 | `fft_size` | 自動計算 | FFT 點數（8kHz→256, 16kHz→512, 48kHz→1024）|
-| `alpha_xi` | 0.92 | 先驗 SNR 平滑因子 |
+| `alpha_xi` | 0.88 | 先驗 SNR 平滑因子 |
 | `q` | 0.5 | 語音先驗機率 |
 | `xi_min_db` | -20 | 先驗 SNR 下限 (dB) |
-| `alpha_s` | 0.7 | MCRA 時間平滑 (v4.0: 0.8→0.7) |
-| `alpha_d` | 0.95 | MCRA 噪聲更新率 |
-| `L` | 5 | MCRA 最小值窗口 (v4.0: 120→5，50ms 快速場景適應) |
+| `alpha_s` | 0.95 | MCRA 時間平滑 |
+| `alpha_d` | 0.7 | MCRA 噪聲更新率 |
+| `L` | 32 | MCRA 最小值窗口（320ms 場景追蹤）|
 | `num_init_frames` | 20 | 噪聲初始化幀數 |
-| `g_min_db` | -12.5 | 最小增益 (dB) |
-| `alpha_g` | 0.8 | 增益平滑因子 |
+| `scene_change_threshold_db` | 10.0 | 場景轉換高頻 gamma 閾值 (dB) |
+| `scene_change_min_frames` | 5 | 場景轉換需連續幀數 |
+| `scene_change_blend` | 0.5 | 場景轉換噪聲重置混合比 |
+| `g_min_db` | -15.0 | 最小增益 (dB) |
+| `alpha_g` | 0.88 | 增益平滑因子 |
 | `alpha_attack` | 0.3 | 非對稱平滑 Attack |
-| `alpha_decay` | 0.7 | 非對稱平滑 Decay |
+| `alpha_decay` | 0.88 | 非對稱平滑 Decay (= alpha_g) |
 
 ## 延遲
 
@@ -321,8 +305,7 @@ c_impl/
 
 - 基本使用: ~50KB (取決於 FFT size 和 n_freqs)
 - 精確 percentile (無 USE_FAST_PERCENTILE): +20KB
-- MCRA 最小值緩衝: L × n_freqs × 4 = 5 × 513 × 4 ≈ **10KB** (48kHz)
-  > **v4.0 更新**: L 從 120→5，記憶體從 240KB 降至 10KB（節省 96%）
+- MCRA 最小值緩衝: L × n_freqs × 4 = 32 × 513 × 4 ≈ **64KB** (48kHz)
 
 ## 參考文獻
 

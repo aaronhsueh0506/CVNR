@@ -13,6 +13,7 @@
  */
 
 #include "mcra_noise_estimator.h"
+#include "fast_math.h"
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
@@ -432,10 +433,10 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
         float arith_sum = 0.0f;
         for (int k = hi_start; k < n_freqs; k++) {
             float p = power[k] + 1e-20f;
-            log_sum += logf(p);
+            log_sum += fast_log(p);
             arith_sum += p;
         }
-        float geo_mean = expf(log_sum / (float)hi_count);
+        float geo_mean = fast_exp(log_sum / (float)hi_count);
         float arith_mean = arith_sum / (float)hi_count;
         float hi_flatness = geo_mean / arith_mean;
 

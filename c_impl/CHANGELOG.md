@@ -2,6 +2,48 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [v1.6.0] - 2026-03-05
+
+### 重大變更 (Breaking Changes)
+
+**同步 Python V3-2 最新參數與功能**
+
+#### 1. 場景轉換偵測（新增）
+- **檔案**: `src/mcra_noise_estimator.c`, `include/mmse_lsa_types.h`
+- **功能**: MCRA 加入高頻 gamma + spectral flatness 雙重條件場景轉換偵測
+- **原理**: Bayesian SPP 依賴 noise_psd，場景轉換後形成 noise_psd→γ→SPP→α̃d→noise_psd 死循環。
+  透過偵測高頻段能量突變（gamma > 10dB）且頻譜平坦（flatness > 0.4，噪聲特徵），
+  連續 5 幀後部分重置 noise_psd（blend=0.5）+ S_min + min_buffer
+- **新增參數**:
+  - `scene_change_threshold_db`: 10.0（高頻 gamma 閾值）
+  - `scene_change_min_frames`: 5（連續幀數）
+  - `scene_change_blend`: 0.5（噪聲重置混合比）
+- **效果**: 場景轉換後 SPP 從 ~0.94 恢復至 ~0.57（0.5 秒內），Clean 語音零誤觸發
+- **優化**: 使用 fast_log/fast_exp 取代標準庫 logf/expf
+
+#### 2. 參數更新
+- **檔案**: `include/mmse_lsa_types.h`
+- **改動**:
+  - `alpha_s`: 0.7 → **0.95**（更高平滑 → 更穩定功率譜估計）
+  - `L`: 5 → **32**（320ms 場景追蹤，搭配場景偵測使用）
+  - `g_min_db`: -12.5 → **-15.0**（更深噪聲抑制，PESQ +0.027）
+  - `alpha_g`: 0.92 → **0.88**（更快增益響應）
+  - `alpha_decay`: 0.92 → **0.88**（與 alpha_g 一致）
+
+#### 3. 移除 Soft VAD
+- **檔案**: `src/mmse_lsa_denoiser.c`, `include/mmse_lsa_types.h`, `example/main.c`
+- **移除**: `enable_soft_vad`, `vad_freq_low`, `vad_freq_high`, `alpha_vad` 配置
+- **移除**: VAD 狀態、初始化、處理、重置邏輯
+- **原因**: 實驗證明 VAD 無明顯 PESQ 提升，場景偵測已提供足夠的噪聲追蹤能力
+
+### 文檔更新
+- `README.md`: 更新配置參數表對齊實際預設值
+- `README.md`: 更新記憶體估算（L=32）
+- `README.md`: 移除 VAD 相關說明
+- `CHANGELOG.md`: 新增 v1.6.0 記錄
+
+---
+
 ## [v1.5.0] - 2026-03-04
 
 ### 重大變更 (Breaking Changes)
