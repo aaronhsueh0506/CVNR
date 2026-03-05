@@ -66,7 +66,6 @@ from denoisers import (
     SppMmseDenoiser,
     MmseLsaDenoiser,
     PmmseDenoiser,
-    ImcraOmlsaDenoiser
 )
 
 
@@ -214,11 +213,6 @@ def create_denoiser_from_config(
                 'alpha_noise': noise_config.get('alpha', 0.95)
             })
 
-        # Soft VAD
-        vad_config = config.get('soft_vad', {})
-        if vad_config.get('enable', False):
-            params['enable_soft_vad'] = True
-            params['vad_method'] = vad_config.get('method', 'spp')
 
         return SppMmseDenoiser(**params)
 
@@ -263,11 +257,6 @@ def create_denoiser_from_config(
                 'alpha_noise': noise_config.get('alpha', 0.95)
             })
 
-        # Soft VAD
-        vad_config = config.get('soft_vad', {})
-        if vad_config.get('enable', False):
-            params['enable_soft_vad'] = True
-            params['vad_method'] = vad_config.get('method', 'spp')
 
         return MmseLsaDenoiser(**params)
 
@@ -313,50 +302,8 @@ def create_denoiser_from_config(
                 'alpha_noise': noise_config.get('alpha', 0.95)
             })
 
-        # Soft VAD
-        vad_config = config.get('soft_vad', {})
-        if vad_config.get('enable', False):
-            params['enable_soft_vad'] = True
-            params['vad_method'] = vad_config.get('method', 'spp')
 
         return PmmseDenoiser(**params)
-
-    elif version == 'V4':
-        # V4: IMCRA + OMLSA (Cohen 2003 + Cohen 2002)
-        spp_config = config.get('spp', {})
-        gain_config = config.get('gain_calculation', {})
-        noise_config = config.get('noise_estimation', {})
-
-        params = {
-            'sample_rate': sample_rate,
-            'frame_size_ms': frame_size_ms,
-            'frame_shift_ms': frame_shift_ms,
-            'fft_size': fft_size,
-            'alpha_xi': spp_config.get('alpha_xi', 0.88),
-            'q': spp_config.get('q', 0.50),
-            'xi_min_db': spp_config.get('xi_min_db', -20.0),
-            'g_min_db': gain_config.get('g_min_db', -12.5),
-            'alpha_g': gain_config.get('alpha_g', 0.92),
-            'use_asymmetric_smoothing': gain_config.get('use_asymmetric_smoothing', True),
-            'alpha_attack': gain_config.get('alpha_attack', 0.3),
-            'freq_smooth_width': noise_config.get('freq_smooth_width', 1),
-            'alpha_s': noise_config.get('alpha_s', 0.9),
-            'alpha_d': noise_config.get('alpha_d', 0.7),
-            'L': noise_config.get('L', 48),
-            'V': noise_config.get('V', 8),
-            'U': noise_config.get('U', 6),
-            'delta_db': noise_config.get('delta_db', 10.0),
-            'delta_s_db': noise_config.get('delta_s_db', 3.0),
-            'num_init_frames': noise_config.get('num_init_frames', 20),
-        }
-
-        # Soft VAD
-        vad_config = config.get('soft_vad', {})
-        if vad_config.get('enable', False):
-            params['enable_soft_vad'] = True
-            params['vad_method'] = vad_config.get('method', 'spp')
-
-        return ImcraOmlsaDenoiser(**params)
 
     else:
         raise ValueError(f"Unknown version: {version}")
@@ -407,7 +354,7 @@ def plot_waveforms(
     axes[0].set_ylim(y_lim)
 
     # 繪製每個版本的降噪結果
-    colors = {'V1': '#FF6B6B', 'V2': '#4ECDC4', 'V3': '#45B7D1', 'V4': '#96CEB4'}
+    colors = {'V1': '#FF6B6B', 'V2': '#4ECDC4', 'V3': '#45B7D1'}
 
     for idx, (version, result) in enumerate(sorted(results.items()), 1):
         enhanced = result['enhanced']
@@ -660,9 +607,9 @@ def main():
     parser.add_argument(
         '--versions',
         nargs='+',
-        default=['V1', 'V2', 'V3', 'V3-2', 'V4'],
-        choices=['V1', 'V2', 'V3', 'V3-2', 'V3-3', 'V4'],
-        help='要使用的版本（默認: V1 V2 V3 V3-2 V4）'
+        default=['V1', 'V2', 'V3', 'V3-2'],
+        choices=['V1', 'V2', 'V3', 'V3-2', 'V3-3'],
+        help='要使用的版本（默認: V1 V2 V3 V3-2）'
     )
 
     parser.add_argument(

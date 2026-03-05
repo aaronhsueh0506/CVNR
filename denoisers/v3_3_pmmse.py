@@ -78,13 +78,8 @@ class PmmseDenoiser(BaseDenoiser):
         scene_change_threshold_db: float = 10.0,  # 場景轉換偵測閾值 (dB)
         scene_change_min_frames: int = 5,
         scene_change_blend: float = 0.5,
-        # v2.6 Soft VAD
-        enable_soft_vad: bool = False,
-        vad_method: str = 'spp'
     ):
         super().__init__(sample_rate, n_fft=fft_size)
-        self.enable_soft_vad = enable_soft_vad
-        self.vad_method = vad_method
         self.noise_method = noise_method
 
         # 創建處理器
@@ -246,9 +241,6 @@ class PmmseDenoiser(BaseDenoiser):
             enhanced_magnitude[i] = gain * noisy_magnitude[i]
 
             # v2.6: 套用 Soft VAD 後處理（使用 SPP 作為 VAD 指標）
-            if self.enable_soft_vad:
-                enhanced_magnitude[i] = self._apply_soft_vad(enhanced_magnitude[i], spp=spp)
-
             # 保存增益供下一幀使用
             self.gain_prev = gain.copy()
 
@@ -273,7 +265,6 @@ class PmmseDenoiser(BaseDenoiser):
         self.spp_estimator.reset()
         self.gain_calculator.reset()
         self.gain_prev = None
-        self._reset_vad()
 
     def get_params(self) -> dict:
         """獲取參數"""

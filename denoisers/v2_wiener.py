@@ -50,11 +50,8 @@ class WienerDenoiser(BaseDenoiser):
         delta_db: float = 5.0,
         # 兼容性參數 (保留接口但不使用)
         enable_noise_tracking: bool = False,
-        # v2.6 Soft VAD
-        enable_soft_vad: bool = False
     ):
         super().__init__(sample_rate, n_fft=fft_size)
-        self.enable_soft_vad = enable_soft_vad
         self.noise_method = noise_method
 
         # 1. 處理器
@@ -141,10 +138,6 @@ class WienerDenoiser(BaseDenoiser):
             # 2. 應用增益
             enhanced_magnitude[i] = gain * noisy_magnitude[i]
 
-            # 2.5 v2.6: 套用 Soft VAD 後處理
-            if self.enable_soft_vad:
-                enhanced_magnitude[i] = self._apply_soft_vad(enhanced_magnitude[i])
-
             # 3. 保存狀態 (供下一幀 DD 使用)
             self.enhanced_mag_prev = enhanced_magnitude[i].copy()
 
@@ -158,7 +151,6 @@ class WienerDenoiser(BaseDenoiser):
         self.noise_estimator.reset()
         self.gain_calculator.reset()
         self.enhanced_mag_prev = None
-        self._reset_vad()
 
     def get_params(self) -> dict:
         params = {

@@ -8,7 +8,6 @@ from .v2_wiener import WienerDenoiser
 from .v3_spp_mmse import SppMmseDenoiser
 from .v3_2_mmse_lsa import MmseLsaDenoiser
 from .v3_3_pmmse import PmmseDenoiser
-from .v4_imcra_omlsa import ImcraOmlsaDenoiser
 
 __all__ = [
     'BaseDenoiser',
@@ -17,5 +16,4 @@ __all__ = [
     'SppMmseDenoiser',
     'MmseLsaDenoiser',
     'PmmseDenoiser',
-    'ImcraOmlsaDenoiser',
 ]

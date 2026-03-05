@@ -23,9 +23,6 @@ noise_estimation:
   scene_change_blend: 0.5
 noise_tracking:
   enable: true
-soft_vad:
-  enable: false
-  method: flatness             # spp / flatness / energy_ratio
 spp:
   alpha_xi: 0.88
   q: 0.50

@@ -29,7 +29,7 @@ snr_levels = [0, 5, 10, 15]
 test_cases = ['clean'] + [f"{n}_{s}dB" for n in noise_types for s in snr_levels]  # 加入 clean.wav 高 SNR 測試
 
 # 我們的方法（需要 trim）
-our_methods = ['V1', 'V2', 'V3', 'V3-2', 'V3-3', 'V3-4', 'V4']
+our_methods = ['V1', 'V2', 'V3', 'V3-2', 'V3-3']
 
 # 基準方法（不需要 trim）
 benchmark_methods = ['Speex', 'RNNoise']
