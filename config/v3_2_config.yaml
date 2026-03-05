@@ -5,8 +5,8 @@ audio:
   sample_rate: 16000
   window_type: hanning
 gain_calculation:
-  alpha_g: 0.92
-  g_min_db: -12.5
+  alpha_g: 0.88
+  g_min_db: -15.0
   method: mmse_lsa
 name: MMSE-LSA
 noise_estimation:
@@ -18,6 +18,9 @@ noise_estimation:
   delta_db: 10.0
   num_init_frames: 20
   broadband_threshold: 1.0     # 調優：關閉（L=32 已足夠快速追蹤場景轉換）
+  scene_change_threshold_db: 10.0  # 場景轉換偵測：broadband γ > 10dB 連續 5 幀觸發
+  scene_change_min_frames: 5
+  scene_change_blend: 0.5
 noise_tracking:
   enable: true
 soft_vad:

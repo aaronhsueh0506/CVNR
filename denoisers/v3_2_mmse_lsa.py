@@ -68,6 +68,9 @@ class MmseLsaDenoiser(BaseDenoiser):
         L: int = 96,                # MCRA 最小值窗口長度
         delta_db: float = 5.0,      # MCRA 偏差補償 (dB)
         broadband_threshold: float = 0.8,  # 寬頻場景轉換偵測閾值
+        scene_change_threshold_db: float = 10.0,  # 場景轉換偵測閾值 (dB)
+        scene_change_min_frames: int = 5,
+        scene_change_blend: float = 0.5,
         # v2.6 Soft VAD
         enable_soft_vad: bool = False,
         vad_method: str = 'spp'
@@ -101,7 +104,10 @@ class MmseLsaDenoiser(BaseDenoiser):
                 L=L,
                 delta_db=delta_db,
                 num_init_frames=num_init_frames,
-                broadband_threshold=broadband_threshold
+                broadband_threshold=broadband_threshold,
+                scene_change_threshold_db=scene_change_threshold_db,
+                scene_change_min_frames=scene_change_min_frames,
+                scene_change_blend=scene_change_blend
             )
         else:
             self.noise_estimator = RecursiveAverageNoiseEstimator(

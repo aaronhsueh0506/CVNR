@@ -203,7 +203,10 @@ def create_denoiser_from_config(
                 'alpha_p': noise_config.get('alpha_p', 0.2),
                 'L': noise_config.get('L', 96),
                 'delta_db': noise_config.get('delta_db', 5.0),
-                'broadband_threshold': noise_config.get('broadband_threshold', 0.8)
+                'broadband_threshold': noise_config.get('broadband_threshold', 0.8),
+                'scene_change_threshold_db': noise_config.get('scene_change_threshold_db', 10.0),
+                'scene_change_min_frames': noise_config.get('scene_change_min_frames', 5),
+                'scene_change_blend': noise_config.get('scene_change_blend', 0.5)
             })
         else:
             params.update({
@@ -249,7 +252,10 @@ def create_denoiser_from_config(
                 'alpha_p': noise_config.get('alpha_p', 0.2),
                 'L': noise_config.get('L', 96),
                 'delta_db': noise_config.get('delta_db', 5.0),
-                'broadband_threshold': noise_config.get('broadband_threshold', 0.8)
+                'broadband_threshold': noise_config.get('broadband_threshold', 0.8),
+                'scene_change_threshold_db': noise_config.get('scene_change_threshold_db', 10.0),
+                'scene_change_min_frames': noise_config.get('scene_change_min_frames', 5),
+                'scene_change_blend': noise_config.get('scene_change_blend', 0.5)
             })
         else:
             params.update({
@@ -296,7 +302,10 @@ def create_denoiser_from_config(
                 'alpha_p': noise_config.get('alpha_p', 0.2),
                 'L': noise_config.get('L', 96),
                 'delta_db': noise_config.get('delta_db', 5.0),
-                'broadband_threshold': noise_config.get('broadband_threshold', 0.8)
+                'broadband_threshold': noise_config.get('broadband_threshold', 0.8),
+                'scene_change_threshold_db': noise_config.get('scene_change_threshold_db', 10.0),
+                'scene_change_min_frames': noise_config.get('scene_change_min_frames', 5),
+                'scene_change_blend': noise_config.get('scene_change_blend', 0.5)
             })
         else:
             params.update({

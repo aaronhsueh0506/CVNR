@@ -182,7 +182,10 @@ def get_denoiser_params_from_config(config, sr, fft_size):
                     'alpha_p': ne.get('alpha_p', 0.2),
                     'L': ne.get('L', 96),
                     'delta_db': ne.get('delta_db', 5.0),
-                    'broadband_threshold': ne.get('broadband_threshold', 0.8)
+                    'broadband_threshold': ne.get('broadband_threshold', 0.8),
+                    'scene_change_threshold_db': ne.get('scene_change_threshold_db', 10.0),
+                    'scene_change_min_frames': ne.get('scene_change_min_frames', 5),
+                    'scene_change_blend': ne.get('scene_change_blend', 0.5)
                 })
             elif ne_method == 'recursive_average':
                 # RecursiveAverage 噪聲估計參數

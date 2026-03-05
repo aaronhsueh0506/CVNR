@@ -48,7 +48,11 @@ class McraNoiseEstimator:
         L: int = 96,
         delta_db: float = 5.0,
         num_init_frames: int = 20,
-        broadband_threshold: float = 0.8
+        broadband_threshold: float = 0.8,
+        # 場景轉換偵測參數
+        scene_change_threshold_db: float = 10.0,  # broadband γ 閾值 (dB)
+        scene_change_min_frames: int = 5,          # 連續幀數確認
+        scene_change_blend: float = 0.5            # 噪聲重置混合比例
     ):
         self.alpha_s = alpha_s
         self.alpha_d = alpha_d
@@ -57,6 +61,12 @@ class McraNoiseEstimator:
         self.delta = 10 ** (delta_db / 10)  # 線性域的 delta
         self.num_init_frames = num_init_frames
         self.broadband_threshold = broadband_threshold
+
+        # 場景轉換偵測
+        self.scene_change_threshold = 10 ** (scene_change_threshold_db / 10)
+        self.scene_change_min_frames = scene_change_min_frames
+        self.scene_change_blend = scene_change_blend
+        self.scene_change_count = 0
 
         # 狀態變量
         self.noise_psd = None       # 噪聲功率譜密度
@@ -156,14 +166,37 @@ class McraNoiseEstimator:
         # p(k,l) = α_p·p(k,l-1) + (1-α_p)·I(k,l)
         self.spp = self.alpha_p * self.spp + (1 - self.alpha_p) * indicator
 
-        # 7. 噪聲更新（SPP 門控）
+        # 7. 場景轉換偵測
+        # 條件：高頻 γ 高 AND 高頻 spectral flatness 高
+        # - 高頻 γ 高：能量突然增加（可能是噪聲或語音）
+        # - Spectral flatness 高：能量分布平坦（噪聲特徵，語音 ~0.1-0.2，白噪聲 ~0.5-0.7）
+        # 兩者同時滿足才觸發，避免語音誤觸發
+        n_freqs = len(power)
+        hi_start = n_freqs // 2  # 上半頻段（~4kHz for 16kHz/512FFT）
+        hi_power = power[hi_start:]
+        hi_gamma = np.mean(hi_power) / (np.mean(self.noise_psd[hi_start:]) + 1e-10)
+
+        # Spectral flatness = geometric_mean / arithmetic_mean（高頻段）
+        hi_power_safe = hi_power + 1e-20
+        hi_flatness = np.exp(np.mean(np.log(hi_power_safe))) / (np.mean(hi_power_safe))
+
+        if hi_gamma > self.scene_change_threshold and hi_flatness > 0.4:
+            self.scene_change_count += 1
+            if self.scene_change_count >= self.scene_change_min_frames:
+                # 場景轉換確認：部分重置噪聲估計和最小值追蹤
+                blend = self.scene_change_blend
+                self.noise_psd = blend * self.noise_psd + (1 - blend) * power
+                self.S_min = self.S.copy()
+                self.min_buffer[:] = self.S.reshape(1, -1)
+                self.scene_change_count = 0
+        else:
+            self.scene_change_count = 0
+
+        # 8. 噪聲更新（SPP 門控）
         # v2.0: 若提供外部 SPP，使用外部 SPP；否則使用內部 SPP
         spp_for_update = spp if spp is not None else self.spp
 
-        # 寬頻場景轉換偵測：
-        # 語音是頻率選擇性的（諧波、共振峰），SPP 只在特定頻段高
-        # 場景轉換是全頻段的，SPP 在所有頻率 bin 同時飆高
-        # 當全頻段 SPP 同時過高時，按比例縮小 spp_for_update 讓噪聲估計加速更新
+        # 寬頻場景轉換偵測（舊方法，broadband_threshold < 1.0 時啟用）
         if self.broadband_threshold < 1.0:
             high_spp_ratio = np.mean(self.spp > 0.5)
             if high_spp_ratio > self.broadband_threshold:
@@ -192,6 +225,7 @@ class McraNoiseEstimator:
         self.spp = None
         self.is_initialized = False
         self.frame_count = 0
+        self.scene_change_count = 0
 
     def __repr__(self):
         return (f"McraNoiseEstimator(alpha_s={self.alpha_s}, alpha_d={self.alpha_d}, "
