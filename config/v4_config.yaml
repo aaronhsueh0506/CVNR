@@ -13,14 +13,14 @@ gain_calculation:
 name: IMCRA-OMLSA
 noise_estimation:
   method: imcra
-  freq_smooth_width: 3         # 調優：更寬頻率平滑窗
-  alpha_s: 0.75                # 調優：IMCRA 兩階段已提供穩定性
+  freq_smooth_width: 5         # 調優：更寬頻率平滑窗（穩態噪聲+VCTK平衡）
+  alpha_s: 0.65                # 調優：較低平滑 → 更快追蹤噪聲變化
   alpha_d: 0.85                # 調優：IMCRA SPP 更準確，不需太低
   L: 48                        # 480ms 場景追蹤（同 V3-2）
   V: 8                         # 子窗口更新週期
   U: 6                         # 子窗口數量
   delta_db: 10.0               # 第一階段閾值
-  delta_s_db: 2.0              # 調優：第二階段閾值（降低 = 噪聲估計更保守）
+  delta_s_db: 3.5              # 調優：較高閾值 → 噪聲估計更積極追蹤
   num_init_frames: 20
 soft_vad:
   enable: false

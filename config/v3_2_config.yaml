@@ -11,13 +11,13 @@ gain_calculation:
 name: MMSE-LSA
 noise_estimation:
   method: mcra
-  alpha_s: 0.9
+  alpha_s: 0.95                # 調優：更高平滑 → 更穩定功率譜估計
   alpha_d: 0.7
   alpha_p: 0.2
-  L: 48                     # 480ms 場景追蹤
+  L: 32                        # 調優：320ms 更快場景追蹤（原 48/480ms）
   delta_db: 10.0
   num_init_frames: 20
-  broadband_threshold: 0.75  # 寬頻場景偵測閾值（SPP>0.5 的 bin 比例）
+  broadband_threshold: 1.0     # 調優：關閉（L=32 已足夠快速追蹤場景轉換）
 noise_tracking:
   enable: true
 soft_vad:
