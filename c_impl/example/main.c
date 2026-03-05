@@ -71,13 +71,6 @@ int main(int argc, char* argv[]) {
     // 2. Create denoiser with default config
     MmseLsaConfig config = mmse_lsa_default_config(sample_rate);
 
-    // v4.1: Eta scene change detection removed (L=5 optimization replaces it)
-    // v4.0 optimizations (sync with Python V3-2):
-    // - alpha_s = 0.7 (faster response, no PESQ degradation)
-    // - L = 5 (50ms scene adaptation)
-    // - init_percentile = 30th (improved initialization)
-    config.enable_soft_vad = true;
-
     MmseLsaDenoiser* denoiser = mmse_lsa_create(&config);
 
     if (!denoiser) {

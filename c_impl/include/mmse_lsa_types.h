@@ -30,24 +30,23 @@ typedef struct {
     float xi_min_db;        // A priori SNR floor in dB (-20)
 
     // MCRA parameters
-    float alpha_s;          // Time smoothing (0.9)
+    float alpha_s;          // Time smoothing (0.95)
     float alpha_d;          // Noise update (0.7)
     float alpha_p;          // SPP smoothing (0.2)
-    int L;                  // Minimum tracking window (48 frames)
+    int L;                  // Minimum tracking window (32 frames = 320ms)
     float delta_db;         // Bias compensation in dB (10.0)
     int num_init_frames;    // Noise init frames (20)
 
-    // Gain parameters
-    float g_min_db;         // Minimum gain in dB (-12.5)
-    float alpha_g;          // Gain smoothing (0.92)
-    float alpha_attack;     // Asymmetric attack (0.3)
-    float alpha_decay;      // Asymmetric decay (0.92 = alpha_g)
+    // MCRA scene change detection
+    float scene_change_threshold_db;  // Hi-freq gamma threshold in dB (10.0)
+    int scene_change_min_frames;      // Consecutive frames required (5)
+    float scene_change_blend;         // Noise reset blend factor (0.5)
 
-    // Soft VAD (post-processing)
-    bool enable_soft_vad;       // Enable soft VAD gating (false)
-    float vad_freq_low;         // VAD band low frequency Hz (300.0)
-    float vad_freq_high;        // VAD band high frequency Hz (3400.0)
-    float alpha_vad;            // VAD temporal smoothing (0.5)
+    // Gain parameters
+    float g_min_db;         // Minimum gain in dB (-15.0)
+    float alpha_g;          // Gain smoothing (0.88)
+    float alpha_attack;     // Asymmetric attack (0.3)
+    float alpha_decay;      // Asymmetric decay (0.88 = alpha_g)
 } MmseLsaConfig;
 
 /**
@@ -76,25 +75,24 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
     config.q = 0.5f;
     config.xi_min_db = -20.0f;
 
-    // MCRA parameters (L=48 scene tracking, sync with Python v3_2_config.yaml)
-    config.alpha_s = 0.9f;
+    // MCRA parameters (sync with Python v3_2_config.yaml)
+    config.alpha_s = 0.95f;
     config.alpha_d = 0.7f;
     config.alpha_p = 0.2f;
-    config.L = 48;               // 480ms scene tracking
+    config.L = 32;               // 320ms scene tracking
     config.delta_db = 10.0f;
     config.num_init_frames = 20;
 
-    // Gain parameters (sync with Python v3_2_config.yaml)
-    config.g_min_db = -12.5f;
-    config.alpha_g = 0.92f;
-    config.alpha_attack = 0.3f;
-    config.alpha_decay = 0.92f;     // Match Python (= alpha_g)
+    // MCRA scene change detection
+    config.scene_change_threshold_db = 10.0f;
+    config.scene_change_min_frames = 5;
+    config.scene_change_blend = 0.5f;
 
-    // Soft VAD (disabled by default)
-    config.enable_soft_vad = false;
-    config.vad_freq_low = 300.0f;
-    config.vad_freq_high = 3400.0f;
-    config.alpha_vad = 0.5f;
+    // Gain parameters (sync with Python v3_2_config.yaml)
+    config.g_min_db = -15.0f;
+    config.alpha_g = 0.88f;
+    config.alpha_attack = 0.3f;
+    config.alpha_decay = 0.88f;     // Match Python (= alpha_g)
 
     return config;
 }

@@ -47,7 +47,11 @@ struct McraNoiseEstimator {
     bool is_initialized;
     int frame_count;
 
-    // v4.1: Eta scene change detection removed
+    // Scene change detection (hi-freq gamma + spectral flatness)
+    float scene_change_threshold;   // Linear threshold for hi-freq gamma
+    int scene_change_min_frames;    // Consecutive frames required
+    float scene_change_blend;       // Noise reset blend factor
+    int scene_change_count;         // Current consecutive count
 
 #ifndef USE_FAST_PERCENTILE
     // Buffer for exact percentile calculation during initialization
@@ -89,7 +93,11 @@ McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config) {
     self->is_initialized = false;
     self->frame_count = 0;
 
-    // v4.1: Eta scene change detection removed
+    // Scene change detection
+    self->scene_change_threshold = powf(10.0f, config->scene_change_threshold_db / 10.0f);
+    self->scene_change_min_frames = config->scene_change_min_frames;
+    self->scene_change_blend = config->scene_change_blend;
+    self->scene_change_count = 0;
 
 #ifndef USE_FAST_PERCENTILE
     // Allocate buffer for exact percentile calculation
@@ -404,6 +412,65 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
                             (1.0f - tilde_alpha_d) * power[k];
     }
 
+    // Scene change detection: hi-freq gamma + spectral flatness
+    {
+        int hi_start = n_freqs / 2;  // Upper half (~4kHz for 16kHz/512FFT)
+        int hi_count = n_freqs - hi_start;
+
+        // Compute hi-freq mean power and mean noise_psd
+        float hi_power_sum = 0.0f;
+        float hi_noise_sum = 0.0f;
+        for (int k = hi_start; k < n_freqs; k++) {
+            hi_power_sum += power[k];
+            hi_noise_sum += self->noise_psd[k];
+        }
+        float hi_gamma = hi_power_sum / (hi_noise_sum + 1e-10f);
+
+        // Spectral flatness = geometric_mean / arithmetic_mean (hi-freq)
+        // geometric_mean = exp(mean(log(power)))
+        float log_sum = 0.0f;
+        float arith_sum = 0.0f;
+        for (int k = hi_start; k < n_freqs; k++) {
+            float p = power[k] + 1e-20f;
+            log_sum += logf(p);
+            arith_sum += p;
+        }
+        float geo_mean = expf(log_sum / (float)hi_count);
+        float arith_mean = arith_sum / (float)hi_count;
+        float hi_flatness = geo_mean / arith_mean;
+
+        if (hi_gamma > self->scene_change_threshold && hi_flatness > 0.4f) {
+            self->scene_change_count++;
+            if (self->scene_change_count >= self->scene_change_min_frames) {
+                // Partial noise reset: blend current noise with observed power
+                float blend = self->scene_change_blend;
+                float one_minus_blend = 1.0f - blend;
+                for (int k = 0; k < n_freqs; k++) {
+                    self->noise_psd[k] = blend * self->noise_psd[k] + one_minus_blend * power[k];
+                    self->S_min[k] = self->S[k];
+                }
+                // Reset min_buffer to current S
+#ifdef USE_OPTIMIZED_MIN_BUFFER
+                for (int k = 0; k < n_freqs; k++) {
+                    float* freq_buf = &self->min_buffer[k * L];
+                    for (int l = 0; l < L; l++) {
+                        freq_buf[l] = self->S[k];
+                    }
+                }
+#else
+                for (int l = 0; l < L; l++) {
+                    for (int k = 0; k < n_freqs; k++) {
+                        self->min_buffer[l * n_freqs + k] = self->S[k];
+                    }
+                }
+#endif
+                self->scene_change_count = 0;
+            }
+        } else {
+            self->scene_change_count = 0;
+        }
+    }
+
     self->frame_count++;
 }
 
@@ -433,5 +500,5 @@ void mcra_reset(McraNoiseEstimator* self) {
     self->ring_idx = 0;
     self->is_initialized = false;
     self->frame_count = 0;
-    // v4.1: Eta state removed
+    self->scene_change_count = 0;
 }
