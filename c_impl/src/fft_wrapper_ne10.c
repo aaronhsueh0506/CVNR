@@ -104,11 +104,8 @@ void fft_inverse(FftHandle* h, const Complex* complex_in, float* real_out) {
     // Inverse C2R FFT: complex[n_freqs] -> real[fft_size]
     ne10_fft_c2r_1d_float32_neon(h->real_buf, h->cpx_buf, h->r2c_cfg);
 
-    // NE10 does NOT auto-scale IFFT, divide by N
-    float scale = 1.0f / (float)h->fft_size;
-    for (int i = 0; i < h->fft_size; i++) {
-        real_out[i] = h->real_buf[i] * scale;
-    }
+    // NE10 C2R IFFT auto-scales by 1/N (official doc confirmed)
+    memcpy(real_out, h->real_buf, h->fft_size * sizeof(float));
 }
 
 void fft_magnitude(const Complex* spectrum, float* magnitude, int n_freqs) {

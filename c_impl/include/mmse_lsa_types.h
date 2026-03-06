@@ -16,6 +16,15 @@ extern "C" {
 #endif
 
 /**
+ * NR strength mode
+ */
+typedef enum {
+    MMSE_LSA_NR_MILD       = 0,   // Less aggressive, preserve speech detail
+    MMSE_LSA_NR_BALANCED   = 1,   // Default
+    MMSE_LSA_NR_AGGRESSIVE = 2    // More aggressive noise removal
+} MmseLsaNrMode;
+
+/**
  * Configuration structure for MMSE-LSA denoiser
  */
 typedef struct {
@@ -93,6 +102,45 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
     config.alpha_g = 0.88f;
     config.alpha_attack = 0.3f;
     config.alpha_decay = 0.88f;     // Match Python (= alpha_g)
+
+    return config;
+}
+
+/**
+ * Create configuration for given NR strength mode
+ *
+ * MILD:       g_min=-10dB, preserve speech, slower noise tracking
+ * BALANCED:   g_min=-15dB, default (same as mmse_lsa_default_config)
+ * AGGRESSIVE: g_min=-20dB, stronger suppression, faster noise tracking
+ */
+static inline MmseLsaConfig mmse_lsa_config_for_mode(int sample_rate, MmseLsaNrMode mode) {
+    MmseLsaConfig config = mmse_lsa_default_config(sample_rate);
+
+    switch (mode) {
+    case MMSE_LSA_NR_MILD:
+        config.g_min_db      = -10.0f;
+        config.q             = 0.6f;
+        config.xi_min_db     = -15.0f;
+        config.alpha_d       = 0.85f;
+        config.alpha_g       = 0.92f;
+        config.alpha_attack  = 0.4f;
+        config.alpha_decay   = 0.92f;
+        break;
+
+    case MMSE_LSA_NR_AGGRESSIVE:
+        config.g_min_db      = -20.0f;
+        config.q             = 0.35f;
+        config.xi_min_db     = -25.0f;
+        config.alpha_d       = 0.5f;
+        config.alpha_g       = 0.75f;
+        config.alpha_attack  = 0.15f;
+        config.alpha_decay   = 0.85f;
+        break;
+
+    case MMSE_LSA_NR_BALANCED:
+    default:
+        break;  // already default
+    }
 
     return config;
 }
