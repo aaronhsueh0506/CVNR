@@ -11,6 +11,7 @@
 #define MMSE_LSA_DENOISER_H
 
 #include "mmse_lsa_types.h"
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -23,6 +24,20 @@ typedef struct MmseLsaDenoiser MmseLsaDenoiser;
 // Core API
 // ============================================================================
 
+#ifdef USE_EXT_MEM
+/**
+ * Query memory size needed for denoiser (for external allocation)
+ */
+size_t mmse_lsa_query_memsize(const MmseLsaConfig* config);
+
+/**
+ * Create denoiser using pre-allocated memory (no internal malloc)
+ *
+ * Note: mmse_lsa_destroy() will NOT free the buffer — caller manages it.
+ */
+MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config,
+                                  void* mem, size_t mem_size);
+#else
 /**
  * Create MMSE-LSA denoiser
  *
@@ -30,6 +45,7 @@ typedef struct MmseLsaDenoiser MmseLsaDenoiser;
  * @return Denoiser instance, or NULL on error
  */
 MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config);
+#endif
 
 /**
  * Destroy denoiser and free all resources

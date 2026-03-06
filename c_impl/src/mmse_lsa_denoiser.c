@@ -20,9 +20,18 @@
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
+#include <stdint.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
+#endif
+
+#ifdef USE_EXT_MEM
+/* ---- Memory alignment helper ---- */
+#define MEM_ALIGN 16
+static inline size_t aligned_size(size_t s) {
+    return (s + (MEM_ALIGN - 1)) & ~(size_t)(MEM_ALIGN - 1);
+}
 #endif
 
 // Internal denoiser structure
@@ -265,89 +274,37 @@ static void calculate_gain(
 // Denoiser implementation
 // ============================================================================
 
-MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config) {
-    if (!config) return NULL;
-
-    MmseLsaDenoiser* self = (MmseLsaDenoiser*)calloc(1, sizeof(MmseLsaDenoiser));
-    if (!self) return NULL;
-
-    // Copy config
+/* Common initialization after all buffers are assigned */
+static int init_denoiser_common(MmseLsaDenoiser* self, const MmseLsaConfig* config) {
     self->config = *config;
 
-    // Calculate frame parameters
     self->frame_size = config->sample_rate * config->frame_size_ms / 1000;
     self->hop_size = config->sample_rate * config->frame_shift_ms / 1000;
     self->overlap = self->frame_size - self->hop_size;
     self->fft_size = config->fft_size;
     self->n_freqs = config->fft_size / 2 + 1;
 
-    // Warning: if frame_size > fft_size, only fft_size samples will be processed per frame
     if (self->frame_size > self->fft_size) {
         fprintf(stderr, "Warning: frame_size (%d) > fft_size (%d). "
-                "Only first %d samples will be used. Consider using fft_size >= frame_size.\n",
+                "Only first %d samples will be used.\n",
                 self->frame_size, self->fft_size, self->fft_size);
     }
 
-    // Allocate input buffer
-    self->input_buffer = (float*)calloc(self->frame_size, sizeof(float));
     self->input_samples = 0;
-
-    // Create FFT handle
-    self->fft_handle = fft_create(self->fft_size);
-
-    // Create window
-    self->window = (float*)calloc(self->frame_size, sizeof(float));
     create_sqrt_hann_window(self->window, self->frame_size);
-
-    // Allocate FFT buffers
-    self->fft_in = (float*)calloc(self->fft_size, sizeof(float));
-    self->spectrum = (Complex*)calloc(self->n_freqs, sizeof(Complex));
-
-    // Allocate spectrum buffers
-    self->power = (float*)calloc(self->n_freqs, sizeof(float));
-    self->magnitude = (float*)calloc(self->n_freqs, sizeof(float));
-    self->phase = (float*)calloc(self->n_freqs, sizeof(float));
-    self->enhanced_mag = (float*)calloc(self->n_freqs, sizeof(float));
-
-    // Create sub-modules (MCRA and SPP only)
-    self->noise_est = mcra_create(self->n_freqs, config);
-    self->spp_est = spp_create(self->n_freqs, config);
-
-    // Allocate SPP/gain buffers
-    self->spp = (float*)calloc(self->n_freqs, sizeof(float));
-    self->xi = (float*)calloc(self->n_freqs, sizeof(float));
-    self->gamma = (float*)calloc(self->n_freqs, sizeof(float));
-    self->gain = (float*)calloc(self->n_freqs, sizeof(float));
-#ifdef USE_SHARED_XI_RATIO
-    self->v = (float*)calloc(self->n_freqs, sizeof(float));
-#endif
-
-    // Allocate OLA buffer
-    self->ola_buffer = (float*)calloc(self->frame_size, sizeof(float));
-
-    // Allocate state buffers
-    self->gain_prev = (float*)calloc(self->n_freqs, sizeof(float));
-    self->enhanced_psd_prev = (float*)calloc(self->n_freqs, sizeof(float));
-
-    // Noise initialization buffer
-    self->init_power_sum = (float*)calloc(self->n_freqs, sizeof(float));
+    init_gain_params(self, config);
     self->init_frame_count = 0;
     self->is_initialized = false;
-
-    // Initialize gain calculation parameters
-    init_gain_params(self, config);
-    self->log_gain_prev = (float*)calloc(self->n_freqs, sizeof(float));
 
 #ifdef DEBUG_DUMP
     self->debug_fp = fopen("/tmp/c_debug_dump.bin", "wb");
     self->debug_frame_idx = 0;
     if (self->debug_fp) {
-        // Write header: n_freqs (int32)
         fwrite(&self->n_freqs, sizeof(int), 1, self->debug_fp);
     }
 #endif
 
-    // Verify all allocations
+    /* Verify all pointers */
     if (!self->input_buffer || !self->fft_handle || !self->window ||
         !self->fft_in || !self->spectrum || !self->power ||
         !self->magnitude || !self->phase || !self->enhanced_mag ||
@@ -359,6 +316,153 @@ MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config) {
         || !self->v
 #endif
         ) {
+        return -1;
+    }
+
+    return 0;
+}
+
+/* ======================================================================== */
+#ifdef USE_EXT_MEM
+/* ======================================================================== */
+
+size_t mmse_lsa_query_memsize(const MmseLsaConfig* config) {
+    if (!config) return 0;
+
+    int frame_size = config->sample_rate * config->frame_size_ms / 1000;
+    int fft_size   = config->fft_size;
+    int n_freqs    = fft_size / 2 + 1;
+
+    size_t total = aligned_size(sizeof(MmseLsaDenoiser));
+
+    /* Input / window / FFT */
+    total += aligned_size(frame_size * sizeof(float));      /* input_buffer */
+    total += aligned_size(frame_size * sizeof(float));      /* window       */
+    total += aligned_size(fft_size   * sizeof(float));      /* fft_in       */
+    total += aligned_size(n_freqs    * sizeof(Complex));    /* spectrum     */
+
+    /* Spectrum buffers */
+    total += aligned_size(n_freqs * sizeof(float));         /* power        */
+    total += aligned_size(n_freqs * sizeof(float));         /* magnitude    */
+    total += aligned_size(n_freqs * sizeof(float));         /* phase        */
+    total += aligned_size(n_freqs * sizeof(float));         /* enhanced_mag */
+
+    /* SPP / Gain buffers */
+    total += aligned_size(n_freqs * sizeof(float));         /* spp          */
+    total += aligned_size(n_freqs * sizeof(float));         /* xi           */
+    total += aligned_size(n_freqs * sizeof(float));         /* gamma        */
+    total += aligned_size(n_freqs * sizeof(float));         /* gain         */
+#ifdef USE_SHARED_XI_RATIO
+    total += aligned_size(n_freqs * sizeof(float));         /* v            */
+#endif
+
+    /* OLA / State */
+    total += aligned_size(frame_size * sizeof(float));      /* ola_buffer   */
+    total += aligned_size(n_freqs * sizeof(float));         /* gain_prev    */
+    total += aligned_size(n_freqs * sizeof(float));         /* enhanced_psd */
+    total += aligned_size(n_freqs * sizeof(float));         /* init_pwr_sum */
+    total += aligned_size(n_freqs * sizeof(float));         /* log_gain_prev*/
+
+    /* Sub-modules */
+    total += fft_query_memsize(fft_size);
+    total += mcra_query_memsize(n_freqs, config);
+    total += spp_query_memsize(n_freqs);
+
+    return total;
+}
+
+MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config,
+                                  void* mem, size_t mem_size) {
+    if (!config || !mem) return NULL;
+    if (mem_size < mmse_lsa_query_memsize(config)) return NULL;
+
+    int frame_size = config->sample_rate * config->frame_size_ms / 1000;
+    int fft_size   = config->fft_size;
+    int n_freqs    = fft_size / 2 + 1;
+
+    uint8_t* cursor = (uint8_t*)mem;
+
+    /* ---- Struct ---- */
+    MmseLsaDenoiser* self = (MmseLsaDenoiser*)cursor;
+    cursor += aligned_size(sizeof(MmseLsaDenoiser));
+    memset(self, 0, sizeof(MmseLsaDenoiser));
+
+    /* ---- Buffers (frame_size) ---- */
+    self->input_buffer = (float*)cursor;
+    cursor += aligned_size(frame_size * sizeof(float));
+
+    self->window = (float*)cursor;
+    cursor += aligned_size(frame_size * sizeof(float));
+
+    /* ---- FFT buffers ---- */
+    self->fft_in = (float*)cursor;
+    cursor += aligned_size(fft_size * sizeof(float));
+
+    self->spectrum = (Complex*)cursor;
+    cursor += aligned_size(n_freqs * sizeof(Complex));
+
+    /* ---- Spectrum buffers ---- */
+    self->power = (float*)cursor;
+    cursor += aligned_size(n_freqs * sizeof(float));
+
+    self->magnitude = (float*)cursor;
+    cursor += aligned_size(n_freqs * sizeof(float));
+
+    self->phase = (float*)cursor;
+    cursor += aligned_size(n_freqs * sizeof(float));
+
+    self->enhanced_mag = (float*)cursor;
+    cursor += aligned_size(n_freqs * sizeof(float));
+
+    /* ---- SPP / Gain ---- */
+    self->spp = (float*)cursor;
+    cursor += aligned_size(n_freqs * sizeof(float));
+
+    self->xi = (float*)cursor;
+    cursor += aligned_size(n_freqs * sizeof(float));
+
+    self->gamma = (float*)cursor;
+    cursor += aligned_size(n_freqs * sizeof(float));
+
+    self->gain = (float*)cursor;
+    cursor += aligned_size(n_freqs * sizeof(float));
+
+#ifdef USE_SHARED_XI_RATIO
+    self->v = (float*)cursor;
+    cursor += aligned_size(n_freqs * sizeof(float));
+#endif
+
+    /* ---- OLA / State ---- */
+    self->ola_buffer = (float*)cursor;
+    cursor += aligned_size(frame_size * sizeof(float));
+
+    self->gain_prev = (float*)cursor;
+    cursor += aligned_size(n_freqs * sizeof(float));
+
+    self->enhanced_psd_prev = (float*)cursor;
+    cursor += aligned_size(n_freqs * sizeof(float));
+
+    self->init_power_sum = (float*)cursor;
+    cursor += aligned_size(n_freqs * sizeof(float));
+
+    self->log_gain_prev = (float*)cursor;
+    cursor += aligned_size(n_freqs * sizeof(float));
+
+    /* ---- Sub-modules ---- */
+    size_t fft_sz  = fft_query_memsize(fft_size);
+    self->fft_handle = fft_create(fft_size, cursor, fft_sz);
+    cursor += fft_sz;
+
+    size_t mcra_sz = mcra_query_memsize(n_freqs, config);
+    self->noise_est = mcra_create(n_freqs, config, cursor, mcra_sz);
+    cursor += mcra_sz;
+
+    size_t spp_sz  = spp_query_memsize(n_freqs);
+    self->spp_est = spp_create(n_freqs, config, cursor, spp_sz);
+    cursor += spp_sz;
+
+    /* ---- Common init ---- */
+    if (init_denoiser_common(self, config) != 0) {
         mmse_lsa_destroy(self);
         return NULL;
     }
@@ -366,11 +470,78 @@ MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config) {
     return self;
 }
 
+/* ======================================================================== */
+#else /* !USE_EXT_MEM */
+/* ======================================================================== */
+
+MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config) {
+    if (!config) return NULL;
+
+    MmseLsaDenoiser* self = (MmseLsaDenoiser*)calloc(1, sizeof(MmseLsaDenoiser));
+    if (!self) return NULL;
+
+    int frame_size = config->sample_rate * config->frame_size_ms / 1000;
+    int fft_size   = config->fft_size;
+    int n_freqs    = fft_size / 2 + 1;
+
+    /* Input / window / FFT */
+    self->input_buffer = (float*)calloc(frame_size, sizeof(float));
+    self->window       = (float*)calloc(frame_size, sizeof(float));
+    self->fft_in       = (float*)calloc(fft_size, sizeof(float));
+    self->spectrum     = (Complex*)calloc(n_freqs, sizeof(Complex));
+
+    /* Spectrum buffers */
+    self->power        = (float*)calloc(n_freqs, sizeof(float));
+    self->magnitude    = (float*)calloc(n_freqs, sizeof(float));
+    self->phase        = (float*)calloc(n_freqs, sizeof(float));
+    self->enhanced_mag = (float*)calloc(n_freqs, sizeof(float));
+
+    /* Sub-modules */
+    self->fft_handle = fft_create(fft_size);
+    self->noise_est  = mcra_create(n_freqs, config);
+    self->spp_est    = spp_create(n_freqs, config);
+
+    /* SPP / Gain buffers */
+    self->spp   = (float*)calloc(n_freqs, sizeof(float));
+    self->xi    = (float*)calloc(n_freqs, sizeof(float));
+    self->gamma = (float*)calloc(n_freqs, sizeof(float));
+    self->gain  = (float*)calloc(n_freqs, sizeof(float));
+#ifdef USE_SHARED_XI_RATIO
+    self->v     = (float*)calloc(n_freqs, sizeof(float));
+#endif
+
+    /* OLA / State */
+    self->ola_buffer        = (float*)calloc(frame_size, sizeof(float));
+    self->gain_prev         = (float*)calloc(n_freqs, sizeof(float));
+    self->enhanced_psd_prev = (float*)calloc(n_freqs, sizeof(float));
+    self->init_power_sum    = (float*)calloc(n_freqs, sizeof(float));
+    self->log_gain_prev     = (float*)calloc(n_freqs, sizeof(float));
+
+    /* Common init */
+    if (init_denoiser_common(self, config) != 0) {
+        mmse_lsa_destroy(self);
+        return NULL;
+    }
+
+    return self;
+}
+
+#endif /* USE_EXT_MEM */
+
 void mmse_lsa_destroy(MmseLsaDenoiser* self) {
     if (!self) return;
 
-    if (self->input_buffer) free(self->input_buffer);
+#ifdef DEBUG_DUMP
+    if (self->debug_fp) fclose(self->debug_fp);
+#endif
+
+    /* Sub-modules: always call destroy (handles NE10 cleanup etc.) */
     if (self->fft_handle) fft_destroy(self->fft_handle);
+    if (self->noise_est) mcra_destroy(self->noise_est);
+    if (self->spp_est) spp_destroy(self->spp_est);
+
+#ifndef USE_EXT_MEM
+    if (self->input_buffer) free(self->input_buffer);
     if (self->window) free(self->window);
     if (self->fft_in) free(self->fft_in);
     if (self->spectrum) free(self->spectrum);
@@ -378,8 +549,6 @@ void mmse_lsa_destroy(MmseLsaDenoiser* self) {
     if (self->magnitude) free(self->magnitude);
     if (self->phase) free(self->phase);
     if (self->enhanced_mag) free(self->enhanced_mag);
-    if (self->noise_est) mcra_destroy(self->noise_est);
-    if (self->spp_est) spp_destroy(self->spp_est);
     if (self->spp) free(self->spp);
     if (self->xi) free(self->xi);
     if (self->gamma) free(self->gamma);
@@ -392,12 +561,8 @@ void mmse_lsa_destroy(MmseLsaDenoiser* self) {
     if (self->enhanced_psd_prev) free(self->enhanced_psd_prev);
     if (self->init_power_sum) free(self->init_power_sum);
     if (self->log_gain_prev) free(self->log_gain_prev);
-
-#ifdef DEBUG_DUMP
-    if (self->debug_fp) fclose(self->debug_fp);
-#endif
-
     free(self);
+#endif
 }
 
 // Process a single frame (internal)

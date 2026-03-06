@@ -9,6 +9,7 @@
 #define SPP_ESTIMATOR_H
 
 #include "mmse_lsa_types.h"
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -17,6 +18,18 @@ extern "C" {
 // Opaque structure
 typedef struct SppEstimator SppEstimator;
 
+#ifdef USE_EXT_MEM
+/**
+ * Query memory size needed for SPP estimator
+ */
+size_t spp_query_memsize(int n_freqs);
+
+/**
+ * Create SPP estimator using pre-allocated memory
+ */
+SppEstimator* spp_create(int n_freqs, const MmseLsaConfig* config,
+                          void* mem, size_t mem_size);
+#else
 /**
  * Create SPP estimator
  *
@@ -25,6 +38,7 @@ typedef struct SppEstimator SppEstimator;
  * @return Estimator instance, or NULL on error
  */
 SppEstimator* spp_create(int n_freqs, const MmseLsaConfig* config);
+#endif
 
 /**
  * Destroy SPP estimator

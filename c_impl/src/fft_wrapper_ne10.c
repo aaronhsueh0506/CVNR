@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdint.h>
 
 static int ne10_initialized = 0;
 
@@ -24,6 +25,64 @@ struct FftHandle {
     ne10_float32_t*            real_buf; // [fft_size] real work buffer
     ne10_fft_cpx_float32_t*    cpx_buf;  // [n_freqs] complex work buffer
 };
+
+#ifdef USE_EXT_MEM
+/* ---- Memory alignment helper ---- */
+#define MEM_ALIGN 16
+static inline size_t aligned_size(size_t s) {
+    return (s + (MEM_ALIGN - 1)) & ~(size_t)(MEM_ALIGN - 1);
+}
+#endif
+
+#ifdef USE_EXT_MEM
+
+size_t fft_query_memsize(int fft_size) {
+    if (fft_size <= 0 || (fft_size & (fft_size - 1)) != 0) return 0;
+    int n_freqs = fft_size / 2 + 1;
+
+    size_t total = aligned_size(sizeof(FftHandle));
+    total += aligned_size(fft_size * sizeof(ne10_float32_t));              /* real_buf */
+    total += aligned_size(n_freqs * sizeof(ne10_fft_cpx_float32_t));       /* cpx_buf  */
+    /* Note: ne10_fft_alloc_r2c_float32 uses internal malloc, not included */
+    return total;
+}
+
+FftHandle* fft_create(int fft_size, void* mem, size_t mem_size) {
+    if (!mem || fft_size <= 0 || (fft_size & (fft_size - 1)) != 0) return NULL;
+    if (mem_size < fft_query_memsize(fft_size)) return NULL;
+
+    /* One-time NE10 initialization */
+    if (!ne10_initialized) {
+        if (ne10_init() != NE10_OK) return NULL;
+        ne10_initialized = 1;
+    }
+
+    uint8_t* cursor = (uint8_t*)mem;
+
+    FftHandle* h = (FftHandle*)cursor;
+    cursor += aligned_size(sizeof(FftHandle));
+    memset(h, 0, sizeof(FftHandle));
+
+    h->fft_size = fft_size;
+    h->n_freqs = fft_size / 2 + 1;
+
+    /* NE10 config — still uses internal malloc */
+    h->r2c_cfg = ne10_fft_alloc_r2c_float32(fft_size);
+    if (!h->r2c_cfg) return NULL;
+
+    /* Work buffers from external memory */
+    h->real_buf = (ne10_float32_t*)cursor;
+    cursor += aligned_size(fft_size * sizeof(ne10_float32_t));
+    memset(h->real_buf, 0, fft_size * sizeof(ne10_float32_t));
+
+    h->cpx_buf = (ne10_fft_cpx_float32_t*)cursor;
+    cursor += aligned_size(h->n_freqs * sizeof(ne10_fft_cpx_float32_t));
+    memset(h->cpx_buf, 0, h->n_freqs * sizeof(ne10_fft_cpx_float32_t));
+
+    return h;
+}
+
+#else /* !USE_EXT_MEM */
 
 FftHandle* fft_create(int fft_size) {
     if (fft_size <= 0 || (fft_size & (fft_size - 1)) != 0) {
@@ -64,14 +123,19 @@ FftHandle* fft_create(int fft_size) {
     return h;
 }
 
+#endif /* USE_EXT_MEM */
+
 void fft_destroy(FftHandle* h) {
     if (!h) return;
 
+    /* NE10 config always needs cleanup (internally malloc'd) */
     if (h->r2c_cfg) ne10_fft_destroy_r2c_float32(h->r2c_cfg);
+
+#ifndef USE_EXT_MEM
     if (h->real_buf) free(h->real_buf);
     if (h->cpx_buf) free(h->cpx_buf);
-
     free(h);
+#endif
 }
 
 int fft_get_size(const FftHandle* h) {
@@ -104,11 +168,8 @@ void fft_inverse(FftHandle* h, const Complex* complex_in, float* real_out) {
     // Inverse C2R FFT: complex[n_freqs] -> real[fft_size]
     ne10_fft_c2r_1d_float32_neon(h->real_buf, h->cpx_buf, h->r2c_cfg);
 
-    // NE10 does NOT auto-scale IFFT, divide by N
-    float scale = 1.0f / (float)h->fft_size;
-    for (int i = 0; i < h->fft_size; i++) {
-        real_out[i] = h->real_buf[i] * scale;
-    }
+    // NE10 C2R IFFT auto-scales by 1/N (official doc confirmed)
+    memcpy(real_out, h->real_buf, h->fft_size * sizeof(float));
 }
 
 void fft_magnitude(const Complex* spectrum, float* magnitude, int n_freqs) {

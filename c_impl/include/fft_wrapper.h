@@ -9,6 +9,7 @@
 #define FFT_WRAPPER_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -23,6 +24,22 @@ typedef struct {
 // Opaque FFT handle
 typedef struct FftHandle FftHandle;
 
+#ifdef USE_EXT_MEM
+/**
+ * Query memory size needed for FFT handle (for external allocation)
+ */
+size_t fft_query_memsize(int fft_size);
+
+/**
+ * Create FFT handle using pre-allocated memory
+ *
+ * @param fft_size FFT size (must be power of 2)
+ * @param mem Pre-allocated memory buffer (16-byte aligned)
+ * @param mem_size Size of buffer (>= fft_query_memsize result)
+ * @return FFT handle, or NULL on error
+ */
+FftHandle* fft_create(int fft_size, void* mem, size_t mem_size);
+#else
 /**
  * Create FFT handle for given size
  *
@@ -30,6 +47,7 @@ typedef struct FftHandle FftHandle;
  * @return FFT handle, or NULL on error
  */
 FftHandle* fft_create(int fft_size);
+#endif
 
 /**
  * Destroy FFT handle

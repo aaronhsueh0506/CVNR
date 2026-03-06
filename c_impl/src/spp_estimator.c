@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdint.h>
 
 // Internal structure
 struct SppEstimator {
@@ -31,17 +32,65 @@ struct SppEstimator {
     int frame_count;
 };
 
-SppEstimator* spp_create(int n_freqs, const MmseLsaConfig* config) {
-    if (n_freqs <= 0 || !config) return NULL;
+#ifdef USE_EXT_MEM
+/* ---- Memory alignment helper ---- */
+#define MEM_ALIGN 16
+static inline size_t aligned_size(size_t s) {
+    return (s + (MEM_ALIGN - 1)) & ~(size_t)(MEM_ALIGN - 1);
+}
+#endif
 
-    SppEstimator* self = (SppEstimator*)calloc(1, sizeof(SppEstimator));
-    if (!self) return NULL;
-
+/* Common initialization (shared between both create paths) */
+static void spp_init_params(SppEstimator* self, int n_freqs, const MmseLsaConfig* config) {
     self->n_freqs = n_freqs;
     self->alpha = config->alpha_xi;
     self->q = config->q;
     self->xi_min = powf(10.0f, config->xi_min_db / 10.0f);
     self->prior_ratio = (1.0f - self->q) / (self->q + 1e-10f);
+    self->is_initialized = false;
+    self->frame_count = 0;
+}
+
+#ifdef USE_EXT_MEM
+
+size_t spp_query_memsize(int n_freqs) {
+    if (n_freqs <= 0) return 0;
+    size_t total = aligned_size(sizeof(SppEstimator));
+    total += aligned_size(n_freqs * sizeof(float));  /* xi_prev    */
+    total += aligned_size(n_freqs * sizeof(float));  /* gamma_prev */
+    return total;
+}
+
+SppEstimator* spp_create(int n_freqs, const MmseLsaConfig* config,
+                          void* mem, size_t mem_size) {
+    if (n_freqs <= 0 || !config || !mem) return NULL;
+    if (mem_size < spp_query_memsize(n_freqs)) return NULL;
+
+    uint8_t* cursor = (uint8_t*)mem;
+
+    SppEstimator* self = (SppEstimator*)cursor;
+    cursor += aligned_size(sizeof(SppEstimator));
+    memset(self, 0, sizeof(SppEstimator));
+
+    self->xi_prev = (float*)cursor;
+    cursor += aligned_size(n_freqs * sizeof(float));
+    memset(self->xi_prev, 0, n_freqs * sizeof(float));
+
+    self->gamma_prev = (float*)cursor;
+    cursor += aligned_size(n_freqs * sizeof(float));
+    memset(self->gamma_prev, 0, n_freqs * sizeof(float));
+
+    spp_init_params(self, n_freqs, config);
+    return self;
+}
+
+#else /* !USE_EXT_MEM */
+
+SppEstimator* spp_create(int n_freqs, const MmseLsaConfig* config) {
+    if (n_freqs <= 0 || !config) return NULL;
+
+    SppEstimator* self = (SppEstimator*)calloc(1, sizeof(SppEstimator));
+    if (!self) return NULL;
 
     // Allocate state arrays
     self->xi_prev = (float*)calloc(n_freqs, sizeof(float));
@@ -52,19 +101,20 @@ SppEstimator* spp_create(int n_freqs, const MmseLsaConfig* config) {
         return NULL;
     }
 
-    self->is_initialized = false;
-    self->frame_count = 0;
-
+    spp_init_params(self, n_freqs, config);
     return self;
 }
+
+#endif /* USE_EXT_MEM */
 
 void spp_destroy(SppEstimator* self) {
     if (!self) return;
 
+#ifndef USE_EXT_MEM
     if (self->xi_prev) free(self->xi_prev);
     if (self->gamma_prev) free(self->gamma_prev);
-
     free(self);
+#endif
 }
 
 void spp_estimate(

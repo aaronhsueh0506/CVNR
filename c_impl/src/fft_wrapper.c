@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdint.h>
 
 // Internal FFT handle structure
 struct FftHandle {
@@ -24,6 +25,77 @@ struct FftHandle {
     kiss_fft_cpx* fft_in;   // Complex input buffer [fft_size]
     kiss_fft_cpx* fft_out;  // Complex output buffer [fft_size]
 };
+
+#ifdef USE_EXT_MEM
+/* ---- Memory alignment helper ---- */
+#define MEM_ALIGN 16
+static inline size_t aligned_size(size_t s) {
+    return (s + (MEM_ALIGN - 1)) & ~(size_t)(MEM_ALIGN - 1);
+}
+#endif
+
+#ifdef USE_EXT_MEM
+
+size_t fft_query_memsize(int fft_size) {
+    if (fft_size <= 0 || (fft_size & (fft_size - 1)) != 0) return 0;
+
+    size_t total = aligned_size(sizeof(FftHandle));
+
+    /* KISS FFT configs — query required size */
+    size_t fwd_size = 0;
+    kiss_fft_alloc(fft_size, 0, NULL, &fwd_size);
+    total += aligned_size(fwd_size);
+
+    size_t inv_size = 0;
+    kiss_fft_alloc(fft_size, 1, NULL, &inv_size);
+    total += aligned_size(inv_size);
+
+    /* Work buffers */
+    total += aligned_size(fft_size * sizeof(kiss_fft_cpx));  /* fft_in  */
+    total += aligned_size(fft_size * sizeof(kiss_fft_cpx));  /* fft_out */
+
+    return total;
+}
+
+FftHandle* fft_create(int fft_size, void* mem, size_t mem_size) {
+    if (!mem || fft_size <= 0 || (fft_size & (fft_size - 1)) != 0) return NULL;
+    if (mem_size < fft_query_memsize(fft_size)) return NULL;
+
+    uint8_t* cursor = (uint8_t*)mem;
+
+    FftHandle* h = (FftHandle*)cursor;
+    cursor += aligned_size(sizeof(FftHandle));
+    memset(h, 0, sizeof(FftHandle));
+
+    h->fft_size = fft_size;
+    h->n_freqs = fft_size / 2 + 1;
+
+    /* Place KISS FFT configs in pre-allocated buffer */
+    size_t fwd_size = 0;
+    kiss_fft_alloc(fft_size, 0, NULL, &fwd_size);
+    h->fft_cfg = kiss_fft_alloc(fft_size, 0, cursor, &fwd_size);
+    cursor += aligned_size(fwd_size);
+
+    size_t inv_size = 0;
+    kiss_fft_alloc(fft_size, 1, NULL, &inv_size);
+    h->ifft_cfg = kiss_fft_alloc(fft_size, 1, cursor, &inv_size);
+    cursor += aligned_size(inv_size);
+
+    if (!h->fft_cfg || !h->ifft_cfg) return NULL;
+
+    /* Work buffers from external memory */
+    h->fft_in = (kiss_fft_cpx*)cursor;
+    cursor += aligned_size(fft_size * sizeof(kiss_fft_cpx));
+    memset(h->fft_in, 0, fft_size * sizeof(kiss_fft_cpx));
+
+    h->fft_out = (kiss_fft_cpx*)cursor;
+    cursor += aligned_size(fft_size * sizeof(kiss_fft_cpx));
+    memset(h->fft_out, 0, fft_size * sizeof(kiss_fft_cpx));
+
+    return h;
+}
+
+#else /* !USE_EXT_MEM */
 
 FftHandle* fft_create(int fft_size) {
     if (fft_size <= 0 || (fft_size & (fft_size - 1)) != 0) {
@@ -58,15 +130,19 @@ FftHandle* fft_create(int fft_size) {
     return h;
 }
 
+#endif /* USE_EXT_MEM */
+
 void fft_destroy(FftHandle* h) {
     if (!h) return;
 
+#ifndef USE_EXT_MEM
     if (h->fft_cfg) kiss_fft_free(h->fft_cfg);
     if (h->ifft_cfg) kiss_fft_free(h->ifft_cfg);
     if (h->fft_in) free(h->fft_in);
     if (h->fft_out) free(h->fft_out);
-
     free(h);
+#endif
+    /* USE_EXT_MEM: KISS configs are in external block, nothing to free */
 }
 
 int fft_get_size(const FftHandle* h) {

@@ -18,6 +18,7 @@
 #include <string.h>
 #include <math.h>
 #include <float.h>
+#include <stdint.h>
 
 // Internal structure
 struct McraNoiseEstimator {
@@ -62,18 +63,93 @@ struct McraNoiseEstimator {
 #endif
 };
 
-McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config) {
-    if (n_freqs <= 0 || !config) return NULL;
+#ifdef USE_EXT_MEM
+/* ---- Memory alignment helper ---- */
+#define MEM_ALIGN 16
+static inline size_t aligned_size(size_t s) {
+    return (s + (MEM_ALIGN - 1)) & ~(size_t)(MEM_ALIGN - 1);
+}
+#endif
 
-    McraNoiseEstimator* self = (McraNoiseEstimator*)calloc(1, sizeof(McraNoiseEstimator));
-    if (!self) return NULL;
-
+/* Common initialization (shared between both create paths) */
+static void mcra_init_params(McraNoiseEstimator* self, int n_freqs,
+                              const MmseLsaConfig* config) {
     self->n_freqs = n_freqs;
     self->L = config->L;
     self->alpha_s = config->alpha_s;
     self->alpha_d = config->alpha_d;
     self->alpha_p = config->alpha_p;
     self->delta = powf(10.0f, config->delta_db / 10.0f);
+    self->ring_idx = 0;
+    self->is_initialized = false;
+    self->frame_count = 0;
+    self->scene_change_threshold = powf(10.0f, config->scene_change_threshold_db / 10.0f);
+    self->scene_change_min_frames = config->scene_change_min_frames;
+    self->scene_change_blend = config->scene_change_blend;
+    self->scene_change_count = 0;
+#ifndef USE_FAST_PERCENTILE
+    self->num_init_frames = config->num_init_frames;
+#endif
+}
+
+#ifdef USE_EXT_MEM
+
+size_t mcra_query_memsize(int n_freqs, const MmseLsaConfig* config) {
+    if (n_freqs <= 0 || !config) return 0;
+    size_t total = aligned_size(sizeof(McraNoiseEstimator));
+    total += aligned_size(n_freqs * sizeof(float));                 /* noise_psd */
+    total += aligned_size(n_freqs * sizeof(float));                 /* S         */
+    total += aligned_size(n_freqs * sizeof(float));                 /* S_min     */
+    total += aligned_size(n_freqs * sizeof(float));                 /* spp       */
+    total += aligned_size(config->L * n_freqs * sizeof(float));     /* min_buffer */
+#ifndef USE_FAST_PERCENTILE
+    total += aligned_size(config->num_init_frames * n_freqs * sizeof(float)); /* init_power_buffer */
+#endif
+    return total;
+}
+
+McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config,
+                                 void* mem, size_t mem_size) {
+    if (n_freqs <= 0 || !config || !mem) return NULL;
+    if (mem_size < mcra_query_memsize(n_freqs, config)) return NULL;
+
+    uint8_t* cursor = (uint8_t*)mem;
+
+    McraNoiseEstimator* self = (McraNoiseEstimator*)cursor;
+    cursor += aligned_size(sizeof(McraNoiseEstimator));
+    memset(self, 0, sizeof(McraNoiseEstimator));
+
+    self->noise_psd = (float*)cursor;
+    cursor += aligned_size(n_freqs * sizeof(float));
+
+    self->S = (float*)cursor;
+    cursor += aligned_size(n_freqs * sizeof(float));
+
+    self->S_min = (float*)cursor;
+    cursor += aligned_size(n_freqs * sizeof(float));
+
+    self->spp = (float*)cursor;
+    cursor += aligned_size(n_freqs * sizeof(float));
+
+    self->min_buffer = (float*)cursor;
+    cursor += aligned_size(config->L * n_freqs * sizeof(float));
+
+#ifndef USE_FAST_PERCENTILE
+    self->init_power_buffer = (float*)cursor;
+    cursor += aligned_size(config->num_init_frames * n_freqs * sizeof(float));
+#endif
+
+    mcra_init_params(self, n_freqs, config);
+    return self;
+}
+
+#else /* !USE_EXT_MEM */
+
+McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config) {
+    if (n_freqs <= 0 || !config) return NULL;
+
+    McraNoiseEstimator* self = (McraNoiseEstimator*)calloc(1, sizeof(McraNoiseEstimator));
+    if (!self) return NULL;
 
     // Allocate state arrays
     self->noise_psd = (float*)calloc(n_freqs, sizeof(float));
@@ -82,7 +158,7 @@ McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config) {
     self->spp = (float*)calloc(n_freqs, sizeof(float));
 
     // Allocate min tracking buffer
-    self->min_buffer = (float*)calloc(self->L * n_freqs, sizeof(float));
+    self->min_buffer = (float*)calloc(config->L * n_freqs, sizeof(float));
 
     if (!self->noise_psd || !self->S || !self->S_min ||
         !self->spp || !self->min_buffer) {
@@ -90,32 +166,25 @@ McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config) {
         return NULL;
     }
 
-    self->ring_idx = 0;
-    self->is_initialized = false;
-    self->frame_count = 0;
-
-    // Scene change detection
-    self->scene_change_threshold = powf(10.0f, config->scene_change_threshold_db / 10.0f);
-    self->scene_change_min_frames = config->scene_change_min_frames;
-    self->scene_change_blend = config->scene_change_blend;
-    self->scene_change_count = 0;
-
 #ifndef USE_FAST_PERCENTILE
     // Allocate buffer for exact percentile calculation
-    self->num_init_frames = config->num_init_frames;
-    self->init_power_buffer = (float*)calloc(self->num_init_frames * n_freqs, sizeof(float));
+    self->init_power_buffer = (float*)calloc(config->num_init_frames * n_freqs, sizeof(float));
     if (!self->init_power_buffer) {
         mcra_destroy(self);
         return NULL;
     }
 #endif
 
+    mcra_init_params(self, n_freqs, config);
     return self;
 }
+
+#endif /* USE_EXT_MEM */
 
 void mcra_destroy(McraNoiseEstimator* self) {
     if (!self) return;
 
+#ifndef USE_EXT_MEM
     if (self->noise_psd) free(self->noise_psd);
     if (self->S) free(self->S);
     if (self->S_min) free(self->S_min);
@@ -124,8 +193,8 @@ void mcra_destroy(McraNoiseEstimator* self) {
 #ifndef USE_FAST_PERCENTILE
     if (self->init_power_buffer) free(self->init_power_buffer);
 #endif
-
     free(self);
+#endif
 }
 
 #ifndef USE_FAST_PERCENTILE
@@ -208,23 +277,20 @@ static float quickselect(float* arr, int n, int k) {
  * @param p Percentile (0-100)
  * @return The p-th percentile value
  */
+/* Max init frames for stack buffer (default num_init_frames=20, 64 is safe) */
+#define PERCENTILE_MAX_N 64
+
 static float calculate_percentile(const float* data, int n, int p) {
     if (n <= 0) return 0.0f;
     if (n == 1) return data[0];
+    if (n > PERCENTILE_MAX_N) n = PERCENTILE_MAX_N;
 
-    // Copy data since quickselect modifies the array
-    float* temp = (float*)malloc(n * sizeof(float));
-    if (!temp) return data[0];  // Fallback
+    /* Stack buffer — avoids malloc (safe for embedded) */
+    float temp[PERCENTILE_MAX_N];
     memcpy(temp, data, n * sizeof(float));
 
-    // Calculate index for p-th percentile
-    // k = floor((n-1) * p / 100)
     int k = ((n - 1) * p) / 100;
-
-    float result = quickselect(temp, n, k);
-    free(temp);
-
-    return result;
+    return quickselect(temp, n, k);
 }
 #else
 /**
@@ -261,26 +327,18 @@ void mcra_init_noise(McraNoiseEstimator* self, const float* power_sum, int n_fra
     // Exact 30th percentile using quickselect (v4.0 optimized)
     // Requires init_power_buffer to be filled via mcra_accumulate_init_power()
 
-    // Temporary buffer to hold power values for one frequency bin
-    float* freq_powers = (float*)malloc(n_frames * sizeof(float));
-    if (!freq_powers) {
-        // Fallback to approximation if allocation fails
-        for (int k = 0; k < n_freqs; k++) {
-            float avg_power = power_sum[k] / (float)n_frames;
-            self->noise_psd[k] = avg_power * 0.23f;  // v4.0: 30th percentile
-            self->S[k] = avg_power;
-            self->S_min[k] = self->noise_psd[k];
-            self->spp[k] = 0.0f;
-        }
-    } else {
+    /* Stack buffer for per-frequency power collection (no malloc needed) */
+    int actual_frames = n_frames > PERCENTILE_MAX_N ? PERCENTILE_MAX_N : n_frames;
+    float freq_powers[PERCENTILE_MAX_N];
+    {
         for (int k = 0; k < n_freqs; k++) {
             // Collect power values for this frequency bin across all frames
-            for (int f = 0; f < n_frames; f++) {
+            for (int f = 0; f < actual_frames; f++) {
                 freq_powers[f] = self->init_power_buffer[f * n_freqs + k];
             }
 
             // Calculate exact 30th percentile (v4.0 optimized)
-            float init_psd = calculate_percentile(freq_powers, n_frames, 30);
+            float init_psd = calculate_percentile(freq_powers, actual_frames, 30);
 
             if (init_psd < 1e-10f) init_psd = 1e-10f;
 
@@ -291,7 +349,6 @@ void mcra_init_noise(McraNoiseEstimator* self, const float* power_sum, int n_fra
             self->S_min[k] = init_psd;
             self->spp[k] = 0.0f;
         }
-        free(freq_powers);
     }
 #endif
 
