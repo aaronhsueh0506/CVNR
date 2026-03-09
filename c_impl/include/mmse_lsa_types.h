@@ -66,13 +66,13 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
     MmseLsaConfig config;
 
     config.sample_rate = sample_rate;
-    config.frame_size_ms = 20;
-    config.frame_shift_ms = 10;
+    config.frame_size_ms = 32;
+    config.frame_shift_ms = 16;
 
     // Calculate frame_size and find appropriate FFT size
     // frame_size = sample_rate * frame_size_ms / 1000
     // fft_size must be >= frame_size (next power of 2)
-    int frame_size = sample_rate * 20 / 1000;  // 20ms frame
+    int frame_size = sample_rate * 32 / 1000;  // 32ms frame
     int fft_size = 256;  // minimum FFT size
     while (fft_size < frame_size) {
         fft_size *= 2;

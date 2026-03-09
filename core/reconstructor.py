@@ -39,7 +39,7 @@ class Reconstructor:
     def __init__(
         self,
         fft_size: int = 512,
-        frame_shift: int = 160,
+        frame_shift: int = 256,
         window: Optional[np.ndarray] = None
     ):
         self.fft_size = fft_size
@@ -64,12 +64,11 @@ class Reconstructor:
         # 重建複數頻譜
         spectrum = magnitude * np.exp(1j * phase)
 
-        # IFFT 512 點，然後取前 320 點（用戶要求）
-        # 320 點信號 → 512 點 FFT → 512 點 IFFT → 取前 320 點
+        # IFFT → 取前 frame_size 點（= window length）
         frame_full = np.fft.irfft(spectrum, n=self.fft_size)
 
         if self.window is not None:
-            frame = frame_full[:len(self.window)]  # 取前 320 點
+            frame = frame_full[:len(self.window)]
         else:
             frame = frame_full
 
@@ -88,11 +87,11 @@ class Reconstructor:
         返回:
             frame: 時域信號 (frame_size,) or (fft_size,)
         """
-        # IFFT 512 點，然後取前 320 點（用戶要求）
+        # IFFT → 取前 frame_size 點（= window length）
         frame_full = np.fft.irfft(spectrum, n=self.fft_size)
 
         if self.window is not None:
-            frame = frame_full[:len(self.window)]  # 取前 320 點
+            frame = frame_full[:len(self.window)]
         else:
             frame = frame_full
 

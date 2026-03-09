@@ -30,8 +30,8 @@ class WienerDenoiser(BaseDenoiser):
     def __init__(
         self,
         sample_rate: int = 16000,
-        frame_size_ms: int = 20,
-        frame_shift_ms: int = 10,
+        frame_size_ms: int = 32,
+        frame_shift_ms: int = 16,
         fft_size: int = 512,
         noise_method: str = 'recursive_average',
         alpha: float = 0.95,
