@@ -29,9 +29,9 @@ typedef enum {
  */
 typedef struct {
     int sample_rate;        // Sample rate (8000, 16000, 48000)
-    int frame_size;         // Frame length in samples (512 @ 16kHz)
-    int hop_size;           // Hop size in samples (256 @ 16kHz)
-    int fft_size;           // FFT size (= frame_size, no zero-padding)
+    int frame_size;         // Frame length in samples (320 @ 16kHz, 20ms)
+    int hop_size;           // Hop size in samples (160 @ 16kHz, 10ms)
+    int fft_size;           // FFT size (next pow2 >= frame_size, 512 @ 16kHz)
 
     // SPP parameters
     float alpha_xi;         // A priori SNR smoothing (0.88)
@@ -67,15 +67,15 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
 
     config.sample_rate = sample_rate;
 
-    // frame_size = next power of 2 >= ~32ms worth of samples
-    int target = sample_rate * 32 / 1000;
-    int frame_size = 256;
-    while (frame_size < target) {
-        frame_size *= 2;
+    // 20ms frame, 10ms hop — unified with AEC pipeline
+    int frame_size = sample_rate * 20 / 1000;  // 320 @ 16kHz
+    int fft_size = 256;
+    while (fft_size < frame_size) {
+        fft_size *= 2;
     }
-    config.frame_size = frame_size;       // 512 @ 16kHz
-    config.hop_size = frame_size / 2;     // 256 @ 16kHz
-    config.fft_size = frame_size;         // = frame_size (no zero-padding)
+    config.frame_size = frame_size;       // 320 @ 16kHz (20ms)
+    config.hop_size = frame_size / 2;     // 160 @ 16kHz (10ms)
+    config.fft_size = fft_size;           // 512 @ 16kHz (next pow2 >= frame_size)
 
     // SPP parameters (sync with Python v3_2_config.yaml)
     config.alpha_xi = 0.88f;
@@ -86,7 +86,7 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
     config.alpha_s = 0.95f;
     config.alpha_d = 0.7f;
     config.alpha_p = 0.2f;
-    config.L = 32;               // 320ms scene tracking
+    config.L = 150;              // 150 × 10ms = 1.5s minima window
     config.delta_db = 10.0f;
     config.num_init_frames = 20;
 

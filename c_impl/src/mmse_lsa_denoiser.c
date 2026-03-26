@@ -684,3 +684,12 @@ const float* mmse_lsa_get_noise_psd(const MmseLsaDenoiser* self, int* n_freqs) {
     if (n_freqs) *n_freqs = self->n_freqs;
     return mcra_get_noise_psd(self->noise_est);
 }
+
+const float* mmse_lsa_get_gain(const MmseLsaDenoiser* self, int* n_freqs) {
+    if (!self) {
+        if (n_freqs) *n_freqs = 0;
+        return NULL;
+    }
+    if (n_freqs) *n_freqs = self->n_freqs;
+    return self->gain;
+}

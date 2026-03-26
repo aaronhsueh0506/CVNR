@@ -131,6 +131,18 @@ const float* mmse_lsa_get_spp(const MmseLsaDenoiser* self, int* n_freqs);
  */
 const float* mmse_lsa_get_noise_psd(const MmseLsaDenoiser* self, int* n_freqs);
 
+/**
+ * Get current per-bin gain (for pipeline integration)
+ *
+ * Returns the most recent MMSE-LSA gain applied to each frequency bin.
+ * Valid after at least one frame has been processed.
+ *
+ * @param self Denoiser instance
+ * @param n_freqs Output: number of frequency bins (optional, may be NULL)
+ * @return Pointer to gain array [n_freqs], or NULL if not available
+ */
+const float* mmse_lsa_get_gain(const MmseLsaDenoiser* self, int* n_freqs);
+
 #ifdef __cplusplus
 }
 #endif
