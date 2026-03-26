@@ -11,6 +11,7 @@
 #define MMSE_LSA_DENOISER_H
 
 #include "mmse_lsa_types.h"
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,7 +25,7 @@ typedef struct MmseLsaDenoiser MmseLsaDenoiser;
 // ============================================================================
 
 /**
- * Create MMSE-LSA denoiser
+ * Create MMSE-LSA denoiser (malloc version)
  *
  * @param config Configuration parameters
  * @return Denoiser instance, or NULL on error
@@ -32,7 +33,22 @@ typedef struct MmseLsaDenoiser MmseLsaDenoiser;
 MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config);
 
 /**
- * Destroy denoiser and free all resources
+ * Initialize denoiser in pre-allocated memory (static version)
+ *
+ * @param mem Pre-allocated buffer (16-byte aligned)
+ * @param mem_size Size of buffer in bytes
+ * @param config Configuration parameters
+ * @return Denoiser instance, or NULL if mem_size too small
+ */
+MmseLsaDenoiser* mmse_lsa_init(void* mem, size_t mem_size, const MmseLsaConfig* config);
+
+/**
+ * Get memory required for mmse_lsa_init()
+ */
+size_t mmse_lsa_get_mem_size(const MmseLsaConfig* config);
+
+/**
+ * Destroy denoiser and free all resources (no-op if created via mmse_lsa_init)
  */
 void mmse_lsa_destroy(MmseLsaDenoiser* self);
 
