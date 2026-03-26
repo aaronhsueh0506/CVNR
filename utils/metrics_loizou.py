@@ -83,8 +83,8 @@ def segmental_snr(
     clean: np.ndarray,
     enhanced: np.ndarray,
     sample_rate: int = 16000,
-    frame_len_ms: float = 20.0,
-    frame_shift_ms: float = 10.0,
+    frame_len: int = 512,
+    frame_shift: int = 256,
     use_vad: bool = True,
     vad_threshold_db: float = -40.0,
     snr_clip_db: Tuple[float, float] = (-10.0, 35.0)
@@ -101,8 +101,8 @@ def segmental_snr(
         clean: 乾淨語音信號 (n_samples,)
         enhanced: 增強後的語音信號 (n_samples,)
         sample_rate: 採樣率 (Hz)
-        frame_len_ms: 幀長 (毫秒)
-        frame_shift_ms: 幀移 (毫秒)
+        frame_len: 幀長 (samples, 512 @ 16kHz)
+        frame_shift: 幀移 (samples, 256 @ 16kHz)
         use_vad: 是否使用 VAD 排除靜音幀
         vad_threshold_db: VAD 能量閾值 (dB)
         snr_clip_db: SNR 限制範圍 (min_db, max_db)
@@ -119,10 +119,6 @@ def segmental_snr(
     min_len = min(len(clean), len(enhanced))
     clean = clean[:min_len]
     enhanced = enhanced[:min_len]
-
-    # 計算幀參數
-    frame_len = int(sample_rate * frame_len_ms / 1000)
-    frame_shift = int(sample_rate * frame_shift_ms / 1000)
 
     # 分幀
     frames_clean = frame_signal(clean, frame_len, frame_shift)
@@ -165,8 +161,8 @@ def frequency_weighted_segsnr(
     clean: np.ndarray,
     enhanced: np.ndarray,
     sample_rate: int = 16000,
-    frame_len_ms: float = 20.0,
-    frame_shift_ms: float = 10.0,
+    frame_len: int = 512,
+    frame_shift: int = 256,
     use_vad: bool = True,
     vad_threshold_db: float = -40.0
 ) -> float:
@@ -179,17 +175,14 @@ def frequency_weighted_segsnr(
         clean: 乾淨語音信號
         enhanced: 增強後的語音信號
         sample_rate: 採樣率
-        frame_len_ms: 幀長 (毫秒)
-        frame_shift_ms: 幀移 (毫秒)
+        frame_len: 幀長 (samples, 512 @ 16kHz)
+        frame_shift: 幀移 (samples, 256 @ 16kHz)
         use_vad: 是否使用 VAD
         vad_threshold_db: VAD 閾值
 
     返回:
         fwseg_snr: 頻率加權 segSNR (dB)
     """
-    # 計算幀參數
-    frame_len = int(sample_rate * frame_len_ms / 1000)
-    frame_shift = int(sample_rate * frame_shift_ms / 1000)
 
     # 確保長度一致
     min_len = min(len(clean), len(enhanced))
@@ -260,8 +253,8 @@ def weighted_spectral_slope(
     clean: np.ndarray,
     enhanced: np.ndarray,
     sample_rate: int = 16000,
-    frame_len_ms: float = 20.0,
-    frame_shift_ms: float = 10.0,
+    frame_len: int = 512,
+    frame_shift: int = 256,
     use_vad: bool = True,
     vad_threshold_db: float = -40.0
 ) -> float:
@@ -274,17 +267,14 @@ def weighted_spectral_slope(
         clean: 乾淨語音信號
         enhanced: 增強後的語音信號
         sample_rate: 採樣率
-        frame_len_ms: 幀長
-        frame_shift_ms: 幀移
+        frame_len: 幀長 (samples, 512 @ 16kHz)
+        frame_shift: 幀移 (samples, 256 @ 16kHz)
         use_vad: 是否使用 VAD
         vad_threshold_db: VAD 閾值
 
     返回:
         wss: WSS 距離 (值越小越好)
     """
-    # 計算幀參數
-    frame_len = int(sample_rate * frame_len_ms / 1000)
-    frame_shift = int(sample_rate * frame_shift_ms / 1000)
 
     # 確保長度一致
     min_len = min(len(clean), len(enhanced))

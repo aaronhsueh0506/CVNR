@@ -274,9 +274,9 @@ MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config) {
     // Copy config
     self->config = *config;
 
-    // Calculate frame parameters
-    self->frame_size = config->sample_rate * config->frame_size_ms / 1000;
-    self->hop_size = config->sample_rate * config->frame_shift_ms / 1000;
+    // Frame parameters (already in samples)
+    self->frame_size = config->frame_size;
+    self->hop_size = config->hop_size;
     self->overlap = self->frame_size - self->hop_size;
     self->fft_size = config->fft_size;
     self->n_freqs = config->fft_size / 2 + 1;

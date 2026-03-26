@@ -29,9 +29,9 @@ typedef enum {
  */
 typedef struct {
     int sample_rate;        // Sample rate (8000, 16000, 48000)
-    int frame_size_ms;      // Frame length in ms (20)
-    int frame_shift_ms;     // Frame shift in ms (10) = hop size
-    int fft_size;           // FFT size (256, 512, 1024)
+    int frame_size;         // Frame length in samples (512 @ 16kHz)
+    int hop_size;           // Hop size in samples (256 @ 16kHz)
+    int fft_size;           // FFT size (= frame_size, no zero-padding)
 
     // SPP parameters
     float alpha_xi;         // A priori SNR smoothing (0.88)
@@ -66,18 +66,16 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
     MmseLsaConfig config;
 
     config.sample_rate = sample_rate;
-    config.frame_size_ms = 32;
-    config.frame_shift_ms = 16;
 
-    // Calculate frame_size and find appropriate FFT size
-    // frame_size = sample_rate * frame_size_ms / 1000
-    // fft_size must be >= frame_size (next power of 2)
-    int frame_size = sample_rate * 32 / 1000;  // 32ms frame
-    int fft_size = 256;  // minimum FFT size
-    while (fft_size < frame_size) {
-        fft_size *= 2;
+    // frame_size = next power of 2 >= ~32ms worth of samples
+    int target = sample_rate * 32 / 1000;
+    int frame_size = 256;
+    while (frame_size < target) {
+        frame_size *= 2;
     }
-    config.fft_size = fft_size;
+    config.frame_size = frame_size;       // 512 @ 16kHz
+    config.hop_size = frame_size / 2;     // 256 @ 16kHz
+    config.fft_size = frame_size;         // = frame_size (no zero-padding)
 
     // SPP parameters (sync with Python v3_2_config.yaml)
     config.alpha_xi = 0.88f;

@@ -1,7 +1,7 @@
 audio:
   fft_size: 512
-  frame_shift_ms: 16
-  frame_size_ms: 32
+  frame_size: 512
+  hop_size: 256
   sample_rate: 16000
   window_type: hanning
 gain_calculation:

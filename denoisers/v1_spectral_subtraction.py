@@ -30,8 +30,8 @@ class SpectralSubtractionDenoiser(BaseDenoiser):
 
     參數:
         sample_rate: 採樣率
-        frame_size_ms: 幀長（毫秒）
-        frame_shift_ms: 幀移（毫秒）
+        frame_size: 幀長（samples）
+        frame_shift: 幀移（samples）
         fft_size: FFT 點數
         alpha: 過減因子（1.5-2.5）
         beta: 頻譜下限（0.002-0.02）
@@ -41,8 +41,8 @@ class SpectralSubtractionDenoiser(BaseDenoiser):
     def __init__(
         self,
         sample_rate: int = 16000,
-        frame_size_ms: int = 32,
-        frame_shift_ms: int = 16,
+        frame_size: int = 512,
+        frame_shift: int = 256,
         fft_size: int = 512,
         alpha: float = 2.0,
         beta: float = 0.01,
@@ -54,8 +54,8 @@ class SpectralSubtractionDenoiser(BaseDenoiser):
         # 創建處理器
         self.processor = FrameProcessor(
             sample_rate=sample_rate,
-            frame_size_ms=frame_size_ms,
-            frame_shift_ms=frame_shift_ms,
+            frame_size=frame_size,
+            frame_shift=frame_shift,
             fft_size=fft_size,
             window_type='hanning'
         )
@@ -157,8 +157,8 @@ class SpectralSubtractionDenoiser(BaseDenoiser):
             'version': 'V1',
             'name': 'Spectral Subtraction',
             'sample_rate': self.sample_rate,
-            'frame_size_ms': self.processor.frame_size_ms,
-            'frame_shift_ms': self.processor.frame_shift_ms,
+            'frame_size': self.processor.frame_size,
+            'frame_shift': self.processor.frame_shift,
             'fft_size': self.processor.fft_size,
             'alpha': self.gain_calculator.alpha,
             'beta': self.gain_calculator.beta,

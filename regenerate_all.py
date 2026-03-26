@@ -67,8 +67,8 @@ def get_denoiser_params_from_config(config, sr, fft_size):
     params = {
         'sample_rate': sr,
         'fft_size': fft_size,
-        'frame_size_ms': config['audio']['frame_size_ms'],
-        'frame_shift_ms': config['audio']['frame_shift_ms']
+        'frame_size': config['audio']['frame_size'],
+        'frame_shift': config['audio']['hop_size']
     }
 
     # V1 特殊參數

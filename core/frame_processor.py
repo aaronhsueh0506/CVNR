@@ -12,8 +12,8 @@ class FrameProcessor:
 
     參數:
         sample_rate: 採樣率 (Hz)
-        frame_size_ms: 幀長 (毫秒)
-        frame_shift_ms: 幀移 (毫秒)
+        frame_size: 幀長 (samples, 512 @ 16kHz)
+        frame_shift: 幀移 (samples, 256 @ 16kHz)
         fft_size: FFT 點數
         window_type: 窗函數類型 ('hanning', 'hamming', 'blackman')
     """
@@ -21,19 +21,17 @@ class FrameProcessor:
     def __init__(
         self,
         sample_rate: int = 16000,
-        frame_size_ms: int = 32,
-        frame_shift_ms: int = 16,
+        frame_size: int = 512,
+        frame_shift: int = 256,
         fft_size: int = 512,
         window_type: str = 'hanning'
     ):
         self.sample_rate = sample_rate
-        self.frame_size_ms = frame_size_ms
-        self.frame_shift_ms = frame_shift_ms
         self.fft_size = fft_size
 
-        # 計算幀長和幀移（樣本數）
-        self.frame_size = int(sample_rate * frame_size_ms / 1000)
-        self.frame_shift = int(sample_rate * frame_shift_ms / 1000)
+        # 幀長和幀移（已是樣本數）
+        self.frame_size = frame_size
+        self.frame_shift = frame_shift
 
         # 創建窗函數
         self.window = self._create_window(window_type, self.frame_size)
@@ -164,6 +162,6 @@ class FrameProcessor:
 
     def __repr__(self):
         return (f"FrameProcessor(sample_rate={self.sample_rate}, "
-                f"frame_size={self.frame_size}({self.frame_size_ms}ms), "
-                f"frame_shift={self.frame_shift}({self.frame_shift_ms}ms), "
+                f"frame_size={self.frame_size}, "
+                f"frame_shift={self.frame_shift}, "
                 f"fft_size={self.fft_size})")

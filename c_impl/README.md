@@ -244,8 +244,8 @@ free(out_buf);
 
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
-| `frame_size_ms` | 20 | 幀長 (ms) |
-| `frame_shift_ms` | 10 | 幀移/hop size (ms) |
+| `frame_size` | 512 | 幀長 (samples, 512 @ 16kHz = 32ms) |
+| `hop_size` | 256 | 幀移/hop size (samples, 256 @ 16kHz = 16ms) |
 | `fft_size` | 自動計算 | FFT 點數（8kHz→256, 16kHz→512, 48kHz→1024）|
 | `alpha_xi` | 0.88 | 先驗 SNR 平滑因子 |
 | `q` | 0.5 | 語音先驗機率 |
@@ -264,15 +264,15 @@ free(out_buf);
 
 ## 延遲
 
-算法延遲 = frame_size = **20 ms**（與採樣率無關）
+算法延遲 = frame_size（取決於採樣率）
 
-| 採樣率 | frame_size | 延遲 |
-|--------|-----------|------|
-| 8 kHz | 160 samples | 20 ms |
-| 16 kHz | 320 samples | 20 ms |
-| 48 kHz | 960 samples | 20 ms |
+| 採樣率 | frame_size | hop_size | 延遲 |
+|--------|-----------|----------|------|
+| 8 kHz | 256 samples | 128 samples | 32 ms |
+| 16 kHz | 512 samples | 256 samples | 32 ms |
+| 48 kHz | 1024 samples | 512 samples | ~21 ms |
 
-> **注意**: 初始化期間（前 20 幀 = 200ms）音頻直接 pass-through（不做降噪），
+> **注意**: 初始化期間（前 20 幀）音頻直接 pass-through（不做降噪），
 > 之後開始正常降噪處理。
 
 ## 檔案結構

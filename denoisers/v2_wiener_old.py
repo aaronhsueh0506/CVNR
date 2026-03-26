@@ -46,8 +46,8 @@ class WienerDenoiser(BaseDenoiser):
 
     參數:
         sample_rate: 採樣率
-        frame_size_ms: 幀長（毫秒）
-        frame_shift_ms: 幀移（毫秒）
+        frame_size: 幀長（samples）
+        frame_shift: 幀移（samples）
         fft_size: FFT 點數
         noise_method: 噪聲估計方法 ('recursive_average' 或 'mcra')
         alpha: 噪聲平滑因子（recursive_average 用）
@@ -68,8 +68,8 @@ class WienerDenoiser(BaseDenoiser):
     def __init__(
         self,
         sample_rate: int = 16000,
-        frame_size_ms: int = 32,
-        frame_shift_ms: int = 16,
+        frame_size: int = 512,
+        frame_shift: int = 256,
         fft_size: int = 512,
         # v2.1: 噪聲估計方法選擇
         noise_method: str = 'recursive_average',  # 'recursive_average' 或 'mcra'
@@ -94,8 +94,8 @@ class WienerDenoiser(BaseDenoiser):
         # 創建處理器
         self.processor = FrameProcessor(
             sample_rate=sample_rate,
-            frame_size_ms=frame_size_ms,
-            frame_shift_ms=frame_shift_ms,
+            frame_size=frame_size,
+            frame_shift=frame_shift,
             fft_size=fft_size,
             window_type='hanning'
         )
@@ -241,8 +241,8 @@ class WienerDenoiser(BaseDenoiser):
             'version': 'V2',
             'name': 'Wiener Filter',
             'sample_rate': self.sample_rate,
-            'frame_size_ms': self.processor.frame_size_ms,
-            'frame_shift_ms': self.processor.frame_shift_ms,
+            'frame_size': self.processor.frame_size,
+            'frame_shift': self.processor.frame_shift,
             'fft_size': self.processor.fft_size,
             'noise_method': self.noise_method,
             'min_gain': self.gain_calculator.min_gain,

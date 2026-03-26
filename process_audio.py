@@ -118,24 +118,23 @@ def create_denoiser_from_config(
 
     # 獲取音頻參數（如果配置文件中有的話）
     if 'audio' in config:
-        frame_size_ms = config['audio'].get('frame_size_ms', 20)
-        frame_shift_ms = config['audio'].get('frame_shift_ms', 10)
+        frame_size = config['audio'].get('frame_size', 512)
+        frame_shift = config['audio'].get('hop_size', 256)
         config_fft_size = config['audio'].get('fft_size', None)
     else:
         # 默認參數
-        frame_size_ms = 20
-        frame_shift_ms = 10
+        frame_size = 512
+        frame_shift = 256
         config_fft_size = None
 
-    # v1.5.1: 自動計算 FFT 大小（基於實際採樣率）
-    frame_samples = int(sample_rate * frame_size_ms / 1000)
-    fft_size = 2 ** int(np.ceil(np.log2(frame_samples)))
+    # 自動計算 FFT 大小（next power of 2 >= frame_size）
+    fft_size = 2 ** int(np.ceil(np.log2(frame_size)))
 
     # 如果配置指定了 FFT 大小且合理，使用配置值
-    if config_fft_size is not None and config_fft_size >= frame_samples:
+    if config_fft_size is not None and config_fft_size >= frame_size:
         fft_size = config_fft_size
     elif config_fft_size is not None:
-        print(f"  ⚠️  警告: {version} 配置的 FFT={config_fft_size} 太小（需要>={frame_samples}），自動調整為 {fft_size}")
+        print(f"  ⚠️  警告: {version} 配置的 FFT={config_fft_size} 太小（需要>={frame_size}），自動調整為 {fft_size}")
 
     # 根據版本創建降噪器
     if version == 'V1':
@@ -145,8 +144,8 @@ def create_denoiser_from_config(
 
         return SpectralSubtractionDenoiser(
             sample_rate=sample_rate,
-            frame_size_ms=frame_size_ms,
-            frame_shift_ms=frame_shift_ms,
+            frame_size=frame_size,
+            frame_shift=frame_shift,
             fft_size=fft_size,
             alpha=gain_config.get('alpha', 2.0),
             beta=gain_config.get('beta', 0.01),
@@ -161,8 +160,8 @@ def create_denoiser_from_config(
 
         return WienerDenoiser(
             sample_rate=sample_rate,
-            frame_size_ms=frame_size_ms,
-            frame_shift_ms=frame_shift_ms,
+            frame_size=frame_size,
+            frame_shift=frame_shift,
             fft_size=fft_size,
             alpha=noise_config.get('alpha', 0.95),
             min_gain=gain_config.get('min_gain', 0.01),
@@ -180,8 +179,8 @@ def create_denoiser_from_config(
         # 基本參數
         params = {
             'sample_rate': sample_rate,
-            'frame_size_ms': frame_size_ms,
-            'frame_shift_ms': frame_shift_ms,
+            'frame_size': frame_size,
+            'frame_shift': frame_shift,
             'fft_size': fft_size,
             'alpha_xi': spp_config.get('alpha_xi', 0.98),
             'q': spp_config.get('q', 0.5),
@@ -225,8 +224,8 @@ def create_denoiser_from_config(
         # 基本參數
         params = {
             'sample_rate': sample_rate,
-            'frame_size_ms': frame_size_ms,
-            'frame_shift_ms': frame_shift_ms,
+            'frame_size': frame_size,
+            'frame_shift': frame_shift,
             'fft_size': fft_size,
             'alpha_xi': spp_config.get('alpha_xi', 0.98),
             'q': spp_config.get('q', 0.5),
@@ -269,8 +268,8 @@ def create_denoiser_from_config(
         # 基本參數
         params = {
             'sample_rate': sample_rate,
-            'frame_size_ms': frame_size_ms,
-            'frame_shift_ms': frame_shift_ms,
+            'frame_size': frame_size,
+            'frame_shift': frame_shift,
             'fft_size': fft_size,
             'alpha_xi': spp_config.get('alpha_xi', 0.98),
             'q': spp_config.get('q', 0.5),

@@ -40,8 +40,8 @@ class PmmseDenoiser(BaseDenoiser):
 
     參數:
         sample_rate: 採樣率
-        frame_size_ms: 幀長（毫秒）
-        frame_shift_ms: 幀移（毫秒）
+        frame_size: 幀長（samples）
+        frame_shift: 幀移（samples）
         fft_size: FFT 點數
         alpha_noise: 噪聲平滑因子
         alpha_xi: 先驗 SNR 平滑因子（0.92-0.98）
@@ -57,8 +57,8 @@ class PmmseDenoiser(BaseDenoiser):
     def __init__(
         self,
         sample_rate: int = 16000,
-        frame_size_ms: int = 32,
-        frame_shift_ms: int = 16,
+        frame_size: int = 512,
+        frame_shift: int = 256,
         fft_size: int = 512,
         alpha_noise: float = 0.95,
         alpha_xi: float = 0.98,
@@ -85,8 +85,8 @@ class PmmseDenoiser(BaseDenoiser):
         # 創建處理器
         self.processor = FrameProcessor(
             sample_rate=sample_rate,
-            frame_size_ms=frame_size_ms,
-            frame_shift_ms=frame_shift_ms,
+            frame_size=frame_size,
+            frame_shift=frame_shift,
             fft_size=fft_size,
             window_type='hanning'
         )
@@ -272,8 +272,8 @@ class PmmseDenoiser(BaseDenoiser):
             'version': 'V3-3',
             'name': 'PMMSE',
             'sample_rate': self.sample_rate,
-            'frame_size_ms': self.processor.frame_size_ms,
-            'frame_shift_ms': self.processor.frame_shift_ms,
+            'frame_size': self.processor.frame_size,
+            'frame_shift': self.processor.frame_shift,
             'fft_size': self.processor.fft_size,
             'noise_method': self.noise_method,
             'alpha_xi': self.spp_estimator.alpha,

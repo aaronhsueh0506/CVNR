@@ -750,14 +750,14 @@ speech_denoise/
 ```yaml
 audio:
   sample_rate: 16000      # 採樣率（VoIP標準）
-  frame_size_ms: 32       # 幀長 512 samples @ 16kHz (= FFT size，無需 zero-padding)
-  frame_shift_ms: 16      # 幀移 256 samples，50% overlap
+  frame_size: 512         # 幀長 (samples, 32ms @ 16kHz = FFT size，無需 zero-padding)
+  hop_size: 256           # 幀移 (samples, 16ms @ 16kHz)，50% overlap
   fft_size: 512           # FFT點數
   window_type: "hanning"  # 窗函數類型
 ```
 
 **調整建議**：
-- 更低延遲：減小 `frame_size_ms` 和 `frame_shift_ms`
+- 更低延遲：減小 `frame_size` 和 `hop_size`
 - 更好頻率分辨率：增加 `fft_size`（512/1024/2048）
 
 ### V1: 頻譜減法參數

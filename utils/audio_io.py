@@ -71,7 +71,7 @@ def write_audio(
     file_path: str,
     audio: np.ndarray,
     sample_rate: int,
-    normalize: bool = True
+    normalize: bool = False
 ) -> None:
     """
     寫入音頻文件

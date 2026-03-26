@@ -43,7 +43,7 @@ print(f"{'Test Case':<20} {'Input SNR':>10} {'RMS%':>7} {'segSNR↑':>9} {'Outpu
 print("-" * 100)
 
 # 初始化處理器（共用）
-processor = FrameProcessor(sample_rate=sr, frame_size_ms=20, frame_shift_ms=10,
+processor = FrameProcessor(sample_rate=sr, frame_size=512, frame_shift=256,
                            fft_size=512, window_type='hanning')
 reconstructor = Reconstructor(fft_size=512, frame_shift=processor.frame_shift,
                               window=processor.window)

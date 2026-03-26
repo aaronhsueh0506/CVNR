@@ -35,8 +35,8 @@ class MmseLsaDenoiser(BaseDenoiser):
 
     參數:
         sample_rate: 採樣率
-        frame_size_ms: 幀長（毫秒）
-        frame_shift_ms: 幀移（毫秒）
+        frame_size: 幀長（samples）
+        frame_shift: 幀移（samples）
         fft_size: FFT 點數
         alpha_noise: 噪聲平滑因子
         alpha_xi: 先驗 SNR 平滑因子（0.92-0.98）
@@ -51,8 +51,8 @@ class MmseLsaDenoiser(BaseDenoiser):
     def __init__(
         self,
         sample_rate: int = 16000,
-        frame_size_ms: int = 32,
-        frame_shift_ms: int = 16,
+        frame_size: int = 512,
+        frame_shift: int = 256,
         fft_size: int = 512,
         alpha_noise: float = 0.95,
         alpha_xi: float = 0.98,
@@ -78,8 +78,8 @@ class MmseLsaDenoiser(BaseDenoiser):
         # 創建處理器
         self.processor = FrameProcessor(
             sample_rate=sample_rate,
-            frame_size_ms=frame_size_ms,
-            frame_shift_ms=frame_shift_ms,
+            frame_size=frame_size,
+            frame_shift=frame_shift,
             fft_size=fft_size,
             window_type='hanning'
         )
@@ -127,25 +127,31 @@ class MmseLsaDenoiser(BaseDenoiser):
         # 存儲上一幀的增益（Decision Directed）
         self.gain_prev = None
 
-    def denoise(self, noisy_signal: np.ndarray, return_spp: bool = False):
+    def denoise(self, noisy_signal: np.ndarray, return_spp: bool = False, return_gain: bool = False):
         """
         對帶噪信號進行降噪
 
         參數:
             noisy_signal: 帶噪音頻信號 (n_samples,)
             return_spp: 是否返回 SPP 歷史數據 (用於可視化)
+            return_gain: 是否返回 Gain 歷史數據 (用於可視化)
 
         返回:
             enhanced_signal: 降噪後的信號 (n_samples,)
             spp_history: SPP 歷史數據 (n_frames, n_freqs) - 僅當 return_spp=True
+            gain_history: Gain 歷史數據 (n_frames, n_freqs) - 僅當 return_gain=True
         """
         # 1. 分幀和 FFT
         magnitudes, phases, spectra = self.processor.process_signal(noisy_signal)
 
         # 2. 降噪
-        result = self.denoise_spectrum(magnitudes, phases, return_spp=return_spp)
-        if return_spp:
+        result = self.denoise_spectrum(magnitudes, phases, return_spp=return_spp, return_gain=return_gain)
+        if return_spp and return_gain:
+            enhanced_magnitudes, enhanced_phases, spp_history, gain_history = result
+        elif return_spp:
             enhanced_magnitudes, enhanced_phases, spp_history = result
+        elif return_gain:
+            enhanced_magnitudes, enhanced_phases, gain_history = result
         else:
             enhanced_magnitudes, enhanced_phases = result
 
@@ -156,15 +162,20 @@ class MmseLsaDenoiser(BaseDenoiser):
             original_length=len(noisy_signal)
         )
 
+        if return_spp and return_gain:
+            return enhanced_signal, spp_history, gain_history
         if return_spp:
             return enhanced_signal, spp_history
+        if return_gain:
+            return enhanced_signal, gain_history
         return enhanced_signal
 
     def denoise_spectrum(
         self,
         noisy_magnitude: np.ndarray,
         noisy_phase: np.ndarray,
-        return_spp: bool = False
+        return_spp: bool = False,
+        return_gain: bool = False
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         在頻域進行降噪
@@ -179,11 +190,13 @@ class MmseLsaDenoiser(BaseDenoiser):
             noisy_magnitude: 帶噪語音幅度譜 (n_frames, n_freqs)
             noisy_phase: 帶噪語音相位譜 (n_frames, n_freqs)
             return_spp: 是否返回 SPP 歷史數據 (用於可視化)
+            return_gain: 是否返回 Gain 歷史數據 (用於可視化)
 
         返回:
             enhanced_magnitude: 降噪後的幅度譜 (n_frames, n_freqs)
             enhanced_phase: 相位譜（不變）(n_frames, n_freqs)
             spp_history: SPP 歷史數據 (n_frames, n_freqs) - 僅當 return_spp=True
+            gain_history: Gain 歷史數據 (n_frames, n_freqs) - 僅當 return_gain=True
         """
         n_frames = noisy_magnitude.shape[0]
 
@@ -195,6 +208,9 @@ class MmseLsaDenoiser(BaseDenoiser):
 
         # SPP 歷史記錄（用於可視化）
         spp_history = [] if return_spp else None
+
+        # Gain 歷史記錄（用於可視化）
+        gain_history = [] if return_gain else None
 
         # v1.5.0: 保存上一幀增強功率譜（用於正確的 DD 計算）
         enhanced_psd_prev = None
@@ -221,6 +237,10 @@ class MmseLsaDenoiser(BaseDenoiser):
             # 計算 MMSE-LSA 增益 (對數域操作)
             gain = self.gain_calculator.calculate(spp, xi, gamma)
 
+            # 收集 Gain 歷史（用於可視化）
+            if return_gain:
+                gain_history.append(gain.copy())
+
             # 應用增益
             enhanced_magnitude[i] = gain * noisy_magnitude[i]
 
@@ -238,8 +258,12 @@ class MmseLsaDenoiser(BaseDenoiser):
         # 相位保持不變
         enhanced_phase = noisy_phase
 
+        if return_spp and return_gain:
+            return enhanced_magnitude, enhanced_phase, np.array(spp_history), np.array(gain_history)
         if return_spp:
             return enhanced_magnitude, enhanced_phase, np.array(spp_history)
+        if return_gain:
+            return enhanced_magnitude, enhanced_phase, np.array(gain_history)
         return enhanced_magnitude, enhanced_phase
 
     def reset(self):
@@ -255,8 +279,8 @@ class MmseLsaDenoiser(BaseDenoiser):
             'version': 'V3-2',
             'name': 'MMSE-LSA',
             'sample_rate': self.sample_rate,
-            'frame_size_ms': self.processor.frame_size_ms,
-            'frame_shift_ms': self.processor.frame_shift_ms,
+            'frame_size': self.processor.frame_size,
+            'frame_shift': self.processor.frame_shift,
             'fft_size': self.processor.fft_size,
             'noise_method': self.noise_method,
             'alpha_xi': self.spp_estimator.alpha,
