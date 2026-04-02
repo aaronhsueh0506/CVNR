@@ -86,7 +86,7 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
     config.alpha_s = 0.95f;
     config.alpha_d = 0.7f;
     config.alpha_p = 0.2f;
-    config.L = 150;              // 150 × 10ms = 1.5s minima window
+    config.L = 32;               // 32 × 10ms = 320ms (sync with Python v3_2)
     config.delta_db = 10.0f;
     config.num_init_frames = 20;
 
