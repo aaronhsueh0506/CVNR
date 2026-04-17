@@ -1,16 +1,20 @@
-# MMSE-LSA Speech Denoiser (V3-2 C Implementation)
+# OMLSA Speech Denoiser — C Implementation (V3-2 主線)
 
-基於 Ephraim-Malah 1985 的 MMSE-LSA (Minimum Mean Square Error Log-Spectral Amplitude) 語音降噪演算法 C 實現。
+> **Release**: v4.2.0 · Part A Review 修復已同步 · 雙 branch 支援（`main` = malloc；`feature/static-memory` = 靜態記憶體）
+> **對應 Python**: `denoisers/v3_2_mmse_lsa.py`
+
+基於 Ephraim-Malah 1985 的 MMSE-LSA (Minimum Mean Square Error Log-Spectral Amplitude) 語音降噪演算法 C 實現，搭配 Cohen & Berdugo (2002) MCRA 噪聲估計與 Cohen & Berdugo (2001) Bayesian SPP 軟判決。整體通稱 **OMLSA**。
 
 ## 特性
 
 - **Streaming 處理**：以 hop_size 為單位輸入/輸出，適合即時處理
 - **MCRA 噪聲估計**：Cohen & Berdugo (2002) 最小值控制遞迴平均
-- **SPP 語音存在機率**：Decision Directed 方法
+- **SPP 語音存在機率**：Decision Directed 方法（Fix #3: DD term 用**前一幀** `noise_psd`）
 - **非對稱增益平滑**：Attack/Decay 分離控制
 - **可配置優化開關**：透過編譯開關選擇精度/速度權衡
-- **場景轉換偵測**：高頻 gamma + spectral flatness 雙重條件，自動追蹤噪聲環境變化
-- **與 Python V3-2 完全同步**：參數、場景偵測邏輯一致
+- **場景轉換偵測**：高頻 gamma + spectral flatness 雙重條件；flatness 閾值現在可由 `scene_change_flatness_threshold` 調整
+- **與 Python V3-2 同步**：Part A Review 修復已 port（#1, #3, #6, #9），`main` 與 `feature/static-memory` 兩 branch 皆已同步
+- **不含 V4 wind handler**：V4 為 Python-only research 框架，VCTK/DEMAND 驗證未能改善風聲，C 端暫不實作
 
 ## 算法流程
 
@@ -240,13 +244,79 @@ free(in_buf);
 free(out_buf);
 ```
 
+### 靜態記憶體 API（`feature/static-memory` branch）
+
+適合嵌入式環境，**完全不使用 malloc**；呼叫端負責從一塊 PA/VA pool 挖出記憶體。
+
+```c
+#include "mmse_lsa_denoiser.h"
+
+MmseLsaConfig config = mmse_lsa_default_config(16000);
+
+// 1. 查詢所需記憶體大小
+size_t need = mmse_lsa_get_mem_size(&config);
+
+// 2. 從外部 pool 取得記憶體（必須 16-byte 對齊）
+uint8_t* pool = (uint8_t*)aligned_alloc(16, need);
+
+// 3. Init（不會呼叫 malloc）
+MmseLsaDenoiser* denoiser = mmse_lsa_init(pool, need, &config);
+
+// 4. 正常處理
+mmse_lsa_process(denoiser, in_buf, out_buf);
+
+// 5. Destroy 為 no-op（is_static flag 防止 free）
+mmse_lsa_destroy(denoiser);
+
+// 6. 由呼叫端釋放 pool
+free(pool);
+```
+
+完整說明：[STATIC_MEMORY.md](../STATIC_MEMORY.md)
+
+## 使用條件 (Usage Requirements)
+
+- **輸入格式**：單聲道（多聲道自動取第一聲道）、8 / 16 / 48 kHz PCM16 或 32-bit float
+- **首 200 ms 需為純噪聲（或無語音）**：用於初始化 MCRA 噪聲底噪，前 `num_init_frames * hop_size` 樣本為 passthrough
+- **Frame / hop 編譯時固定**：不可在執行時切換 `frame_size` 或 `hop_size`
+- **Streaming 語義**：每次呼叫 `mmse_lsa_process()` 輸入 hop_size 樣本，輸出 hop_size 樣本；內部有 50% overlap OLA 緩衝
+
+### 不適用情境（C 端與 Python 完全一致）
+- 迴響 / 回聲 → 另配 AEC（`SE/AEC/`）或 dereverb 模組
+- 風聲 / 麥克風 buffeting → 統計型單麥 NR 無法處理；建議硬體風罩
+- 衝擊 / transient（敲擊、關門、碗盤碰撞）→ MCRA 320 ms tracking window 追不上
+- 與目標語音頻譜重疊的干擾（其他人語音、音樂、電視）→ SPP 二元假設不適用
+
+## 調參指引 (Quick Tuning)
+
+> **優先使用 strength mode**：呼叫 `mmse_lsa_config_for_mode(sample_rate, MMSE_LSA_NR_MILD | BALANCED | AGGRESSIVE)`，多數情境足矣。
+
+| Symptom | 建議動作 |
+|---|---|
+| 殘留底噪吵 | 換 AGGRESSIVE 模式，或手動 `config.g_min_db = -20.0f` |
+| 語音變悶 / 細節掉 | 換 MILD 模式，或 `config.g_min_db = -10.0f`、`config.alpha_g = 0.92f` |
+| Musical noise | `config.alpha_g = 0.92f`、`config.xi_min_db = -25.0f` |
+| 場景切換慢（開冷氣、進車廂） | `config.scene_change_threshold_db = 7.0f` |
+| 場景偵測誤觸發 | `config.scene_change_threshold_db = 12.0f`、`config.scene_change_min_frames = 8` |
+| 語音初期被吃掉 | 確認首 200 ms 為純噪聲；若使用場景無法保證，考慮在 caller 端做 VAD gating |
+
+### 不建議在 release 動
+- `alpha_xi` / `alpha_s` / `alpha_d` / `L` / `alpha_p` — 內部穩定性依賴這些預設
+- `num_init_frames` — 固定 20，改短會讓底噪估計 under-fit
+- 編譯開關：v4.2 recommended configuration 即 `make`（已啟用 6 個 bit-exact 優化）
+
+### 當這些都不夠
+- 檢查是否屬於「不適用情境」—— 本模組 by design 無法處理風聲 / 衝擊 / 重疊干擾
+- 用 `make debug` 重編並開啟 `DEBUG_DUMP` 輸出 `noise_psd / spp / xi / gamma / gain`，與 Python 逐幀對比
+- V4 OMLSA + wind handler 為 Python-only research 框架，C 端暫不提供
+
 ## 配置參數
 
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
-| `frame_size` | 512 | 幀長 (samples, 512 @ 16kHz = 32ms) |
-| `hop_size` | 256 | 幀移/hop size (samples, 256 @ 16kHz = 16ms) |
-| `fft_size` | 自動計算 | FFT 點數（8kHz→256, 16kHz→512, 48kHz→1024）|
+| `frame_size` | `sample_rate × 20 / 1000` | 幀長 (20 ms)，例如 16 kHz → 320 samples |
+| `hop_size` | `frame_size / 2` | 幀移 (10 ms)，50% overlap；例如 16 kHz → 160 samples |
+| `fft_size` | 自動計算 | 次方 2 且 ≥ frame_size。8 kHz → 256；16 kHz → 512；48 kHz → 1024 |
 | `alpha_xi` | 0.88 | 先驗 SNR 平滑因子 |
 | `q` | 0.5 | 語音先驗機率 |
 | `xi_min_db` | -20 | 先驗 SNR 下限 (dB) |
@@ -257,6 +327,7 @@ free(out_buf);
 | `scene_change_threshold_db` | 10.0 | 場景轉換高頻 gamma 閾值 (dB) |
 | `scene_change_min_frames` | 5 | 場景轉換需連續幀數 |
 | `scene_change_blend` | 0.5 | 場景轉換噪聲重置混合比 |
+| `scene_change_flatness_threshold` | 0.4 | 場景轉換高頻 spectral flatness 閾值 (Fix #6 v4.2 新增) |
 | `g_min_db` | -15.0 | 最小增益 (dB) |
 | `alpha_g` | 0.88 | 增益平滑因子 |
 | `alpha_attack` | 0.3 | 非對稱平滑 Attack |
@@ -264,16 +335,15 @@ free(out_buf);
 
 ## 延遲
 
-算法延遲 = frame_size（取決於採樣率）
+算法延遲 ≈ `frame_size`（以 samples 計；取 1 幀 + OLA 緩衝）。`frame_size` 固定為 20 ms。
 
-| 採樣率 | frame_size | hop_size | 延遲 |
-|--------|-----------|----------|------|
-| 8 kHz | 256 samples | 128 samples | 32 ms |
-| 16 kHz | 512 samples | 256 samples | 32 ms |
-| 48 kHz | 1024 samples | 512 samples | ~21 ms |
+| 採樣率 | frame_size | hop_size | fft_size | 延遲 |
+|--------|-----------|----------|----------|------|
+| 8 kHz  | 160 samples | 80 samples  | 256  | 20 ms |
+| 16 kHz | 320 samples | 160 samples | 512  | 20 ms |
+| 48 kHz | 960 samples | 480 samples | 1024 | 20 ms |
 
-> **注意**: 初始化期間（前 20 幀）音頻直接 pass-through（不做降噪），
-> 之後開始正常降噪處理。
+> **注意**: 初始化期間（前 20 幀 = 200 ms）音頻 lightweight passthrough（gain=1），MCRA 累積噪聲統計；之後開始正常降噪處理。
 
 ## 檔案結構
 
@@ -303,9 +373,12 @@ c_impl/
 
 ## 記憶體使用
 
-- 基本使用: ~50KB (取決於 FFT size 和 n_freqs)
-- 精確 percentile (無 USE_FAST_PERCENTILE): +20KB
-- MCRA 最小值緩衝: L × n_freqs × 4 = 32 × 513 × 4 ≈ **64KB** (48kHz)
+- **基本使用** (16 kHz, USE_FAST_PERCENTILE)：~50 KB
+- **精確 percentile** (`make` 預設不啟用 USE_FAST_PERCENTILE)：+20 KB
+- **48 kHz** (n_freqs=513, L=32)：~130 KB；MCRA `min_buffer` 約 ~66 KB
+- **v4.2 新增**：Fix #3 加的 `noise_psd_prev` 每實例 +`n_freqs × 4` bytes（16 kHz ~1 KB）
+
+完整記憶體佈局見 [STATIC_MEMORY.md](../STATIC_MEMORY.md)。
 
 ## 參考文獻
 

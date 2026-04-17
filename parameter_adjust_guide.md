@@ -1,6 +1,23 @@
 # 🎛️ 語音降噪參數調整指南
 
-本指南幫助您理解和調整語音降噪算法的關鍵參數。
+> **適用版本**: v4.2 · **主推演算法**: V3-2 OMLSA（Python `v3_2_mmse_lsa.py` / C `c_impl/`）
+>
+> 本指南提供 release 場景下的快速調參，含四個核心旋鈕與場景切換相關參數。遇到本模組「不適用情境」（風聲 / 衝擊 / 迴響 / 重疊干擾），**請勿嘗試調參**，參見 [README.md](README.md#-演算法限制-limitations)。
+
+---
+
+## 🪜 先試 Strength Mode
+
+Python: `MmseLsaDenoiser()` 預設已調好，或用 `config.yaml` 指定模式。
+C: `mmse_lsa_config_for_mode(sample_rate, MMSE_LSA_NR_MILD | BALANCED | AGGRESSIVE)`。
+
+| 模式 | g_min | 適用 |
+|---|---|---|
+| MILD | -10 dB | 安靜 / 室內、重視語音自然度 |
+| BALANCED（預設） | -15 dB | 一般使用 |
+| AGGRESSIVE | -20 dB | 高噪 / 戶外、可接受些微失真 |
+
+**多數情境切模式就夠了**，以下細節調參僅在模式都不符需求時再看。
 
 ---
 
@@ -111,34 +128,73 @@
 
 ---
 
-## 🏆 Optuna 1000-trial 優化結果 (v2.4.0)
+## 🎬 場景切換相關參數（v4.2 起可調）
 
-以下是各版本經過 1000 次貝葉斯優化後的最佳參數與性能指標：
+MCRA 的 scene change detector 用「高頻 gamma + spectral flatness」雙重條件觸發 noise reset。調這組參數是處理「突然切換噪聲環境」（如進地鐵、上車、開冷氣）最有效的方法。
 
-| 版本 | PESQ | STOI | segSNR | xi_min_db | g_min_db | alpha_g |
-|------|------|------|--------|-----------|----------|---------|
-| V4 (IMCRA-OMLSA) | **1.747** | **0.859** | +5.22 dB | -19.0 | -17.0 | 0.87 |
-| V3-2 (MMSE-LSA) | 1.738 | **0.859** | +5.12 dB | -22.0 | -13.0 | 0.84 |
-| V3-3 (PMMSE) | 1.688 | 0.839 | **+6.06 dB** | -19.0 | -18.0 | 0.80 |
-| V3 (MMSE-STSA) | 1.676 | 0.837 | +6.00 dB | -25.0 | -17.0 | 0.80 |
-| V3-4 (Laplacian) | 1.539 | 0.840 | +5.10 dB | -15.0 | -18.0 | 0.70 |
-
-> 💡 **說明**：PESQ 範圍 1.0~4.5，STOI 範圍 0~1，segSNR 為改善量 (dB)
+| 參數 | 預設 | 症狀 & 調整 |
+|---|---|---|
+| `scene_change_threshold_db` | 10.0 | 切換太慢 → 降至 7；誤觸發把語音當噪聲 → 升至 12 |
+| `scene_change_min_frames` | 5 | 誤觸發頻率高 → 升至 8；太遲鈍 → 降至 3 |
+| `scene_change_blend` | 0.5 | 觸發時噪聲重估強度：1.0 = 完全重置；0 = 不重置 |
+| `scene_change_flatness_threshold` | 0.4 | v4.2 新增（Fix #6）。一般搭配 threshold_db 使用，不需單調 |
 
 ---
 
-## 📝 參數調整流程建議
+## ⚠️ 不建議在 release 動的參數
 
-1. **先跑一次基準測試**：使用預設配置處理你的音頻
-2. **聆聽並診斷問題**：根據上面的「調參決策表」識別症狀
-3. **單一參數調整**：每次只調整一個參數，觀察效果
-4. **小步調整**：每次調整 1-2 dB 或 0.05-0.1
-5. **記錄最佳值**：找到滿意的參數後記錄下來
+下列參數會改變演算法內部穩定性，預設值是 Optuna / Cohen 文獻 / VCTK 驗證的結果：
+
+- `alpha_xi` (0.88)：DD 平滑；動會造成 musical noise 或反應遲鈍
+- `alpha_s` (0.95) / `alpha_d` (0.7) / `alpha_p` (0.2) / `L` (32)：MCRA 核心常數
+- `num_init_frames` (20 = 200 ms)：調短會讓底噪估計 under-fit
+- `delta_db` (10)：MCRA speech indicator 偏移
+- `alpha_attack` (0.3) / `alpha_decay` (= alpha_g)：非對稱平滑，預設即最佳
+
+如確實需要動，**請務必以 VCTK/DEMAND 800+ 檔做 regression 驗證**，避免改善單一 case 但整體退步。
+
+---
+
+## 🚫 什麼時候不要調參
+
+下列情境屬於 OMLSA **本質限制**，無論怎麼調都無法解決——參見 [README.md#-演算法限制-limitations](README.md#演算法限制-limitations)：
+
+- **風聲 / buffeting**（強風直吹、車窗漏風）— 需硬體風罩或 NN 模型
+- **衝擊噪聲**（關門、敲擊、碗盤）— 需獨立 transient detector
+- **類語音干擾**（其他人語音、電視、音樂）— 需 speech separation
+- **迴響 / 回聲**— 需 dereverb / AEC
+
+---
+
+## 📝 調參流程建議
+
+1. 先換 strength mode（**80% 的情境止於這一步**）
+2. 遇到 symptom 對照「調參決策表」調四大核心旋鈕
+3. 遇到場景切換問題調 `scene_change_*`
+4. 每次只動一個參數，用同一批測試音檔 A/B 比對
+5. 拿去 VCTK regression（若有批次測試 pipeline）確認沒變差
+6. 記錄到 `config/*.yaml` 或 C 端 custom config
+
+---
+
+## 🏆 歷史 Optuna 1000-trial 最佳參數（v2.4.0，stale）
+
+> 下表為 v2.4.0 歷史資料，僅供參考。**v4.2 release 已改採 config 預設值**，未再用 Optuna 重跑。
+
+| 版本 | PESQ | STOI | segSNR | xi_min_db | g_min_db | alpha_g |
+|------|------|------|--------|-----------|----------|---------|
+| V3-2 (MMSE-LSA) | 1.738 | 0.859 | +5.12 dB | -22.0 | -13.0 | 0.84 |
+| V3-3 (PMMSE) | 1.688 | 0.839 | +6.06 dB | -19.0 | -18.0 | 0.80 |
+| V3 (MMSE-STSA) | 1.676 | 0.837 | +6.00 dB | -25.0 | -17.0 | 0.80 |
+| V3-4 (Laplacian) | 1.539 | 0.840 | +5.10 dB | -15.0 | -18.0 | 0.70 |
+
+> ⚠️ 原 "V4 (IMCRA-OMLSA)" 欄位已移除：當時的 V4 是指 MCRA 雙視窗版本（v1.5.0），與目前 v4.2 的 V4 OMLSA + Wind Handler 不是同一個東西；現行 V4 wind handler 為 research 框架，不建議 release 使用
 
 ---
 
 ## 🔗 相關文檔
 
-- [README.md](README.md) - 項目總覽
-- [ALGORITHMS_EXPLANATION.md](ALGORITHMS_EXPLANATION.md) - 算法原理詳解
-- [config/](config/) - 各版本配置文件
+- [README.md](README.md) — 項目總覽、演算法限制、完整調參章節
+- [ALGORITHMS_EXPLANATION.md](ALGORITHMS_EXPLANATION.md) — 算法原理詳解
+- [c_impl/README.md](c_impl/README.md) — C 實作使用方法與同等調參指引
+- [config/](config/) — 各版本配置文件

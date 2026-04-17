@@ -1,8 +1,13 @@
 # 語音降噪系統 (Speech Denoising System)
 
-**版本**: v4.0
+**版本**: v4.2 · **Release 主推演算法**: V3-2 OMLSA (MMSE-LSA + Bayesian SPP + MCRA)
 
 傳統信號處理方法的實時語音降噪系統，採用漸進式學習路徑。
+
+> **v4.2 release 重點**
+> - **Part A Review 修復**（11 項 OMLSA 演算法/介面修正；Python + C 已同步 main 與 `feature/static-memory` 雙 branch）
+> - **主推 V3-2 OMLSA**（`denoisers/v3_2_mmse_lsa.py` + `c_impl/`），已完整評估並有規格保證
+> - **V4 OMLSA + Wind Handler**（`denoisers/v4_omlsa.py`）為 **研究用框架 (research infrastructure)**，在 VCTK/DEMAND 上未能改善風聲；預設 FLAT profile 等同 V3-2，**不建議直接拿去 ship**，詳見下方「演算法限制」章節
 
 ## 📋 項目概述
 
@@ -1196,7 +1201,24 @@ MIT License
 
 ## 📜 版本歷史
 
-### v4.1.0 (2026-03-04) ✨ 最新
+### v4.2.0 (2026-04-17) ✨ 最新 · Release
+- 🔧 **Part A Review 修復（11 項）**：
+  - **#1** MCRA 初始化 `S = init_psd`（原為 `avg_power`，與 `S_min` 不一致會造成首幀異常 ratio）
+  - **#3** SPP Decision-Directed term 改用**前一幀** `noise_psd`（原為當前幀，理論不一致）
+  - **#6** Scene change flatness 閾值從硬編 0.4 改為 config 可調
+  - **#7** 分析/合成 window 改為 periodic (`sym=False`)，COLA 完全準確
+  - **#9** SPP prior probability `q` 在 create 時 clip 至 `(1e-6, 1-1e-6)`
+  - **#2 / #8** init passthrough + auto-reset（Python 端）
+  - **#4 / #5** `alpha_d` 接通、asymmetric smoothing（`alpha_attack` / `alpha_decay`）參數外露
+  - **#10 / #11** 清理過時註解與 `__main__`
+- 🧪 **V4 OMLSA 誠實定位**：
+  - Wind Handler (`core/wind_detector.py`, `core/freq_adaptive_controller.py`, `core/transient_suppressor.py`) 在 VCTK/DEMAND 子集**未能改善風聲**，主要原因：風聲低頻能量與語音 F1/F2 頻段重疊，單麥克風 + 統計特徵無法可靠區分
+  - v4_config.yaml 預設 **FLAT** adaptive profile（等同 V3-2）+ **transient OFF**
+  - 保留 V4 作為 research 框架（詳見 `results/v4_diagnosis_report.md`）
+- 🖇️ **C 實作同步**：Part A 核心 4 項 (#1, #3, #6, #9) 已 port 到 C，同步至 `main`（malloc）與 `feature/static-memory`（靜態記憶體）兩條 branch
+- 📋 **文檔重構**：更新 README / c_impl/README / ALGORITHMS_EXPLANATION / parameter_adjust_guide 加入 release 用限制條件、風聲/impulse 不適用 case、調參方法
+
+### v4.1.0 (2026-03-04)
 - 🚨 **Eta 機制完全移除**: 測試證明 L=5 優化已替代 eta 功能
   - test_wav: enable_eta 降低 PESQ 0.06-0.41
   - VCTK: enable_eta 收益僅 0.006 PESQ（可忽略不計）
@@ -1415,15 +1437,17 @@ MIT License
 | **與語音頻譜高度重疊的噪聲** | 其他人的語音（單一干擾說話者）、電視播放語音 | SPP 無法區分目標語音與干擾語音，兩者會同時被保留或同時被抑制 |
 | **極低 SNR (< 0 dB)** | 噪聲能量遠大於語音 | 先驗 SNR 估計困難，增益可能過度抑制語音或抑噪不足 |
 | **強迴響環境** | 大空間迴響、教堂、空曠走廊 | reverb tail 與穩態噪音特性相近，部分迴響會被當噪音抑制，導致語音變「乾」失真 |
+| **風聲 / 湍流氣流 (Wind Buffeting)** | 戶外強風、汽車車窗縫隙漏風、麥克風無風罩直吹 | 風聲低頻 (<300 Hz) 能量與語音基頻/F1 高度重疊，單麥克風 + 統計特徵無法可靠區分。V4 wind handler 雖已實作但 VCTK/DEMAND 驗證未能改善，**建議硬體加裝風罩或使用雙麥克風 + 空間過濾** |
 
 ### 不適用場景 ❌
 
 | 噪聲類型 | 說明 | 建議替代方案 |
 |----------|------|-------------|
 | **迴響 / 殘響 (Reverberation)** | 房間反射造成的語音模糊 | 需專用 dereverberation 演算法（如 WPE） |
-| **回聲 (Echo)** | 喇叭到麥克風的聲學耦合 | 需 AEC（Acoustic Echo Cancellation） |
+| **回聲 (Echo)** | 喇叭到麥克風的聲學耦合 | 需 AEC（Acoustic Echo Cancellation，參考 `SE/AEC/`） |
 | **多說話人分離** | 區分多個同時說話的人 | 需 speech separation（如 TasNet、DPRNN） |
 | **音樂中的人聲分離** | 從音樂中提取或去除人聲 | 需 source separation（如 Demucs） |
+| **強風直吹 / 麥克風湍流** | Buffeting noise，能量衝擊式非穩態 | 統計型單麥 NR 本質無法處理；需硬體風罩、雙麥 + 空間濾波或 NN-based 專用模型 |
 
 ---
 
@@ -1461,3 +1485,51 @@ MIT License
 | **場景切換延遲** | 噪聲環境突變時，需約 50ms（5 幀 × 10ms）偵測 + 320ms 完全收斂 |
 | **頻率解析度** | 受限於 FFT size：16kHz 下為 31.25 Hz/bin (512-pt FFT)，無法精細處理窄頻干擾 |
 | **不支援多通道** | 無 beamforming、spatial filtering 能力 |
+
+---
+
+## ✅ 使用條件 (Usage Requirements)
+
+### 輸入訊號
+- **單聲道**（若多聲道輸入則取第一聲道）
+- **取樣率 8 / 16 / 48 kHz**；其他取樣率需先重採樣
+- **PCM 16-bit 或 32-bit float**
+- **前 200 ms 應為純噪聲**（無語音）— 用於初始化底噪估計。若錄音一開始即為語音，會造成初期過度抑制
+
+### 呼叫模式
+- **Streaming（C 實現, `c_impl/`）**：每次餵 1 hop (10 ms)，適合即時處理。首 200 ms 仍會輸出，但為 passthrough / 初始化階段
+- **Batch（Python `MmseLsaDenoiser.denoise_spectrum()`）**：一次給完整頻譜；自動 reset，適合離線或 regression 測試
+
+### 不適用情境（必看）
+本演算法**無法**處理：
+- **迴響 / 回聲** → 需 dereverb / AEC（專門模組，另見 `SE/AEC/`）
+- **風聲 / buffeting** → 需硬體風罩或雙麥；V4 wind handler 為 research 框架，**不建議直接 release**
+- **與目標語音重疊的干擾**（其他人的語音、電視背景人聲、音樂）→ SPP 無法區分類語音訊號
+- **強衝擊 / transient**（敲擊、碰撞、關門）→ MCRA tracking window 320 ms 追不上
+
+---
+
+## 🔧 調參指引 (Quick Tuning for Release)
+
+> **第一原則：先試 strength mode（MILD / BALANCED / AGGRESSIVE），大部分情境不需要動其它參數**
+
+### 依 symptom 調參（四個關鍵旋鈕）
+
+| Symptom | 推薦動作 | 效應 |
+|---|---|---|
+| 殘留底噪太吵 | `g_min_db` ↓（BALANCED −15 → AGGRESSIVE −20） | 更強抑制，可能略增語音失真 |
+| 語音被抑制 / 變悶 | `g_min_db` ↑（BALANCED −15 → MILD −10） 或 `alpha_g` ↑ | 保留更多細節，底噪增多 |
+| Musical noise / 水聲 | `alpha_g` ↑（0.88 → 0.92）、`xi_min_db` ↓（−20 → −25） | 增益更平滑，最小 SNR 更低 |
+| 噪聲場景切換慢（進地鐵/上車） | `scene_change_threshold_db` ↓（10 → 7） | 更容易觸發 noise reset |
+| 過度觸發 scene reset（語音被當成噪聲重估） | `scene_change_threshold_db` ↑（10 → 12） 或 `scene_change_min_frames` ↑（5 → 8） | 提高切換門檻 |
+| 語音抓不到（被當噪聲） | `q` ↑（0.5 → 0.6）、`xi_min_db` ↑（−20 → −15） | SPP 更傾向判定為語音 |
+
+### 不建議在 release 動的參數
+- `alpha_xi`（DD 平滑）、`alpha_s` / `alpha_d` / `L`（MCRA）：改動對穩定性影響大，請先用 strength mode
+- `num_init_frames`（固定 20 = 200 ms）：改短會讓底噪估計不穩
+- `scene_change_flatness_threshold`（固定 0.4）：搭配 threshold_db 使用，一般不需單獨調整
+
+### 當 symptom 無法用上述 table 解決
+- 先確認是否為「不適用情境」（風聲、衝擊、迴響、類語音干擾）— 屬於本演算法**本質限制**，不是調參問題
+- 若需更積極的風聲/衝擊抑制，請評估 NN-based 方案或多麥克風方案
+- C 實作端的 log / dump：`make debug` 編譯，`bin/denoise_wav` 可觀察每幀 `noise_psd / spp / gain`，協助診斷
