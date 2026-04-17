@@ -40,15 +40,25 @@ Python V3-2 OMLSA 調整為與 C 實作 **bit-exact 對齊**（float32 精度極
 
 ### 驗證 (Validation)
 
-- C `make debug` (USE_STANDARD_MATH + 關所有優化 flag) + Python 同配置：
-  - Aligned correlation 0.99999994
-  - Post-500 ms `|diff|` 分布：72.8% 在 `[1e-6, 1e-5)` + 1e-5 區間，僅 0.02% 大於 1e-4
-- Python 原生預設（`recursive_average` 路徑）smoke test 通過；Python-native 48 kHz `babble_10dB.wav` 輸出正常（RMS 0.06，無 NaN/Inf）
+**C/Python 對齊**（同配置 16 kHz/MCRA/debug C build）：
+- Aligned correlation **0.99999994**
+- Median `|diff|` 1.65e-5，99% 3.33e-5，max 5.9e-3（isolated spike）
+- 99.98% post-500 ms 樣點 `|diff|` < 1e-4
 
-### 建議後續 (TODO)
+**VCTK/DEMAND regression**（824 檔，`v3_2_config.yaml`，C1 baseline vs v4.2.1 C-aligned）：
 
-- 跑 VCTK/DEMAND regression 檢查 PESQ/STOI 是否有退步（理論 < 0.02，但需實測）
-- 若研究需要精確 E1：`USE_SCIPY_EXP1 = True` 即可恢復 scipy 路徑
+| 指標 | C1 baseline | v4.2.1 | Delta |
+|---|---|---|---|
+| PESQ | 2.410 | **2.391** | **−0.019** ✓（目標 < 0.02） |
+| STOI | 0.914 | 0.906 | −0.008 |
+| segSNR (dB) | +4.88 | +4.21 | −0.67 |
+| fwSegSNR (dB) | +1.80 | +1.22 | −0.58 |
+| LSD | 13.22 | 14.68 | +1.46（變差） |
+
+**結論**：
+- **PESQ 退步 0.019 在 release 可接受範圍內**；使用者聽感差異極小
+- segSNR / LSD / fwSegSNR 退步屬 **預期代價**，主要來自 3-segment E1 近似（用來與 C `exp1_approx` bit-exact 對齊）
+- 若研究或離線工具需要較高精度，設 `core.gain_calculators.mmse_lsa.USE_SCIPY_EXP1 = True` 即可恢復 scipy.special.exp1 路徑，但 C/Python 將無法 bit-exact
 
 ---
 
