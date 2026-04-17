@@ -40,17 +40,38 @@ class FrameProcessor:
         self.buffer = np.zeros(self.frame_size)
 
     def _create_window(self, window_type: str, size: int) -> np.ndarray:
-        """創建窗函數（sqrt(Hann) for COLA）"""
-        if window_type == 'hanning':
-            # 使用 sqrt(Hann) 窗以滿足 COLA 條件
-            # sqrt(w) × sqrt(w) + 50% overlap = 能量守恆
-            return np.sqrt(np.hanning(size))
-        elif window_type == 'hamming':
-            return np.sqrt(np.hamming(size))
-        elif window_type == 'blackman':
-            return np.sqrt(np.blackman(size))
-        else:
-            raise ValueError(f"Unknown window type: {window_type}")
+        """
+        創建 sqrt(periodic window) 以滿足精確 COLA。
+
+        numpy 的 hanning/hamming/blackman 為 symmetric（對稱），
+        對 50% overlap 不滿足精確 COLA，需用 periodic 版本
+        （scipy.signal.windows.*(N, sym=False)）。
+        """
+        try:
+            from scipy.signal.windows import hann, hamming, blackman
+            if window_type == 'hanning':
+                return np.sqrt(hann(size, sym=False))
+            elif window_type == 'hamming':
+                return np.sqrt(hamming(size, sym=False))
+            elif window_type == 'blackman':
+                return np.sqrt(blackman(size, sym=False))
+            else:
+                raise ValueError(f"Unknown window type: {window_type}")
+        except ImportError:
+            import warnings
+            warnings.warn(
+                "scipy not available, falling back to symmetric window. "
+                "OLA reconstruction may not be exact COLA.",
+                RuntimeWarning
+            )
+            if window_type == 'hanning':
+                return np.sqrt(np.hanning(size))
+            elif window_type == 'hamming':
+                return np.sqrt(np.hamming(size))
+            elif window_type == 'blackman':
+                return np.sqrt(np.blackman(size))
+            else:
+                raise ValueError(f"Unknown window type: {window_type}")
 
     def process_frame(self, frame: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """

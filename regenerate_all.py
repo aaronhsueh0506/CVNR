@@ -115,12 +115,19 @@ def get_denoiser_params_from_config(config, sr, fft_size):
                 'alpha_g': gc.get('alpha_g', 0.7),
                 'use_full_formula': gc.get('use_full_formula', False)
             })
-        # V3-2 (MMSE-LSA)
+        # V3-2 (MMSE-LSA / OMLSA)
         elif gc.get('method') == 'mmse_lsa':
             params.update({
                 'g_min_db': gc.get('g_min_db', -20.0),
                 'alpha_g': gc.get('alpha_g', 0.7)
             })
+            # 非對稱平滑（可選）
+            if 'use_asymmetric_smoothing' in gc:
+                params['use_asymmetric_smoothing'] = gc['use_asymmetric_smoothing']
+            if 'alpha_attack' in gc:
+                params['alpha_attack'] = gc['alpha_attack']
+            if 'alpha_decay' in gc:
+                params['alpha_decay'] = gc['alpha_decay']
         # V3-3 (PMMSE - Wolfe & Godsill β=0.5)
         elif gc.get('method') == 'pmmse':
             params.update({
@@ -152,14 +159,17 @@ def get_denoiser_params_from_config(config, sr, fft_size):
                 params.update({
                     'noise_method': 'mcra',
                     'alpha_s': ne.get('alpha_s', 0.9),
-                    'alpha_noise': ne.get('alpha_d', 0.85),
+                    'alpha_d': ne.get('alpha_d', 0.85),
                     'alpha_p': ne.get('alpha_p', 0.2),
                     'L': ne.get('L', 96),
                     'delta_db': ne.get('delta_db', 5.0),
                     'broadband_threshold': ne.get('broadband_threshold', 0.8),
                     'scene_change_threshold_db': ne.get('scene_change_threshold_db', 10.0),
                     'scene_change_min_frames': ne.get('scene_change_min_frames', 5),
-                    'scene_change_blend': ne.get('scene_change_blend', 0.5)
+                    'scene_change_blend': ne.get('scene_change_blend', 0.5),
+                    'scene_change_flatness_threshold': ne.get(
+                        'scene_change_flatness_threshold', 0.4
+                    ),
                 })
             elif ne_method == 'recursive_average':
                 # RecursiveAverage 噪聲估計參數

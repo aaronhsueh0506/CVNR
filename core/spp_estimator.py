@@ -30,12 +30,15 @@ class SppEstimator:
         xi_min_db: float = -25.0
     ):
         self.alpha = alpha
-        self.q = q
+        # Clip q 到 (eps, 1-eps) 避免先驗比率的相撞歸零
+        _eps = 1e-6
+        self.q = float(np.clip(q, _eps, 1.0 - _eps))
         self.xi_min = 10 ** (xi_min_db / 10)
 
         # 狀態變量（用於 Decision Directed 方法）
-        self.xi_prev = None  # 上一幀的先驗 SNR
-        self.gamma_prev = None  # 上一幀的後驗 SNR
+        self.xi_prev = None         # 上一幀的先驗 SNR
+        self.gamma_prev = None      # 上一幀的後驗 SNR
+        self.noise_psd_prev = None  # 上一幀的噪聲 PSD（DD 需要同步）
         self.frame_count = 0
 
     def estimate(
@@ -69,13 +72,17 @@ class SppEstimator:
             # 初始化：使用直接估計
             xi = np.maximum(gamma - 1, 0)
         else:
-            # v4.0: 移除 DD 兼容模式，強制使用正確的當前噪聲
-            # 正確公式: ξ(k,l) = α · |X̂(k,l-1)|² / λ_n(k,l) + (1-α) · max(γ(k,l)-1, 0)
-            # 使用當前幀噪聲 λ_n 而非上一幀 λ_{n-1}
+            # Ephraim-Malah (1984) 標準 DD：
+            #   ξ(k,l) = α · |X̂(k,l-1)|² / λ_d(k,l-1) + (1-α) · max(γ(k,l)-1, 0)
+            # 分母必須用「上一幀」的 λ_d，因為 |X̂(k,l-1)|² 本身就是用 λ_d(k,l-1) 算出來的；
+            # 兩者同步才能保持統計一致。若用當前幀 λ_d，噪聲更新後 ξ 會被錯誤縮放。
             assert enhanced_psd_prev is not None, \
-                "enhanced_psd_prev must be provided for correct Decision Directed estimation"
+                "enhanced_psd_prev must be provided for Decision Directed estimation"
 
-            xi_dd_term1 = enhanced_psd_prev / (noise_psd + 1e-10)
+            # noise_psd_prev 為 None 時（理論上不應發生，保險起見），降級到當前幀
+            noise_for_dd = self.noise_psd_prev if self.noise_psd_prev is not None else noise_psd
+
+            xi_dd_term1 = enhanced_psd_prev / (noise_for_dd + 1e-10)
             xi_dd = self.alpha * xi_dd_term1 + \
                     (1 - self.alpha) * np.maximum(gamma - 1, 0)
             xi = np.maximum(xi_dd, self.xi_min)
@@ -98,8 +105,9 @@ class SppEstimator:
         term_xi = 1 + xi
         
         # 計算先驗比率 (1-q)/q
-        prior_ratio = (1 - self.q) / (self.q + 1e-10)
-        
+        # q 已在 __init__ 中 clip 到 (eps, 1-eps)，此處無需額外保護
+        prior_ratio = (1 - self.q) / self.q
+
         # 組合公式: 1 / (1 + prior_ratio * (1+xi) * exp(-v))
         # 注意 log_likelihood 變數存的是 v (gamma * xi / (1+xi))
         spp = 1 / (1 + prior_ratio * term_xi * np.exp(-log_likelihood))
@@ -107,6 +115,7 @@ class SppEstimator:
         # 保存當前值供下一幀使用
         self.xi_prev = xi
         self.gamma_prev = gamma
+        self.noise_psd_prev = noise_psd.copy()  # DD 需要「上一幀」的噪聲 PSD
         self.frame_count += 1
 
         return spp, xi, gamma
@@ -115,6 +124,7 @@ class SppEstimator:
         """重置狀態"""
         self.xi_prev = None
         self.gamma_prev = None
+        self.noise_psd_prev = None
         self.frame_count = 0
 
     def __repr__(self):

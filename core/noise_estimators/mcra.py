@@ -49,10 +49,12 @@ class McraNoiseEstimator:
         delta_db: float = 5.0,
         num_init_frames: int = 20,
         broadband_threshold: float = 0.8,
-        # 場景轉換偵測參數
-        scene_change_threshold_db: float = 10.0,  # broadband γ 閾值 (dB)
-        scene_change_min_frames: int = 5,          # 連續幀數確認
-        scene_change_blend: float = 0.5            # 噪聲重置混合比例
+        # 場景轉換偵測參數（實際實作為「高頻段 γ + 高頻段 spectral flatness」聯合判斷；
+        # flatness 用於避免語音誤觸發，因語音 flatness 較低）
+        scene_change_threshold_db: float = 10.0,   # 高頻段 γ 閾值 (dB)
+        scene_change_min_frames: int = 5,           # 連續幀數確認
+        scene_change_blend: float = 0.5,            # 噪聲重置混合比例
+        scene_change_flatness_threshold: float = 0.4,  # 高頻段 spectral flatness 閾值
     ):
         self.alpha_s = alpha_s
         self.alpha_d = alpha_d
@@ -62,10 +64,11 @@ class McraNoiseEstimator:
         self.num_init_frames = num_init_frames
         self.broadband_threshold = broadband_threshold
 
-        # 場景轉換偵測
+        # 場景轉換偵測（高頻段 γ + flatness 聯合）
         self.scene_change_threshold = 10 ** (scene_change_threshold_db / 10)
         self.scene_change_min_frames = scene_change_min_frames
         self.scene_change_blend = scene_change_blend
+        self.scene_change_flatness_threshold = scene_change_flatness_threshold
         self.scene_change_count = 0
 
         # 狀態變量
@@ -99,13 +102,14 @@ class McraNoiseEstimator:
         init_frames = magnitude_spectrum[:self.num_init_frames]
         power_spectrum = init_frames ** 2
 
-        # v4.0: 使用 30th 百分位數（知乎文章建議）
-        # 20th 太低容易造成過低估計，30th 更準確
+        # 使用 30th 百分位數作初始噪聲估計（20th 太低容易過低估計）
         init_psd = np.percentile(power_spectrum, 30, axis=0)
 
-        # 初始化狀態
+        # 初始化狀態：S、S_min、min_buffer 必須從同一個統計量出發
+        # 若 S 用均值而 S_min 用 P30，第一次 update 時 ratio = S/(S_min*delta) 會異常（>>1 或 <<1），
+        # 導致 indicator 在純噪聲段誤觸發或誤壓
         self.noise_psd = init_psd.copy()
-        self.S = np.mean(power_spectrum, axis=0)  # S 用平均值以便 SPP 計算
+        self.S = init_psd.copy()       # 與 S_min 一致，避免初始 ratio 異常
         self.S_min = init_psd.copy()
         self.spp = np.zeros(n_freqs)
 
@@ -180,7 +184,8 @@ class McraNoiseEstimator:
         hi_power_safe = hi_power + 1e-20
         hi_flatness = np.exp(np.mean(np.log(hi_power_safe))) / (np.mean(hi_power_safe))
 
-        if hi_gamma > self.scene_change_threshold and hi_flatness > 0.4:
+        if (hi_gamma > self.scene_change_threshold and
+                hi_flatness > self.scene_change_flatness_threshold):
             self.scene_change_count += 1
             if self.scene_change_count >= self.scene_change_min_frames:
                 # 場景轉換確認：部分重置噪聲估計和最小值追蹤
