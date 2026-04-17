@@ -80,14 +80,17 @@ for noise in noise_types:
 
             # 逐幀處理
             gain_prev = None
+            enhanced_psd_prev = None
             enhanced_magnitude = np.zeros_like(magnitudes)
 
             for i in range(n_frames):
                 Y_psd = magnitudes[i] ** 2
                 noise_psd = noise_estimator.noise_psd
 
-                # 估計 SPP
-                spp, xi, gamma = spp_estimator.estimate(Y_psd, noise_psd, gain_prev)
+                # 估計 SPP（DD 需要 enhanced_psd_prev）
+                spp, xi, gamma = spp_estimator.estimate(
+                    Y_psd, noise_psd, gain_prev, enhanced_psd_prev
+                )
 
                 # 計算 MMSE gain
                 v = (xi / (1 + xi)) * gamma
@@ -117,6 +120,7 @@ for noise in noise_types:
                 # 應用增益
                 enhanced_magnitude[i] = gain * magnitudes[i]
                 gain_prev = gain.copy()
+                enhanced_psd_prev = enhanced_magnitude[i] ** 2
 
                 # 更新噪聲估計
                 is_speech = np.mean(spp) > 0.5

@@ -18,9 +18,10 @@ noise_estimation:
   delta_db: 10.0
   num_init_frames: 20
   broadband_threshold: 1.0     # 調優：關閉（L=32 已足夠快速追蹤場景轉換）
-  scene_change_threshold_db: 10.0  # 場景轉換偵測：broadband γ > 10dB 連續 5 幀觸發
+  scene_change_threshold_db: 10.0  # 場景轉換偵測：高頻段 γ > 10dB 且 flatness 高，連續 5 幀觸發
   scene_change_min_frames: 5
   scene_change_blend: 0.5
+  scene_change_flatness_threshold: 0.4  # 高頻段 spectral flatness 閾值，避免語音誤觸發
 noise_tracking:
   enable: true
 spp:

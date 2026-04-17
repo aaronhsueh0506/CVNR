@@ -54,7 +54,7 @@ class MmseLsaDenoiser(BaseDenoiser):
         frame_size: int = 512,
         frame_shift: int = 256,
         fft_size: int = 512,
-        alpha_noise: float = 0.95,
+        alpha_noise: float = 0.95,  # [Deprecated] 保留相容性；等同 alpha_d
         alpha_xi: float = 0.98,
         q: float = 0.5,
         xi_min_db: float = -25.0,
@@ -64,6 +64,7 @@ class MmseLsaDenoiser(BaseDenoiser):
         # v2.0 MCRA 噪聲估計參數
         noise_method: str = 'recursive_average',  # 'recursive_average' 或 'mcra'
         alpha_s: float = 0.9,       # MCRA 時間平滑因子
+        alpha_d: float = None,      # MCRA 噪聲更新基礎速率（None 則用 alpha_noise）
         alpha_p: float = 0.2,       # MCRA SPP 平滑因子
         L: int = 96,                # MCRA 最小值窗口長度
         delta_db: float = 5.0,      # MCRA 偏差補償 (dB)
@@ -71,9 +72,17 @@ class MmseLsaDenoiser(BaseDenoiser):
         scene_change_threshold_db: float = 10.0,  # 場景轉換偵測閾值 (dB)
         scene_change_min_frames: int = 5,
         scene_change_blend: float = 0.5,
+        scene_change_flatness_threshold: float = 0.4,  # 高頻段 flatness 閾值
+        # 非對稱平滑參數
+        use_asymmetric_smoothing: bool = True,
+        alpha_attack: float = 0.3,
+        alpha_decay: float = None,  # None = 等於 alpha_g
     ):
         super().__init__(sample_rate, n_fft=fft_size)
         self.noise_method = noise_method
+
+        # alpha_d 優先於 alpha_noise（兩者同義；alpha_noise 為舊名保留相容）
+        alpha_d_effective = alpha_d if alpha_d is not None else alpha_noise
 
         # 創建處理器
         self.processor = FrameProcessor(
@@ -94,7 +103,7 @@ class MmseLsaDenoiser(BaseDenoiser):
         if noise_method == 'mcra':
             self.noise_estimator = McraNoiseEstimator(
                 alpha_s=alpha_s,
-                alpha_d=alpha_noise,
+                alpha_d=alpha_d_effective,
                 alpha_p=alpha_p,
                 L=L,
                 delta_db=delta_db,
@@ -102,11 +111,12 @@ class MmseLsaDenoiser(BaseDenoiser):
                 broadband_threshold=broadband_threshold,
                 scene_change_threshold_db=scene_change_threshold_db,
                 scene_change_min_frames=scene_change_min_frames,
-                scene_change_blend=scene_change_blend
+                scene_change_blend=scene_change_blend,
+                scene_change_flatness_threshold=scene_change_flatness_threshold,
             )
         else:
             self.noise_estimator = RecursiveAverageNoiseEstimator(
-                alpha=alpha_noise,
+                alpha=alpha_d_effective,
                 num_init_frames=num_init_frames,
                 update_during_speech=False
             )
@@ -118,10 +128,13 @@ class MmseLsaDenoiser(BaseDenoiser):
             xi_min_db=xi_min_db
         )
 
-        # 創建 MMSE-LSA 增益計算器
+        # 創建 MMSE-LSA / OMLSA 增益計算器
         self.gain_calculator = MmseLsaGainCalculator(
             g_min_db=g_min_db,
-            alpha_g=alpha_g
+            alpha_g=alpha_g,
+            use_asymmetric_smoothing=use_asymmetric_smoothing,
+            alpha_attack=alpha_attack,
+            alpha_decay=alpha_decay,
         )
 
         # 存儲上一幀的增益（Decision Directed）
@@ -186,6 +199,8 @@ class MmseLsaDenoiser(BaseDenoiser):
         3. 在對數域進行 SPP 加權和時間平滑
         4. 轉回線性域應用增益
 
+        注意：進入時會自動 reset 內部狀態，確保連續呼叫處理不同音訊段時互不污染。
+
         參數:
             noisy_magnitude: 帶噪語音幅度譜 (n_frames, n_freqs)
             noisy_phase: 帶噪語音相位譜 (n_frames, n_freqs)
@@ -198,31 +213,34 @@ class MmseLsaDenoiser(BaseDenoiser):
             spp_history: SPP 歷史數據 (n_frames, n_freqs) - 僅當 return_spp=True
             gain_history: Gain 歷史數據 (n_frames, n_freqs) - 僅當 return_gain=True
         """
+        # 進入點重置所有幀間狀態，避免不同段落互相污染
+        self.reset()
+
         n_frames = noisy_magnitude.shape[0]
 
-        # 初始化噪聲估計
+        # 使用前 num_init 幀建立初始噪聲 PSD
         self.noise_estimator.estimate(noisy_magnitude)
+        num_init = self.noise_estimator.num_init_frames
 
         # 初始化輸出
         enhanced_magnitude = np.zeros_like(noisy_magnitude)
 
-        # SPP 歷史記錄（用於可視化）
+        # SPP / Gain 歷史記錄（用於可視化）
         spp_history = [] if return_spp else None
-
-        # Gain 歷史記錄（用於可視化）
         gain_history = [] if return_gain else None
 
         # v1.5.0: 保存上一幀增強功率譜（用於正確的 DD 計算）
         enhanced_psd_prev = None
 
         # 逐幀處理
+        # 前 num_init 幀已被 estimate() 用於建立初始 noise_psd；此處用該 PSD 正常算 gain，
+        # 但不再呼叫 update()，避免這些幀被重複計算（Fix #2 輕量版）。
         for i in range(n_frames):
             # 計算功率譜密度
             Y_psd = noisy_magnitude[i] ** 2
             noise_psd = self.noise_estimator.noise_psd
 
             # 估計 SPP、先驗 SNR 和後驗 SNR
-            # v1.5.0: 傳入 enhanced_psd_prev 用於正確的 DD 計算
             spp, xi, gamma = self.spp_estimator.estimate(
                 Y_psd,
                 noise_psd,
@@ -230,30 +248,28 @@ class MmseLsaDenoiser(BaseDenoiser):
                 enhanced_psd_prev
             )
 
-            # 收集 SPP 歷史（用於可視化）
             if return_spp:
                 spp_history.append(spp.copy())
 
-            # 計算 MMSE-LSA 增益 (對數域操作)
+            # 計算 MMSE-LSA / OMLSA 增益（對數域）
             gain = self.gain_calculator.calculate(spp, xi, gamma)
 
-            # 收集 Gain 歷史（用於可視化）
             if return_gain:
                 gain_history.append(gain.copy())
 
             # 應用增益
             enhanced_magnitude[i] = gain * noisy_magnitude[i]
 
-            # v2.6: 套用 Soft VAD 後處理（使用 SPP 作為 VAD 指標）
-            # 保存增益供下一幀使用
+            # 保存增益供下一幀 Decision Directed 使用
             self.gain_prev = gain.copy()
 
             # v1.5.0: 保存增強功率譜供下一幀 DD 使用
             enhanced_psd_prev = enhanced_magnitude[i] ** 2
 
-            # 更新噪聲估計（v2.0: 使用 SPP 軟判決）
-            # SPP 高（語音）→ 更新慢，SPP 低（噪聲）→ 正常更新
-            self.noise_estimator.update(noisy_magnitude[i], spp=spp)
+            # 只在 init 完成後更新噪聲估計，避免前 num_init 幀被雙重計算
+            # （estimate() 已從這些幀建立初始 PSD）
+            if i >= num_init:
+                self.noise_estimator.update(noisy_magnitude[i], spp=spp)
 
         # 相位保持不變
         enhanced_phase = noisy_phase
@@ -277,7 +293,7 @@ class MmseLsaDenoiser(BaseDenoiser):
         """獲取參數"""
         params = {
             'version': 'V3-2',
-            'name': 'MMSE-LSA',
+            'name': 'OMLSA (MMSE-LSA + SPP weighting)',
             'sample_rate': self.sample_rate,
             'frame_size': self.processor.frame_size,
             'frame_shift': self.processor.frame_shift,
@@ -288,6 +304,9 @@ class MmseLsaDenoiser(BaseDenoiser):
             'xi_min_db': 10 * np.log10(self.spp_estimator.xi_min),
             'g_min_db': 10 * np.log10(self.gain_calculator.g_min),
             'alpha_g': self.gain_calculator.alpha_g,
+            'use_asymmetric_smoothing': self.gain_calculator.use_asymmetric_smoothing,
+            'alpha_attack': self.gain_calculator.alpha_attack,
+            'alpha_decay': self.gain_calculator.alpha_decay,
             'num_init_frames': self.noise_estimator.num_init_frames
         }
         if self.noise_method == 'mcra':
@@ -295,6 +314,9 @@ class MmseLsaDenoiser(BaseDenoiser):
             params['alpha_d'] = self.noise_estimator.alpha_d
             params['alpha_p'] = self.noise_estimator.alpha_p
             params['L'] = self.noise_estimator.L
+            params['scene_change_flatness_threshold'] = (
+                self.noise_estimator.scene_change_flatness_threshold
+            )
         else:
             params['alpha_noise'] = self.noise_estimator.alpha
         return params

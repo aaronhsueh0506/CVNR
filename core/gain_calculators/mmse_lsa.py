@@ -83,53 +83,43 @@ class MmseLsaGainCalculator:
         g_min: float = None
     ) -> np.ndarray:
         """
-        計算 SPP 加權的 MMSE-LSA 增益
+        計算 SPP 加權的 MMSE-LSA / OMLSA 增益
 
         參數:
             spp: 語音存在機率 (n_freqs,)
             xi: 先驗 SNR (n_freqs,)
             gamma: 後驗 SNR (n_freqs,)
-            g_min: SNR adaptive 最小增益（可選，用於動態調整）
+            g_min: SNR adaptive 最小增益（可選）
 
         返回:
             gain: 增益 (n_freqs,)
         """
-        # 使用 SNR adaptive g_min (如果提供) 或默認值
         g_min_effective = g_min if g_min is not None else self.g_min
         log_g_min_effective = np.log(g_min_effective + 1e-10)
 
-        # 基礎 MMSE 增益 (與 MMSE-STSA 簡化版相同公式)
+        # 基礎 MMSE 增益
         gain_mmse = self._mmse_gain_base(xi, gamma)
         gain_mmse = np.clip(gain_mmse, g_min_effective, 1.0)
 
-        # 對數域加權 (MMSE-LSA 核心)
+        # 對數域加權 (OMLSA 核心)
         log_gain_mmse = np.log(gain_mmse + 1e-10)
         log_gain = spp * log_gain_mmse + (1 - spp) * log_g_min_effective
 
-        # 對數域時間平滑 (LSA 的核心特徵)
-        # v1.5.0: 支持非對稱平滑
+        # 對數域時間平滑
         if self.log_gain_prev is not None:
             if self.use_asymmetric_smoothing:
-                # 非對稱平滑: Attack 快, Decay 慢
-                # Attack: log_gain > log_gain_prev (增益上升)
-                # Decay: log_gain <= log_gain_prev (增益下降)
+                # Attack 快 / Decay 慢
                 alpha_effective = np.where(
                     log_gain > self.log_gain_prev,
-                    self.alpha_attack,  # Attack: 快速響應
-                    self.alpha_decay    # Decay: 慢速抑制 Musical Noise
+                    self.alpha_attack,
+                    self.alpha_decay,
                 )
                 log_gain = alpha_effective * self.log_gain_prev + (1 - alpha_effective) * log_gain
             else:
-                # 對稱平滑 (原始行為)
                 log_gain = self.alpha_g * self.log_gain_prev + (1 - self.alpha_g) * log_gain
 
         # 轉回線性域
         gain = np.exp(log_gain)
-
-        # v2.2: 增益補償 - LSA 傾向於低估幅度，對高 SNR 區域給予輕微 Boost
-        # 當 xi > 1 (約 0dB SNR)，語音成分明確時，補償 20%
-        # gain_boost = np.where(xi > 1.0, 1.2, 1.0)
-        # gain = gain * gain_boost
 
         # 限制範圍
         gain = np.clip(gain, g_min_effective, 1.0)
@@ -225,46 +215,53 @@ if __name__ == "__main__":
     gamma = np.array([1.0, 2.0, 3.0, 6.0, 12.0])  # 後驗 SNR
     spp = np.ones_like(xi)  # 假設都是語音
 
-    # 對數域 LSA
-    calc_lsa = MmseLsaGainCalculator(use_linear_spp_weighting=False, alpha_g=0.0)
+    # 純 MMSE-LSA（無 SPP 加權）
+    calc_lsa = MmseLsaGainCalculator(
+        use_spp_weighting=False, alpha_g=0.0, use_asymmetric_smoothing=False
+    )
     gain_lsa = calc_lsa.calculate(spp, xi, gamma)
 
-    # 線性域 (退化為 STSA)
-    calc_linear = MmseLsaGainCalculator(use_linear_spp_weighting=True, alpha_g=0.0)
-    gain_linear = calc_linear.calculate(spp, xi, gamma)
+    # OMLSA（SPP 對數域加權）
+    calc_omlsa = MmseLsaGainCalculator(
+        use_spp_weighting=True, alpha_g=0.0, use_asymmetric_smoothing=False
+    )
+    gain_omlsa = calc_omlsa.calculate(spp, xi, gamma)
 
     # 對比
-    print("\nSNR (dB) | LSA (對數域) | Linear (線性域) | 差異 (%)")
+    print("\nSNR (dB) | LSA (純) | OMLSA (SPP) | 差異 (%)")
     print("-" * 60)
     for i in range(len(xi)):
         xi_db = 10 * np.log10(xi[i])
-        diff = abs(gain_lsa[i] - gain_linear[i]) / gain_linear[i] * 100
-        print(f"{xi_db:7.1f} | {gain_lsa[i]:12.4f} | {gain_linear[i]:14.4f} | {diff:8.2f}")
+        diff = abs(gain_lsa[i] - gain_omlsa[i]) / (gain_omlsa[i] + 1e-10) * 100
+        print(f"{xi_db:7.1f} | {gain_lsa[i]:8.4f} | {gain_omlsa[i]:11.4f} | {diff:8.2f}")
 
-    print("\n對數域平滑效果:")
+    print("\nSPP 對 OMLSA 增益的影響:")
     print("-" * 60)
 
-    # 測試對數域平滑對小增益的影響
-    spp_low = np.array([0.3, 0.5, 0.7, 0.9, 1.0])  # 不同語音機率
+    # 測試不同 SPP 值
+    spp_low = np.array([0.3, 0.5, 0.7, 0.9, 1.0])
     xi_test = np.array([1.0] * 5)
     gamma_test = np.array([2.0] * 5)
 
-    calc_lsa_smooth = MmseLsaGainCalculator(use_linear_spp_weighting=False, alpha_g=0.0)
-    calc_linear_smooth = MmseLsaGainCalculator(use_linear_spp_weighting=True, alpha_g=0.0)
+    calc_lsa_pure = MmseLsaGainCalculator(
+        use_spp_weighting=False, alpha_g=0.0, use_asymmetric_smoothing=False
+    )
+    calc_omlsa_pure = MmseLsaGainCalculator(
+        use_spp_weighting=True, alpha_g=0.0, use_asymmetric_smoothing=False
+    )
 
-    print("\nSPP | LSA增益 | Linear增益 | LSA更保守")
+    print("\nSPP | LSA純 | OMLSA | 差異")
     print("-" * 50)
     for i in range(len(spp_low)):
-        g_lsa = calc_lsa_smooth.calculate(
+        g_lsa = calc_lsa_pure.calculate(
             spp_low[i:i+1], xi_test[i:i+1], gamma_test[i:i+1]
         )[0]
-        g_lin = calc_linear_smooth.calculate(
+        g_omlsa = calc_omlsa_pure.calculate(
             spp_low[i:i+1], xi_test[i:i+1], gamma_test[i:i+1]
         )[0]
-        more_conservative = "是" if g_lsa < g_lin else "否"
-        print(f"{spp_low[i]:.1f} | {g_lsa:.4f} | {g_lin:.4f} | {more_conservative}")
+        print(f"{spp_low[i]:.1f} | {g_lsa:.4f} | {g_omlsa:.4f} | {abs(g_lsa-g_omlsa):.4f}")
 
     print("\n結論:")
-    print("1. LSA 對數域加權使小增益更保守 (更多抑制)")
-    print("2. LSA 對數域平滑使增益變化更平緩")
-    print("3. LSA 產生更少 musical noise,但可能過度抑制弱語音")
+    print("1. 純 LSA 不受 SPP 影響")
+    print("2. OMLSA 以 SPP 在 log 域混合 G_H1 與 g_min，低 SPP 時壓得更低")
+    print("3. OMLSA 對時變噪聲更穩定，但弱語音可能被抑制")
