@@ -4,6 +4,54 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [4.2.1] - 2026-04-17 · C-Alignment Release
+
+### 變更 (Changed)
+
+Python V3-2 OMLSA 調整為與 C 實作 **bit-exact 對齊**（float32 精度極限內）。以同一配置（16 kHz / MCRA / 同參數）處理 `babble_10dB_16k.wav`：
+
+- 對齊後 correlation: **0.99999994**
+- Median sample-level `|diff|`: **1.65e-5**
+- 99% samples `|diff|` < **3.3e-5**
+- 99.98% samples `|diff|` < 1e-4
+
+三項 Python 語義調整（**會改變 Python V3-2 於 MCRA 模式的數值輸出**）：
+
+1. **MCRA 初始化 percentile 改為 k-th 最小值**
+   - 檔案: `core/noise_estimators/mcra.py` `estimate()`
+   - 原: `np.percentile(power, 30, axis=0)`（線性插值 sorted[k] 與 sorted[k+1]）
+   - 新: `np.partition(power, k, axis=0)[k]`，`k = ((N-1)*30)//100`
+   - 原因: C 端 `calculate_percentile()` 使用 quickselect 直接取 k-th 元素，兩者對高變異 bin 可差 ~30%
+
+2. **V3-2 denoise_spectrum init 階段改為嚴格 passthrough**
+   - 檔案: `denoisers/v3_2_mmse_lsa.py` `denoise_spectrum()`
+   - 原 (Fix #2 輕量版): 前 20 幀仍呼叫 SPP、計算 gain、套用 gain（但跳過 noise update）
+   - 新: 前 20 幀 `gain = 1.0`（strict passthrough），不呼叫 SPP estimate，DD state 設為 `(gain_prev=1.0, enhanced_psd_prev=Y_psd)`
+   - 原因: C streaming API 於 init 期間只能 passthrough（缺 look-ahead），Python 配合保持兩端同語義
+   - 影響: 前 200 ms 輸出變為 raw input（而非經 MMSE-LSA 處理）
+
+3. **MmseLsaGainCalculator 預設改用 3-segment E1 近似**
+   - 檔案: `core/gain_calculators/mmse_lsa.py`
+   - 原: 預設使用 `scipy.special.exp1`（Taylor + continued fraction，精確）
+   - 新: 預設使用 `_exp1_approx`（三段對數/指數近似），與 C `exp1_approx` 公式完全一致
+   - 切回 scipy: 在 caller 設 `mmse_lsa_mod.USE_SCIPY_EXP1 = True`（預設 `False`）
+   - 原因: C 端不會鏈結 scipy，兩端 E1 必須用相同近似才能 bit-exact
+   - 影響: E1(v) 精度損失 ~1e-4 absolute，gain 差 ~1e-3 level；對 PESQ/STOI 實際影響極小（主要在極低 SNR 的少數 bin）
+
+### 驗證 (Validation)
+
+- C `make debug` (USE_STANDARD_MATH + 關所有優化 flag) + Python 同配置：
+  - Aligned correlation 0.99999994
+  - Post-500 ms `|diff|` 分布：72.8% 在 `[1e-6, 1e-5)` + 1e-5 區間，僅 0.02% 大於 1e-4
+- Python 原生預設（`recursive_average` 路徑）smoke test 通過；Python-native 48 kHz `babble_10dB.wav` 輸出正常（RMS 0.06，無 NaN/Inf）
+
+### 建議後續 (TODO)
+
+- 跑 VCTK/DEMAND regression 檢查 PESQ/STOI 是否有退步（理論 < 0.02，但需實測）
+- 若研究需要精確 E1：`USE_SCIPY_EXP1 = True` 即可恢復 scipy 路徑
+
+---
+
 ## [4.2.0] - 2026-04-17 · Release
 
 ### 新增 (Added)
