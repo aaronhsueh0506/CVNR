@@ -175,6 +175,7 @@ McraNoiseEstimator* mcra_init(void* mem, size_t mem_size, int n_freqs, const Mms
     self->scene_change_threshold = powf(10.0f, config->scene_change_threshold_db / 10.0f);
     self->scene_change_min_frames = config->scene_change_min_frames;
     self->scene_change_blend = config->scene_change_blend;
+    self->scene_change_flatness_threshold = config->scene_change_flatness_threshold;
     self->scene_change_count = 0;
 
 #ifndef USE_FAST_PERCENTILE
