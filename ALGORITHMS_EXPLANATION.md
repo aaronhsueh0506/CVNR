@@ -1,8 +1,16 @@
 # 語音降噪演算法詳解
 
-**版本**：v2.3
-**更新日期**：2026-01-08
+**版本**：v4.2
+**更新日期**：2026-04-17
 **適用對象**：技術介紹、演算法說明、項目展示
+
+> **⚠️ v4.2 release 重要聲明**
+>
+> 本文檔保留了歷史各版本演進脈絡（v1.x–v2.x）供參考。**Release 主推演算法**為 **V3-2 OMLSA**（MMSE-LSA + Bayesian SPP + MCRA），經 Part A Review 11 項修復，Python 與 C 皆已同步（雙 branch：`main` = malloc；`feature/static-memory` = 靜態記憶體）。
+>
+> **V4 新版本**（`denoisers/v4_omlsa.py` + `core/wind_detector.py` 等）**不是**本文件下方「V4: IMCRA-OMLSA」章節所描述的舊 V4。現行 V4 是「OMLSA + Wind Handler research 框架」，VCTK/DEMAND 驗證**未能改善**風聲場景，**不建議 release 使用**。詳見 [README.md](README.md) 與 `results/v4_diagnosis_report.md`。
+>
+> 下方舊 V4 章節的歷史內容（IMCRA + 對數域平滑）**仍是 V3-2 + MCRA 內部設計基礎**，可作為理解 OMLSA 的技術參考，但**命名與參數不再對應現行 V4**。
 
 ---
 
@@ -49,6 +57,31 @@
 | 降噪效果 | segSNR 改善 10-15dB | 顯著改善 |
 | 適用 SNR | 0-20 dB | 覆蓋常見噪聲環境 |
 | 噪聲適應 | 100-600ms | v1.3.0 新增 |
+
+---
+
+## v4.2 重大更新 (2026-04-17) — Part A Review 修復
+
+本次 release 套用 Part A Review 11 項修復，同步至 Python + C（`main` / `feature/static-memory` 雙 branch）：
+
+| Fix | 項目 | 影響模組 |
+|-----|------|----------|
+| #1 | MCRA 初始化 `S = init_psd`（原 `avg_power`，與 `S_min` 不一致） | `core/noise_estimators/mcra.py`、`c_impl/src/mcra_noise_estimator.c` |
+| #2 | 初始化幀 lightweight passthrough（首 200 ms 輸出 = 輸入 + gain 計算） | `denoisers/v3_2_mmse_lsa.py` |
+| #3 | SPP Decision-Directed term 改用**前一幀** `noise_psd`（理論一致） | `core/spp_estimator.py`、`c_impl/src/spp_estimator.c` |
+| #4 | `alpha_d` 接通 denoiser `__init__` | Python loader |
+| #5 | `alpha_attack` / `alpha_decay` 非對稱平滑參數外露 | `denoisers/v3_2_mmse_lsa.py` |
+| #6 | Scene change flatness 閾值參數化（config `scene_change_flatness_threshold`） | MCRA（Python + C） |
+| #7 | Analysis/synthesis window 改為 periodic (`sym=False`)，COLA 完全準確 | `core/frame_processor.py`（C 端原本就正確） |
+| #8 | `denoise_spectrum()` 入口自動 reset，避免跨呼叫狀態污染 | `denoisers/v3_2_mmse_lsa.py` |
+| #9 | SPP prior probability `q` clip 到 `(1e-6, 1-1e-6)` | `core/spp_estimator.py`、`c_impl/src/spp_estimator.c` |
+| #10/#11 | 清理過時註解與 `__main__` demo | 各檔 |
+
+**V4 誠實定位**（v4.2）：
+- `denoisers/v4_omlsa.py` + wind handler 三個模組（`core/wind_detector.py`、`core/freq_adaptive_controller.py`、`core/transient_suppressor.py`）為 **research 框架**
+- 在 VCTK/DEMAND 驗證子集上**未能改善風聲**（根因：風聲低頻能量與語音 F1/F2 頻段重疊，單麥克風 + 統計特徵無法可靠區分）
+- `config/v4_config.yaml` 預設 **FLAT adaptive profile + transient OFF**，等同 V3-2
+- 保留作為後續研究起點，**不建議直接 release 使用**
 
 ---
 
@@ -844,14 +877,18 @@ Hu, Y., & Loizou, P. C. (2008). "Evaluation of objective quality measures for sp
 
 ---
 
-### V4: IMCRA-OMLSA（產品級方案）⭐⭐⭐
+### V4: IMCRA-OMLSA（⚠️ 歷史章節，名稱衝突請先閱讀下方說明）
 
-**v1.5.0 優化**：
+> **v4.2 注記**：本章標題所稱「V4 IMCRA-OMLSA」指 v1.5.0 時期的 IMCRA + OMLSA 組合。現行 v4.2 release 的 V4 模組（`denoisers/v4_omlsa.py`）為 **OMLSA + Wind Handler research 框架**，與此章描述不是同一個東西。
+>
+> 本章技術原理（IMCRA 偏移校正、OMLSA 對數域平滑、對照 V3-2 `noise_estimators/mcra.py` 與 `gain_calculators/mmse_lsa.py`）**仍是 V3-2 release 主線背後的設計基礎**，可讀；但**實作層面**以 [V3-2 MMSE-LSA (Log-Spectral Amplitude MMSE)](#v3-2-mmse-lsa) 章節為準。
+
+**v1.5.0 歷史優化紀錄**（對應當時的 V4 config）：
 - 修復音量損失問題（8-10dB → 3-5dB）
 - 添加混合策略減少過度抑制
 - 添加幀間變化限制（±6dB max）防止震動
 - 自適應 delta 調整（3-12dB）
-- 配置文件：[config/v4_config.yaml](config/v4_config.yaml:1)
+- 歷史配置：[config/v4_config.yaml](config/v4_config.yaml:1)（v4.2 起此檔案改為 **OMLSA + Wind Handler research 框架**，預設 FLAT profile 等同 V3-2）
 
 **技術原理**：結合先進的噪聲估計（IMCRA）和最優增益計算（OMLSA）
 

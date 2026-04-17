@@ -4,6 +4,51 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [4.2.0] - 2026-04-17 · Release
+
+### 新增 (Added)
+
+**Part A Review 修復（Python + C 雙 branch 同步）**
+- **Fix #1**: MCRA `estimate()` 改 `self.S = init_psd.copy()`（原為 `np.mean(power_spectrum, axis=0)`）——與 `S_min` 一致，避免首幀 `S/(S_min·δ)` 異常
+- **Fix #3**: SPP Decision-Directed `xi_dd_term1` 改用**前一幀** `noise_psd`；新增 `self.noise_psd_prev` 狀態，每幀尾端 `copy()` 保存
+- **Fix #6**: `scene_change_flatness_threshold` 配置參數化（預設 0.4），同步到 C `MmseLsaConfig`
+- **Fix #7**: `frame_processor.py` window 改為 `scipy.signal.windows.*(N, sym=False)`（periodic）
+- **Fix #9**: SPP `q` 於 `__init__` / `spp_create()` clip 到 `(1e-6, 1-1e-6)`；移除分母 `+1e-10` 補丁
+- **Fix #4/#5**: Denoiser `__init__` 新增 `alpha_d`、`use_asymmetric_smoothing`、`alpha_attack`、`alpha_decay` 參數外露
+- **Fix #2**: `denoise_spectrum()` 前 `num_init` 幀 lightweight passthrough（gain=1、spp=0、enhanced_psd=|Y|²）
+- **Fix #8**: `denoise_spectrum()` 入口 auto `reset()`，避免跨呼叫狀態污染
+- **Fix #10/#11**: 清理過時 Soft VAD 註解與 `__main__` demo
+
+**V4 OMLSA 研究框架（不 release 使用）**
+- 新增 `denoisers/v4_omlsa.py`、`core/wind_detector.py`、`core/freq_adaptive_controller.py`、`core/transient_suppressor.py`
+- VCTK/DEMAND 驗證顯示 V4 無法改善風聲場景（根因：風聲低頻與語音 F1/F2 頻譜重疊）
+- 預設 `config/v4_config.yaml` 採 FLAT adaptive profile + transient OFF（等同 V3-2）
+- 產出診斷報告：`results/v4_diagnosis_report.md`、`results/v4_validation_report.md`、`results/next_steps_recommendations.md`
+
+**C 實作同步**
+- Part A 4 項核心 fix 已 port 至 `c_impl/` (#1, #3, #6, #9)
+- `main` branch（malloc）與 `feature/static-memory` branch（靜態記憶體）兩條 branch 完全同步
+- `feature/static-memory` 端 `spp_get_mem_size()` 新增 `noise_psd_prev` 記憶體槽；`spp_init()` / `mcra_init()` 同步 q clip + flatness threshold
+- Build & smoke verified：兩 branch 對同一 wav 產出 bit-exact
+
+**文檔重構**
+- README / c_impl/README / parameter_adjust_guide / ALGORITHMS_EXPLANATION / STATIC_MEMORY 全數更新
+- 新增「使用條件」、「調參指引」、「風聲/衝擊等不適用情境」章節
+- STATIC_MEMORY.md 修正 frame/hop/L 數值（原 150 誤植為 L=32）
+- c_impl/README.md 修正 frame_size / hop_size 預設值顯示（原誤為 512/256）
+- 各文件加入 v4.2 版本統一標記；V4 舊/新章節命名衝突已註記
+
+### 修復 (Fixed)
+- C 與 Python V3-2 演算法端對齊（Part A 之前 C 端就缺這些 fix）
+- `tools/validate_best_config.py` 補齊 `enhanced_psd_prev` 參數（Fix #3 連帶修正）
+
+### 驗證 (Validation)
+- C pre-fix vs post-fix：輸出差異 −37 dB（相對輸入），init 200 ms passthrough 區完全 bit-exact，符合 fix 範疇
+- C main vs feature/static-memory：bit-exact
+- C post-fix vs Python V3-2：對齊後 correlation 0.58，RMS 差 +0.36 dB（符合 `scipy.special.exp1` vs `exp1_approx` 的既有漂移）
+
+---
+
 ## [4.1.0] - 2026-03-04
 
 ### 重大變更 (Breaking Changes) 🚨
