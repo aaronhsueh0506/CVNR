@@ -233,43 +233,45 @@ class MmseLsaDenoiser(BaseDenoiser):
         enhanced_psd_prev = None
 
         # 逐幀處理
-        # 前 num_init 幀已被 estimate() 用於建立初始 noise_psd；此處用該 PSD 正常算 gain，
-        # 但不再呼叫 update()，避免這些幀被重複計算（Fix #2 輕量版）。
+        # v4.2.1 C-align: 前 num_init 幀改為嚴格 passthrough (gain=1)，與 C streaming 一致。
+        # DD state (gain_prev, enhanced_psd_prev) 反映 passthrough 的結果；update() 在 init 完成後才開始。
+        n_freqs = noisy_magnitude.shape[1]
         for i in range(n_frames):
-            # 計算功率譜密度
             Y_psd = noisy_magnitude[i] ** 2
-            noise_psd = self.noise_estimator.noise_psd
 
-            # 估計 SPP、先驗 SNR 和後驗 SNR
+            if i < num_init:
+                # Init 階段：passthrough，不呼叫 SPP / gain 計算（避免狀態污染）
+                gain = np.ones(n_freqs)
+                if return_spp:
+                    spp_history.append(np.zeros(n_freqs))
+                if return_gain:
+                    gain_history.append(gain.copy())
+                enhanced_magnitude[i] = noisy_magnitude[i]
+                # DD state：gain_prev = 1.0, enhanced_psd_prev = Y_psd
+                self.gain_prev = gain.copy()
+                enhanced_psd_prev = Y_psd.copy()
+                continue
+
+            # 正常處理
+            noise_psd = self.noise_estimator.noise_psd
             spp, xi, gamma = self.spp_estimator.estimate(
                 Y_psd,
                 noise_psd,
                 self.gain_prev,
                 enhanced_psd_prev
             )
-
             if return_spp:
                 spp_history.append(spp.copy())
 
-            # 計算 MMSE-LSA / OMLSA 增益（對數域）
             gain = self.gain_calculator.calculate(spp, xi, gamma)
-
             if return_gain:
                 gain_history.append(gain.copy())
 
-            # 應用增益
             enhanced_magnitude[i] = gain * noisy_magnitude[i]
-
-            # 保存增益供下一幀 Decision Directed 使用
             self.gain_prev = gain.copy()
-
-            # v1.5.0: 保存增強功率譜供下一幀 DD 使用
             enhanced_psd_prev = enhanced_magnitude[i] ** 2
 
-            # 只在 init 完成後更新噪聲估計，避免前 num_init 幀被雙重計算
-            # （estimate() 已從這些幀建立初始 PSD）
-            if i >= num_init:
-                self.noise_estimator.update(noisy_magnitude[i], spp=spp)
+            self.noise_estimator.update(noisy_magnitude[i], spp=spp)
 
         # 相位保持不變
         enhanced_phase = noisy_phase

@@ -20,12 +20,14 @@ MMSE-LSA Gain Calculator (Log-Spectral Amplitude)
 import numpy as np
 from typing import Optional
 
+# v4.2.1 C-align: 預設改為走 3 段近似（與 C `exp1_approx` bit-exact 對齊）。
+# 若需要 scipy.special.exp1 的精確值（研究/離線分析），將 USE_SCIPY_EXP1 設為 True。
+USE_SCIPY_EXP1 = False
 try:
     from scipy.special import exp1
     SCIPY_AVAILABLE = True
 except ImportError:
     SCIPY_AVAILABLE = False
-    print("Warning: scipy 不可用,將使用近似函數")
 
 
 class MmseLsaGainCalculator:
@@ -185,8 +187,9 @@ class MmseLsaGainCalculator:
         v = (xi / (1 + xi)) * gamma
         v = np.clip(v, 1e-10, 700)  # 防止溢出
 
-        # 計算 E1
-        if SCIPY_AVAILABLE:
+        # v4.2.1 C-align: 預設用 3 段近似（與 C `exp1_approx` bit-exact 對齊）。
+        # 如需 scipy.special.exp1 的精確值，在 caller 端設 USE_SCIPY_EXP1 = True。
+        if USE_SCIPY_EXP1 and SCIPY_AVAILABLE:
             exp1_v = exp1(v)
         else:
             exp1_v = self._exp1_approx(v)

@@ -103,7 +103,11 @@ class McraNoiseEstimator:
         power_spectrum = init_frames ** 2
 
         # 使用 30th 百分位數作初始噪聲估計（20th 太低容易過低估計）
-        init_psd = np.percentile(power_spectrum, 30, axis=0)
+        # v4.2.1 C-align: 改用 k-th 最小值（不做線性插值），與 C quickselect 語義一致。
+        # 原 np.percentile(..., 30) 會在 sorted[k]/sorted[k+1] 之間做線性插值，C 則直接取 sorted[k]。
+        N = power_spectrum.shape[0]
+        k = ((N - 1) * 30) // 100
+        init_psd = np.partition(power_spectrum, k, axis=0)[k]
 
         # 初始化狀態：S、S_min、min_buffer 必須從同一個統計量出發
         # 若 S 用均值而 S_min 用 P30，第一次 update 時 ratio = S/(S_min*delta) 會異常（>>1 或 <<1），
