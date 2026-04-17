@@ -49,10 +49,11 @@ struct McraNoiseEstimator {
     int frame_count;
 
     // Scene change detection (hi-freq gamma + spectral flatness)
-    float scene_change_threshold;   // Linear threshold for hi-freq gamma
-    int scene_change_min_frames;    // Consecutive frames required
-    float scene_change_blend;       // Noise reset blend factor
-    int scene_change_count;         // Current consecutive count
+    float scene_change_threshold;           // Linear threshold for hi-freq gamma
+    int scene_change_min_frames;            // Consecutive frames required
+    float scene_change_blend;               // Noise reset blend factor
+    float scene_change_flatness_threshold;  // Hi-freq flatness threshold
+    int scene_change_count;                 // Current consecutive count
 
 #ifndef USE_FAST_PERCENTILE
     // Buffer for exact percentile calculation during initialization
@@ -98,6 +99,7 @@ McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config) {
     self->scene_change_threshold = powf(10.0f, config->scene_change_threshold_db / 10.0f);
     self->scene_change_min_frames = config->scene_change_min_frames;
     self->scene_change_blend = config->scene_change_blend;
+    self->scene_change_flatness_threshold = config->scene_change_flatness_threshold;
     self->scene_change_count = 0;
 
 #ifndef USE_FAST_PERCENTILE
@@ -253,7 +255,7 @@ void mcra_init_noise(McraNoiseEstimator* self, const float* power_sum, int n_fra
         if (init_psd < 1e-10f) init_psd = 1e-10f;
 
         self->noise_psd[k] = init_psd;
-        self->S[k] = avg_power;
+        self->S[k] = init_psd;
         self->S_min[k] = init_psd;
         self->spp[k] = 0.0f;
     }
@@ -267,9 +269,11 @@ void mcra_init_noise(McraNoiseEstimator* self, const float* power_sum, int n_fra
         // Fallback to approximation if allocation fails
         for (int k = 0; k < n_freqs; k++) {
             float avg_power = power_sum[k] / (float)n_frames;
-            self->noise_psd[k] = avg_power * 0.23f;  // v4.0: 30th percentile
-            self->S[k] = avg_power;
-            self->S_min[k] = self->noise_psd[k];
+            float init_psd = avg_power * 0.23f;  // v4.0: 30th percentile
+            if (init_psd < 1e-10f) init_psd = 1e-10f;
+            self->noise_psd[k] = init_psd;
+            self->S[k] = init_psd;
+            self->S_min[k] = init_psd;
             self->spp[k] = 0.0f;
         }
     } else {
@@ -284,10 +288,8 @@ void mcra_init_noise(McraNoiseEstimator* self, const float* power_sum, int n_fra
 
             if (init_psd < 1e-10f) init_psd = 1e-10f;
 
-            float avg_power = power_sum[k] / (float)n_frames;
-
             self->noise_psd[k] = init_psd;
-            self->S[k] = avg_power;
+            self->S[k] = init_psd;
             self->S_min[k] = init_psd;
             self->spp[k] = 0.0f;
         }
@@ -440,7 +442,8 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
         float arith_mean = arith_sum / (float)hi_count;
         float hi_flatness = geo_mean / arith_mean;
 
-        if (hi_gamma > self->scene_change_threshold && hi_flatness > 0.4f) {
+        if (hi_gamma > self->scene_change_threshold &&
+            hi_flatness > self->scene_change_flatness_threshold) {
             self->scene_change_count++;
             if (self->scene_change_count >= self->scene_change_min_frames) {
                 // Partial noise reset: blend current noise with observed power

@@ -47,9 +47,10 @@ typedef struct {
     int num_init_frames;    // Noise init frames (20)
 
     // MCRA scene change detection
-    float scene_change_threshold_db;  // Hi-freq gamma threshold in dB (10.0)
-    int scene_change_min_frames;      // Consecutive frames required (5)
-    float scene_change_blend;         // Noise reset blend factor (0.5)
+    float scene_change_threshold_db;     // Hi-freq gamma threshold in dB (10.0)
+    int scene_change_min_frames;         // Consecutive frames required (5)
+    float scene_change_blend;            // Noise reset blend factor (0.5)
+    float scene_change_flatness_threshold; // Hi-freq spectral flatness threshold (0.4)
 
     // Gain parameters
     float g_min_db;         // Minimum gain in dB (-15.0)
@@ -94,6 +95,7 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
     config.scene_change_threshold_db = 10.0f;
     config.scene_change_min_frames = 5;
     config.scene_change_blend = 0.5f;
+    config.scene_change_flatness_threshold = 0.4f;
 
     // Gain parameters (sync with Python v3_2_config.yaml)
     config.g_min_db = -15.0f;
