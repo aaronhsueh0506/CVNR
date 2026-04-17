@@ -61,7 +61,11 @@ class MmseLsaGainCalculator:
         use_spp_weighting: bool = False,
         use_asymmetric_smoothing: bool = True,
         alpha_attack: float = 0.3,
-        alpha_decay: float = None
+        alpha_decay: float = None,
+        # V4: 語音段保護 floor。當 spp > spp_protect_threshold 時
+        # 強制 gain >= spp_protect_floor（線性）。避免 wind handler 對語音過度壓制。
+        spp_protect_floor_db: Optional[float] = None,
+        spp_protect_threshold: float = 0.5,
     ):
         self.g_min = 10 ** (g_min_db / 10)
         self.log_g_min = np.log(self.g_min + 1e-10)
@@ -73,6 +77,12 @@ class MmseLsaGainCalculator:
         self.alpha_attack = alpha_attack
         self.alpha_decay = alpha_decay if alpha_decay is not None else alpha_g
 
+        # V4: SPP-protected floor
+        self.spp_protect_floor_db = spp_protect_floor_db
+        self.spp_protect_floor = (10 ** (spp_protect_floor_db / 10)
+                                  if spp_protect_floor_db is not None else None)
+        self.spp_protect_threshold = spp_protect_threshold
+
         self.log_gain_prev = None
 
     def calculate(
@@ -80,7 +90,10 @@ class MmseLsaGainCalculator:
         spp: np.ndarray,
         xi: np.ndarray,
         gamma: np.ndarray,
-        g_min: float = None
+        g_min=None,
+        alpha_g_override: Optional[np.ndarray] = None,
+        alpha_attack_override: Optional[np.ndarray] = None,
+        alpha_decay_override: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """
         計算 SPP 加權的 MMSE-LSA / OMLSA 增益
@@ -89,13 +102,20 @@ class MmseLsaGainCalculator:
             spp: 語音存在機率 (n_freqs,)
             xi: 先驗 SNR (n_freqs,)
             gamma: 後驗 SNR (n_freqs,)
-            g_min: SNR adaptive 最小增益（可選）
+            g_min: 最小增益（可選）。可為 float（scalar）或 ndarray（per-bin）
+            alpha_g_override: 對稱平滑 alpha_g 的 per-bin 覆蓋值（V4 wind handler 使用）
+            alpha_attack_override: 非對稱 attack 的 per-bin 覆蓋值
+            alpha_decay_override: 非對稱 decay 的 per-bin 覆蓋值
 
         返回:
             gain: 增益 (n_freqs,)
         """
-        g_min_effective = g_min if g_min is not None else self.g_min
-        log_g_min_effective = np.log(g_min_effective + 1e-10)
+        # g_min 支援 scalar 或 per-bin array（V4 FreqAdaptiveController 輸出為 array）
+        if g_min is None:
+            g_min_effective = self.g_min
+        else:
+            g_min_effective = g_min
+        log_g_min_effective = np.log(np.asarray(g_min_effective) + 1e-10)
 
         # 基礎 MMSE 增益
         gain_mmse = self._mmse_gain_base(xi, gamma)
@@ -109,20 +129,37 @@ class MmseLsaGainCalculator:
         if self.log_gain_prev is not None:
             if self.use_asymmetric_smoothing:
                 # Attack 快 / Decay 慢
+                alpha_attack_eff = (alpha_attack_override
+                                    if alpha_attack_override is not None
+                                    else self.alpha_attack)
+                alpha_decay_eff = (alpha_decay_override
+                                   if alpha_decay_override is not None
+                                   else self.alpha_decay)
                 alpha_effective = np.where(
                     log_gain > self.log_gain_prev,
-                    self.alpha_attack,
-                    self.alpha_decay,
+                    alpha_attack_eff,
+                    alpha_decay_eff,
                 )
                 log_gain = alpha_effective * self.log_gain_prev + (1 - alpha_effective) * log_gain
             else:
-                log_gain = self.alpha_g * self.log_gain_prev + (1 - self.alpha_g) * log_gain
+                alpha_g_eff = (alpha_g_override if alpha_g_override is not None
+                               else self.alpha_g)
+                log_gain = alpha_g_eff * self.log_gain_prev + (1 - alpha_g_eff) * log_gain
 
         # 轉回線性域
         gain = np.exp(log_gain)
 
         # 限制範圍
         gain = np.clip(gain, g_min_effective, 1.0)
+
+        # V4 SPP-protected floor：語音 bin（spp > threshold）強制 gain >= 保護下限，
+        # 避免 wind handler 的激進 g_min 誤壓語音。
+        if self.spp_protect_floor is not None:
+            gain = np.where(
+                spp > self.spp_protect_threshold,
+                np.maximum(gain, self.spp_protect_floor),
+                gain,
+            )
 
         # 保存對數域增益
         self.log_gain_prev = np.log(gain + 1e-10)

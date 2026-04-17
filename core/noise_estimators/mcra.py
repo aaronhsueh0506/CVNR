@@ -125,19 +125,20 @@ class McraNoiseEstimator:
         self,
         magnitude: np.ndarray,
         is_speech: Optional[bool] = None,  # 保持接口兼容（MCRA 內部判斷，忽略此參數）
-        spp: Optional[np.ndarray] = None   # v2.0: 支持外部 SPP（軟判決）
+        spp: Optional[np.ndarray] = None,  # v2.0: 支持外部 SPP（軟判決）
+        wind_severity: str = 'none',       # V4: 風聲嚴重度 ('none'/'mild'/'severe')
     ) -> np.ndarray:
         """
         MCRA 噪聲估計更新
 
-        v2.0: 支持外部 SPP 軟判決
-        - 若傳入 spp 參數，使用外部 SPP 取代內部 SPP 進行噪聲更新
-        - 仍會計算內部 SPP（用於最小值追蹤），但更新時使用外部 SPP
-
         參數:
             magnitude: 當前幀的幅度譜 (n_freqs,)
             is_speech: 忽略，MCRA 使用 SPP 判斷
-            spp: 外部 SPP 值 (n_freqs,)，可選。若提供則用於噪聲更新門控
+            spp: 外部 SPP 值 (n_freqs,)，可選
+            wind_severity: V4 風聲嚴重度，severe 時啟用 fast tracking：
+                - effective_alpha_s = 0.85（原 alpha_s ~0.95，減少平滑讓噪聲更新更快）
+                - 低頻段（<300Hz）強制 tilde_alpha_d=0.5 快速學進風聲
+              只影響當前幀計算，不污染 self.alpha_s 等持久狀態
 
         返回:
             noise_psd: 更新後的噪聲功率譜密度 (n_freqs,)
@@ -145,12 +146,15 @@ class McraNoiseEstimator:
         if not self.is_initialized:
             raise RuntimeError("Noise estimator not initialized. Call estimate() first.")
 
+        # V4: severe 風聲時降低 alpha_s（區域變數，不改 self.alpha_s 避免 state leak）
+        effective_alpha_s = 0.85 if wind_severity == 'severe' else self.alpha_s
+
         # 1. 計算當前幀的功率譜
         power = magnitude ** 2
 
         # 2. 時間平滑
         # S(k,l) = α_s·S(k,l-1) + (1-α_s)·|Y(k,l)|²
-        self.S = self.alpha_s * self.S + (1 - self.alpha_s) * power
+        self.S = effective_alpha_s * self.S + (1 - effective_alpha_s) * power
 
         # 3. 更新最小值緩衝區（FIFO 滾動）
         self.min_buffer = np.roll(self.min_buffer, -1, axis=0)
@@ -213,6 +217,17 @@ class McraNoiseEstimator:
         # 當 SPP 高（語音段）時，α̃_d 接近 1，噪聲更新慢
         # 當 SPP 低（噪聲段）時，α̃_d 接近 α_d，噪聲更新快
         tilde_alpha_d = self.alpha_d + (1 - self.alpha_d) * spp_for_update
+
+        # V4: severe 風聲時低頻段強制 fast tracking
+        if wind_severity == 'severe':
+            # 假設 16kHz + fft_size=512 → freq_per_bin=31.25Hz，300Hz ≈ bin 10
+            # 這裡用 magnitude 長度推回 fft_size（n_freqs = fft_size//2 + 1）
+            n_freqs = len(power)
+            fft_size_approx = (n_freqs - 1) * 2
+            # 假設 sample_rate=16000；若未來需支援其他 sr，應由外部傳入
+            low_freq_end_bin = max(1, int(300.0 * fft_size_approx / 16000.0))
+            tilde_alpha_d = tilde_alpha_d.copy() if hasattr(tilde_alpha_d, 'copy') else np.full(n_freqs, tilde_alpha_d)
+            tilde_alpha_d[:low_freq_end_bin] = 0.5
 
         # N(k,l) = α̃_d·N(k,l-1) + (1-α̃_d)·|Y(k,l)|²
         self.noise_psd = tilde_alpha_d * self.noise_psd + (1 - tilde_alpha_d) * power

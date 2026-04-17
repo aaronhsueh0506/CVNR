@@ -46,7 +46,8 @@ class SppEstimator:
         Y_psd: np.ndarray,
         noise_psd: np.ndarray,
         gain_prev: Optional[np.ndarray] = None,
-        enhanced_psd_prev: Optional[np.ndarray] = None
+        enhanced_psd_prev: Optional[np.ndarray] = None,
+        alpha_override: Optional[np.ndarray] = None,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         估計 SPP
@@ -82,9 +83,11 @@ class SppEstimator:
             # noise_psd_prev 為 None 時（理論上不應發生，保險起見），降級到當前幀
             noise_for_dd = self.noise_psd_prev if self.noise_psd_prev is not None else noise_psd
 
+            # V4: 支援 alpha_override 讓 FreqAdaptiveController 頻段自適應
+            alpha_effective = alpha_override if alpha_override is not None else self.alpha
             xi_dd_term1 = enhanced_psd_prev / (noise_for_dd + 1e-10)
-            xi_dd = self.alpha * xi_dd_term1 + \
-                    (1 - self.alpha) * np.maximum(gamma - 1, 0)
+            xi_dd = alpha_effective * xi_dd_term1 + \
+                    (1 - alpha_effective) * np.maximum(gamma - 1, 0)
             xi = np.maximum(xi_dd, self.xi_min)
 
         # 3. 計算對數似然比
