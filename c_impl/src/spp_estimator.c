@@ -28,6 +28,7 @@ struct SppEstimator {
     // State arrays [n_freqs]
     float* xi_prev;     // Previous frame a priori SNR
     float* gamma_prev;  // Previous frame a posteriori SNR
+    float* noise_psd_prev;  // Previous frame noise PSD (for DD xi_dd_term1)
 
     bool is_initialized;
     int frame_count;
@@ -41,15 +42,23 @@ SppEstimator* spp_create(int n_freqs, const MmseLsaConfig* config) {
 
     self->n_freqs = n_freqs;
     self->alpha = config->alpha_xi;
-    self->q = config->q;
+    // Fix #9: clip q to (eps, 1-eps) so prior_ratio is well defined
+    {
+        const float _eps = 1e-6f;
+        float q_clipped = config->q;
+        if (q_clipped < _eps) q_clipped = _eps;
+        if (q_clipped > 1.0f - _eps) q_clipped = 1.0f - _eps;
+        self->q = q_clipped;
+        self->prior_ratio = (1.0f - q_clipped) / q_clipped;
+    }
     self->xi_min = powf(10.0f, config->xi_min_db / 10.0f);
-    self->prior_ratio = (1.0f - self->q) / (self->q + 1e-10f);
 
     // Allocate state arrays
     self->xi_prev = (float*)calloc(n_freqs, sizeof(float));
     self->gamma_prev = (float*)calloc(n_freqs, sizeof(float));
+    self->noise_psd_prev = (float*)calloc(n_freqs, sizeof(float));
 
-    if (!self->xi_prev || !self->gamma_prev) {
+    if (!self->xi_prev || !self->gamma_prev || !self->noise_psd_prev) {
         spp_destroy(self);
         return NULL;
     }
@@ -107,6 +116,7 @@ void spp_destroy(SppEstimator* self) {
 
     if (self->xi_prev) free(self->xi_prev);
     if (self->gamma_prev) free(self->gamma_prev);
+    if (self->noise_psd_prev) free(self->noise_psd_prev);
 
     free(self);
 }
@@ -128,6 +138,11 @@ void spp_estimate(
     float xi_min = self->xi_min;
     float prior_ratio = self->prior_ratio;
 
+    // Fix #3: DD xi_dd_term1 should use previous frame's noise_psd.
+    // On the first DD call (after one estimate()), noise_psd_prev already holds
+    // the prior frame's noise; if not yet populated, fall back to current noise.
+    const float* noise_for_dd = self->is_initialized ? self->noise_psd_prev : noise_psd;
+
     for (int k = 0; k < n_freqs; k++) {
         // 1. Calculate a posteriori SNR
         // γ = |Y|² / λ_n
@@ -140,11 +155,11 @@ void spp_estimate(
             // First frame: direct estimate
             xi = gamma > 1.0f ? gamma - 1.0f : 0.0f;
         } else {
-            // DD method: ξ = α·|X̂_{n-1}|²/λ_n + (1-α)·max(γ-1, 0)
+            // DD method: ξ = α·|X̂_{n-1}|²/λ_n_prev + (1-α)·max(γ-1, 0)
             float xi_dd_term1;
             if (enhanced_psd_prev != NULL) {
                 // Use provided enhanced PSD (recommended)
-                xi_dd_term1 = enhanced_psd_prev[k] / (noise_psd[k] + 1e-10f);
+                xi_dd_term1 = enhanced_psd_prev[k] / (noise_for_dd[k] + 1e-10f);
             } else {
                 // Fallback: use gain²·γ_prev approximation
                 float g2 = gain_prev[k] * gain_prev[k];
@@ -174,6 +189,9 @@ void spp_estimate(
         self->gamma_prev[k] = gamma;
     }
 
+    // Fix #3: save current noise_psd for next frame's DD term
+    memcpy(self->noise_psd_prev, noise_psd, n_freqs * sizeof(float));
+
     self->is_initialized = true;
     self->frame_count++;
 }
@@ -183,6 +201,7 @@ void spp_reset(SppEstimator* self) {
 
     memset(self->xi_prev, 0, self->n_freqs * sizeof(float));
     memset(self->gamma_prev, 0, self->n_freqs * sizeof(float));
+    memset(self->noise_psd_prev, 0, self->n_freqs * sizeof(float));
 
     self->is_initialized = false;
     self->frame_count = 0;
@@ -211,6 +230,9 @@ void spp_estimate_ex(
     float xi_min = self->xi_min;
     float prior_ratio = self->prior_ratio;
 
+    // Fix #3: DD xi_dd_term1 uses previous frame's noise_psd
+    const float* noise_for_dd = self->is_initialized ? self->noise_psd_prev : noise_psd;
+
     for (int k = 0; k < n_freqs; k++) {
         // 1. Calculate a posteriori SNR
         float gamma = Y_psd[k] / (noise_psd[k] + 1e-10f);
@@ -223,7 +245,7 @@ void spp_estimate_ex(
         } else {
             float xi_dd_term1;
             if (enhanced_psd_prev != NULL) {
-                xi_dd_term1 = enhanced_psd_prev[k] / (noise_psd[k] + 1e-10f);
+                xi_dd_term1 = enhanced_psd_prev[k] / (noise_for_dd[k] + 1e-10f);
             } else {
                 float g2 = gain_prev[k] * gain_prev[k];
                 xi_dd_term1 = g2 * self->gamma_prev[k];
@@ -252,6 +274,9 @@ void spp_estimate_ex(
         self->xi_prev[k] = xi;
         self->gamma_prev[k] = gamma;
     }
+
+    // Fix #3: save current noise_psd for next frame's DD term
+    memcpy(self->noise_psd_prev, noise_psd, n_freqs * sizeof(float));
 
     self->is_initialized = true;
     self->frame_count++;
