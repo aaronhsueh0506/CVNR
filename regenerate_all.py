@@ -128,6 +128,11 @@ def get_denoiser_params_from_config(config, sr, fft_size):
                 params['alpha_attack'] = gc['alpha_attack']
             if 'alpha_decay' in gc:
                 params['alpha_decay'] = gc['alpha_decay']
+            # V4: SPP-protected floor
+            if 'spp_protect_floor_db' in gc:
+                params['spp_protect_floor_db'] = gc['spp_protect_floor_db']
+            if 'spp_protect_threshold' in gc:
+                params['spp_protect_threshold'] = gc['spp_protect_threshold']
         # V3-3 (PMMSE - Wolfe & Godsill β=0.5)
         elif gc.get('method') == 'pmmse':
             params.update({
