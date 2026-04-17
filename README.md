@@ -1402,13 +1402,27 @@ MIT License
 | BALANCED（預設） | -15 dB | 平衡降噪與語音品質 |
 | AGGRESSIVE | -20 dB | 強力抑噪，適合高噪環境 |
 
-### 品質指標（V3-2 MMSE-LSA, Balanced 模式, 混合噪聲平均）
+### 品質指標（V3-2 OMLSA, Balanced 模式）
+
+**test_wav 混合噪聲平均**（歷史 Optuna 調參結果）：
 
 | 指標 | 數值 |
 |------|------|
 | PESQ | 1.738 |
 | STOI | 0.859 |
 | segSNR 改善 | +5.12 dB |
+
+**v4.2.1 VCTK/DEMAND 824 檔平均**（C-aligned 版本）：
+
+| 指標 | Noisy | Enhanced | Delta |
+|------|-------|----------|-------|
+| PESQ | 1.973 | **2.391** | +0.418 |
+| STOI | 0.921 | 0.906 | −0.015 |
+| segSNR 改善 | - | - | +4.21 dB |
+| fwSegSNR 改善 | - | - | +1.22 |
+| LSD | 16.86 | 14.68 | −2.18 |
+
+> v4.2.1 vs v4.2.0（pre-align）差異：PESQ −0.019、STOI −0.008、LSD +1.46。退步來自 3-segment E1 近似（與 C `exp1_approx` bit-exact 對齊的代價）。需要高精度時設 `core.gain_calculators.mmse_lsa.USE_SCIPY_EXP1 = True`。
 
 ---
 
