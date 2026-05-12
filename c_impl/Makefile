@@ -105,7 +105,6 @@ BIN_DIR = bin
 
 # Source files (gain calculation merged into mmse_lsa_denoiser.c)
 SRCS = $(SRC_DIR)/mmse_lsa_denoiser.c \
-       $(SRC_DIR)/mmse_lsa_freq_denoiser.c \
        $(SRC_DIR)/mcra_noise_estimator.c \
        $(SRC_DIR)/spp_estimator.c \
        $(FFT_SRC)

@@ -1,161 +1,109 @@
 /**
- * mmse_lsa_denoiser.h - MMSE-LSA Denoiser Main API
+ * mmse_lsa_denoiser.h - MMSE-LSA Denoiser API (Frequency-Domain I/O)
  *
- * V3-2 MMSE-LSA Speech Denoiser
- * Streaming by hop_size (frame_shift)
+ * V3-2 MMSE-LSA Speech Denoiser — freq-domain variant.
+ * Caller owns FFT / IFFT / windowing / OLA.
+ * Input and output are complex spectra: Complex[n_freqs] per hop.
  *
- * Based on Ephraim-Malah 1985
+ * Drop-in replacement for the time-domain variant on branch feature/static-memory:
+ *   - All function and type names are identical.
+ *   - Only mmse_lsa_process() signature changes: float* -> Complex*.
+ *   - mmse_lsa_process_ex() is removed (not applicable in freq domain).
+ *   - get_hop_size / get_frame_size / get_latency return config values
+ *     for callers that query them; they carry no framing responsibility here.
+ *
+ * Based on Ephraim-Malah 1985.
  */
 
 #ifndef MMSE_LSA_DENOISER_H
 #define MMSE_LSA_DENOISER_H
 
 #include "mmse_lsa_types.h"
+#include "fft_wrapper.h"    /* Complex type, fft_power, fft_apply_gain */
 #include <stddef.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// Opaque denoiser structure
+/* Opaque denoiser handle */
 typedef struct MmseLsaDenoiser MmseLsaDenoiser;
 
-// ============================================================================
-// Core API
-// ============================================================================
+/* ============================================================================
+ * Core API
+ * ========================================================================== */
 
 /**
- * Create MMSE-LSA denoiser (malloc version)
- *
- * @param config Configuration parameters
- * @return Denoiser instance, or NULL on error
+ * Create denoiser (heap allocation).
  */
 MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config);
 
 /**
- * Initialize denoiser in pre-allocated memory (static version)
+ * Initialize denoiser in pre-allocated memory (static / embedded).
  *
- * @param mem Pre-allocated buffer (16-byte aligned)
- * @param mem_size Size of buffer in bytes
- * @param config Configuration parameters
- * @return Denoiser instance, or NULL if mem_size too small
+ * @param mem       16-byte aligned buffer
+ * @param mem_size  Must be >= mmse_lsa_get_mem_size(config)
  */
-MmseLsaDenoiser* mmse_lsa_init(void* mem, size_t mem_size, const MmseLsaConfig* config);
+MmseLsaDenoiser* mmse_lsa_init(void* mem, size_t mem_size,
+                                const MmseLsaConfig* config);
 
-/**
- * Get memory required for mmse_lsa_init()
- */
+/** Required buffer size for mmse_lsa_init(). */
 size_t mmse_lsa_get_mem_size(const MmseLsaConfig* config);
 
-/**
- * Destroy denoiser and free all resources (no-op if created via mmse_lsa_init)
- */
+/** Destroy and free (no-op if created via mmse_lsa_init). */
 void mmse_lsa_destroy(MmseLsaDenoiser* self);
 
 /**
- * Process hop_size samples (streaming core)
+ * Process one FFT frame (frequency-domain I/O).
  *
- * Input:  samples_in[hop_size]  - New input samples
- * Output: samples_out[hop_size] - Processed output samples
+ * Caller is responsible for windowing, forward FFT, inverse FFT, and OLA.
+ * May be called in-place (spectrum_out == spectrum_in).
  *
- * Note: First few calls may output silence while initializing
- *
- * @param self Denoiser instance
- * @param samples_in Input samples [hop_size]
- * @param samples_out Output samples [hop_size]
+ * @param self         Denoiser instance
+ * @param spectrum_in  Complex input  [n_freqs]  — caller's FFT output
+ * @param spectrum_out Complex output [n_freqs]  — NR gain applied
  * @return 0 on success, <0 on error
  */
-int mmse_lsa_process(
-    MmseLsaDenoiser* self,
-    const float* samples_in,
-    float* samples_out
-);
+int mmse_lsa_process(MmseLsaDenoiser* self,
+                     const Complex*   spectrum_in,
+                     Complex*         spectrum_out);
 
-/**
- * Extended process with optional external inputs
- *
- * Pass NULL for internal computation, or provide external values to save computation
- *
- * @param self Denoiser instance
- * @param samples_in Input samples [hop_size]
- * @param samples_out Output samples [hop_size]
- * @param noise_psd_ext External noise PSD [n_freqs] or NULL
- * @param spp_ext External SPP [n_freqs] or NULL
- * @param xi_ext External a priori SNR [n_freqs] or NULL
- * @param gamma_ext External a posteriori SNR [n_freqs] or NULL
- * @return 0 on success, <0 on error
- */
-int mmse_lsa_process_ex(
-    MmseLsaDenoiser* self,
-    const float* samples_in,
-    float* samples_out,
-    const float* noise_psd_ext,
-    const float* spp_ext,
-    const float* xi_ext,
-    const float* gamma_ext
-);
-
-/**
- * Reset denoiser state (call when switching audio streams)
- */
+/** Reset all internal state (call when switching audio streams). */
 void mmse_lsa_reset(MmseLsaDenoiser* self);
 
-// ============================================================================
-// Query API
-// ============================================================================
+/* ============================================================================
+ * Query API
+ * ========================================================================== */
 
-/**
- * Get hop size (samples per process call)
- */
+/** hop_size from config (samples; for caller reference only). */
 int mmse_lsa_get_hop_size(const MmseLsaDenoiser* self);
 
-/**
- * Get frame size in samples
- */
+/** frame_size from config (samples; for caller reference only). */
 int mmse_lsa_get_frame_size(const MmseLsaDenoiser* self);
 
-/**
- * Get number of frequency bins
- */
+/** Number of frequency bins (fft_size/2 + 1). */
 int mmse_lsa_get_n_freqs(const MmseLsaDenoiser* self);
 
 /**
- * Get latency in samples (due to OLA and initialization)
+ * Algorithmic latency in samples.
+ * Freq-domain NR itself has zero latency; returns 0.
+ * Caller's IFFT+OLA adds frame_size latency — caller accounts for that.
  */
 int mmse_lsa_get_latency(const MmseLsaDenoiser* self);
 
-/**
- * Check if noise estimation is initialized
- */
+/** True once the noise estimator has completed its init frames. */
 bool mmse_lsa_is_initialized(const MmseLsaDenoiser* self);
 
-/**
- * Get current SPP (for visualization)
- *
- * @param self Denoiser instance
- * @param n_freqs Output: number of frequency bins
- * @return Pointer to SPP array [n_freqs], or NULL if not available
- */
+/** Current Speech Presence Probability per bin [n_freqs]. */
 const float* mmse_lsa_get_spp(const MmseLsaDenoiser* self, int* n_freqs);
 
-/**
- * Get current noise PSD (for visualization)
- *
- * @param self Denoiser instance
- * @param n_freqs Output: number of frequency bins
- * @return Pointer to noise PSD array [n_freqs], or NULL if not available
- */
+/** Current noise PSD estimate (power units) [n_freqs]. */
 const float* mmse_lsa_get_noise_psd(const MmseLsaDenoiser* self, int* n_freqs);
 
 /**
- * Get current per-bin gain (for pipeline integration)
- *
- * Returns the most recent MMSE-LSA gain applied to each frequency bin.
+ * Most recent per-bin MMSE-LSA gain (linear, [g_min, 1]) [n_freqs].
  * Valid after at least one frame has been processed.
- *
- * @param self Denoiser instance
- * @param n_freqs Output: number of frequency bins (optional, may be NULL)
- * @return Pointer to gain array [n_freqs], or NULL if not available
  */
 const float* mmse_lsa_get_gain(const MmseLsaDenoiser* self, int* n_freqs);
 
@@ -163,4 +111,4 @@ const float* mmse_lsa_get_gain(const MmseLsaDenoiser* self, int* n_freqs);
 }
 #endif
 
-#endif // MMSE_LSA_DENOISER_H
+#endif /* MMSE_LSA_DENOISER_H */
