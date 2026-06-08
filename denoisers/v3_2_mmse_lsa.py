@@ -188,7 +188,8 @@ class MmseLsaDenoiser(BaseDenoiser):
         noisy_magnitude: np.ndarray,
         noisy_phase: np.ndarray,
         return_spp: bool = False,
-        return_gain: bool = False
+        return_gain: bool = False,
+        extra_noise_psd: np.ndarray = None
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         在頻域進行降噪
@@ -254,6 +255,13 @@ class MmseLsaDenoiser(BaseDenoiser):
 
             # 正常處理
             noise_psd = self.noise_estimator.noise_psd
+            # Echo-aware joint gain: fold the AEC residual-echo PSD R²(f) into the
+            # noise floor THIS frame (a priori SNR ξ = S²/(N²+R²)) so the single
+            # MMSE-LSA gain suppresses noise + residual echo per-bin. Does NOT
+            # pollute the MCRA estimator's internal noise_psd (numpy + makes a
+            # fresh array); update() below still tracks true noise.
+            if extra_noise_psd is not None:
+                noise_psd = noise_psd + extra_noise_psd[i]
             spp, xi, gamma = self.spp_estimator.estimate(
                 Y_psd,
                 noise_psd,
