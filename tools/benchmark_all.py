@@ -68,9 +68,9 @@ class BenchmarkRunner:
         return {
             'V1': SpectralSubtractionDenoiser(sample_rate=self.sample_rate),
             'V2': WienerDenoiser(sample_rate=self.sample_rate, enable_noise_tracking=True),
-            'V3': SppMmseDenoiser(sample_rate=self.sample_rate, enable_noise_tracking=True),
-            'V3-2': MmseLsaDenoiser(sample_rate=self.sample_rate, enable_noise_tracking=True),
-            'V3-3': PmmseDenoiser(sample_rate=self.sample_rate, enable_noise_tracking=True),
+            'V3': SppMmseDenoiser(sample_rate=self.sample_rate),
+            'V3-2': MmseLsaDenoiser(sample_rate=self.sample_rate),
+            'V3-3': PmmseDenoiser(sample_rate=self.sample_rate),
             # V3-4 removed (test results not better than V3-2)
             # V4 merged to V3-2 (same implementation with optimized parameters)
         }
