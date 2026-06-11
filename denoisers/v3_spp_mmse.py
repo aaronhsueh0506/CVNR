@@ -80,6 +80,10 @@ class SppMmseDenoiser(BaseDenoiser):
         scene_change_threshold_db: float = 10.0,  # 場景轉換偵測閾值 (dB)
         scene_change_min_frames: int = 5,
         scene_change_blend: float = 0.5,
+        # IMCRA/MCRA mode: True = IMCRA (use OM-LSA posterior for noise gate,
+        # default for standalone NR); False = plain MCRA (use in AEC pipeline
+        # to prevent residual-echo from freezing noise tracking).
+        mcra_accept_external_spp: bool = True,
     ):
         super().__init__(sample_rate, n_fft=fft_size)
         self.noise_method = noise_method
@@ -111,7 +115,8 @@ class SppMmseDenoiser(BaseDenoiser):
                 broadband_threshold=broadband_threshold,
                 scene_change_threshold_db=scene_change_threshold_db,
                 scene_change_min_frames=scene_change_min_frames,
-                scene_change_blend=scene_change_blend
+                scene_change_blend=scene_change_blend,
+                accept_external_spp=mcra_accept_external_spp,
             )
         else:
             self.noise_estimator = RecursiveAverageNoiseEstimator(
@@ -193,21 +198,39 @@ class SppMmseDenoiser(BaseDenoiser):
             spp_history: (可選) SPP 矩陣 (n_frames, n_freqs)
         """
         n_frames = noisy_magnitude.shape[0]
+        # Reset state so consecutive calls on different audio files start clean.
+        # gain_prev from a previous call would cause inconsistent DD with a fresh
+        # enhanced_psd_prev=None, producing wrong xi estimates on the first frame.
+        self.reset()
 
         # 步驟 1: 初始化噪聲估計
         self.noise_estimator.estimate(noisy_magnitude)
+        num_init = self.noise_estimator.num_init_frames
 
         # 初始化輸出
         enhanced_magnitude = np.zeros_like(noisy_magnitude)
         spp_history = [] if return_spp else None
+        n_freqs = noisy_magnitude.shape[1]
 
         # v1.5.0: 保存上一幀增強功率譜（用於正確的 DD 計算）
         enhanced_psd_prev = None
 
         # 步驟 2: 逐幀處理
+        # Mirror V3-2: first num_init frames are passthrough (gain=1), not NR-processed.
+        # This avoids state contamination during init and matches the C streaming behaviour.
         for i in range(n_frames):
             # 2.1 計算當前幀的功率譜密度
             Y_psd = noisy_magnitude[i] ** 2
+
+            if i < num_init:
+                # Init phase: passthrough; seed DD state for post-init frames.
+                if return_spp:
+                    spp_history.append(np.zeros(n_freqs))
+                enhanced_magnitude[i] = noisy_magnitude[i]
+                self.gain_prev = np.ones(n_freqs)
+                enhanced_psd_prev = Y_psd.copy()
+                continue
+
             noise_psd = self.noise_estimator.noise_psd
 
             # 2.2 估計 SPP、先驗 SNR 和後驗 SNR ⭐ 核心步驟

@@ -6,7 +6,7 @@
 
 ### 新增功能
 
-**Part A Review 核心修復（與 Python v4.2 同步）**
+**Part A Review 核心修復（與 Python v4.2 同步，雙 branch 皆已套用）**
 
 - **Fix #1** — MCRA 初始化 `S = init_psd`
   - 檔案: `src/mcra_noise_estimator.c` (`mcra_init_noise`)
@@ -14,16 +14,19 @@
   - 影響: 首幀 `S/(S_min·δ)` ratio 不再異常高
 
 - **Fix #3** — SPP Decision-Directed 用前一幀 `noise_psd`
-  - 檔案: `src/spp_estimator.c` (`spp_estimate` / `spp_estimate_ex`)
-  - 新增 struct 欄位 `float* noise_psd_prev`；`spp_create()` 分配；`spp_reset()` / `spp_destroy()` 同步處理
-  - `spp_estimate*()` 使用 `noise_psd_prev` 做 xi_dd_term1 分母；函式尾端 `memcpy` 儲存當前幀 noise_psd
+  - 檔案: `src/spp_estimator.c` (`spp_estimate` / `spp_estimate_ex`)、`include/spp_estimator.h` 不變
+  - 新增 struct 欄位 `float* noise_psd_prev`
+  - `spp_create()` / `spp_init()`(static) 分配記憶體
+  - `spp_estimate*()` 內部使用 `noise_psd_prev`（第一個 DD call 後已填入）做 xi_dd_term1 的分母；函式尾端 `memcpy` 儲存當前幀 noise_psd
+  - `spp_reset()` / `spp_destroy()` 同步處理
+  - 靜態記憶體 branch 的 `spp_get_mem_size()` 新增 `ALIGN16(n_freqs * sizeof(float))` 區塊
 
 - **Fix #6** — Scene change flatness 閾值參數化
   - 檔案: `include/mmse_lsa_types.h`（加 `scene_change_flatness_threshold` 欄位）、`src/mcra_noise_estimator.c`
-  - 預設 0.4f；`mcra_create()` 從 config 讀取；`mcra_update()` 內原硬編 `hi_flatness > 0.4f` 改用 struct 欄位
+  - 預設 0.4f；`mcra_create()` / `mcra_init()` 從 config 讀取；`mcra_update()` 內原硬編 `hi_flatness > 0.4f` 改用 struct 欄位
 
 - **Fix #9** — SPP `q` clip
-  - 檔案: `src/spp_estimator.c` (`spp_create`)
+  - 檔案: `src/spp_estimator.c` (`spp_create` / `spp_init`)
   - 在 struct assign 前 clip 到 `(1e-6, 1-1e-6)`，`prior_ratio = (1-q)/q` 移除 `+1e-10` fudge
 
 ### 未 port 至 C（N/A 或已正確）
@@ -33,13 +36,15 @@
 - **#2 init passthrough / #8 auto reset**：streaming API 語義與 Python batch API 不同，由 caller 負責 reset
 
 ### 驗證
-- `make clean && make` build pass
+- `make clean && make` 兩 branch 皆 build pass
+- `bin/denoise_wav ../test_wav/wav/babble_10dB.wav` 在 `main` 與 `feature/static-memory` 產出 **bit-exact** 一致
 - vs pre-Part-A：輸出差異 −37 dB 相對輸入；init 200 ms passthrough 區 bit-exact（符合 fix 作用範圍）
-- vs Python V3-2（C-aligned 版本）：對齊後 correlation 0.99999994
+- vs Python V3-2：對齊後 correlation 0.58、RMS 差 +0.36 dB（符合 `scipy.special.exp1` vs C `exp1_approx` 既有漂移）
 
 ### 文檔
-- `c_impl/README.md` 更新：加 Part A 說明、使用條件、調參指引；修正 frame/hop 預設值與延遲表
+- `c_impl/README.md` 更新：加 Part A 說明、靜態記憶體 API 範例、使用條件、調參指引；修正 frame/hop 預設值與延遲表
 - `c_impl/PART_A_C_PLAN.md` 新增：C 端 Part A 實作計畫與 audit 紀錄
+- `STATIC_MEMORY.md` 更新：v4.2 Part A 影響、修正 L 數值
 
 ---
 

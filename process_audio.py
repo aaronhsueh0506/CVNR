@@ -158,17 +158,28 @@ def create_denoiser_from_config(
         gain_config = config.get('gain_calculation', {})
         noise_config = config.get('noise_estimation', {})
 
-        return WienerDenoiser(
-            sample_rate=sample_rate,
-            frame_size=frame_size,
-            frame_shift=frame_shift,
-            fft_size=fft_size,
-            alpha=noise_config.get('alpha', 0.95),
-            min_gain=gain_config.get('min_gain', 0.01),
-            alpha_smooth=gain_config.get('alpha_smooth', 0.8),
-            num_init_frames=noise_config.get('num_init_frames', 20),
-            update_during_speech=noise_config.get('update_during_speech', False)
-        )
+        ne_method = noise_config.get('method', 'recursive_average')
+        v2_params = {
+            'sample_rate': sample_rate,
+            'frame_size': frame_size,
+            'frame_shift': frame_shift,
+            'fft_size': fft_size,
+            'noise_method': ne_method,
+            'alpha': noise_config.get('alpha', 0.95),
+            'min_gain': gain_config.get('min_gain', 0.01),
+            'alpha_smooth': gain_config.get('alpha_smooth', 0.8),
+            'num_init_frames': noise_config.get('num_init_frames', 20),
+            'update_during_speech': noise_config.get('update_during_speech', False),
+        }
+        if ne_method == 'mcra':
+            v2_params.update({
+                'alpha_s': noise_config.get('alpha_s', 0.9),
+                'alpha_d': noise_config.get('alpha_d', 0.85),
+                'alpha_p': noise_config.get('alpha_p', 0.2),
+                'L': noise_config.get('L', 96),
+                'delta_db': noise_config.get('delta_db', 5.0),
+            })
+        return WienerDenoiser(**v2_params)
 
     elif version == 'V3':
         # V3: SPP-MMSE
@@ -248,7 +259,9 @@ def create_denoiser_from_config(
                 'broadband_threshold': noise_config.get('broadband_threshold', 0.8),
                 'scene_change_threshold_db': noise_config.get('scene_change_threshold_db', 10.0),
                 'scene_change_min_frames': noise_config.get('scene_change_min_frames', 5),
-                'scene_change_blend': noise_config.get('scene_change_blend', 0.5)
+                'scene_change_blend': noise_config.get('scene_change_blend', 0.5),
+                'scene_change_flatness_threshold': noise_config.get('scene_change_flatness_threshold', 0.4),
+                'mcra_accept_external_spp': noise_config.get('mcra_accept_external_spp', True),
             })
         else:
             params.update({
@@ -256,11 +269,10 @@ def create_denoiser_from_config(
                 'alpha_noise': noise_config.get('alpha', 0.95)
             })
 
-
         return MmseLsaDenoiser(**params)
 
     elif version == 'V3-3':
-        # V3-3: PMMSE (Loizou 2005)
+        # V3-3: PMMSE (Wolfe & Godsill β=0.5)
         spp_config = config.get('spp', {})
         gain_config = config.get('gain_calculation', {})
         noise_config = config.get('noise_estimation', {})
@@ -544,8 +556,8 @@ def process_audio_file(
         if result.get('spp_matrix') is not None:
             try:
                 spp_output_path = os.path.join(output_dir, f"{basename}_{version.lower()}_spp.png")
-                # 計算 hop_length（幀移的採樣點數）
-                hop_length = int(sample_rate * 10 / 1000)  # 默認 10ms 幀移
+                # Use the actual frame_shift, not a hardcoded 10ms default.
+                hop_length = frame_shift
                 plot_spp_spectrogram(
                     result['spp_matrix'],
                     spp_output_path,

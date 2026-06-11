@@ -126,9 +126,13 @@ class Reconstructor:
         # 初始化輸出
         output = np.zeros(output_length)
 
-        # Overlap-Add with sqrt(Hann) synthesis window
-        # sqrt(Hann) × sqrt(Hann) + 50% overlap = 自動能量守恆
-        # 不需要手動歸一化！
+        # Overlap-Add with sqrt(Hann) synthesis window.
+        # sqrt(Hann) × sqrt(Hann) + 50% overlap satisfies COLA — no manual norm needed.
+        # This holds ONLY for 50% overlap; other hop sizes require explicit COLA norm.
+        assert self.frame_shift * 2 == frame_size, (
+            f"COLA property requires 50% overlap; got frame_shift={self.frame_shift}, "
+            f"frame_size={frame_size}"
+        )
         for i, frame in enumerate(frames):
             start = i * self.frame_shift
             end = start + frame_size

@@ -6,11 +6,11 @@
 
 > **⚠️ v4.2 release 重要聲明**
 >
-> 本文檔保留了歷史各版本演進脈絡（v1.x–v2.x）供參考。**Release 主推演算法**為 **V3-2 OMLSA**（MMSE-LSA + Bayesian SPP + MCRA），經 Part A Review 11 項修復，Python 與 C 皆已同步。
+> 本文檔保留了歷史各版本演進脈絡（v1.x–v2.x）供參考。**Release 主推演算法**為 **V3-2 OMLSA**（MMSE-LSA + Bayesian SPP + IMCRA），經 Part A Review 11 項修復，Python 與 C 皆已同步（雙 branch：`main` = malloc；`feature/static-memory` = 靜態記憶體）。
 >
 > **V4 新版本**（`denoisers/v4_omlsa.py` + `core/wind_detector.py` 等）**不是**本文件下方「V4: IMCRA-OMLSA」章節所描述的舊 V4。現行 V4 是「OMLSA + Wind Handler research 框架」，VCTK/DEMAND 驗證**未能改善**風聲場景，**不建議 release 使用**。詳見 [README.md](README.md) 與 `results/v4_diagnosis_report.md`。
 >
-> 下方舊 V4 章節的歷史內容（IMCRA + 對數域平滑）**仍是 V3-2 + MCRA 內部設計基礎**，可作為理解 OMLSA 的技術參考，但**命名與參數不再對應現行 V4**。
+> 下方舊 V4 章節的歷史內容（IMCRA + 對數域平滑）**仍是 V3-2 + IMCRA 內部設計基礎**，可作為理解 OMLSA 的技術參考，但**命名與參數不再對應現行 V4**。
 
 ---
 
@@ -62,7 +62,7 @@
 
 ## v4.2 重大更新 (2026-04-17) — Part A Review 修復
 
-本次 release 套用 Part A Review 11 項修復，同步至 Python + C：
+本次 release 套用 Part A Review 11 項修復，同步至 Python + C（`main` / `feature/static-memory` 雙 branch）：
 
 | Fix | 項目 | 影響模組 |
 |-----|------|----------|
@@ -881,7 +881,7 @@ Hu, Y., & Loizou, P. C. (2008). "Evaluation of objective quality measures for sp
 
 > **v4.2 注記**：本章標題所稱「V4 IMCRA-OMLSA」指 v1.5.0 時期的 IMCRA + OMLSA 組合。現行 v4.2 release 的 V4 模組（`denoisers/v4_omlsa.py`）為 **OMLSA + Wind Handler research 框架**，與此章描述不是同一個東西。
 >
-> 本章技術原理（IMCRA 偏移校正、OMLSA 對數域平滑、對照 V3-2 `noise_estimators/mcra.py` 與 `gain_calculators/mmse_lsa.py`）**仍是 V3-2 release 主線背後的設計基礎**，可讀；但**實作層面**以 [V3-2 MMSE-LSA (Log-Spectral Amplitude MMSE)](#v3-2-mmse-lsa) 章節為準。
+> 本章技術原理（IMCRA 偏移校正、OMLSA 對數域平滑）**仍是 V3-2 release 主線背後的設計基礎**，可讀；但**實作層面**以 [V3-2 MMSE-LSA (Log-Spectral Amplitude MMSE)](#v3-2-mmse-lsa) 章節為準。V3-2 的噪聲估計器 `noise_estimators/mcra.py`（`McraNoiseEstimator`）在 `accept_external_spp=True`（預設）下即為 IMCRA；AEC pipeline 設 `mcra_accept_external_spp=False` 改用 plain MCRA。
 
 **v1.5.0 歷史優化紀錄**（對應當時的 V4 config）：
 - 修復音量損失問題（8-10dB → 3-5dB）

@@ -4,6 +4,48 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [4.2.2] - 2026-06-11 · IMCRA 正名 + D2 修復
+
+### 修復 (Fixed)
+
+**噪聲估計器正名：IMCRA（非 plain MCRA）**
+
+V3-2 的噪聲估計器在 v2.0 起實際上即為 IMCRA（Cohen 2003），但一直以 `McraNoiseEstimator` 命名，導致 D2 commit 將其錯誤改回 plain MCRA，造成 VCTK/DEMAND 824 檔 ΔPESQ −0.632（獨立 NR 嚴重退步）。
+
+| 項目 | 內容 |
+|------|------|
+| 根因 | D2 移除外部 OM-LSA posterior SPP 傳入 MCRA noise gate，改用內部 binary ratio-test；IMCRA 設計明確要求兩者耦合（Cohen 2003 Table II） |
+| 差異 | IMCRA posterior 帶 DD 歷史（alpha_xi=0.98），語音邊界不誤更新；plain MCRA 的 indicator 無 SNR 記憶 |
+| AEC pipeline | 殘餘 echo 導致 OM-LSA posterior 在噪聲段被拉高 → AEC context 改用 plain MCRA 保護 |
+
+**具體修改**：
+
+1. **恢復 IMCRA 耦合**（`core/noise_estimators/mcra.py`）
+   - 新增 `accept_external_spp: bool = True` constructor param
+   - `spp_for_update = spp if (accept_external_spp and spp is not None) else self.spp`
+   - 預設 True = IMCRA mode（standalone NR）；False = plain MCRA（AEC pipeline）
+
+2. **透傳 flag**（`denoisers/v3_2_mmse_lsa.py`）
+   - 新增 `mcra_accept_external_spp=True` constructor param，透傳給 `McraNoiseEstimator`
+
+3. **AEC pipeline 使用 plain MCRA**（`Audio_ALG/pipelines/aec_nr_pipeline.py`）
+   - `_build_denoiser()` 加 `mcra_accept_external_spp=False`
+
+4. **命名文件化**（`core/noise_estimators/__init__.py`）
+   - 加 `ImcraNoiseEstimator = McraNoiseEstimator` alias
+
+### 驗證 (Validation)
+
+VCTK/DEMAND **824 檔**完整比較（standalone NR, `v3_2_config.yaml`，6 workers）：
+
+| 配置 | PESQ noisy | PESQ enhanced | ΔPESQ | STOI noisy | STOI enhanced | ΔSTOI |
+|------|-----------|--------------|-------|-----------|--------------|-------|
+| IMCRA mode（此修復後） | 1.967 | 2.145 | +0.178 | 0.921 | 0.851 | −0.070 |
+| plain MCRA mode（D2 regression） | 1.967 | 1.514 | −0.454 | 0.921 | 0.793 | −0.128 |
+| **D2 regression 效應** | — | — | **−0.632** | — | — | **−0.058** |
+
+---
+
 ## [4.2.1] - 2026-04-17 · C-Alignment Release
 
 ### 變更 (Changed)
@@ -85,11 +127,14 @@ Python V3-2 OMLSA 調整為與 C 實作 **bit-exact 對齊**（float32 精度極
 
 **C 實作同步**
 - Part A 4 項核心 fix 已 port 至 `c_impl/` (#1, #3, #6, #9)
-- Build & smoke verified：C build pass，vs pre-fix 輸出差異 −37 dB（符合 fix 作用範圍）
+- `main` branch（malloc）與 `feature/static-memory` branch（靜態記憶體）兩條 branch 完全同步
+- `feature/static-memory` 端 `spp_get_mem_size()` 新增 `noise_psd_prev` 記憶體槽；`spp_init()` / `mcra_init()` 同步 q clip + flatness threshold
+- Build & smoke verified：兩 branch 對同一 wav 產出 bit-exact
 
 **文檔重構**
-- README / c_impl/README / parameter_adjust_guide / ALGORITHMS_EXPLANATION 全數更新
+- README / c_impl/README / parameter_adjust_guide / ALGORITHMS_EXPLANATION / STATIC_MEMORY 全數更新
 - 新增「使用條件」、「調參指引」、「風聲/衝擊等不適用情境」章節
+- STATIC_MEMORY.md 修正 frame/hop/L 數值（原 150 誤植為 L=32）
 - c_impl/README.md 修正 frame_size / hop_size 預設值顯示（原誤為 512/256）
 - 各文件加入 v4.2 版本統一標記；V4 舊/新章節命名衝突已註記
 
@@ -98,8 +143,9 @@ Python V3-2 OMLSA 調整為與 C 實作 **bit-exact 對齊**（float32 精度極
 - `tools/validate_best_config.py` 補齊 `enhanced_psd_prev` 參數（Fix #3 連帶修正）
 
 ### 驗證 (Validation)
-- C pre-fix vs post-fix：輸出差異 −37 dB（相對輸入），init 200 ms passthrough 區完全 bit-exact
-- C post-fix vs Python V3-2（C-aligned）：對齊後 correlation 0.99999994
+- C pre-fix vs post-fix：輸出差異 −37 dB（相對輸入），init 200 ms passthrough 區完全 bit-exact，符合 fix 範疇
+- C main vs feature/static-memory：bit-exact
+- C post-fix vs Python V3-2：對齊後 correlation 0.58，RMS 差 +0.36 dB（符合 `scipy.special.exp1` vs `exp1_approx` 的既有漂移）
 
 ---
 

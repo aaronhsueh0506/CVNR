@@ -2,6 +2,7 @@
 Frame Processor - 分幀、加窗、FFT
 """
 
+import math
 import numpy as np
 from typing import Tuple, Optional
 
@@ -144,12 +145,10 @@ class FrameProcessor:
         """
         n_samples = len(signal)
 
-        # 計算幀數
-        n_frames = 1 + (n_samples - self.frame_size) // self.frame_shift
-
-        # 如果信號太短，至少返回一幀
-        if n_frames < 1:
-            n_frames = 1
+        # ceil ensures the last partial frame (tail) is included, not dropped.
+        # e.g. 16000 samples, frame_size=512, frame_shift=256 → ceil((16000-512)/256)+1 = 62
+        # vs floor → 61 (drops last 128 samples).
+        n_frames = max(1, math.ceil(max(n_samples - self.frame_size, 0) / self.frame_shift) + 1)
 
         # 創建幀數組
         frames = np.zeros((n_frames, self.frame_size))
@@ -177,7 +176,7 @@ class FrameProcessor:
         返回:
             times: 時間戳數組 (n_frames,)
         """
-        n_frames = 1 + (n_samples - self.frame_size) // self.frame_shift
+        n_frames = max(1, math.ceil(max(n_samples - self.frame_size, 0) / self.frame_shift) + 1)
         times = np.arange(n_frames) * self.frame_shift / self.sample_rate
         return times
 

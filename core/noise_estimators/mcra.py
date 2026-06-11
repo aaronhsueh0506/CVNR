@@ -1,18 +1,27 @@
 """
-MCRA - Minima Controlled Recursive Averaging
-Cohen & Berdugo (2002)
+IMCRA / MCRA — Noise Estimator
+Implements two modes via the `accept_external_spp` constructor flag:
 
-用於 V3 系列降噪器
+  accept_external_spp=True  (default):
+    Improved MCRA (IMCRA) — Cohen (2003).
+    Noise-update gate uses the OM-LSA posterior SPP passed in from the
+    denoiser (if provided), falling back to the internal min-stat SPP.
+    Better speech protection; designed to pair with OM-LSA gain calculation.
+    Use in standalone NR.
 
-特點：
-- 時間平滑：減少功率譜波動
-- 最小值追蹤：找到噪聲底線
-- SPP 門控：語音段自動減少噪聲更新
+  accept_external_spp=False:
+    Plain MCRA — Cohen & Berdugo (2002).
+    Noise-update gate always uses the internal min-stat indicator.
+    Use when the caller's OM-LSA posterior is unreliable (e.g. the AEC
+    pipeline, where residual echo inflates the posterior in noise-only bins,
+    which would freeze noise tracking).
 
-參考文獻：
+References:
     Cohen, I. & Berdugo, B. (2002). "Noise estimation by minima controlled
-    recursive averaging for robust speech enhancement." IEEE Signal Processing
-    Letters, 9(1), 12-15.
+    recursive averaging." IEEE Signal Processing Letters, 9(1), 12-15.
+    Cohen, I. (2003). "Noise spectrum estimation in adverse environments:
+    Improved minima controlled recursive averaging." IEEE Trans. Signal
+    Processing, 51(2), 466-475.
 """
 
 import numpy as np
@@ -21,23 +30,27 @@ from typing import Optional
 
 class McraNoiseEstimator:
     """
-    MCRA 噪聲估計器
+    IMCRA/MCRA 噪聲估計器（mode 由 accept_external_spp 控制，見 module docstring）
 
     演算法步驟：
     1. 時間平滑：S(k,l) = α_s·S(k,l-1) + (1-α_s)·|Y(k,l)|²
     2. 最小值追蹤：S_min(k,l) = min{S(k,τ): l-L+1 ≤ τ ≤ l}
-    3. 語音指示器：I(k,l) = 1 if S(k,l)/S_min(k,l) > δ else 0
-    4. SPP 平滑：p(k,l) = α_p·p(k,l-1) + (1-α_p)·I(k,l)
-    5. 噪聲更新：α̃_d = α_d + (1-α_d)·p(k,l)
-                 N(k,l) = α̃_d·N(k,l-1) + (1-α̃_d)·|Y(k,l)|²
+    3. 內部語音指示器：I(k,l) = 1 if S(k,l)/S_min(k,l) > δ else 0
+    4. 內部 SPP 平滑：p(k,l) = α_p·p(k,l-1) + (1-α_p)·I(k,l)
+    5. 噪聲更新 gate：
+         IMCRA mode: spp_gate = external OM-LSA posterior (if provided) else self.spp
+         MCRA mode:  spp_gate = self.spp  (internal only)
+       α̃_d = α_d + (1-α_d)·spp_gate
+       N(k,l) = α̃_d·N(k,l-1) + (1-α̃_d)·|Y(k,l)|²
 
     參數:
-        alpha_s: 時間平滑因子 (0.85-0.95)，越大越平滑
-        alpha_d: 噪聲更新基礎速率 (0.80-0.90)，越大更新越慢
-        alpha_p: SPP 平滑因子 (0.1-0.3)，越大 SPP 變化越平緩
-        L: 最小值窗口長度（幀），約 1 秒 @ 10ms 幀移
-        delta_db: 偏差補償（dB），語音檢測閾值
-        num_init_frames: 初始化使用的幀數
+        alpha_s: 時間平滑因子 (0.85-0.95)
+        alpha_d: 噪聲更新基礎速率 (0.70-0.90)
+        alpha_p: 內部 SPP 平滑因子 (0.1-0.3)
+        L: 最小值窗口長度（幀）
+        delta_db: 語音偵測偏差補償（dB）
+        num_init_frames: 初始化幀數
+        accept_external_spp: True = IMCRA mode；False = plain MCRA mode
     """
 
     def __init__(
@@ -49,12 +62,14 @@ class McraNoiseEstimator:
         delta_db: float = 5.0,
         num_init_frames: int = 20,
         broadband_threshold: float = 0.8,
-        # 場景轉換偵測參數（實際實作為「高頻段 γ + 高頻段 spectral flatness」聯合判斷；
+        # 場景轉換偵測參數（高頻段 γ + spectral flatness 聯合判斷；
         # flatness 用於避免語音誤觸發，因語音 flatness 較低）
-        scene_change_threshold_db: float = 10.0,   # 高頻段 γ 閾值 (dB)
-        scene_change_min_frames: int = 5,           # 連續幀數確認
-        scene_change_blend: float = 0.5,            # 噪聲重置混合比例
-        scene_change_flatness_threshold: float = 0.4,  # 高頻段 spectral flatness 閾值
+        scene_change_threshold_db: float = 10.0,
+        scene_change_min_frames: int = 5,
+        scene_change_blend: float = 0.5,
+        scene_change_flatness_threshold: float = 0.4,
+        # IMCRA/MCRA mode switch
+        accept_external_spp: bool = True,  # True=IMCRA, False=plain MCRA
     ):
         self.alpha_s = alpha_s
         self.alpha_d = alpha_d
@@ -70,12 +85,14 @@ class McraNoiseEstimator:
         self.scene_change_blend = scene_change_blend
         self.scene_change_flatness_threshold = scene_change_flatness_threshold
         self.scene_change_count = 0
+        self.accept_external_spp = accept_external_spp
 
         # 狀態變量
         self.noise_psd = None       # 噪聲功率譜密度
         self.S = None               # 時間平滑後的功率譜
         self.S_min = None           # 最小值
         self.min_buffer = None      # 最小值追蹤緩衝區 (L, n_freqs)
+        self._buf_ptr = 0           # circular-buffer write pointer
         self.spp = None             # Speech Presence Probability
 
         self.is_initialized = False
@@ -113,12 +130,14 @@ class McraNoiseEstimator:
         # 若 S 用均值而 S_min 用 P30，第一次 update 時 ratio = S/(S_min*delta) 會異常（>>1 或 <<1），
         # 導致 indicator 在純噪聲段誤觸發或誤壓
         self.noise_psd = init_psd.copy()
-        self.S = init_psd.copy()       # 與 S_min 一致，避免初始 ratio 異常
-        self.S_min = init_psd.copy()
+        self.S = self.noise_psd.copy()     # 與 S_min 一致，避免初始 ratio 異常
+        self.S_min = self.noise_psd.copy()
         self.spp = np.zeros(n_freqs)
 
-        # 初始化最小值追蹤緩衝區（用 init_psd 填滿）
+        # 初始化最小值追蹤緩衝區（用 init_psd 填滿）; _buf_ptr starts at last slot
+        # so first update() advances to slot 0.
         self.min_buffer = np.tile(init_psd, (self.L, 1))
+        self._buf_ptr = self.L - 1
 
         self.is_initialized = True
         self.frame_count = self.num_init_frames
@@ -130,7 +149,6 @@ class McraNoiseEstimator:
         magnitude: np.ndarray,
         is_speech: Optional[bool] = None,  # 保持接口兼容（MCRA 內部判斷，忽略此參數）
         spp: Optional[np.ndarray] = None,  # v2.0: 支持外部 SPP（軟判決）
-        wind_severity: str = 'none',       # V4: 風聲嚴重度 ('none'/'mild'/'severe')
     ) -> np.ndarray:
         """
         MCRA 噪聲估計更新
@@ -139,10 +157,6 @@ class McraNoiseEstimator:
             magnitude: 當前幀的幅度譜 (n_freqs,)
             is_speech: 忽略，MCRA 使用 SPP 判斷
             spp: 外部 SPP 值 (n_freqs,)，可選
-            wind_severity: V4 風聲嚴重度，severe 時啟用 fast tracking：
-                - effective_alpha_s = 0.85（原 alpha_s ~0.95，減少平滑讓噪聲更新更快）
-                - 低頻段（<300Hz）強制 tilde_alpha_d=0.5 快速學進風聲
-              只影響當前幀計算，不污染 self.alpha_s 等持久狀態
 
         返回:
             noise_psd: 更新後的噪聲功率譜密度 (n_freqs,)
@@ -150,19 +164,16 @@ class McraNoiseEstimator:
         if not self.is_initialized:
             raise RuntimeError("Noise estimator not initialized. Call estimate() first.")
 
-        # V4: severe 風聲時降低 alpha_s（區域變數，不改 self.alpha_s 避免 state leak）
-        effective_alpha_s = 0.85 if wind_severity == 'severe' else self.alpha_s
-
         # 1. 計算當前幀的功率譜
         power = magnitude ** 2
 
         # 2. 時間平滑
         # S(k,l) = α_s·S(k,l-1) + (1-α_s)·|Y(k,l)|²
-        self.S = effective_alpha_s * self.S + (1 - effective_alpha_s) * power
+        self.S = self.alpha_s * self.S + (1 - self.alpha_s) * power
 
-        # 3. 更新最小值緩衝區（FIFO 滾動）
-        self.min_buffer = np.roll(self.min_buffer, -1, axis=0)
-        self.min_buffer[-1] = self.S
+        # 3. 更新最小值緩衝區（circular buffer，避免每幀 np.roll 分配）
+        self._buf_ptr = (self._buf_ptr + 1) % self.L
+        self.min_buffer[self._buf_ptr] = self.S
 
         # 4. 計算最小值
         # S_min(k,l) = min{S(k,τ): l-L+1 ≤ τ ≤ l}
@@ -206,8 +217,14 @@ class McraNoiseEstimator:
             self.scene_change_count = 0
 
         # 8. 噪聲更新（SPP 門控）
-        # v2.0: 若提供外部 SPP，使用外部 SPP；否則使用內部 SPP
-        spp_for_update = spp if spp is not None else self.spp
+        # IMCRA mode (accept_external_spp=True): prefer OM-LSA posterior from the
+        # denoiser — it uses DD-smoothed a priori SNR history, giving more reliable
+        # per-bin speech protection than the internal binary ratio test.
+        # Plain MCRA mode (accept_external_spp=False): always use internal indicator.
+        # Use False in AEC pipeline contexts where residual echo inflates the
+        # OM-LSA posterior in noise-only bins and would freeze noise tracking.
+        spp_for_update = (spp if (self.accept_external_spp and spp is not None)
+                          else self.spp)
 
         # 寬頻場景轉換偵測（舊方法，broadband_threshold < 1.0 時啟用）
         if self.broadband_threshold < 1.0:
@@ -222,17 +239,6 @@ class McraNoiseEstimator:
         # 當 SPP 低（噪聲段）時，α̃_d 接近 α_d，噪聲更新快
         tilde_alpha_d = self.alpha_d + (1 - self.alpha_d) * spp_for_update
 
-        # V4: severe 風聲時低頻段強制 fast tracking
-        if wind_severity == 'severe':
-            # 假設 16kHz + fft_size=512 → freq_per_bin=31.25Hz，300Hz ≈ bin 10
-            # 這裡用 magnitude 長度推回 fft_size（n_freqs = fft_size//2 + 1）
-            n_freqs = len(power)
-            fft_size_approx = (n_freqs - 1) * 2
-            # 假設 sample_rate=16000；若未來需支援其他 sr，應由外部傳入
-            low_freq_end_bin = max(1, int(300.0 * fft_size_approx / 16000.0))
-            tilde_alpha_d = tilde_alpha_d.copy() if hasattr(tilde_alpha_d, 'copy') else np.full(n_freqs, tilde_alpha_d)
-            tilde_alpha_d[:low_freq_end_bin] = 0.5
-
         # N(k,l) = α̃_d·N(k,l-1) + (1-α̃_d)·|Y(k,l)|²
         self.noise_psd = tilde_alpha_d * self.noise_psd + (1 - tilde_alpha_d) * power
 
@@ -246,6 +252,7 @@ class McraNoiseEstimator:
         self.S = None
         self.S_min = None
         self.min_buffer = None
+        self._buf_ptr = 0
         self.spp = None
         self.is_initialized = False
         self.frame_count = 0

@@ -7,7 +7,6 @@ from .wiener import WienerGainCalculator
 from .spp_mmse import SppMmseGainCalculator
 from .mmse_lsa import MmseLsaGainCalculator
 from .pmmse import PmmseGainCalculator
-from .laplacian_mmse import LaplacianMmseGainCalculator
 
 __all__ = [
     'SpectralSubtractionGainCalculator',
@@ -15,5 +14,4 @@ __all__ = [
     'SppMmseGainCalculator',
     'MmseLsaGainCalculator',
     'PmmseGainCalculator',
-    'LaplacianMmseGainCalculator'
 ]

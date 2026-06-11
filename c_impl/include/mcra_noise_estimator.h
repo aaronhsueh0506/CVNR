@@ -9,6 +9,7 @@
 #define MCRA_NOISE_ESTIMATOR_H
 
 #include "mmse_lsa_types.h"
+#include <stddef.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -18,7 +19,7 @@ extern "C" {
 typedef struct McraNoiseEstimator McraNoiseEstimator;
 
 /**
- * Create MCRA noise estimator
+ * Create MCRA noise estimator (malloc version)
  *
  * @param n_freqs Number of frequency bins
  * @param config Configuration parameters
@@ -27,7 +28,17 @@ typedef struct McraNoiseEstimator McraNoiseEstimator;
 McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config);
 
 /**
- * Destroy MCRA estimator
+ * Initialize MCRA estimator in pre-allocated memory (static version)
+ */
+McraNoiseEstimator* mcra_init(void* mem, size_t mem_size, int n_freqs, const MmseLsaConfig* config);
+
+/**
+ * Get memory required for mcra_init()
+ */
+size_t mcra_get_mem_size(int n_freqs, const MmseLsaConfig* config);
+
+/**
+ * Destroy MCRA estimator (no-op if created via mcra_init)
  */
 void mcra_destroy(McraNoiseEstimator* self);
 

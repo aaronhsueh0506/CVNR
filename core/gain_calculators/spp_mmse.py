@@ -8,6 +8,8 @@ v1.5.0 更新: 支持完整 Bessel 公式和 E1 簡化版切換
 import numpy as np
 from typing import Optional
 
+from .mmse_lsa import _exp1_approx
+
 try:
     from scipy.special import exp1, i0, i1
     SCIPY_AVAILABLE = True
@@ -26,20 +28,20 @@ class SppMmseGainCalculator:
     最終增益：G = p * G_H1 + (1-p) * G_min
 
     v1.5.0 新增: 支持兩種 MMSE-STSA 公式
-    - use_full_formula=False: E1 簡化版（默認，推薦）
-    - use_full_formula=True: Bessel I0+I1 完整版（學術標準）
+    - use_full_formula=True: Bessel I0+I1 完整版（學術標準，默認）
+    - use_full_formula=False: E1 形式（實際為 MMSE-LSA，非 MMSE-STSA，誤差 ~13-15%）
 
     參數:
         g_min_db: 最小增益 (dB)，通常 -15 到 -25 dB
         alpha_g: 增益時間平滑因子，減少音樂噪聲
-        use_full_formula: True=Bessel完整版, False=E1簡化版(推薦)
+        use_full_formula: True=Bessel完整版MMSE-STSA(默認), False=E1近似(MMSE-LSA語義)
     """
 
     def __init__(
         self,
         g_min_db: float = -20.0,
         alpha_g: float = 0.7,
-        use_full_formula: bool = False
+        use_full_formula: bool = True
     ):
         self.g_min = 10 ** (g_min_db / 10)
         self.alpha_g = alpha_g
@@ -86,8 +88,8 @@ class SppMmseGainCalculator:
         if self.gain_prev is not None:
             gain = self.alpha_g * self.gain_prev + (1 - self.alpha_g) * gain
 
-        # 保存當前增益
-        self.gain_prev = gain.copy()
+        # 保存當前增益（clip to [0,1] so DD input stays in valid range）
+        self.gain_prev = np.clip(gain, 0.0, 1.0).copy()
 
         # 限制增益範圍
         gain = np.clip(gain, g_min_effective, 1.0)
@@ -96,14 +98,15 @@ class SppMmseGainCalculator:
 
     def _mmse_stsa_gain_e1(self, xi: np.ndarray, gamma: np.ndarray) -> np.ndarray:
         """
-        MMSE-STSA 簡化版（使用指數積分 E1）
+        MMSE-LSA 公式（非 MMSE-STSA）
 
         公式:
             G = (ξ/(1+ξ)) * exp(0.5 * E1(v))
             其中 v = ξ/(1+ξ) * γ
 
-        這是推薦的默認版本，性能接近完整公式但數值穩定性更好。
-        誤差 < 5% vs Bessel 完整版。
+        注意：此公式實為 Cohen (2005) MMSE-LSA（最小均方誤差對數頻譜幅度），
+        非 Ephraim-Malah (1984) MMSE-STSA。兩者差異約 13-15%。
+        默認已改為 Bessel 完整版（use_full_formula=True）。
 
         參數:
             xi: 先驗 SNR (n_freqs,)
@@ -124,7 +127,7 @@ class SppMmseGainCalculator:
             exp1_v = exp1(v)
         else:
             # 使用近似（對於大的 v）
-            exp1_v = self._exp1_approx(v)
+            exp1_v = _exp1_approx(v)
 
         # MMSE-STSA 增益
         # G = (ξ/(1+ξ)) * exp(0.5 * E1(v))
@@ -270,43 +273,6 @@ class SppMmseGainCalculator:
                                   0.00163801*t**3 - 0.01031555*t**4 +
                                   0.02282967*t**5 - 0.02895312*t**6 +
                                   0.01787654*t**7 - 0.00420059*t**8)
-
-        return result
-
-    def _exp1_approx(self, v: np.ndarray) -> np.ndarray:
-        """
-        指數積分 E1(v) 的三段近似（v2.1 更新）
-
-        參考: https://bobondemon.github.io/2019/03/20/MMSE-STSA-and-LSA/
-
-        三段近似公式:
-        - v < 0.1:   E1(v) ≈ -2.31 * log10(v) - 0.6
-        - 0.1 ≤ v ≤ 1.0: E1(v) ≈ -1.544 * log10(v) + 0.166
-        - v > 1.0:   E1(v) ≈ 10^(-0.52*v - 0.26)
-
-        參數:
-            v: 輸入值
-
-        返回:
-            exp1_v: E1(v) 的近似值
-        """
-        result = np.zeros_like(v)
-
-        # v < 0.1
-        mask1 = v < 0.1
-        if np.any(mask1):
-            v1 = np.maximum(v[mask1], 1e-10)  # 避免 log(0)
-            result[mask1] = -2.31 * np.log10(v1) - 0.6
-
-        # 0.1 <= v <= 1.0
-        mask2 = (v >= 0.1) & (v <= 1.0)
-        if np.any(mask2):
-            result[mask2] = -1.544 * np.log10(v[mask2]) + 0.166
-
-        # v > 1.0
-        mask3 = v > 1.0
-        if np.any(mask3):
-            result[mask3] = 10 ** (-0.52 * v[mask3] - 0.26)
 
         return result
 

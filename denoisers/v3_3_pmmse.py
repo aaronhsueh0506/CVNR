@@ -78,6 +78,10 @@ class PmmseDenoiser(BaseDenoiser):
         scene_change_threshold_db: float = 10.0,  # 場景轉換偵測閾值 (dB)
         scene_change_min_frames: int = 5,
         scene_change_blend: float = 0.5,
+        # IMCRA/MCRA mode: True = IMCRA (use OM-LSA posterior for noise gate,
+        # default for standalone NR); False = plain MCRA (use in AEC pipeline
+        # to prevent residual-echo from freezing noise tracking).
+        mcra_accept_external_spp: bool = True,
     ):
         super().__init__(sample_rate, n_fft=fft_size)
         self.noise_method = noise_method
@@ -109,7 +113,8 @@ class PmmseDenoiser(BaseDenoiser):
                 broadband_threshold=broadband_threshold,
                 scene_change_threshold_db=scene_change_threshold_db,
                 scene_change_min_frames=scene_change_min_frames,
-                scene_change_blend=scene_change_blend
+                scene_change_blend=scene_change_blend,
+                accept_external_spp=mcra_accept_external_spp,
             )
         else:
             self.noise_estimator = RecursiveAverageNoiseEstimator(
@@ -195,6 +200,8 @@ class PmmseDenoiser(BaseDenoiser):
             spp_history: SPP 歷史數據 (n_frames, n_freqs) - 僅當 return_spp=True
         """
         n_frames = noisy_magnitude.shape[0]
+        # Reset state so consecutive calls on different audio files start clean.
+        self.reset()
 
         # 初始化噪聲估計
         self.noise_estimator.estimate(noisy_magnitude)
@@ -256,8 +263,7 @@ class PmmseDenoiser(BaseDenoiser):
 
         if return_spp:
             return enhanced_magnitude, enhanced_phase, np.array(spp_history)
-        else:
-            return enhanced_magnitude, enhanced_phase
+        return enhanced_magnitude, enhanced_phase
 
     def reset(self):
         """重置降噪器狀態"""

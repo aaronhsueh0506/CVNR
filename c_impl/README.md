@@ -1,6 +1,6 @@
 # OMLSA Speech Denoiser — C Implementation (V3-2 主線)
 
-> **Release**: v4.2.0 · Part A Review 修復已同步
+> **Release**: v4.2.0 · Part A Review 修復已同步 · 雙 branch 支援（`main` = malloc；`feature/static-memory` = 靜態記憶體）
 > **對應 Python**: `denoisers/v3_2_mmse_lsa.py`
 
 基於 Ephraim-Malah 1985 的 MMSE-LSA (Minimum Mean Square Error Log-Spectral Amplitude) 語音降噪演算法 C 實現，搭配 Cohen & Berdugo (2002) MCRA 噪聲估計與 Cohen & Berdugo (2001) Bayesian SPP 軟判決。整體通稱 **OMLSA**。
@@ -13,7 +13,7 @@
 - **非對稱增益平滑**：Attack/Decay 分離控制
 - **可配置優化開關**：透過編譯開關選擇精度/速度權衡
 - **場景轉換偵測**：高頻 gamma + spectral flatness 雙重條件；flatness 閾值現在可由 `scene_change_flatness_threshold` 調整
-- **與 Python V3-2 同步**：Part A Review 修復已 port（#1, #3, #6, #9）
+- **與 Python V3-2 同步**：Part A Review 修復已 port（#1, #3, #6, #9），`main` 與 `feature/static-memory` 兩 branch 皆已同步
 - **不含 V4 wind handler**：V4 為 Python-only research 框架，VCTK/DEMAND 驗證未能改善風聲，C 端暫不實作
 
 ## 算法流程
@@ -244,6 +244,36 @@ free(in_buf);
 free(out_buf);
 ```
 
+### 靜態記憶體 API（`feature/static-memory` branch）
+
+適合嵌入式環境，**完全不使用 malloc**；呼叫端負責從一塊 PA/VA pool 挖出記憶體。
+
+```c
+#include "mmse_lsa_denoiser.h"
+
+MmseLsaConfig config = mmse_lsa_default_config(16000);
+
+// 1. 查詢所需記憶體大小
+size_t need = mmse_lsa_get_mem_size(&config);
+
+// 2. 從外部 pool 取得記憶體（必須 16-byte 對齊）
+uint8_t* pool = (uint8_t*)aligned_alloc(16, need);
+
+// 3. Init（不會呼叫 malloc）
+MmseLsaDenoiser* denoiser = mmse_lsa_init(pool, need, &config);
+
+// 4. 正常處理
+mmse_lsa_process(denoiser, in_buf, out_buf);
+
+// 5. Destroy 為 no-op（is_static flag 防止 free）
+mmse_lsa_destroy(denoiser);
+
+// 6. 由呼叫端釋放 pool
+free(pool);
+```
+
+完整說明：[STATIC_MEMORY.md](../STATIC_MEMORY.md)
+
 ## 使用條件 (Usage Requirements)
 
 - **輸入格式**：單聲道（多聲道自動取第一聲道）、8 / 16 / 48 kHz PCM16 或 32-bit float
@@ -348,6 +378,7 @@ c_impl/
 - **48 kHz** (n_freqs=513, L=32)：~130 KB；MCRA `min_buffer` 約 ~66 KB
 - **v4.2 新增**：Fix #3 加的 `noise_psd_prev` 每實例 +`n_freqs × 4` bytes（16 kHz ~1 KB）
 
+完整記憶體佈局見 [STATIC_MEMORY.md](../STATIC_MEMORY.md)。
 
 ## 參考文獻
 

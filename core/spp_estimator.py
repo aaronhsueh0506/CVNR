@@ -1,6 +1,6 @@
 """
 SPP Estimator - Speech Presence Probability 估計器
-用於 V3 和 V4 版本
+用於 V3 系列 (OM-LSA)
 """
 
 import numpy as np
@@ -59,6 +59,8 @@ class SppEstimator:
             noise_psd: 噪聲功率譜密度 (n_freqs,)
             gain_prev: 上一幀的增益（可選，用於 Decision Directed）
             enhanced_psd_prev: 上一幀增強後的功率譜 |X̂_{n-1}|²（可選，v1.5.0 新增）
+              注意：DD 第一項 α·gain_prev²·Y_psd_prev 使用的是 PREVIOUS frame 的 λ_d（即
+              enhanced_psd_prev / noise_psd_prev），此處以 gain_prev²·Y_psd 近似。
 
         返回:
             spp: 語音存在機率 (n_freqs,)
@@ -83,7 +85,7 @@ class SppEstimator:
             # noise_psd_prev 為 None 時（理論上不應發生，保險起見），降級到當前幀
             noise_for_dd = self.noise_psd_prev if self.noise_psd_prev is not None else noise_psd
 
-            # V4: 支援 alpha_override 讓 FreqAdaptiveController 頻段自適應
+            # 支援 alpha_override 做 per-bin 頻段自適應（可選；預設 None）
             alpha_effective = alpha_override if alpha_override is not None else self.alpha
             xi_dd_term1 = enhanced_psd_prev / (noise_for_dd + 1e-10)
             xi_dd = alpha_effective * xi_dd_term1 + \
