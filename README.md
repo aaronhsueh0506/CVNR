@@ -1,6 +1,6 @@
 # 語音降噪系統 (Speech Denoising System)
 
-**版本**: v4.2 · **Release 主推演算法**: V3-2 OMLSA (MMSE-LSA + Bayesian SPP + MCRA)
+**版本**: v4.2.2 · **Release 主推演算法**: V3-2 OMLSA (MMSE-LSA + Bayesian SPP + IMCRA)
 
 傳統信號處理方法的實時語音降噪系統，採用漸進式學習路徑。
 
@@ -312,44 +312,40 @@ python3 comprehensive_evaluation.py
 
 詳細說明請參考：[EVALUATION_GUIDE.md](EVALUATION_GUIDE.md)
 
-### 對標結果（v2.3 - 2026-01-08）
+### 對標結果（v4.2.2 — 2026-06-11）
 
-與業界標準 Speex/RNNoise 對比：
+與業界標準 Speex/RNNoise 對比。測試集：13 cases（clean + babble/car/street × 0/5/10/15 dB SNR）。
+
+> **v4.2.2 演算法修正影響**：D2 fix（IMCRA 恢復正確 internal SPP gate）令 V3-2 ΔPESQ
+> 大幅提升（+0.452 vs 舊 +0.387）；D3 fix（V3 MMSE-STSA 改用正確 Bessel 公式）調整
+> V3 gain — 舊分數由錯用 MMSE-LSA 公式產生（過高），新分數為正確基準。
 
 #### 改善量指標（Improvement）- 主要指標
 
 | 排名 | 方法 | segSNR改善↑ | fwSegSNR改善↑ | ΔPESQ | Enhanced STOI |
 |------|------|-------------|---------------|-------|---------------|
-| 🥇 1 | **V1 (Spectral Sub)** | **+5.59 dB** | +4.86 dB | +0.193 | 0.853 |
-| 🥈 2 | **V3 (MMSE-STSA)** | +5.06 dB | **+4.98 dB** | +0.392 | 0.848 |
-| 🥉 3 | **V3-4 (OMLSA-MCRA)** | +5.03 dB | +4.40 dB | +0.399 | **0.875** |
-| 4 | V2 (Wiener) | +5.02 dB | +4.25 dB | +0.244 | 0.832 |
-| 5 | V3-3 (PMMSE) | +4.95 dB | +4.55 dB | +0.332 | 0.832 |
-| 6 | V4 (IMCRA-OMLSA) | +4.81 dB | +4.91 dB | **+0.410** | 0.865 |
-| 7 | V3-2 (MMSE-LSA) | +4.34 dB | +4.34 dB | +0.387 | 0.847 |
-| 8 | RNNoise | +2.77 dB | +1.08 dB | +0.390 | **0.905** |
-| 9 | Speex | +1.41 dB | +1.25 dB | +0.120 | 0.888 |
+| 🥇 1 | **V3-2 (MMSE-LSA)** | **+4.79 dB** | **+4.29 dB** | **+0.452** | 0.872 |
+| 🥈 2 | **RNNoise** | +2.85 dB | +2.08 dB | +0.390 | **0.905** |
+| 🥉 3 | **Speex** | +1.37 dB | +0.68 dB | +0.120 | 0.888 |
+| 4 | V3-3 (PMMSE) | +1.52 dB | +0.91 dB | +0.114 | 0.843 |
+| 5 | V3 (MMSE-STSA) | +2.13 dB | +1.36 dB | +0.061 | 0.838 |
 
 #### PESQ/STOI 排名（感知語音質量）- 參考指標
 
 | 排名 | 方法 | Enhanced PESQ | ΔPESQ | Enhanced STOI | 特點 |
 |------|------|---------------|-------|---------------|------|
-| 🥇 1 | **V4 (IMCRA-OMLSA)** | 1.930 | **+0.410** | 0.865 | **PESQ 改善最佳** |
-| 🥈 2 | **V3-4 (OMLSA-MCRA)** | 1.919 | +0.399 | **0.875** | **傳統算法 STOI 最佳** |
-| 🥉 3 | **V3 (MMSE-STSA)** | 1.911 | +0.392 | 0.848 | 平衡性能 |
-| 4 | RNNoise | 1.909 | +0.390 | **0.905** | **深度學習 STOI 最佳** |
-| 5 | V3-2 (MMSE-LSA) | 1.907 | +0.387 | 0.847 | 對數域 MMSE |
-| 6 | V3-3 (PMMSE) | 1.852 | +0.332 | 0.832 | 感知優化 |
-| 7 | V2 (Wiener) | 1.763 | +0.244 | 0.832 | v2.2 大幅改進 |
-| 8 | V1 (Spectral Sub) | 1.713 | +0.193 | 0.853 | 簡單高效 |
-| 9 | Speex | 1.640 | +0.120 | 0.888 | 傳統基準 |
+| 🥇 1 | **V3-2 (MMSE-LSA)** | **1.971** | **+0.452** | 0.872 | **PESQ 絕對值 + 改善量雙冠** |
+| 🥈 2 | **RNNoise** | 1.909 | +0.390 | **0.905** | **STOI 最佳（深度學習）** |
+| 🥉 3 | **Speex** | 1.640 | +0.120 | 0.888 | 傳統基準 |
+| 4 | V3-3 (PMMSE) | 1.634 | +0.114 | 0.843 | 感知優化 |
+| 5 | V3 (MMSE-STSA) | 1.581 | +0.061 | 0.838 | 基礎版本 |
 
-**✅ v2.3 關鍵改進**：
-- ✅ **V2 Wiener 大幅改進**：ΔPESQ 從 +0.035 提升至 +0.244（使用 Bayesian SPP）
-- ✅ **MCRA 雙視窗最小值追蹤**：內建噪聲場景變化適應
-- ✅ **V4 PESQ 改善最佳**：+0.410，產品級效果
-- ✅ **V3-4 STOI 最佳**：0.875，可懂度最高
-- ✅ **所有版本優於 Speex**：segSNR 改善 +4.3~5.6 dB vs +1.41 dB
+**✅ v4.2.2 關鍵改進**：
+- ✅ **V3-2 PESQ 新冠軍**：ΔPESQ +0.452（D2 IMCRA fix 恢復正確 noise gate → 改善 +0.065）
+- ✅ **D2 IMCRA fix**：external SPP posterior floor ~0.5 不再阻塞 fast-update leg
+- ✅ **D3 MMSE-STSA fix**：V3 gain 改用正確 Bessel 公式（原 MMSE-LSA 公式不正確）
+- ✅ **D1 OLA tail fix**：reconstructor 輸出長度 = 輸入長度（tail frames 不再丟失）
+- ✅ **V3-2 優於 RNNoise PESQ**：1.971 vs 1.909（傳統 DSP 超越深度學習 PESQ）
 - 📊 詳細報告：[results/improvement_report.md](results/improvement_report.md)
 
 輸出範例：
