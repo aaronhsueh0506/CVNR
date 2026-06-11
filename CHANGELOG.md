@@ -4,6 +4,48 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [4.2.2] - 2026-06-11 · IMCRA 正名 + D2 修復
+
+### 修復 (Fixed)
+
+**噪聲估計器正名：IMCRA（非 plain MCRA）**
+
+V3-2 的噪聲估計器在 v2.0 起實際上即為 IMCRA（Cohen 2003），但一直以 `McraNoiseEstimator` 命名，導致 D2 commit 將其錯誤改回 plain MCRA，造成 VCTK/DEMAND 824 檔 ΔPESQ −0.632（獨立 NR 嚴重退步）。
+
+| 項目 | 內容 |
+|------|------|
+| 根因 | D2 移除外部 OM-LSA posterior SPP 傳入 MCRA noise gate，改用內部 binary ratio-test；IMCRA 設計明確要求兩者耦合（Cohen 2003 Table II） |
+| 差異 | IMCRA posterior 帶 DD 歷史（alpha_xi=0.98），語音邊界不誤更新；plain MCRA 的 indicator 無 SNR 記憶 |
+| AEC pipeline | 殘餘 echo 導致 OM-LSA posterior 在噪聲段被拉高 → AEC context 改用 plain MCRA 保護 |
+
+**具體修改**：
+
+1. **恢復 IMCRA 耦合**（`core/noise_estimators/mcra.py`）
+   - 新增 `accept_external_spp: bool = True` constructor param
+   - `spp_for_update = spp if (accept_external_spp and spp is not None) else self.spp`
+   - 預設 True = IMCRA mode（standalone NR）；False = plain MCRA（AEC pipeline）
+
+2. **透傳 flag**（`denoisers/v3_2_mmse_lsa.py`）
+   - 新增 `mcra_accept_external_spp=True` constructor param，透傳給 `McraNoiseEstimator`
+
+3. **AEC pipeline 使用 plain MCRA**（`Audio_ALG/pipelines/aec_nr_pipeline.py`）
+   - `_build_denoiser()` 加 `mcra_accept_external_spp=False`
+
+4. **命名文件化**（`core/noise_estimators/__init__.py`）
+   - 加 `ImcraNoiseEstimator = McraNoiseEstimator` alias
+
+### 驗證 (Validation)
+
+VCTK/DEMAND **824 檔**完整比較（standalone NR, `v3_2_config.yaml`，6 workers）：
+
+| 配置 | PESQ noisy | PESQ enhanced | ΔPESQ | STOI noisy | STOI enhanced | ΔSTOI |
+|------|-----------|--------------|-------|-----------|--------------|-------|
+| IMCRA mode（此修復後） | 1.967 | 2.145 | +0.178 | 0.921 | 0.851 | −0.070 |
+| plain MCRA mode（D2 regression） | 1.967 | 1.514 | −0.454 | 0.921 | 0.793 | −0.128 |
+| **D2 regression 效應** | — | — | **−0.632** | — | — | **−0.058** |
+
+---
+
 ## [4.2.1] - 2026-04-17 · C-Alignment Release
 
 ### 變更 (Changed)

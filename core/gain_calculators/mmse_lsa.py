@@ -20,6 +20,28 @@ MMSE-LSA Gain Calculator (Log-Spectral Amplitude)
 import numpy as np
 from typing import Optional
 
+
+def _exp1_approx(v: np.ndarray) -> np.ndarray:
+    """E1(v) three-segment approximation (Cohen & Berdugo 2002 / Loizou 2007).
+
+    Segments:
+      v < 0.1  : -2.31  * log10(v) - 0.6
+      0.1..1.0 : -1.544 * log10(v) + 0.166
+      v > 1.0  : 10^(-0.52*v - 0.26)
+
+    Shared with SppMmseGainCalculator (imported there).
+    """
+    v = np.maximum(v, 1e-10)
+    result = np.zeros_like(v)
+    mask1 = v < 0.1
+    mask2 = (v >= 0.1) & (v <= 1.0)
+    mask3 = v > 1.0
+    result[mask1] = -2.31 * np.log10(v[mask1]) - 0.6
+    result[mask2] = -1.544 * np.log10(v[mask2]) + 0.166
+    result[mask3] = 10 ** (-0.52 * v[mask3] - 0.26)
+    return result
+
+
 # v4.2.1 C-align: 預設改為走 3 段近似（與 C `exp1_approx` bit-exact 對齊）。
 # 若需要 scipy.special.exp1 的精確值（研究/離線分析），將 USE_SCIPY_EXP1 設為 True。
 USE_SCIPY_EXP1 = False
@@ -112,9 +134,10 @@ class MmseLsaGainCalculator:
         # g_min 支援 scalar 或 per-bin array（可選 per-bin 覆蓋）
         if g_min is None:
             g_min_effective = self.g_min
+            log_g_min_effective = self.log_g_min  # cached at __init__, avoid recompute
         else:
             g_min_effective = g_min
-        log_g_min_effective = np.log(np.asarray(g_min_effective) + 1e-10)
+            log_g_min_effective = np.log(np.asarray(g_min_effective) + 1e-10)
 
         # 基礎 MMSE 增益
         gain_mmse = self._mmse_gain_base(xi, gamma)
@@ -189,48 +212,11 @@ class MmseLsaGainCalculator:
         if USE_SCIPY_EXP1 and SCIPY_AVAILABLE:
             exp1_v = exp1(v)
         else:
-            exp1_v = self._exp1_approx(v)
+            exp1_v = _exp1_approx(v)
 
         gain = (xi / (1 + xi)) * np.exp(0.5 * exp1_v)
 
         return gain
-
-    def _exp1_approx(self, v: np.ndarray) -> np.ndarray:
-        """
-        指數積分 E1(v) 的三段近似（v2.1 更新）
-
-        參考: https://bobondemon.github.io/2019/03/20/MMSE-STSA-and-LSA/
-
-        三段近似公式:
-        - v < 0.1:   E1(v) ≈ -2.31 * log10(v) - 0.6
-        - 0.1 ≤ v ≤ 1.0: E1(v) ≈ -1.544 * log10(v) + 0.166
-        - v > 1.0:   E1(v) ≈ 10^(-0.52*v - 0.26)
-
-        參數:
-            v: 輸入值
-
-        返回:
-            exp1_v: E1(v) 的近似值
-        """
-        result = np.zeros_like(v)
-
-        # v < 0.1
-        mask1 = v < 0.1
-        if np.any(mask1):
-            v1 = np.maximum(v[mask1], 1e-10)  # 避免 log(0)
-            result[mask1] = -2.31 * np.log10(v1) - 0.6
-
-        # 0.1 <= v <= 1.0
-        mask2 = (v >= 0.1) & (v <= 1.0)
-        if np.any(mask2):
-            result[mask2] = -1.544 * np.log10(v[mask2]) + 0.166
-
-        # v > 1.0
-        mask3 = v > 1.0
-        if np.any(mask3):
-            result[mask3] = 10 ** (-0.52 * v[mask3] - 0.26)
-
-        return result
 
     def reset(self):
         """重置增益歷史"""

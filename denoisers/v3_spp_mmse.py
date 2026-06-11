@@ -80,6 +80,10 @@ class SppMmseDenoiser(BaseDenoiser):
         scene_change_threshold_db: float = 10.0,  # 場景轉換偵測閾值 (dB)
         scene_change_min_frames: int = 5,
         scene_change_blend: float = 0.5,
+        # IMCRA/MCRA mode: True = IMCRA (use OM-LSA posterior for noise gate,
+        # default for standalone NR); False = plain MCRA (use in AEC pipeline
+        # to prevent residual-echo from freezing noise tracking).
+        mcra_accept_external_spp: bool = True,
     ):
         super().__init__(sample_rate, n_fft=fft_size)
         self.noise_method = noise_method
@@ -111,7 +115,8 @@ class SppMmseDenoiser(BaseDenoiser):
                 broadband_threshold=broadband_threshold,
                 scene_change_threshold_db=scene_change_threshold_db,
                 scene_change_min_frames=scene_change_min_frames,
-                scene_change_blend=scene_change_blend
+                scene_change_blend=scene_change_blend,
+                accept_external_spp=mcra_accept_external_spp,
             )
         else:
             self.noise_estimator = RecursiveAverageNoiseEstimator(

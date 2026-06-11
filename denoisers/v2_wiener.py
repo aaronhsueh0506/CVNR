@@ -77,7 +77,8 @@ class WienerDenoiser(BaseDenoiser):
                 alpha_p=alpha_p,
                 L=L,
                 delta_db=delta_db,
-                num_init_frames=num_init_frames
+                num_init_frames=num_init_frames,
+                accept_external_spp=False,  # Wiener has no OM-LSA posterior to supply
             )
         else:
             self.noise_estimator = RecursiveAverageNoiseEstimator(

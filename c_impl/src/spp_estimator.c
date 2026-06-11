@@ -186,13 +186,10 @@ void spp_estimate(
         }
         xi_out[k] = xi;
 
-        // 3. Calculate log-likelihood ratio
-        // v = ξ/(1+ξ)·γ
-        float v = xi / (1.0f + xi) * gamma;
-
-        // 4. Calculate SPP using Cohen & Berdugo formula
-        // SPP = 1 / (1 + prior_ratio × (1+ξ) × exp(-v))
+        // 3. Calculate log-likelihood ratio: v = ξ/(1+ξ)·γ
+        // 4. SPP = 1 / (1 + prior_ratio × (1+ξ) × exp(-v))
         float term_xi = 1.0f + xi;
+        float v = xi / term_xi * gamma;
         float exp_neg_v = fast_exp_neg(v);
         spp_out[k] = 1.0f / (1.0f + prior_ratio * term_xi * exp_neg_v);
 

@@ -130,7 +130,7 @@ C: `mmse_lsa_config_for_mode(sample_rate, MMSE_LSA_NR_MILD | BALANCED | AGGRESSI
 
 ## 🎬 場景切換相關參數（v4.2 起可調）
 
-MCRA 的 scene change detector 用「高頻 gamma + spectral flatness」雙重條件觸發 noise reset。調這組參數是處理「突然切換噪聲環境」（如進地鐵、上車、開冷氣）最有效的方法。
+IMCRA/MCRA 的 scene change detector 用「高頻 gamma + spectral flatness」雙重條件觸發 noise reset。調這組參數是處理「突然切換噪聲環境」（如進地鐵、上車、開冷氣）最有效的方法。
 
 | 參數 | 預設 | 症狀 & 調整 |
 |---|---|---|
@@ -146,9 +146,10 @@ MCRA 的 scene change detector 用「高頻 gamma + spectral flatness」雙重�
 下列參數會改變演算法內部穩定性，預設值是 Optuna / Cohen 文獻 / VCTK 驗證的結果：
 
 - `alpha_xi` (0.88)：DD 平滑；動會造成 musical noise 或反應遲鈍
-- `alpha_s` (0.95) / `alpha_d` (0.7) / `alpha_p` (0.2) / `L` (32)：MCRA 核心常數
+- `alpha_s` (0.95) / `alpha_d` (0.7) / `alpha_p` (0.2) / `L` (32)：IMCRA/MCRA 核心常數
 - `num_init_frames` (20 = 200 ms)：調短會讓底噪估計 under-fit
-- `delta_db` (10)：MCRA speech indicator 偏移
+- `delta_db` (10)：IMCRA/MCRA 內部 speech indicator 偏移（IMCRA 另有 OM-LSA posterior 作為主要 gate）
+- `mcra_accept_external_spp` (True)：**True = IMCRA mode（standalone NR 預設）；False = plain MCRA（AEC pipeline 用）**
 - `alpha_attack` (0.3) / `alpha_decay` (= alpha_g)：非對稱平滑，預設即最佳
 
 如確實需要動，**請務必以 VCTK/DEMAND 800+ 檔做 regression 驗證**，避免改善單一 case 但整體退步。

@@ -494,26 +494,22 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
         int hi_start = n_freqs / 2;  // Upper half (~4kHz for 16kHz/512FFT)
         int hi_count = n_freqs - hi_start;
 
-        // Compute hi-freq mean power and mean noise_psd
+        // Merged hi-freq loop: power sum + noise sum + log/arith for flatness
         float hi_power_sum = 0.0f;
         float hi_noise_sum = 0.0f;
-        for (int k = hi_start; k < n_freqs; k++) {
-            hi_power_sum += power[k];
-            hi_noise_sum += self->noise_psd[k];
-        }
-        float hi_gamma = hi_power_sum / (hi_noise_sum + 1e-10f);
-
-        // Spectral flatness = geometric_mean / arithmetic_mean (hi-freq)
-        // geometric_mean = exp(mean(log(power)))
         float log_sum = 0.0f;
         float arith_sum = 0.0f;
         for (int k = hi_start; k < n_freqs; k++) {
+            hi_power_sum += power[k];
+            hi_noise_sum += self->noise_psd[k];
             float p = power[k] + 1e-20f;
             log_sum += fast_log(p);
             arith_sum += p;
         }
-        float geo_mean = fast_exp(log_sum / (float)hi_count);
-        float arith_mean = arith_sum / (float)hi_count;
+        float hi_gamma = hi_power_sum / (hi_noise_sum + 1e-10f);
+        float inv_hi_count = 1.0f / (float)hi_count;
+        float geo_mean = fast_exp(log_sum * inv_hi_count);
+        float arith_mean = arith_sum * inv_hi_count;
         float hi_flatness = geo_mean / arith_mean;
 
         if (hi_gamma > self->scene_change_threshold &&

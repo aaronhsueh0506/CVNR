@@ -77,6 +77,10 @@ class MmseLsaDenoiser(BaseDenoiser):
         use_asymmetric_smoothing: bool = True,
         alpha_attack: float = 0.3,
         alpha_decay: float = None,  # None = 等於 alpha_g
+        # IMCRA/MCRA mode: True = IMCRA (use OM-LSA posterior for noise gate,
+        # default for standalone NR); False = plain MCRA (use in AEC pipeline
+        # to prevent residual-echo from freezing noise tracking).
+        mcra_accept_external_spp: bool = True,
     ):
         super().__init__(sample_rate, n_fft=fft_size)
         self.noise_method = noise_method
@@ -113,6 +117,7 @@ class MmseLsaDenoiser(BaseDenoiser):
                 scene_change_min_frames=scene_change_min_frames,
                 scene_change_blend=scene_change_blend,
                 scene_change_flatness_threshold=scene_change_flatness_threshold,
+                accept_external_spp=mcra_accept_external_spp,
             )
         else:
             self.noise_estimator = RecursiveAverageNoiseEstimator(

@@ -8,6 +8,8 @@ v1.5.0 更新: 支持完整 Bessel 公式和 E1 簡化版切換
 import numpy as np
 from typing import Optional
 
+from .mmse_lsa import _exp1_approx
+
 try:
     from scipy.special import exp1, i0, i1
     SCIPY_AVAILABLE = True
@@ -125,7 +127,7 @@ class SppMmseGainCalculator:
             exp1_v = exp1(v)
         else:
             # 使用近似（對於大的 v）
-            exp1_v = self._exp1_approx(v)
+            exp1_v = _exp1_approx(v)
 
         # MMSE-STSA 增益
         # G = (ξ/(1+ξ)) * exp(0.5 * E1(v))
@@ -271,43 +273,6 @@ class SppMmseGainCalculator:
                                   0.00163801*t**3 - 0.01031555*t**4 +
                                   0.02282967*t**5 - 0.02895312*t**6 +
                                   0.01787654*t**7 - 0.00420059*t**8)
-
-        return result
-
-    def _exp1_approx(self, v: np.ndarray) -> np.ndarray:
-        """
-        指數積分 E1(v) 的三段近似（v2.1 更新）
-
-        參考: https://bobondemon.github.io/2019/03/20/MMSE-STSA-and-LSA/
-
-        三段近似公式:
-        - v < 0.1:   E1(v) ≈ -2.31 * log10(v) - 0.6
-        - 0.1 ≤ v ≤ 1.0: E1(v) ≈ -1.544 * log10(v) + 0.166
-        - v > 1.0:   E1(v) ≈ 10^(-0.52*v - 0.26)
-
-        參數:
-            v: 輸入值
-
-        返回:
-            exp1_v: E1(v) 的近似值
-        """
-        result = np.zeros_like(v)
-
-        # v < 0.1
-        mask1 = v < 0.1
-        if np.any(mask1):
-            v1 = np.maximum(v[mask1], 1e-10)  # 避免 log(0)
-            result[mask1] = -2.31 * np.log10(v1) - 0.6
-
-        # 0.1 <= v <= 1.0
-        mask2 = (v >= 0.1) & (v <= 1.0)
-        if np.any(mask2):
-            result[mask2] = -1.544 * np.log10(v[mask2]) + 0.166
-
-        # v > 1.0
-        mask3 = v > 1.0
-        if np.any(mask3):
-            result[mask3] = 10 ** (-0.52 * v[mask3] - 0.26)
 
         return result
 

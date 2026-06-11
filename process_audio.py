@@ -261,6 +261,7 @@ def create_denoiser_from_config(
                 'scene_change_min_frames': noise_config.get('scene_change_min_frames', 5),
                 'scene_change_blend': noise_config.get('scene_change_blend', 0.5),
                 'scene_change_flatness_threshold': noise_config.get('scene_change_flatness_threshold', 0.4),
+                'mcra_accept_external_spp': noise_config.get('mcra_accept_external_spp', True),
             })
         else:
             params.update({

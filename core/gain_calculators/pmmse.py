@@ -104,7 +104,7 @@ class PmmseGainCalculator:
         if self.gain_prev is not None:
             gain = self.alpha_g * self.gain_prev + (1 - self.alpha_g) * gain
 
-        self.gain_prev = np.clip(gain, 0.0, 1.0).copy()
+        self.gain_prev = gain.copy()
         gain = np.clip(gain, g_min_effective, 1.0)
 
         return gain
