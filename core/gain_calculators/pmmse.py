@@ -1,14 +1,17 @@
 """
-PMMSE Gain Calculator (Perceptually Motivated MMSE)
-基於 Wolfe & Godsill (β=0.5 特例解析解)
+PMMSE Gain Calculator (MMSE-STSA under weighted-Euclidean criterion)
+基於 Loizou (2005) weighted-Euclidean p=-1 特例 (Ephraim & Malah 1984 MMSE-STSA)
 
 參考文獻:
-    Wolfe, P. J. & Godsill, S. J. (2003).
-    "Efficient alternatives to the Ephraim and Malah suppression rule for
-    audio signal enhancement."
-    EURASIP Journal on Applied Signal Processing, 2003(10), 1043-1051.
+    Loizou, P. C. (2005).
+    "Speech enhancement: Theory and practice." (Ch. 7, weighted-Euclidean p=-1)
+    Ephraim, Y. & Malah, D. (1984). IEEE Trans. Acoustics, Speech, Signal Processing.
 
-公式 (β=0.5):
+注意: 原本錯誤標記為 Wolfe & Godsill (2003) β=0.5 公式，但 W&G β=0.5
+    產生不同增益曲線 (修正 Bessel 函數 K_{-1/2})；本實作的
+    i0e 路徑對應 MMSE-STSA / Loizou p=-1。
+
+公式:
     G_PM(k) = sqrt(v_k) / (sqrt(π) · γ_k) · exp(v_k/2) / I_0(v_k/2)
 
     其中:
@@ -34,7 +37,7 @@ except ImportError:
 
 class PmmseGainCalculator:
     """
-    感知動機 MMSE 增益估計器 (Wolfe & Godsill, β=0.5)
+    MMSE-STSA 增益估計器 (Loizou 2005 weighted-Euclidean p=-1)
 
     公式:
         G_PM = sqrt(v) / (sqrt(π) · γ) · exp(v/2) / I_0(v/2)
@@ -70,7 +73,7 @@ class PmmseGainCalculator:
         in_boost_mode: bool = False
     ) -> np.ndarray:
         """
-        計算 PMMSE 增益 (Wolfe & Godsill, β=0.5)
+        計算 PMMSE 增益 (Loizou 2005 p=-1)
 
         公式:
             G_PM = sqrt(v) / (sqrt(π) · γ) · 1 / i0e(v/2)
@@ -101,7 +104,7 @@ class PmmseGainCalculator:
         if self.gain_prev is not None:
             gain = self.alpha_g * self.gain_prev + (1 - self.alpha_g) * gain
 
-        self.gain_prev = gain.copy()
+        self.gain_prev = np.clip(gain, 0.0, 1.0).copy()
         gain = np.clip(gain, g_min_effective, 1.0)
 
         return gain
@@ -112,7 +115,7 @@ class PmmseGainCalculator:
         gamma: np.ndarray
     ) -> np.ndarray:
         """
-        Perceptually Motivated Estimator (Wolfe & Godsill, β=0.5)
+        Perceptually Motivated Estimator (Loizou 2005 p=-1)
 
         公式:
             G_PM = sqrt(v) / (sqrt(π) · γ) · exp(v/2) / I_0(v/2)
@@ -192,14 +195,14 @@ class PmmseGainCalculator:
 
     def __repr__(self):
         spp_mode = "with SPP" if self.use_spp_weighting else "no SPP"
-        return (f"PmmseGainCalculator(Wolfe&Godsill β=0.5, "
+        return (f"PmmseGainCalculator(Loizou p=-1, "
                 f"g_min={10*np.log10(self.g_min):.1f} dB, "
                 f"alpha_g={self.alpha_g}, {spp_mode})")
 
 
 if __name__ == "__main__":
     # 測試示例
-    print("PMMSE 增益計算器 (Wolfe & Godsill, β=0.5)")
+    print("PMMSE 增益計算器 (Loizou 2005 p=-1)")
     print("公式: G_PM = sqrt(v) / (sqrt(π) · γ) · 1 / i0e(v/2)")
 
     # 模擬 SNR 數據

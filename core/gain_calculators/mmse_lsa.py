@@ -63,6 +63,10 @@ class MmseLsaGainCalculator:
         spp_protect_floor_db: Optional[float] = None,
         spp_protect_threshold: float = 0.5,
     ):
+        # WARNING: uses power-dB convention (/10), not amplitude-dB (/20).
+        # A label of g_min_db=-20 dB yields g_min=0.01, which corresponds to -40 dB
+        # amplitude — all documented config dB values are effectively half-dB.
+        # Do NOT change to /20 without re-calibrating all config files and the C port.
         self.g_min = 10 ** (g_min_db / 10)
         self.log_g_min = np.log(self.g_min + 1e-10)
         self.alpha_g = alpha_g

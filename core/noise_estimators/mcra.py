@@ -198,8 +198,11 @@ class McraNoiseEstimator:
             self.scene_change_count = 0
 
         # 8. 噪聲更新（SPP 門控）
-        # v2.0: 若提供外部 SPP，使用外部 SPP；否則使用內部 SPP
-        spp_for_update = spp if spp is not None else self.spp
+        # Always gate on MCRA's internal min-stat SPP for noise tracking.
+        # External OM-LSA posterior (v2.0) has a natural floor ~0.5 even in speech-absent
+        # bins, which would block the fast-update path and cause noise over-estimation.
+        # Internal self.spp has a sharp 0/1 characteristic suited for noise gating.
+        spp_for_update = self.spp
 
         # 寬頻場景轉換偵測（舊方法，broadband_threshold < 1.0 時啟用）
         if self.broadband_threshold < 1.0:

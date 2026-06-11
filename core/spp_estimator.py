@@ -59,6 +59,8 @@ class SppEstimator:
             noise_psd: 噪聲功率譜密度 (n_freqs,)
             gain_prev: 上一幀的增益（可選，用於 Decision Directed）
             enhanced_psd_prev: 上一幀增強後的功率譜 |X̂_{n-1}|²（可選，v1.5.0 新增）
+              注意：DD 第一項 α·gain_prev²·Y_psd_prev 使用的是 PREVIOUS frame 的 λ_d（即
+              enhanced_psd_prev / noise_psd_prev），此處以 gain_prev²·Y_psd 近似。
 
         返回:
             spp: 語音存在機率 (n_freqs,)

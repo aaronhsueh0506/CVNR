@@ -88,8 +88,8 @@ def write_audio(
     if SOUNDFILE_AVAILABLE:
         sf.write(file_path, audio, sample_rate)
     elif SCIPY_AVAILABLE:
-        # 轉換為 int16
-        audio_int16 = (audio * 32767).astype(np.int16)
+        # 轉換為 int16（先 clip 避免 overflow）
+        audio_int16 = (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16)
         wavfile.write(file_path, sample_rate, audio_int16)
     else:
         raise RuntimeError("No audio I/O library available. Install soundfile or scipy.")

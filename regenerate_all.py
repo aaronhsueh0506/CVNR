@@ -9,6 +9,7 @@ v2.0: 使用配置文件參數進行優化
 v2.1: 支持 --version 和 --config 參數用於批量調參
 """
 
+import inspect
 import numpy as np
 import librosa
 import soundfile as sf
@@ -128,11 +129,6 @@ def get_denoiser_params_from_config(config, sr, fft_size):
                 params['alpha_attack'] = gc['alpha_attack']
             if 'alpha_decay' in gc:
                 params['alpha_decay'] = gc['alpha_decay']
-            # V4: SPP-protected floor
-            if 'spp_protect_floor_db' in gc:
-                params['spp_protect_floor_db'] = gc['spp_protect_floor_db']
-            if 'spp_protect_threshold' in gc:
-                params['spp_protect_threshold'] = gc['spp_protect_threshold']
         # V3-3 (PMMSE - Wolfe & Godsill β=0.5)
         elif gc.get('method') == 'pmmse':
             params.update({
@@ -160,11 +156,17 @@ def get_denoiser_params_from_config(config, sr, fft_size):
 
         if is_v3_series:
             if ne_method == 'mcra':
-                # V3/V3-2/V3-3 的 MCRA 噪聲估計參數
+                # V3/V3-2/V3-3 MCRA params.
+                # alpha_d (MmseLsaDenoiser) and alpha_noise (SppMmseDenoiser/PmmseDenoiser)
+                # are the same underlying MCRA parameter with different kwarg names.
+                # scene_change_flatness_threshold is accepted by MmseLsaDenoiser only.
+                # Unknown params are filtered per-class at construction time (inspect below).
+                _alpha_val = ne.get('alpha_d', 0.85)
                 params.update({
                     'noise_method': 'mcra',
                     'alpha_s': ne.get('alpha_s', 0.9),
-                    'alpha_d': ne.get('alpha_d', 0.85),
+                    'alpha_d': _alpha_val,      # V3-2 (MmseLsaDenoiser)
+                    'alpha_noise': _alpha_val,  # V3/V3-3 (SppMmseDenoiser/PmmseDenoiser)
                     'alpha_p': ne.get('alpha_p', 0.2),
                     'L': ne.get('L', 96),
                     'delta_db': ne.get('delta_db', 5.0),
@@ -174,7 +176,7 @@ def get_denoiser_params_from_config(config, sr, fft_size):
                     'scene_change_blend': ne.get('scene_change_blend', 0.5),
                     'scene_change_flatness_threshold': ne.get(
                         'scene_change_flatness_threshold', 0.4
-                    ),
+                    ),  # V3-2 only
                 })
             elif ne_method == 'recursive_average':
                 # RecursiveAverage 噪聲估計參數
@@ -262,8 +264,13 @@ def main():
                 # 從配置文件獲取參數
                 denoiser_params = get_denoiser_params_from_config(config, sr, fft_size)
 
-                # 創建降噪器
-                denoiser = method_config['class'](**denoiser_params)
+                # Filter params to those accepted by the target class; different V3
+                # variants use different kwarg names for the same MCRA parameters.
+                cls = method_config['class']
+                sig = inspect.signature(cls.__init__)
+                accepted = {k: v for k, v in denoiser_params.items()
+                            if k in sig.parameters}
+                denoiser = cls(**accepted)
 
                 # 處理
                 enhanced = denoiser.denoise(noisy)

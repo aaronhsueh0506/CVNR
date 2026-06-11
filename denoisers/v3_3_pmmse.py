@@ -195,6 +195,8 @@ class PmmseDenoiser(BaseDenoiser):
             spp_history: SPP 歷史數據 (n_frames, n_freqs) - 僅當 return_spp=True
         """
         n_frames = noisy_magnitude.shape[0]
+        # Reset state so consecutive calls on different audio files start clean.
+        self.reset()
 
         # 初始化噪聲估計
         self.noise_estimator.estimate(noisy_magnitude)

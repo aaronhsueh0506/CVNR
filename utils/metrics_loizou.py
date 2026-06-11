@@ -236,11 +236,10 @@ def frequency_weighted_segsnr(
         clean_psd = np.abs(clean_fft) ** 2 + 1e-10
         noise_psd = np.abs(clean_fft - enhanced_fft) ** 2 + 1e-10
 
-        # 頻率加權 SNR
+        # Frequency-weighted SNR: weighted sum of per-band dB SNRs (Loizou 2007 eq 3.15).
+        # NOT 10*log10(sum(w*snr_lin)) — that conflates the log with the weighted sum.
         snr_freq = clean_psd / noise_psd
-        fwsnr = 10 * np.log10(np.sum(weights * snr_freq))
-
-        fwsnr = np.clip(fwsnr, -10, 35)
+        fwsnr = np.sum(weights * np.clip(10 * np.log10(snr_freq), -10, 35))
         fwsnr_frames.append(fwsnr)
 
     if len(fwsnr_frames) == 0:
