@@ -66,6 +66,9 @@ struct MmseLsaDenoiser {
 
 static void init_gain_params(MmseLsaDenoiser* self,
                               const MmseLsaConfig* config) {
+    /* D4 note: /10.0f → power-domain conversion. g_min_db=-20 yields g_min=0.01
+     * (≡ −40 dB amplitude). Label is intentionally half-value; calibrated configs
+     * must account for this (matches Python mmse_lsa.py L89 comment). */
     self->g_min        = powf(10.0f, config->g_min_db / 10.0f);
     self->log_g_min    = logf(self->g_min + 1e-10f);
     self->alpha_g      = config->alpha_g;
