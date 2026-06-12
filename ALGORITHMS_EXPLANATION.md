@@ -6,7 +6,7 @@
 
 > **⚠️ v4.2 release 重要聲明**
 >
-> 本文檔保留了歷史各版本演進脈絡（v1.x–v2.x）供參考。**Release 主推演算法**為 **V3-2 OMLSA**（MMSE-LSA + Bayesian SPP + IMCRA），經 Part A Review 11 項修復，Python 與 C 皆已同步（雙 branch：`main` = malloc；`feature/static-memory` = 靜態記憶體）。
+> 本文檔保留了歷史各版本演進脈絡（v1.x–v2.x）供參考。**Release 主推演算法**為 **V3-2 OMLSA**（MMSE-LSA + Bayesian SPP + IMCRA），經 Part A Review 11 項修復，Python 與 C 皆已同步。
 >
 > **V4 新版本**（`denoisers/v4_omlsa.py` + `core/wind_detector.py` 等）**不是**本文件下方「V4: IMCRA-OMLSA」章節所描述的舊 V4。現行 V4 是「OMLSA + Wind Handler research 框架」，VCTK/DEMAND 驗證**未能改善**風聲場景，**不建議 release 使用**。詳見 [README.md](README.md) 與 `results/v4_diagnosis_report.md`。
 >
@@ -62,7 +62,7 @@
 
 ## v4.2 重大更新 (2026-04-17) — Part A Review 修復
 
-本次 release 套用 Part A Review 11 項修復，同步至 Python + C（`main` / `feature/static-memory` 雙 branch）：
+本次 release 套用 Part A Review 11 項修復，同步至 Python + C：
 
 | Fix | 項目 | 影響模組 |
 |-----|------|----------|

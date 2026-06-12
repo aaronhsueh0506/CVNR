@@ -5,13 +5,6 @@
  * Caller owns FFT / IFFT / windowing / OLA.
  * Input and output are complex spectra: Complex[n_freqs] per hop.
  *
- * Drop-in replacement for the time-domain variant on branch feature/static-memory:
- *   - All function and type names are identical.
- *   - Only mmse_lsa_process() signature changes: float* -> Complex*.
- *   - mmse_lsa_process_ex() is removed (not applicable in freq domain).
- *   - get_hop_size / get_frame_size / get_latency return config values
- *     for callers that query them; they carry no framing responsibility here.
- *
  * Based on Ephraim-Malah 1985.
  */
 
@@ -39,19 +32,7 @@ typedef struct MmseLsaDenoiser MmseLsaDenoiser;
  */
 MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config);
 
-/**
- * Initialize denoiser in pre-allocated memory (static / embedded).
- *
- * @param mem       16-byte aligned buffer
- * @param mem_size  Must be >= mmse_lsa_get_mem_size(config)
- */
-MmseLsaDenoiser* mmse_lsa_init(void* mem, size_t mem_size,
-                                const MmseLsaConfig* config);
-
-/** Required buffer size for mmse_lsa_init(). */
-size_t mmse_lsa_get_mem_size(const MmseLsaConfig* config);
-
-/** Destroy and free (no-op if created via mmse_lsa_init). */
+/** Destroy and free resources. */
 void mmse_lsa_destroy(MmseLsaDenoiser* self);
 
 /**

@@ -25,7 +25,6 @@
 |---|---|---|
 | `c_impl/include/mmse_lsa_types.h` | 加 `scene_change_flatness_threshold` 欄位 + 預設 0.4f | `MmseLsaConfig`, `mmse_lsa_default_config()`, `mmse_lsa_config_for_mode()` |
 | `c_impl/src/mcra_noise_estimator.c` | Fix #1：`mcra_init_noise()` 中 `S=init_psd`（兩條 code path）<br>Fix #6：讀取 config 的 flatness threshold 存入 struct，用於 line 443 | `struct McraNoiseEstimator`, `mcra_create()`, `mcra_init_noise()`, `mcra_update()` |
-| `c_impl/include/spp_estimator.h` | （靜態記憶體 branch）若 state 改變影響 `spp_get_mem_size()` | 只在 `feature/static-memory` |
 | `c_impl/src/spp_estimator.c` | Fix #3：加 `noise_psd_prev` state 欄位<br>Fix #9：在 `spp_create()` 中 clip q | `struct SppEstimator`, `spp_create()`, `spp_estimate()`, `spp_estimate_ex()`, `spp_reset()`, `spp_destroy()` |
 
 ## 具體改動草稿
@@ -95,23 +94,6 @@ self->has_prev_noise = false;
 if (self->noise_psd_prev) free(self->noise_psd_prev);
 ```
 
-### 4. `spp_estimator.h`（只限 `feature/static-memory` branch）
-
-若有 `spp_get_mem_size()`，要加上 `noise_psd_prev` 的記憶體估算（`ALIGN16(n_freqs * sizeof(float))`）。
-
-## 雙 branch 實作順序
-
-1. **`main` branch 先做**（沒 static memory，最乾淨）
-   - 改上述 4 個檔案
-   - 跑 c_impl example / test 驗證無 crash、輸出與 Python 接近
-   - Commit 為 "fix(c): port Part A fixes to C implementation"
-
-2. **`feature/static-memory` branch**
-   - `git cherry-pick` main 的 commit
-   - 預期在 `spp_estimator.c/h` 的 `spp_get_mem_size()` / `spp_init()` 有衝突（因為 Fix #3 加了 `noise_psd_prev` 影響記憶體佈局）
-   - 手動解衝突：在 `spp_get_mem_size()` 加一塊 `ALIGN16(n_freqs * sizeof(float))`；在 `spp_init()` 內用指標算術 carve 出 `noise_psd_prev`
-   - 跑同樣驗證
-
 ## 驗證策略
 
 ### L1 模組級（建議這階段 target）
@@ -133,13 +115,11 @@ if (self->noise_psd_prev) free(self->noise_psd_prev);
 2. `make -C c_impl clean && make -C c_impl` 確認能 build
 3. 跑一下 `c_impl/bin/denoise_wav test_wav/wav/car_5dB.wav /tmp/out.wav` 或已有的 demo 確認無 crash
 4. Commit
-5. `git checkout feature/static-memory && git cherry-pick <main_sha>` 同步（預期會有 static memory API 衝突，手動解）
-6. 解完 static memory 衝突後 commit
-7. （可選）寫簡單的 c vs python diff 驗證 script
+5. （可選）寫簡單的 c vs python diff 驗證 script
 
 ## 風險與注意事項
 
-- **`spp_estimator.c` 會增加記憶體** — `noise_psd_prev` 加 `n_freqs * sizeof(float)` ≈ 1 KB @ 16kHz/512 FFT。對 Novatek 嵌入式小，但 static memory branch 要記得改 `_get_mem_size()`。
+- **`spp_estimator.c` 會增加記憶體** — `noise_psd_prev` 加 `n_freqs * sizeof(float)` ≈ 1 KB @ 16kHz/512 FFT。
 - **`mcra_update()` 的 line 443 改 `0.4f` 為變數** — 若 struct 沒初始化（某些 edge case 如直接 memcpy），會讀到 0 導致永遠不觸發 scene change。`mcra_create()` 內一定要設好。
 - **Fix #3 的 DD 第一幀** — Python 版 `noise_psd_prev is None` 時 fallback 到 current noise_psd。C 版需要 `has_prev_noise` flag 或用 `is_initialized`（但 spp 已有這個 flag 了——可以共用）。
 

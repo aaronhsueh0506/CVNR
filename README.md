@@ -5,7 +5,7 @@
 傳統信號處理方法的實時語音降噪系統，採用漸進式學習路徑。
 
 > **v4.2 release 重點**
-> - **Part A Review 修復**（11 項 OMLSA 演算法/介面修正；Python + C 已同步 main 與 `feature/static-memory` 雙 branch）
+> - **Part A Review 修復**（11 項 OMLSA 演算法/介面修正；Python + C 已同步）
 > - **主推 V3-2 OMLSA**（`denoisers/v3_2_mmse_lsa.py` + `c_impl/`），已完整評估並有規格保證
 > - **V4 OMLSA + Wind Handler**（`denoisers/v4_omlsa.py`）為 **研究用框架 (research infrastructure)**，在 VCTK/DEMAND 上未能改善風聲；預設 FLAT profile 等同 V3-2，**不建議直接拿去 ship**，詳見下方「演算法限制」章節
 
@@ -1211,7 +1211,7 @@ MIT License
   - Wind Handler (`core/wind_detector.py`, `core/freq_adaptive_controller.py`, `core/transient_suppressor.py`) 在 VCTK/DEMAND 子集**未能改善風聲**，主要原因：風聲低頻能量與語音 F1/F2 頻段重疊，單麥克風 + 統計特徵無法可靠區分
   - v4_config.yaml 預設 **FLAT** adaptive profile（等同 V3-2）+ **transient OFF**
   - 保留 V4 作為 research 框架（詳見 `results/v4_diagnosis_report.md`）
-- 🖇️ **C 實作同步**：Part A 核心 4 項 (#1, #3, #6, #9) 已 port 到 C，同步至 `main`（malloc）與 `feature/static-memory`（靜態記憶體）兩條 branch
+- 🖇️ **C 實作同步**：Part A 核心 4 項 (#1, #3, #6, #9) 已 port 到 C，已 port 到 C
 - 📋 **文檔重構**：更新 README / c_impl/README / ALGORITHMS_EXPLANATION / parameter_adjust_guide 加入 release 用限制條件、風聲/impulse 不適用 case、調參方法
 
 ### v4.1.0 (2026-03-04)
