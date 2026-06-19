@@ -1392,7 +1392,9 @@ MIT License
 
 ### 降噪強度模式
 
-| 模式 | g_min | 特性 |
+> ⚠️ **命名好的 strength mode 僅 C 實作提供**（`mmse_lsa_config_for_mode(sample_rate, MMSE_LSA_NR_MILD|BALANCED|AGGRESSIVE)`，見 `c_impl/include/mmse_lsa_types.h`）。Python `MmseLsaDenoiser` **沒有 `config_for_mode` 方法**；Python 端透過 `config.yaml` 的 `g_min_db` 等數值（下表 g_min 欄）達到等效強度。
+
+| 模式（C） | g_min_db（Python 等效值） | 特性 |
 |------|-------|------|
 | MILD | -10 dB | 保留語音細節，適合低噪環境 |
 | BALANCED（預設） | -15 dB | 平衡降噪與語音品質 |
@@ -1481,7 +1483,7 @@ MIT License
 | **a priori SNR 估計（Decision-Directed）** | $\xi(k,n) = \alpha \cdot G^2 \xi_{prev} + (1-\alpha) \cdot \max(\gamma-1, 0)$ | 語音/噪音瞬間切換時有 1-2 幀延遲；產生 musical noise 風險 |
 | **g_min 下限** | Balanced -15dB / Aggressive -20dB | 噪音無法完全消除，殘留底噪可聽到 |
 | **頻譜缺口** | 過度抑制低能量 bin → 頻譜出現「洞」 | 低 SNR 下產生 musical noise 殘留 |
-| **無 transient detector** | 沒有獨立的脈衝偵測 | 短脈衝（< 10ms）依靠 MCRA 慢追蹤，效果有限 |
+| **transient suppressor 預設關閉** | `core/transient_suppressor.py`（`TransientSuppressor`）存在，但 `v4_config.yaml` 預設 `transient_suppressor.enable: false`（research subset 顯示一般場景反而輕微有害） | 預設管線無獨立脈衝偵測；短脈衝（< 10ms）依靠 MCRA 慢追蹤，效果有限 |
 
 ### 處理限制
 
@@ -1522,6 +1524,8 @@ MIT License
 ## 🔧 調參指引 (Quick Tuning for Release)
 
 > **第一原則：先試 strength mode（MILD / BALANCED / AGGRESSIVE），大部分情境不需要動其它參數**
+>
+> ⚠️ strength mode 是 **C 實作 only**（`mmse_lsa_config_for_mode`）。Python `MmseLsaDenoiser` 無 mode API，請改設對應 `g_min_db`（MILD −10 / BALANCED −15 / AGGRESSIVE −20）達到等效強度。
 
 ### 依 symptom 調參（四個關鍵旋鈕）
 
