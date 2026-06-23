@@ -51,6 +51,7 @@ typedef struct {
     int scene_change_min_frames;         // Consecutive frames required (5)
     float scene_change_blend;            // Noise reset blend factor (0.5)
     float scene_change_flatness_threshold; // Hi-freq spectral flatness threshold (0.4)
+    float broadband_threshold;           // Broadband scene-reset gate (0.8; <1.0 enables)
 
     // Gain parameters
     float g_min_db;         // Minimum gain in dB (-15.0)
@@ -96,6 +97,7 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
     config.scene_change_min_frames = 5;
     config.scene_change_blend = 0.5f;
     config.scene_change_flatness_threshold = 0.4f;
+    config.broadband_threshold = 0.8f;   // <1.0 enables broadband scene reset (Python default)
 
     // Gain parameters (sync with Python v3_2_config.yaml)
     config.g_min_db = -15.0f;
