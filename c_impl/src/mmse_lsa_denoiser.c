@@ -30,6 +30,7 @@ struct MmseLsaDenoiser {
     int n_freqs;               /* fft_size/2 + 1 */
 
     float* power;              /* |X[k]|^2  [n_freqs] */
+    float* noise_aug;          /* N²+R² scratch for the unified-gain path */
 
     McraNoiseEstimator* noise_est;
     SppEstimator*       spp_est;
@@ -183,6 +184,7 @@ MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config) {
     if (!self) return NULL;
 
     self->power             = (float*)calloc(nf, sizeof(float));
+    self->noise_aug         = (float*)calloc(nf, sizeof(float));
     self->noise_est         = mcra_create(nf, config);
     self->spp_est           = spp_create(nf, config);
     self->spp               = (float*)calloc(nf, sizeof(float));
@@ -197,7 +199,7 @@ MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config) {
     self->init_power_sum    = (float*)calloc(nf, sizeof(float));
     self->log_gain_prev     = (float*)calloc(nf, sizeof(float));
 
-    if (!self->power || !self->noise_est || !self->spp_est ||
+    if (!self->power || !self->noise_aug || !self->noise_est || !self->spp_est ||
         !self->spp || !self->xi || !self->gamma || !self->gain ||
         !self->gain_prev || !self->enhanced_psd_prev ||
         !self->init_power_sum || !self->log_gain_prev
@@ -221,6 +223,7 @@ void mmse_lsa_destroy(MmseLsaDenoiser* self) {
     if (!self) return;
 
     free(self->power);
+    free(self->noise_aug);
     if (self->noise_est) mcra_destroy(self->noise_est);
     if (self->spp_est)   spp_destroy(self->spp_est);
     free(self->spp);
@@ -302,6 +305,80 @@ int mmse_lsa_process(MmseLsaDenoiser* self,
 
     /* 5. Apply NR gain */
     fft_apply_gain(spectrum_out, self->gain, nf);
+
+    return 0;
+}
+
+int mmse_lsa_process_gain(MmseLsaDenoiser* self,
+                          const Complex*   spectrum_in,
+                          const float*     extra_noise_psd,
+                          float*           gain_out) {
+    if (!self || !spectrum_in || !gain_out) return -1;
+
+    int nf = self->n_freqs;
+
+    /* 1. Power from input spectrum */
+    fft_power(spectrum_in, self->power, nf);
+
+    /* 2. Noise init or normal processing (identical to mmse_lsa_process; the
+     *    MCRA tracker and the init pass-through are unaffected by extra noise). */
+    if (!self->is_initialized) {
+        for (int k = 0; k < nf; k++)
+            self->init_power_sum[k] += self->power[k];
+
+        mcra_accumulate_init_power(self->noise_est, self->power,
+                                   self->init_frame_count);
+        self->init_frame_count++;
+
+        if (self->init_frame_count >= self->config.num_init_frames) {
+            mcra_init_noise(self->noise_est, self->init_power_sum,
+                            self->init_frame_count);
+            self->is_initialized = true;
+        }
+
+        for (int k = 0; k < nf; k++)
+            self->gain[k] = 1.0f;
+    } else {
+        const float* noise_psd = mcra_get_noise_psd(self->noise_est);
+
+        /* Unified gain: fold R² into the noise floor for the SPP / a-priori-SNR
+         * estimate (ξ = S²/(N²+R²)) WITHOUT polluting the MCRA tracker — exactly
+         * the Python denoise_spectrum copy `noise_psd = noise_psd + extra[i]`
+         * (v3_2_mmse_lsa.py:268-269). With extra==NULL this is the plain noise. */
+        const float* noise_for_spp = noise_psd;
+        if (extra_noise_psd) {
+            for (int k = 0; k < nf; k++)
+                self->noise_aug[k] = noise_psd[k] + extra_noise_psd[k];
+            noise_for_spp = self->noise_aug;
+        }
+
+#ifdef USE_SHARED_XI_RATIO
+        spp_estimate_ex(self->spp_est, self->power, noise_for_spp,
+                        self->gain_prev, self->enhanced_psd_prev,
+                        self->spp, self->xi, self->gamma, self->v);
+        calculate_gain(self, self->spp, self->xi, self->gamma,
+                       self->v, self->gain);
+#else
+        spp_estimate(self->spp_est, self->power, noise_for_spp,
+                     self->gain_prev, self->enhanced_psd_prev,
+                     self->spp, self->xi, self->gamma);
+        calculate_gain(self, self->spp, self->xi, self->gamma,
+                       NULL, self->gain);
+#endif
+
+        /* MCRA updates from the clean power + SPP only (R² excluded). */
+        mcra_update(self->noise_est, self->power, self->spp);
+    }
+
+    /* 3. Update DD state (same recursion as the apply path). */
+    for (int k = 0; k < nf; k++) {
+        float g = self->gain[k];
+        self->gain_prev[k]         = g;
+        self->enhanced_psd_prev[k] = g * g * self->power[k];
+    }
+
+    /* 4. Return the gain WITHOUT applying it (caller combines with res_gain). */
+    memcpy(gain_out, self->gain, nf * sizeof(float));
 
     return 0;
 }

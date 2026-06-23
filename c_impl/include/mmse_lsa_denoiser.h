@@ -50,6 +50,30 @@ int mmse_lsa_process(MmseLsaDenoiser* self,
                      const Complex*   spectrum_in,
                      Complex*         spectrum_out);
 
+/**
+ * Compute the per-bin NR gain for one frame WITHOUT applying it, optionally
+ * folding an external residual-echo PSD into the noise floor (the Speex/Habets
+ * "echo-as-extra-noise" unified gain, ξ = S²/(N² + R²)). Mirrors the Python
+ * denoise_spectrum(..., extra_noise_psd=R²): the augmented noise N²+R² feeds the
+ * SPP / a-priori-SNR estimate, while the MCRA noise tracker keeps updating from
+ * the clean power only (R² does not pollute the noise estimate).
+ *
+ * Use this to drive an external AEC(linear) → NR → RES combine: feed the AEC's
+ * windowed error spectrum as spectrum_in and ctx.r2/32768² as extra_noise_psd,
+ * then combine gain_out with the AEC3 res_gain downstream.
+ *
+ * @param self           Denoiser instance
+ * @param spectrum_in    Complex input [n_freqs] — caller's FFT output (e.g. E(f))
+ * @param extra_noise_psd Extra noise PSD [n_freqs] on the |spectrum_in|² scale,
+ *                        or NULL to behave exactly like the plain noise-only NR
+ * @param gain_out       Output per-bin gain [n_freqs], linear [g_min, 1]
+ * @return 0 on success, <0 on error
+ */
+int mmse_lsa_process_gain(MmseLsaDenoiser* self,
+                          const Complex*   spectrum_in,
+                          const float*     extra_noise_psd,
+                          float*           gain_out);
+
 /** Reset all internal state (call when switching audio streams). */
 void mmse_lsa_reset(MmseLsaDenoiser* self);
 

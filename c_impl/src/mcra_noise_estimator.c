@@ -54,6 +54,7 @@ struct McraNoiseEstimator {
     float scene_change_blend;               // Noise reset blend factor
     float scene_change_flatness_threshold;  // Hi-freq flatness threshold
     int scene_change_count;                 // Current consecutive count
+    float broadband_threshold;              // Broadband scene-reset gate (<1.0 enables)
 
 #ifndef USE_FAST_PERCENTILE
     // Buffer for exact percentile calculation during initialization
@@ -100,6 +101,7 @@ McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config) {
     self->scene_change_min_frames = config->scene_change_min_frames;
     self->scene_change_blend = config->scene_change_blend;
     self->scene_change_flatness_threshold = config->scene_change_flatness_threshold;
+    self->broadband_threshold = config->broadband_threshold;
     self->scene_change_count = 0;
 
 #ifndef USE_FAST_PERCENTILE
@@ -399,8 +401,10 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
     // Advance ring index
     self->ring_idx = (self->ring_idx + 1) % L;
 
-    // Loop C: Speech indicator + SPP smoothing + noise update
-    const float* spp_for_update = spp_ext ? spp_ext : self->spp;
+    // Loop C1: speech indicator + SPP smoothing only (Python mcra.py step 5).
+    // The noise update is deferred to AFTER the scene-change reset + broadband
+    // gate, matching the Python ordering exactly (steps 7-8 run before step 8b's
+    // SPP-gated update).
     for (int k = 0; k < n_freqs; k++) {
         // Speech indicator: I(k,l) = 1 if S(k,l)/(S_min(k,l)·δ) > 1
         float ratio = self->S[k] / (self->S_min[k] * delta + 1e-10f);
@@ -408,14 +412,10 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
 
         // SPP smoothing: p(k,l) = α_p·p(k,l-1) + (1-α_p)·I(k,l)
         self->spp[k] = alpha_p * self->spp[k] + (1.0f - alpha_p) * indicator;
-
-        // Noise update with SPP gating (uses external SPP if provided, else internal)
-        float tilde_alpha_d = alpha_d + (1.0f - alpha_d) * spp_for_update[k];
-        self->noise_psd[k] = tilde_alpha_d * self->noise_psd[k] +
-                            (1.0f - tilde_alpha_d) * power[k];
     }
 
-    // Scene change detection: hi-freq gamma + spectral flatness
+    // Scene change detection (Python step 7, on the PRE-update noise_psd):
+    // hi-freq gamma + spectral flatness
     {
         int hi_start = n_freqs / 2;  // Upper half (~4kHz for 16kHz/512FFT)
         int hi_count = n_freqs - hi_start;
@@ -469,6 +469,34 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
         } else {
             self->scene_change_count = 0;
         }
+    }
+
+    // Broadband scene-reset gate (Python step 8a, mcra.py:229-235): when most
+    // bins are active (fraction with internal spp>0.5 exceeds broadband_threshold),
+    // scale the noise-update SPP toward 0 so the floor catches a broadband onset
+    // fast. Uses the INTERNAL smoothed spp for the ratio; the per-bin update uses
+    // the external SPP if the denoiser supplied one. Disabled when >= 1.0.
+    const float* spp_for_update = spp_ext ? spp_ext : self->spp;
+    float bb_scale = 1.0f;
+    if (self->broadband_threshold < 1.0f) {
+        int high = 0;
+        for (int k = 0; k < n_freqs; k++)
+            if (self->spp[k] > 0.5f) high++;
+        float high_spp_ratio = (float)high / (float)n_freqs;
+        if (high_spp_ratio > self->broadband_threshold) {
+            bb_scale = 1.0f - (high_spp_ratio - self->broadband_threshold)
+                              / (1.0f - self->broadband_threshold);
+            if (bb_scale < 0.0f) bb_scale = 0.0f;
+        }
+    }
+
+    // Noise update with SPP gating (Python step 8b), AFTER the scene resets:
+    // α̃_d = α_d + (1-α_d)·(spp·bb_scale);  N = α̃_d·N + (1-α̃_d)·|Y|²
+    for (int k = 0; k < n_freqs; k++) {
+        float su = spp_for_update[k] * bb_scale;
+        float tilde_alpha_d = alpha_d + (1.0f - alpha_d) * su;
+        self->noise_psd[k] = tilde_alpha_d * self->noise_psd[k] +
+                            (1.0f - tilde_alpha_d) * power[k];
     }
 
     self->frame_count++;
