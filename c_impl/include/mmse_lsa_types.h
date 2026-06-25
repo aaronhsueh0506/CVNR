@@ -97,7 +97,10 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
     config.scene_change_min_frames = 5;
     config.scene_change_blend = 0.5f;
     config.scene_change_flatness_threshold = 0.4f;
-    config.broadband_threshold = 0.8f;   // <1.0 enables broadband scene reset (Python default)
+    config.broadband_threshold = 0.8f;   // <1.0 enables broadband scene reset.
+                                          // NOTE: 0.8 matches the Audio_ALG pipeline path, NOT the
+                                          // standalone Python YAML — config/v3_2_config.yaml uses
+                                          // broadband_threshold: 1.0 (disabled; L=32 tracks fast enough).
 
     // Gain parameters (sync with Python v3_2_config.yaml)
     config.g_min_db = -15.0f;

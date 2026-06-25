@@ -13,7 +13,6 @@
  */
 
 #include "mcra_noise_estimator.h"
-#include "fft_wrapper.h"  /* ALIGN16 */
 #include "fast_math.h"
 #include <stdlib.h>
 #include <string.h>
@@ -24,7 +23,6 @@
 struct McraNoiseEstimator {
     int n_freqs;
     int L;              // Min tracking window length
-    int is_static;      // 1 = placed in external memory, skip free
 
     float alpha_s;      // Time smoothing factor
     float alpha_d;      // Noise update base rate
@@ -119,80 +117,8 @@ McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config) {
     return self;
 }
 
-/* --- Static memory API --- */
-
-size_t mcra_get_mem_size(int n_freqs, const MmseLsaConfig* config) {
-    if (n_freqs <= 0 || !config) return 0;
-    int L = config->L;
-    size_t total = 0;
-    total += ALIGN16(sizeof(McraNoiseEstimator));
-    total += ALIGN16(n_freqs * sizeof(float));      /* noise_psd */
-    total += ALIGN16(n_freqs * sizeof(float));      /* S */
-    total += ALIGN16(n_freqs * sizeof(float));      /* S_min */
-    total += ALIGN16(n_freqs * sizeof(float));      /* spp */
-    total += ALIGN16(L * n_freqs * sizeof(float));  /* min_buffer */
-#ifndef USE_FAST_PERCENTILE
-    total += ALIGN16(config->num_init_frames * n_freqs * sizeof(float));  /* init_power_buffer */
-#endif
-    return total;
-}
-
-McraNoiseEstimator* mcra_init(void* mem, size_t mem_size, int n_freqs, const MmseLsaConfig* config) {
-    if (!mem || !config || n_freqs <= 0) return NULL;
-    if (mem_size < mcra_get_mem_size(n_freqs, config)) return NULL;
-
-    uint8_t* ptr = (uint8_t*)mem;
-
-    McraNoiseEstimator* self = (McraNoiseEstimator*)ptr;
-    ptr += ALIGN16(sizeof(McraNoiseEstimator));
-    memset(self, 0, sizeof(McraNoiseEstimator));
-
-    self->n_freqs = n_freqs;
-    self->L = config->L;
-    self->is_static = 1;
-    self->alpha_s = config->alpha_s;
-    self->alpha_d = config->alpha_d;
-    self->alpha_p = config->alpha_p;
-    self->delta = powf(10.0f, config->delta_db / 10.0f);
-
-    self->noise_psd = (float*)ptr;  ptr += ALIGN16(n_freqs * sizeof(float));
-    memset(self->noise_psd, 0, n_freqs * sizeof(float));
-
-    self->S = (float*)ptr;  ptr += ALIGN16(n_freqs * sizeof(float));
-    memset(self->S, 0, n_freqs * sizeof(float));
-
-    self->S_min = (float*)ptr;  ptr += ALIGN16(n_freqs * sizeof(float));
-    memset(self->S_min, 0, n_freqs * sizeof(float));
-
-    self->spp = (float*)ptr;  ptr += ALIGN16(n_freqs * sizeof(float));
-    memset(self->spp, 0, n_freqs * sizeof(float));
-
-    self->min_buffer = (float*)ptr;  ptr += ALIGN16(self->L * n_freqs * sizeof(float));
-    memset(self->min_buffer, 0, self->L * n_freqs * sizeof(float));
-
-    self->ring_idx = 0;
-    self->is_initialized = false;
-    self->frame_count = 0;
-
-    self->scene_change_threshold = powf(10.0f, config->scene_change_threshold_db / 10.0f);
-    self->scene_change_min_frames = config->scene_change_min_frames;
-    self->scene_change_blend = config->scene_change_blend;
-    self->scene_change_flatness_threshold = config->scene_change_flatness_threshold;
-    self->scene_change_count = 0;
-
-#ifndef USE_FAST_PERCENTILE
-    self->num_init_frames = config->num_init_frames;
-    self->init_power_buffer = (float*)ptr;
-    /* ptr += ALIGN16(self->num_init_frames * n_freqs * sizeof(float)); */
-    memset(self->init_power_buffer, 0, self->num_init_frames * n_freqs * sizeof(float));
-#endif
-
-    return self;
-}
-
 void mcra_destroy(McraNoiseEstimator* self) {
     if (!self) return;
-    if (self->is_static) return;
 
     if (self->noise_psd) free(self->noise_psd);
     if (self->S) free(self->S);

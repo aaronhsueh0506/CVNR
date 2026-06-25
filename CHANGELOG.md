@@ -127,14 +127,11 @@ Python V3-2 OMLSA 調整為與 C 實作 **bit-exact 對齊**（float32 精度極
 
 **C 實作同步**
 - Part A 4 項核心 fix 已 port 至 `c_impl/` (#1, #3, #6, #9)
-- `main` branch（malloc）與 `feature/static-memory` branch（靜態記憶體）兩條 branch 完全同步
-- `feature/static-memory` 端 `spp_get_mem_size()` 新增 `noise_psd_prev` 記憶體槽；`spp_init()` / `mcra_init()` 同步 q clip + flatness threshold
-- Build & smoke verified：兩 branch 對同一 wav 產出 bit-exact
+- Build & smoke verified：輸出 bit-exact
 
 **文檔重構**
-- README / c_impl/README / parameter_adjust_guide / ALGORITHMS_EXPLANATION / STATIC_MEMORY 全數更新
+- README / c_impl/README / parameter_adjust_guide / ALGORITHMS_EXPLANATION 全數更新
 - 新增「使用條件」、「調參指引」、「風聲/衝擊等不適用情境」章節
-- STATIC_MEMORY.md 修正 frame/hop/L 數值（原 150 誤植為 L=32）
 - c_impl/README.md 修正 frame_size / hop_size 預設值顯示（原誤為 512/256）
 - 各文件加入 v4.2 版本統一標記；V4 舊/新章節命名衝突已註記
 
@@ -144,7 +141,6 @@ Python V3-2 OMLSA 調整為與 C 實作 **bit-exact 對齊**（float32 精度極
 
 ### 驗證 (Validation)
 - C pre-fix vs post-fix：輸出差異 −37 dB（相對輸入），init 200 ms passthrough 區完全 bit-exact，符合 fix 範疇
-- C main vs feature/static-memory：bit-exact
 - C post-fix vs Python V3-2：對齊後 correlation 0.58，RMS 差 +0.36 dB（符合 `scipy.special.exp1` vs `exp1_approx` 的既有漂移）
 
 ---

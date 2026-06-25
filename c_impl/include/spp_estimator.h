@@ -28,17 +28,7 @@ typedef struct SppEstimator SppEstimator;
 SppEstimator* spp_create(int n_freqs, const MmseLsaConfig* config);
 
 /**
- * Initialize SPP estimator in pre-allocated memory (static version)
- */
-SppEstimator* spp_init(void* mem, size_t mem_size, int n_freqs, const MmseLsaConfig* config);
-
-/**
- * Get memory required for spp_init()
- */
-size_t spp_get_mem_size(int n_freqs);
-
-/**
- * Destroy SPP estimator (no-op if created via spp_init)
+ * Destroy SPP estimator.
  */
 void spp_destroy(SppEstimator* self);
 

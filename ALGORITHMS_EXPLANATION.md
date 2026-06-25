@@ -6,7 +6,7 @@
 
 > **⚠️ v4.2 release 重要聲明**
 >
-> 本文檔保留了歷史各版本演進脈絡（v1.x–v2.x）供參考。**Release 主推演算法**為 **V3-2 OMLSA**（MMSE-LSA + Bayesian SPP + IMCRA），經 Part A Review 11 項修復，Python 與 C 皆已同步（雙 branch：`main` = malloc；`feature/static-memory` = 靜態記憶體）。
+> 本文檔保留了歷史各版本演進脈絡（v1.x–v2.x）供參考。**Release 主推演算法**為 **V3-2 OMLSA**（MMSE-LSA + Bayesian SPP + IMCRA），經 Part A Review 11 項修復，Python 與 C 皆已同步。
 >
 > **V4 新版本**（`denoisers/v4_omlsa.py` + `core/wind_detector.py` 等）**不是**本文件下方「V4: IMCRA-OMLSA」章節所描述的舊 V4。現行 V4 是「OMLSA + Wind Handler research 框架」，VCTK/DEMAND 驗證**未能改善**風聲場景，**不建議 release 使用**。詳見 [README.md](README.md) 與 `results/v4_diagnosis_report.md`。
 >
@@ -62,7 +62,7 @@
 
 ## v4.2 重大更新 (2026-04-17) — Part A Review 修復
 
-本次 release 套用 Part A Review 11 項修復，同步至 Python + C（`main` / `feature/static-memory` 雙 branch）：
+本次 release 套用 Part A Review 11 項修復，同步至 Python + C：
 
 | Fix | 項目 | 影響模組 |
 |-----|------|----------|
@@ -515,23 +515,28 @@ G = (ξ/(1+ξ)) * exp(0.5 * E1(v))
 
 ---
 
-### V3-2: MMSE-LSA (Ephraim-Malah 1985)
+### V3-2: MMSE-LSA (Ephraim-Malah 1985) — 功能上即 OM-LSA
 
-**技術原理**：最小均方誤差對數短時頻譜幅度估計 (對數域)
+> ⚠️ **類別命名 vs 實際公式**：Python 類別名為 `MmseLsaDenoiser`、增益計算器為 `MmseLsaGainCalculator`（檔名 `v3_2_mmse_lsa.py` / `core/gain_calculators/mmse_lsa.py`），名稱沿用「MMSE-LSA」。但它**實際算出的是 OM-LSA**（Cohen 2002）：MMSE-LSA 只是其中的 H1 增益 `G_H1`，整體增益再用 SPP 在 log 域與 g_min 混合（下方公式）。SPP 混合（blend）一律開啟，不存在「純 MMSE-LSA」的退化路徑。因此：**檔名/類別名 = MMSE-LSA，功能形式 = OM-LSA**。整個 NR 主線本質上就是這一個 OM-LSA 核心。
 
-#### 核心創新：對數域操作
+**技術原理**：MMSE 對數短時頻譜幅度（LSA）估計做為 H1 增益，再以 SPP 在對數域與 g_min 混合（= OM-LSA）
 
-**成本函數**: 最小化 `E[(log|X| - log|Xhat|)²]`
+#### 核心創新：對數域操作 + SPP 加權（OM-LSA 混合）
+
+**成本函數**: H1 增益最小化 `E[(log|X| - log|Xhat|)²]`
 
 **關鍵差異**:
 ```
 STSA (V3-1): G = p*G_mmse + (1-p)*g_min          (線性域加權)
-LSA  (V3-2): log(G) = p*log(G_mmse) + (1-p)*log(g_min)  (對數域加權)
+LSA  (V3-2): log(G) = p*log(G_H1) + (1-p)*log(g_min)  (對數域加權 = OM-LSA)
+            ⇔  G = G_H1^p · g_min^(1-p)
 ```
+其中 `p` = SPP（語音存在機率），`G_H1` = MMSE-LSA 的 H1 增益。對應程式碼
+`log_gain = spp * log_gain_mmse + (1 - spp) * log_g_min`（`core/gain_calculators/mmse_lsa.py`）。
 
-**基礎公式** (與 STSA 相同):
+**H1 基礎公式** (`G_H1`，與 STSA 的 G_base 同式):
 ```
-G_base = (ξ/(1+ξ)) * exp(0.5 * E1(v))
+G_H1 = (ξ/(1+ξ)) * exp(0.5 * E1(v))
 ```
 
 **優勢**:
@@ -543,9 +548,10 @@ G_base = (ξ/(1+ξ)) * exp(0.5 * E1(v))
 
 | 參數 | 默認值 | 作用 |
 |------|--------|------|
-| use_linear_spp_weighting | false | true=線性域(退化為STSA), false=對數域(推薦) |
-| g_min_db | -20 dB | 最小增益 |
-| alpha_g | 0.7 | 增益時間平滑 |
+| g_min_db | -20 dB（建構預設；config 預設 -15） | 最小增益（log 域混合下限） |
+| alpha_g | 0.7（建構預設；config 預設 0.88） | 增益時間平滑 |
+
+> 📌 歷史註：舊版文件曾列 `use_linear_spp_weighting`（true=線性域退化為 STSA）。**現行 `MmseLsaGainCalculator` 已無此旗標**——SPP 混合一律走 log 域（OM-LSA），無線性退化路徑。
 
 #### 技術特點
 

@@ -15,11 +15,6 @@
 extern "C" {
 #endif
 
-/* 16-byte alignment for buffer placement (static memory) */
-#ifndef ALIGN16
-#define ALIGN16(x) (((size_t)(x) + 15u) & ~(size_t)15u)
-#endif
-
 // Complex number structure
 typedef struct {
     float r;  // Real part
@@ -38,22 +33,7 @@ typedef struct FftHandle FftHandle;
 FftHandle* fft_create(int fft_size);
 
 /**
- * Initialize FFT handle in pre-allocated memory (static version)
- *
- * @param mem Pre-allocated buffer (16-byte aligned)
- * @param mem_size Size of buffer in bytes
- * @param fft_size FFT size (must be power of 2)
- * @return FFT handle, or NULL if mem_size too small
- */
-FftHandle* fft_init(void* mem, size_t mem_size, int fft_size);
-
-/**
- * Get memory required for fft_init()
- */
-size_t fft_get_mem_size(int fft_size);
-
-/**
- * Destroy FFT handle (no-op if created via fft_init)
+ * Destroy FFT handle.
  */
 void fft_destroy(FftHandle* handle);
 

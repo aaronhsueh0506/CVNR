@@ -6,18 +6,18 @@
 
 ---
 
-## 🪜 先試 Strength Mode
+## 🪜 先試 Strength Mode（C 實作 only）
 
-Python: `MmseLsaDenoiser()` 預設已調好，或用 `config.yaml` 指定模式。
-C: `mmse_lsa_config_for_mode(sample_rate, MMSE_LSA_NR_MILD | BALANCED | AGGRESSIVE)`。
+> ⚠️ **命名好的 strength mode 只存在於 C 實作**：`mmse_lsa_config_for_mode(sample_rate, MMSE_LSA_NR_MILD | BALANCED | AGGRESSIVE)`（見 `c_impl/include/mmse_lsa_types.h`）。
+> **Python `MmseLsaDenoiser` 沒有 `config_for_mode` 方法**，不吃 MILD/BALANCED/AGGRESSIVE 字串；Python 端請直接在 `config.yaml`（或建構參數）設 `g_min_db` 等數值來達成等效強度。下表的 g_min 即各模式對應的 `g_min_db`，Python 直接填這個值。
 
-| 模式 | g_min | 適用 |
+| 模式 | g_min_db | 適用 |
 |---|---|---|
 | MILD | -10 dB | 安靜 / 室內、重視語音自然度 |
 | BALANCED（預設） | -15 dB | 一般使用 |
 | AGGRESSIVE | -20 dB | 高噪 / 戶外、可接受些微失真 |
 
-**多數情境切模式就夠了**，以下細節調參僅在模式都不符需求時再看。
+**多數情境切模式（C）或設對應 `g_min_db`（Python）就夠了**，以下細節調參僅在這一步不符需求時再看。
 
 ---
 
@@ -161,7 +161,7 @@ IMCRA/MCRA 的 scene change detector 用「高頻 gamma + spectral flatness」�
 下列情境屬於 OMLSA **本質限制**，無論怎麼調都無法解決——參見 [README.md#-演算法限制-limitations](README.md#演算法限制-limitations)：
 
 - **風聲 / buffeting**（強風直吹、車窗漏風）— 需硬體風罩或 NN 模型
-- **衝擊噪聲**（關門、敲擊、碗盤）— 需獨立 transient detector
+- **衝擊噪聲**（關門、敲擊、碗盤）— 預設管線無啟用的脈衝偵測（`core/transient_suppressor.py` 存在但 `v4_config.yaml` 預設 `enable: false`）
 - **類語音干擾**（其他人語音、電視、音樂）— 需 speech separation
 - **迴響 / 回聲**— 需 dereverb / AEC
 
@@ -169,7 +169,7 @@ IMCRA/MCRA 的 scene change detector 用「高頻 gamma + spectral flatness」�
 
 ## 📝 調參流程建議
 
-1. 先換 strength mode（**80% 的情境止於這一步**）
+1. 先換 strength mode（C 端 `mmse_lsa_config_for_mode`）／設對應 `g_min_db`（Python 端，無 mode API）（**80% 的情境止於這一步**）
 2. 遇到 symptom 對照「調參決策表」調四大核心旋鈕
 3. 遇到場景切換問題調 `scene_change_*`
 4. 每次只動一個參數，用同一批測試音檔 A/B 比對

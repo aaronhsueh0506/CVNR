@@ -28,17 +28,7 @@ typedef struct McraNoiseEstimator McraNoiseEstimator;
 McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config);
 
 /**
- * Initialize MCRA estimator in pre-allocated memory (static version)
- */
-McraNoiseEstimator* mcra_init(void* mem, size_t mem_size, int n_freqs, const MmseLsaConfig* config);
-
-/**
- * Get memory required for mcra_init()
- */
-size_t mcra_get_mem_size(int n_freqs, const MmseLsaConfig* config);
-
-/**
- * Destroy MCRA estimator (no-op if created via mcra_init)
+ * Destroy MCRA estimator.
  */
 void mcra_destroy(McraNoiseEstimator* self);
 

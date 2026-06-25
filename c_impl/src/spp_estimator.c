@@ -9,7 +9,6 @@
  */
 
 #include "spp_estimator.h"
-#include "fft_wrapper.h"  /* ALIGN16 */
 #include "fast_math.h"
 #include <stdlib.h>
 #include <string.h>
@@ -18,7 +17,6 @@
 // Internal structure
 struct SppEstimator {
     int n_freqs;
-    int is_static;      // 1 = placed in external memory, skip free
 
     float alpha;        // A priori SNR smoothing factor
     float q;            // Prior speech probability
@@ -69,62 +67,8 @@ SppEstimator* spp_create(int n_freqs, const MmseLsaConfig* config) {
     return self;
 }
 
-/* --- Static memory API --- */
-
-size_t spp_get_mem_size(int n_freqs) {
-    size_t total = 0;
-    total += ALIGN16(sizeof(SppEstimator));
-    total += ALIGN16(n_freqs * sizeof(float));  /* xi_prev */
-    total += ALIGN16(n_freqs * sizeof(float));  /* gamma_prev */
-    total += ALIGN16(n_freqs * sizeof(float));  /* noise_psd_prev (Fix #3) */
-    return total;
-}
-
-SppEstimator* spp_init(void* mem, size_t mem_size, int n_freqs, const MmseLsaConfig* config) {
-    if (!mem || !config || n_freqs <= 0) return NULL;
-    if (mem_size < spp_get_mem_size(n_freqs)) return NULL;
-
-    uint8_t* ptr = (uint8_t*)mem;
-
-    SppEstimator* self = (SppEstimator*)ptr;
-    ptr += ALIGN16(sizeof(SppEstimator));
-    memset(self, 0, sizeof(SppEstimator));
-
-    self->n_freqs = n_freqs;
-    self->is_static = 1;
-    self->alpha = config->alpha_xi;
-    // Fix #9: clip q to (eps, 1-eps) so prior_ratio is well defined
-    {
-        const float _eps = 1e-6f;
-        float q_clipped = config->q;
-        if (q_clipped < _eps) q_clipped = _eps;
-        if (q_clipped > 1.0f - _eps) q_clipped = 1.0f - _eps;
-        self->q = q_clipped;
-        self->prior_ratio = (1.0f - q_clipped) / q_clipped;
-    }
-    self->xi_min = powf(10.0f, config->xi_min_db / 10.0f);
-
-    self->xi_prev = (float*)ptr;
-    ptr += ALIGN16(n_freqs * sizeof(float));
-    memset(self->xi_prev, 0, n_freqs * sizeof(float));
-
-    self->gamma_prev = (float*)ptr;
-    ptr += ALIGN16(n_freqs * sizeof(float));
-    memset(self->gamma_prev, 0, n_freqs * sizeof(float));
-
-    self->noise_psd_prev = (float*)ptr;
-    /* ptr += ALIGN16(n_freqs * sizeof(float)); */
-    memset(self->noise_psd_prev, 0, n_freqs * sizeof(float));
-
-    self->is_initialized = false;
-    self->frame_count = 0;
-
-    return self;
-}
-
 void spp_destroy(SppEstimator* self) {
     if (!self) return;
-    if (self->is_static) return;
 
     if (self->xi_prev) free(self->xi_prev);
     if (self->gamma_prev) free(self->gamma_prev);

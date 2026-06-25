@@ -26,7 +26,6 @@
 
 struct MmseLsaDenoiser {
     MmseLsaConfig config;
-    int is_static;
 
     int n_freqs;               /* fft_size/2 + 1 */
 
@@ -161,30 +160,6 @@ static void calculate_gain(MmseLsaDenoiser* self,
 }
 
 /* -------------------------------------------------------------------------
- * Memory size
- * ---------------------------------------------------------------------- */
-
-size_t mmse_lsa_get_mem_size(const MmseLsaConfig* config) {
-    if (!config) return 0;
-    int nf = config->fft_size / 2 + 1;
-    size_t total = 0;
-
-    total += ALIGN16(sizeof(MmseLsaDenoiser));
-    total += ALIGN16(nf * sizeof(float));          /* power */
-    total += mcra_get_mem_size(nf, config);        /* noise_est */
-    total += spp_get_mem_size(nf);                 /* spp_est */
-    total += ALIGN16(nf * sizeof(float)) * 4;      /* spp, xi, gamma, gain */
-#ifdef USE_SHARED_XI_RATIO
-    total += ALIGN16(nf * sizeof(float));          /* v */
-#endif
-    total += ALIGN16(nf * sizeof(float)) * 2;      /* gain_prev, enhanced_psd_prev */
-    total += ALIGN16(nf * sizeof(float));          /* init_power_sum */
-    total += ALIGN16(nf * sizeof(float));          /* log_gain_prev */
-
-    return total;
-}
-
-/* -------------------------------------------------------------------------
  * Shared post-alloc setup
  * ---------------------------------------------------------------------- */
 
@@ -241,71 +216,11 @@ MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config) {
 }
 
 /* -------------------------------------------------------------------------
- * Static (pre-allocated) version
- * ---------------------------------------------------------------------- */
-
-MmseLsaDenoiser* mmse_lsa_init(void* mem, size_t mem_size,
-                                const MmseLsaConfig* config) {
-    if (!mem || !config) return NULL;
-    if (mem_size < mmse_lsa_get_mem_size(config)) return NULL;
-
-    int nf       = config->fft_size / 2 + 1;
-    uint8_t* ptr = (uint8_t*)mem;
-
-    MmseLsaDenoiser* self = (MmseLsaDenoiser*)ptr;
-    ptr += ALIGN16(sizeof(MmseLsaDenoiser));
-    memset(self, 0, sizeof(MmseLsaDenoiser));
-    self->is_static = 1;
-
-    self->power = (float*)ptr;  ptr += ALIGN16(nf * sizeof(float));
-    memset(self->power, 0, nf * sizeof(float));
-
-    size_t mcra_mem = mcra_get_mem_size(nf, config);
-    self->noise_est = mcra_init(ptr, mcra_mem, nf, config);
-    ptr += mcra_mem;
-    if (!self->noise_est) return NULL;
-
-    size_t spp_mem = spp_get_mem_size(nf);
-    self->spp_est = spp_init(ptr, spp_mem, nf, config);
-    ptr += spp_mem;
-    if (!self->spp_est) return NULL;
-
-    self->spp   = (float*)ptr;  ptr += ALIGN16(nf * sizeof(float));
-    self->xi    = (float*)ptr;  ptr += ALIGN16(nf * sizeof(float));
-    self->gamma = (float*)ptr;  ptr += ALIGN16(nf * sizeof(float));
-    self->gain  = (float*)ptr;  ptr += ALIGN16(nf * sizeof(float));
-    memset(self->spp,   0, nf * sizeof(float));
-    memset(self->xi,    0, nf * sizeof(float));
-    memset(self->gamma, 0, nf * sizeof(float));
-    memset(self->gain,  0, nf * sizeof(float));
-
-#ifdef USE_SHARED_XI_RATIO
-    self->v = (float*)ptr;  ptr += ALIGN16(nf * sizeof(float));
-    memset(self->v, 0, nf * sizeof(float));
-#endif
-
-    self->gain_prev         = (float*)ptr;  ptr += ALIGN16(nf * sizeof(float));
-    self->enhanced_psd_prev = (float*)ptr;  ptr += ALIGN16(nf * sizeof(float));
-    memset(self->gain_prev,         0, nf * sizeof(float));
-    memset(self->enhanced_psd_prev, 0, nf * sizeof(float));
-
-    self->init_power_sum = (float*)ptr;  ptr += ALIGN16(nf * sizeof(float));
-    memset(self->init_power_sum, 0, nf * sizeof(float));
-
-    self->log_gain_prev = (float*)ptr;
-    memset(self->log_gain_prev, 0, nf * sizeof(float));
-
-    _setup(self, config);
-    return self;
-}
-
-/* -------------------------------------------------------------------------
  * Destroy
  * ---------------------------------------------------------------------- */
 
 void mmse_lsa_destroy(MmseLsaDenoiser* self) {
     if (!self) return;
-    if (self->is_static) return;
 
     free(self->power);
     free(self->noise_aug);
