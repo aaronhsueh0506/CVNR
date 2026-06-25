@@ -37,8 +37,9 @@
 
 ### 驗證
 - `make clean && make` 兩 branch 皆 build pass
-- `bin/denoise_wav ../test_wav/wav/babble_10dB.wav` 產出與預期輸出 bit-exact 一致
-- vs pre-Part-A：輸出差異 −37 dB 相對輸入；init 200 ms passthrough 區 bit-exact（符合 fix 作用範圍）
+- lib 核心（mmse_lsa_process / mmse_lsa_process_gain）為 freq-domain caller-owns-FFT API；此 bit-exact 驗證針對 lib 核心數值，非 standalone runner
+  - ⚠️ 註：此處原述 `bin/denoise_wav` 端到端 bit-exact 已過時——當時 example/main.c 直接把時域 PCM 餵進 freq-domain API（指標型別錯誤），runner 並未真正跑通；example/main.c 已重寫為正確的 freq-domain runner（窗→rFFT→mmse_lsa_process→iFFT→sqrt-Hann OLA），參見 tools/parity_nr 對齊驗證
+- vs pre-Part-A：lib 核心輸出差異 −37 dB 相對輸入；init 200 ms passthrough 區 bit-exact（符合 fix 作用範圍）
 - vs Python V3-2：對齊後 correlation 0.58、RMS 差 +0.36 dB（符合 `scipy.special.exp1` vs C `exp1_approx` 既有漂移）
 
 ### 文檔

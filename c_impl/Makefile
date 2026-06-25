@@ -181,6 +181,19 @@ lib: dirs $(OBJS) $(LIB_OBJS)
 	ar rcs $(LIB_TARGET) $(OBJS) $(LIB_OBJS)
 	@echo "Static library built: $(LIB_TARGET)"
 
+# =============================================================================
+# Python<->C parity runner (drives mmse_lsa_process_gain on dumped spectra)
+# Built separately from denoise_wav (both have their own main()).
+# Honors EXTRA_CFLAGS, so:  make parity            -> fast-math
+#                           make parity EXTRA_CFLAGS="-DUSE_STANDARD_MATH" -> std-math
+# See tools/parity_nr.py for the Python side.
+# =============================================================================
+PARITY_TARGET = $(BIN_DIR)/parity_runner
+
+parity: dirs $(OBJS) $(LIB_OBJS) $(OBJ_DIR)/parity_runner.o
+	$(CC) $(CFLAGS) -o $(PARITY_TARGET) $(OBJS) $(LIB_OBJS) $(OBJ_DIR)/parity_runner.o $(LDFLAGS)
+	@echo "Build complete: $(PARITY_TARGET)"
+
 # Help
 help:
 	@echo "MMSE-LSA Denoiser Build System"
@@ -212,4 +225,4 @@ help:
 	@echo "After building:"
 	@echo "  ./bin/denoise_wav input.wav output.wav"
 
-.PHONY: all dirs clean install uninstall test lib help debug
+.PHONY: all dirs clean install uninstall test lib help debug parity

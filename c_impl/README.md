@@ -213,36 +213,63 @@ MCRA 噪聲估計的瓶頸是每幀掃描 ring buffer（L=32 幀）找最小值�
 ./bin/denoise_wav input.wav output.wav
 ```
 
-### 程式碼整合
+### 程式碼整合（freq-domain：caller 自備 FFT / 窗 / OLA）
+
+lib 核心 `mmse_lsa_process()` 是**頻域 API**：吃 `Complex[n_freqs]` 頻譜、吐
+`Complex[n_freqs]`（套用 per-bin gain、相位不變）。窗 / rFFT / iFFT / OLA 由
+caller 負責（見 `example/main.c` 的完整 freq-domain runner）。
 
 ```c
 #include "mmse_lsa_denoiser.h"
+#include "fft_wrapper.h"
 
-// 1. 創建配置
-MmseLsaConfig config = mmse_lsa_default_config(16000);  // 16kHz
-
-// 2. 初始化降噪器
+// 1. 創建配置 + 降噪器 + FFT handle
+MmseLsaConfig config = mmse_lsa_default_config(16000);
 MmseLsaDenoiser* denoiser = mmse_lsa_create(&config);
+FftHandle* fft = fft_create(config.fft_size);
+int n_freqs = mmse_lsa_get_n_freqs(denoiser);   // fft_size/2 + 1
 
-// 3. 獲取 hop_size
-int hop_size = mmse_lsa_get_hop_size(denoiser);
+// 2. 每幀：窗 -> rFFT -> mmse_lsa_process -> iFFT -> 窗 -> OLA
+//    （窗 = sqrt(periodic Hann)，50% overlap 即 COLA，無需額外歸一化）
+Complex spec_in[n_freqs], spec_out[n_freqs];
+fft_forward(fft, windowed_frame /*[fft_size]*/, spec_in);
+mmse_lsa_process(denoiser, spec_in, spec_out);  // gain 套到複數頻譜
+fft_inverse(fft, spec_out, time_out /*[fft_size]*/);
+// out[start..] += time_out * window;  (overlap-add)
 
-// 4. 分配緩衝
-float* in_buf = malloc(hop_size * sizeof(float));
-float* out_buf = malloc(hop_size * sizeof(float));
-
-// 5. 串流處理（每次處理 hop_size 樣本）
-while (has_more_samples()) {
-    read_samples(in_buf, hop_size);
-    mmse_lsa_process(denoiser, in_buf, out_buf);
-    write_samples(out_buf, hop_size);
-}
-
-// 6. 清理
+// 3. 清理
 mmse_lsa_destroy(denoiser);
-free(in_buf);
-free(out_buf);
+fft_destroy(fft);
 ```
+
+### Python↔C 數值對齊驗證 (parity harness)
+
+`tools/parity_nr.py` + `example/parity_runner.c` 提供可重現的埠正確性驗證，
+**隔離 FFT 差異**：兩端餵入 byte-identical 的逐幀複數頻譜，只比 gain/SPP/MCRA 運算。
+
+```bash
+# 1. Python 端 dump 參考頻譜 + gain
+python3 ../tools/parity_nr.py dump --wav ../test_wav/wav/babble_10dB.wav --out /tmp/parity_in.bin
+
+# 2a. C 端 fast-math
+make parity && ./bin/parity_runner /tmp/parity_in.bin /tmp/g_fast.bin
+python3 ../tools/parity_nr.py compare --ref /tmp/parity_in.bin --c-gains /tmp/g_fast.bin
+
+# 2b. C 端 standard-math（與 make debug 同旗標）→ 近 bit-exact
+make clean && make parity CFLAGS="-Wall -Wextra -O2 -std=c99 -I./include -I./example -I./lib/kiss_fft -DUSE_STANDARD_MATH"
+./bin/parity_runner /tmp/parity_in.bin /tmp/g_debug.bin
+python3 ../tools/parity_nr.py compare --ref /tmp/parity_in.bin --c-gains /tmp/g_debug.bin
+```
+
+實測（babble_10dB.wav，6961 幀 × 257 bin）：
+
+| build | worst &#124;Δgain&#124; | median &#124;Δgain&#124; |
+|-------|--------------|---------------|
+| standard-math (`-DUSE_STANDARD_MATH`) | 2.9e-5 | 1.5e-8 |
+| fast-math (預設) | 3.7e-1 | 1.9e-3 |
+
+standard-math 近 bit-exact ⇒ 埠邏輯正確。fast-math 尾端較大來自 `fast_log`
+Taylor 近似（小引數 worst ~0.11），會經遞迴平滑放大；屬 fast-math 固有取捨，非埠 bug。
 
 ## 使用條件 (Usage Requirements)
 

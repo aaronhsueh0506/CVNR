@@ -42,14 +42,8 @@ def _exp1_approx(v: np.ndarray) -> np.ndarray:
     return result
 
 
-# v4.2.1 C-align: 預設改為走 3 段近似（與 C `exp1_approx` bit-exact 對齊）。
-# 若需要 scipy.special.exp1 的精確值（研究/離線分析），將 USE_SCIPY_EXP1 設為 True。
-USE_SCIPY_EXP1 = False
-try:
-    from scipy.special import exp1
-    SCIPY_AVAILABLE = True
-except ImportError:
-    SCIPY_AVAILABLE = False
+# v4.2.1 C-align: E1(v) 一律走 3 段近似（與 C `exp1_approx` bit-exact 對齊）。
+# scipy.special.exp1 路徑已移除——C 端不會鏈結 scipy，保留 scipy 分支只會是 parity footgun。
 
 
 class MmseLsaGainCalculator:
@@ -207,12 +201,8 @@ class MmseLsaGainCalculator:
         v = (xi / (1 + xi)) * gamma
         v = np.clip(v, 1e-10, 700)  # 防止溢出
 
-        # v4.2.1 C-align: 預設用 3 段近似（與 C `exp1_approx` bit-exact 對齊）。
-        # 如需 scipy.special.exp1 的精確值，在 caller 端設 USE_SCIPY_EXP1 = True。
-        if USE_SCIPY_EXP1 and SCIPY_AVAILABLE:
-            exp1_v = exp1(v)
-        else:
-            exp1_v = _exp1_approx(v)
+        # v4.2.1 C-align: 一律用 3 段近似（與 C `exp1_approx` bit-exact 對齊）。
+        exp1_v = _exp1_approx(v)
 
         gain = (xi / (1 + xi)) * np.exp(0.5 * exp1_v)
 
