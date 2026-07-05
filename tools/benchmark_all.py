@@ -1,7 +1,7 @@
 """
 Benchmark All Denoisers - 完整性能評估
 
-對所有降噪算法（V1-V4）進行綜合評估：
+對所有降噪算法（V1-V3 系列）進行綜合評估：
 - 性能測試：處理時間、CPU、內存、RTF
 - 音質測試：SNR、PESQ、STOI、LSD（可選）
 
@@ -32,7 +32,7 @@ from denoisers import (
     MmseLsaDenoiser,
     PmmseDenoiser
 )
-# V4 IMCRA-OMLSA archived, V3-4 removed (not better than V3-2)
+# V3-4/V4 removed (not better than V3-2)
 
 
 class BenchmarkRunner:
@@ -64,15 +64,14 @@ class BenchmarkRunner:
         )
 
     def create_denoisers(self) -> Dict[str, Any]:
-        """創建所有降噪器（v4.0: V4 merged to V3-2, V3-4 removed）"""
+        """創建所有降噪器（V3-4/V4 已移除）"""
         return {
             'V1': SpectralSubtractionDenoiser(sample_rate=self.sample_rate),
             'V2': WienerDenoiser(sample_rate=self.sample_rate, enable_noise_tracking=True),
             'V3': SppMmseDenoiser(sample_rate=self.sample_rate),
             'V3-2': MmseLsaDenoiser(sample_rate=self.sample_rate),
             'V3-3': PmmseDenoiser(sample_rate=self.sample_rate),
-            # V3-4 removed (test results not better than V3-2)
-            # V4 merged to V3-2 (same implementation with optimized parameters)
+            # V3-4/V4 removed (not better than V3-2)
         }
 
     def generate_test_cases(
@@ -197,7 +196,7 @@ class BenchmarkRunner:
         print(f"Mode:         {'Quick (SNR only)' if self.quick_mode else 'Full (all metrics)'}")
         print(f"Test cases:   {len(test_cases)} ({len(noise_types)} noise types × {len(snr_levels)} SNR levels)")
         print(f"Duration:     {self.duration} seconds per test")
-        print(f"Denoisers:    V1, V2, V3, V4")
+        print(f"Denoisers:    V1, V2, V3, V3-2, V3-3")
         print("="*70)
 
         # 創建降噪器

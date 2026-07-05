@@ -7,7 +7,6 @@ SPP 參數優化器
 - V3-2 (MMSE-LSA)
 - V3-3 (PMMSE)
 - V3-4 (Laplacian-MMSE)
-- V4 (IMCRA-OMLSA)
 
 評估指標: PESQ, STOI, segSNR
 搜索方法: 隨機搜索 / 網格搜索 / 關鍵參數網格 / Optuna 貝葉斯優化
@@ -44,7 +43,6 @@ VERSION_CONFIG_MAP = {
     'V3-2': 'v3_2_config.yaml',
     'V3-3': 'v3_3_config.yaml',
     'V3-4': 'v3_4_config.yaml',
-    'V4': 'v4_config.yaml'
 }
 
 # 固定 SPP 參數 (全局) - 舊版向後兼容
@@ -885,7 +883,7 @@ def optimize(version: str, method: str = 'random', n_trials: int = 50,
 def main():
     parser = argparse.ArgumentParser(description='SPP 參數優化器')
     parser.add_argument('--version', type=str, required=True,
-                        choices=['V3', 'V3-2', 'V3-3', 'V3-4', 'V4'],
+                        choices=['V3', 'V3-2', 'V3-3', 'V3-4'],
                         help='要優化的版本')
     parser.add_argument('--method', type=str, default='random',
                         choices=['random', 'grid', 'focused_grid', 'optuna'],

@@ -181,7 +181,7 @@ class BenchmarkComparison:
 
         # 默認方法列表
         if methods is None:
-            methods = ['Speex', 'RNNoise', 'V1', 'V2', 'V3', 'V3-2', 'V3-3', 'V3-4', 'V4']
+            methods = ['Speex', 'RNNoise', 'V1', 'V2', 'V3', 'V3-2', 'V3-3', 'V3-4']
 
         results = {}
         total_tests = len(test_cases) * len(methods)
@@ -404,7 +404,7 @@ def main():
     parser.add_argument('--output-dir', type=str, default='results',
                        help='結果輸出目錄')
     parser.add_argument('--methods', type=str, nargs='+',
-                       default=['Speex', 'RNNoise', 'V1', 'V2', 'V3', 'V3-2', 'V3-3', 'V3-4', 'V4'],
+                       default=['Speex', 'RNNoise', 'V1', 'V2', 'V3', 'V3-2', 'V3-3', 'V3-4'],
                        help='要評估的方法列表')
 
     args = parser.parse_args()

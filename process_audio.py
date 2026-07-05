@@ -11,7 +11,7 @@
     python process_audio.py input.wav --output-dir ./custom_output
 
     # 只處理特定版本
-    python process_audio.py input.wav --versions V3 V4
+    python process_audio.py input.wav --versions V3 V3-2
 
     # 指定配置文件目錄
     python process_audio.py input.wav --config-dir ./my_configs
