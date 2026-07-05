@@ -67,6 +67,7 @@ from denoisers import (
     MmseLsaDenoiser,
     PmmseDenoiser,
 )
+from core.nr_modes import apply_mode
 
 
 def load_config(config_file: str) -> dict:
@@ -98,7 +99,8 @@ def load_config(config_file: str) -> dict:
 def create_denoiser_from_config(
     version: str,
     config_dir: str,
-    sample_rate: int
+    sample_rate: int,
+    mode: str = None
 ):
     """
     根據配置文件創建降噪器
@@ -107,6 +109,8 @@ def create_denoiser_from_config(
         version: 版本名稱 (V1, V2, V3, V3-2, V3-3)
         config_dir: 配置文件目錄
         sample_rate: 採樣率
+        mode: NR 內容保留模式 ('full' | 'stationary')，僅 V3-2 有效；
+              None 則取 config 的 mode，預設 'full'。
 
     Returns:
         降噪器實例
@@ -269,6 +273,11 @@ def create_denoiser_from_config(
                 'alpha_noise': noise_config.get('alpha', 0.95)
             })
 
+        # NR content-preservation mode (full | stationary). Explicit arg wins over config; the
+        # preset overlay sets the stationary levers, then params['mode'] records the choice.
+        mode = mode or config.get('mode', 'full')
+        params = apply_mode(params, mode)
+        params['mode'] = mode
         return MmseLsaDenoiser(**params)
 
     elif version == 'V3-3':

@@ -61,6 +61,9 @@ comparison_results/
 *.txt
 !requirements.txt
 
+# 音樂保留 eval harness 產物（tools/eval_music_preservation.py 的輸出，含 wav/png/json）
+results/music_eval*/
+
 # 臨時文件
 *.tmp
 *.bak

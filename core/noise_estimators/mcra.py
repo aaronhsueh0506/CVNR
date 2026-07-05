@@ -1,36 +1,49 @@
 """
-IMCRA / MCRA — Noise Estimator
-Implements two modes via the `accept_external_spp` constructor flag:
+MCRA-based Noise Estimator (MCRA-lite — NOT canonical IMCRA; see NOTE).
 
-  accept_external_spp=True  (default):
-    Improved MCRA (IMCRA) — Cohen (2003).
-    Noise-update gate uses the OM-LSA posterior SPP passed in from the
-    denoiser (if provided), falling back to the internal min-stat SPP.
-    Better speech protection; designed to pair with OM-LSA gain calculation.
-    Use in standalone NR.
+Minimum-tracking noise-PSD estimation (Cohen & Berdugo 2002). The
+`accept_external_spp` constructor flag selects what drives the noise-update gate:
 
-  accept_external_spp=False:
-    Plain MCRA — Cohen & Berdugo (2002).
-    Noise-update gate always uses the internal min-stat indicator.
-    Use when the caller's OM-LSA posterior is unreliable (e.g. the AEC
-    pipeline, where residual echo inflates the posterior in noise-only bins,
-    which would freeze noise tracking).
+  accept_external_spp=True  (default — standalone NR):
+    Gate uses the OM-LSA posterior SPP passed in from the denoiser (falling back
+    to the internal min-stat SPP if none is given). The external DD-smoothed
+    posterior gives more reliable per-bin speech protection than the internal
+    binary min-ratio test, and pairs naturally with the OM-LSA gain.
+
+  accept_external_spp=False  (AEC pipeline):
+    Gate always uses the internal min-stat indicator. Use when the caller's
+    OM-LSA posterior is unreliable (e.g. residual echo inflates the posterior in
+    noise-only bins, which would freeze noise tracking).
+
+NOTE — this is MCRA-lite, not canonical IMCRA. It does single-pass minimum
+tracking + a posterior-gated recursive average, but deliberately OMITS IMCRA's
+(Cohen 2003) distinctive additions: the two-iteration minimum smoothing
+(rough-VAD exclusion before the minimum) and the B_min bias compensation.
+Reconnecting the internal minimum-controlled gate as the noise-update driver
+regressed speech (−0.632 PESQ / 824 VCTK) and is intentionally not used.
 
 References:
     Cohen, I. & Berdugo, B. (2002). "Noise estimation by minima controlled
     recursive averaging." IEEE Signal Processing Letters, 9(1), 12-15.
     Cohen, I. (2003). "Noise spectrum estimation in adverse environments:
     Improved minima controlled recursive averaging." IEEE Trans. Signal
-    Processing, 51(2), 466-475.
+    Processing, 51(2), 466-475.  (IMCRA — NOT fully implemented here; see NOTE.)
 """
 
 import numpy as np
 from typing import Optional
 
 
+def _spectral_flatness(power_band: np.ndarray) -> float:
+    """Geometric-mean / arithmetic-mean spectral flatness of a power band (∈ (0,1]).
+    ~0.1-0.2 for voiced/tonal content, ~0.5-0.7 for white noise."""
+    p = power_band + 1e-20
+    return np.exp(np.mean(np.log(p))) / np.mean(p)
+
+
 class McraNoiseEstimator:
     """
-    IMCRA/MCRA 噪聲估計器（mode 由 accept_external_spp 控制，見 module docstring）
+    MCRA-lite 噪聲估計器（gate 由 accept_external_spp 控制，見 module docstring；非 canonical IMCRA）
 
     演算法步驟：
     1. 時間平滑：S(k,l) = α_s·S(k,l-1) + (1-α_s)·|Y(k,l)|²
@@ -38,8 +51,8 @@ class McraNoiseEstimator:
     3. 內部語音指示器：I(k,l) = 1 if S(k,l)/S_min(k,l) > δ else 0
     4. 內部 SPP 平滑：p(k,l) = α_p·p(k,l-1) + (1-α_p)·I(k,l)
     5. 噪聲更新 gate：
-         IMCRA mode: spp_gate = external OM-LSA posterior (if provided) else self.spp
-         MCRA mode:  spp_gate = self.spp  (internal only)
+         external-gate (accept_external_spp=True):  spp_gate = external OM-LSA posterior (else self.spp)
+         internal-gate (accept_external_spp=False): spp_gate = self.spp
        α̃_d = α_d + (1-α_d)·spp_gate
        N(k,l) = α̃_d·N(k,l-1) + (1-α̃_d)·|Y(k,l)|²
 
@@ -68,6 +81,12 @@ class McraNoiseEstimator:
         scene_change_min_frames: int = 5,
         scene_change_blend: float = 0.5,
         scene_change_flatness_threshold: float = 0.4,
+        # Music-aware scene-change (for `stationary` NR mode). Default OFF → `full` untouched.
+        # tonal veto: skip the floor-blend when the LOW band is tonal (peaky, low flatness) —
+        # sustained tonal music must not trigger a noise-floor reset, whereas a genuine
+        # broadband noise-scene change has a flat low band and still fires.
+        scene_change_tonal_veto: bool = False,
+        scene_change_lo_flatness_max: float = 0.4,
         # IMCRA/MCRA mode switch
         accept_external_spp: bool = True,  # True=IMCRA, False=plain MCRA
     ):
@@ -84,6 +103,8 @@ class McraNoiseEstimator:
         self.scene_change_min_frames = scene_change_min_frames
         self.scene_change_blend = scene_change_blend
         self.scene_change_flatness_threshold = scene_change_flatness_threshold
+        self.scene_change_tonal_veto = scene_change_tonal_veto
+        self.scene_change_lo_flatness_max = scene_change_lo_flatness_max
         self.scene_change_count = 0
         self.accept_external_spp = accept_external_spp
 
@@ -200,27 +221,33 @@ class McraNoiseEstimator:
         hi_gamma = np.mean(hi_power) / (np.mean(self.noise_psd[hi_start:]) + 1e-10)
 
         # Spectral flatness = geometric_mean / arithmetic_mean（高頻段）
-        hi_power_safe = hi_power + 1e-20
-        hi_flatness = np.exp(np.mean(np.log(hi_power_safe))) / (np.mean(hi_power_safe))
+        hi_flatness = _spectral_flatness(hi_power)
 
         if (hi_gamma > self.scene_change_threshold and
                 hi_flatness > self.scene_change_flatness_threshold):
             self.scene_change_count += 1
             if self.scene_change_count >= self.scene_change_min_frames:
-                # 場景轉換確認：部分重置噪聲估計和最小值追蹤
-                blend = self.scene_change_blend
-                self.noise_psd = blend * self.noise_psd + (1 - blend) * power
-                self.S_min = self.S.copy()
-                self.min_buffer[:] = self.S.reshape(1, -1)
+                # 音樂安全化 tonal veto（stationary mode）：低頻若是 tonal（尖峰、flatness 低）
+                # 則判為音樂 → 不重設噪聲底；只有低頻也平坦（真的換噪聲場）才放行。
+                blocked = False
+                if self.scene_change_tonal_veto:
+                    lo_flatness = _spectral_flatness(power[:hi_start])
+                    blocked = lo_flatness < self.scene_change_lo_flatness_max
+                if not blocked:
+                    # 場景轉換確認：部分重置噪聲估計和最小值追蹤
+                    blend = self.scene_change_blend
+                    self.noise_psd = blend * self.noise_psd + (1 - blend) * power
+                    self.S_min = self.S.copy()
+                    self.min_buffer[:] = self.S.reshape(1, -1)
                 self.scene_change_count = 0
         else:
             self.scene_change_count = 0
 
         # 8. 噪聲更新（SPP 門控）
-        # IMCRA mode (accept_external_spp=True): prefer OM-LSA posterior from the
+        # external-gate (accept_external_spp=True): prefer OM-LSA posterior from the
         # denoiser — it uses DD-smoothed a priori SNR history, giving more reliable
         # per-bin speech protection than the internal binary ratio test.
-        # Plain MCRA mode (accept_external_spp=False): always use internal indicator.
+        # internal-gate (accept_external_spp=False): always use internal indicator.
         # Use False in AEC pipeline contexts where residual echo inflates the
         # OM-LSA posterior in noise-only bins and would freeze noise tracking.
         spp_for_update = (spp if (self.accept_external_spp and spp is not None)

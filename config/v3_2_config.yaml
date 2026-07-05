@@ -5,6 +5,10 @@ audio:
   sample_rate: 16000
   window_type: hanning
 gain_calculation:
+  # NOTE: V3-2 runs ASYMMETRIC gain smoothing (attack=0.3 fast rise / decay=alpha_g slow fall)
+  # via MmseLsaGainCalculator defaults. process_audio's V3-2 branch does NOT read
+  # use_asymmetric_smoothing/alpha_attack/alpha_decay, so `alpha_g` below is the DECAY factor and
+  # the fast attack (0.3) is fixed in code (not configurable here). The C port mirrors this.
   alpha_g: 0.88
   g_min_db: -15.0
   method: mmse_lsa
@@ -14,7 +18,7 @@ noise_estimation:
   alpha_s: 0.95                # 調優：更高平滑 → 更穩定功率譜估計
   alpha_d: 0.7
   alpha_p: 0.2
-  L: 32                        # 調優：320ms 更快場景追蹤（原 48/480ms）
+  L: 32                        # 最小值窗長 32 幀 × 16ms/hop = 512ms（原 48 幀 = 768ms；hop=256）
   delta_db: 10.0
   num_init_frames: 20
   broadband_threshold: 1.0     # 調優：關閉（L=32 已足夠快速追蹤場景轉換）
