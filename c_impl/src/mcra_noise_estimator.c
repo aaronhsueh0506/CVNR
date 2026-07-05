@@ -55,6 +55,8 @@ struct McraNoiseEstimator {
     float scene_change_flatness_threshold;  // Hi-freq flatness threshold
     int scene_change_count;                 // Current consecutive count
     float broadband_threshold;              // Broadband scene-reset gate (<1.0 enables)
+    bool scene_change_tonal_veto;           // Skip reset when LOW band is tonal (music-safe)
+    float scene_change_lo_flatness_max;     // Lo-band flatness below this => tonal => veto
 
 #ifndef USE_FAST_PERCENTILE
     // Buffer for exact percentile calculation during initialization
@@ -63,6 +65,43 @@ struct McraNoiseEstimator {
     int num_init_frames;    // Max number of init frames (from config)
 #endif
 };
+
+/* Geometric-mean / arithmetic-mean spectral flatness of power[start:end] (∈ (0,1]).
+ * ~0.1-0.2 for tonal/voiced content, ~0.5-0.7 for white noise. Mirrors Python
+ * core/noise_estimators/mcra.py _spectral_flatness (same +1e-20 eps). */
+static float spectral_flatness(const float* power, int start, int end) {
+    float log_sum = 0.0f, arith_sum = 0.0f;
+    for (int k = start; k < end; k++) {
+        float p = power[k] + 1e-20f;
+        log_sum   += fast_log(p);
+        arith_sum += p;
+    }
+    float inv_n = 1.0f / (float)(end - start);
+    return fast_exp(log_sum * inv_n) / (arith_sum * inv_n);
+}
+
+/* Partial noise-floor reset on a confirmed scene change: blend the tracked noise
+ * toward the observed power and re-seed the min tracker to the current S. */
+static void mcra_reset_noise_floor(McraNoiseEstimator* self, const float* power) {
+    int n_freqs = self->n_freqs;
+    int L = self->L;
+    float blend = self->scene_change_blend;
+    float one_minus_blend = 1.0f - blend;
+    for (int k = 0; k < n_freqs; k++) {
+        self->noise_psd[k] = blend * self->noise_psd[k] + one_minus_blend * power[k];
+        self->S_min[k] = self->S[k];
+    }
+#ifdef USE_OPTIMIZED_MIN_BUFFER
+    for (int k = 0; k < n_freqs; k++) {
+        float* freq_buf = &self->min_buffer[k * L];
+        for (int l = 0; l < L; l++) freq_buf[l] = self->S[k];
+    }
+#else
+    for (int l = 0; l < L; l++)
+        for (int k = 0; k < n_freqs; k++)
+            self->min_buffer[l * n_freqs + k] = self->S[k];
+#endif
+}
 
 McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config) {
     if (n_freqs <= 0 || !config) return NULL;
@@ -102,6 +141,8 @@ McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config) {
     self->scene_change_blend = config->scene_change_blend;
     self->scene_change_flatness_threshold = config->scene_change_flatness_threshold;
     self->broadband_threshold = config->broadband_threshold;
+    self->scene_change_tonal_veto = config->scene_change_tonal_veto;
+    self->scene_change_lo_flatness_max = config->scene_change_lo_flatness_max;
     self->scene_change_count = 0;
 
 #ifndef USE_FAST_PERCENTILE
@@ -442,28 +483,14 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
             hi_flatness > self->scene_change_flatness_threshold) {
             self->scene_change_count++;
             if (self->scene_change_count >= self->scene_change_min_frames) {
-                // Partial noise reset: blend current noise with observed power
-                float blend = self->scene_change_blend;
-                float one_minus_blend = 1.0f - blend;
-                for (int k = 0; k < n_freqs; k++) {
-                    self->noise_psd[k] = blend * self->noise_psd[k] + one_minus_blend * power[k];
-                    self->S_min[k] = self->S[k];
-                }
-                // Reset min_buffer to current S
-#ifdef USE_OPTIMIZED_MIN_BUFFER
-                for (int k = 0; k < n_freqs; k++) {
-                    float* freq_buf = &self->min_buffer[k * L];
-                    for (int l = 0; l < L; l++) {
-                        freq_buf[l] = self->S[k];
-                    }
-                }
-#else
-                for (int l = 0; l < L; l++) {
-                    for (int k = 0; k < n_freqs; k++) {
-                        self->min_buffer[l * n_freqs + k] = self->S[k];
-                    }
-                }
-#endif
+                // Music-safe tonal veto (stationary mode): if the LOW band is tonal
+                // (peaky, low flatness) treat it as music and skip the noise-floor reset;
+                // only a genuine noise-scene change (flat low band) is let through.
+                // Matches Python mcra.py:230-236 (lo_flatness via _spectral_flatness).
+                bool blocked = self->scene_change_tonal_veto &&
+                               spectral_flatness(power, 0, hi_start) <
+                                   self->scene_change_lo_flatness_max;
+                if (!blocked) mcra_reset_noise_floor(self, power);
                 self->scene_change_count = 0;
             }
         } else {

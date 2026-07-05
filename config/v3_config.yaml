@@ -20,7 +20,7 @@ spp:
   xi_min_db: -22.0        # Optuna 500-trial (2026-01-12)
 gain_calculation:
   method: spp_mmse
-  g_min_db: -19.5         # Optuna 500-trial (2026-01-12)
+  g_min_db: -39.0         # Optuna 500-trial (2026-01-12); amplitude dB (/20) = old -19.5 @ /10
   alpha_g: 0.65           # Optuna 500-trial (2026-01-12)
   use_full_formula: true
 noise_tracking:

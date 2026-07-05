@@ -54,10 +54,19 @@ typedef struct {
     float broadband_threshold;           // Broadband scene-reset gate (0.8; <1.0 enables)
 
     // Gain parameters
-    float g_min_db;         // Minimum gain in dB (-15.0)
+    float g_min_db;         // Minimum gain in amplitude dB, /20 (-30.0)
     float alpha_g;          // Gain smoothing (0.88)
     float alpha_attack;     // Asymmetric attack (0.3)
     float alpha_decay;      // Asymmetric decay (0.88 = alpha_g)
+
+    // Content-preservation mode (full | stationary) — orthogonal to the strength axis.
+    // Default (all off / full) is byte-identical to the shipped V3-2. The `stationary`
+    // preset (mmse_lsa_config_stationary) turns these on. Mirrors Python core/nr_modes.py.
+    bool  stationary_floor;              // Wiener gain lower-bound gain>=(ξ/(β+ξ))^p (default off)
+    float stationary_floor_exponent;     // p (1.0 = pure Wiener; stationary preset uses 2.0)
+    float stationary_floor_beta;         // β (1.0 = remove exactly the stationary floor N)
+    bool  scene_change_tonal_veto;       // skip scene reset when the LOW band is tonal (music-safe)
+    float scene_change_lo_flatness_max;  // lo-band flatness below this => tonal => veto (0.4)
 } MmseLsaConfig;
 
 /**
@@ -103,10 +112,17 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
                                           // broadband_threshold: 1.0 (disabled; L=32 tracks fast enough).
 
     // Gain parameters (sync with Python v3_2_config.yaml)
-    config.g_min_db = -15.0f;
+    config.g_min_db = -30.0f;   /* amplitude dB (/20); = old -15 @ /10 → same 0.0316 floor */
     config.alpha_g = 0.88f;
     config.alpha_attack = 0.3f;
     config.alpha_decay = 0.88f;     // Match Python (= alpha_g)
+
+    // Content-preservation mode: default = full (all levers off → byte-identical V3-2).
+    config.stationary_floor            = false;
+    config.stationary_floor_exponent   = 1.0f;
+    config.stationary_floor_beta       = 1.0f;
+    config.scene_change_tonal_veto     = false;
+    config.scene_change_lo_flatness_max = 0.4f;
 
     return config;
 }
@@ -114,16 +130,17 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
 /**
  * Create configuration for given NR strength mode
  *
- * MILD:       g_min=-10dB, preserve speech, slower noise tracking
- * BALANCED:   g_min=-15dB, default (same as mmse_lsa_default_config)
- * AGGRESSIVE: g_min=-20dB, stronger suppression, faster noise tracking
+ * (g_min in amplitude dB, /20 convention)
+ * MILD:       g_min=-20dB, preserve speech, slower noise tracking
+ * BALANCED:   g_min=-30dB, default (same as mmse_lsa_default_config)
+ * AGGRESSIVE: g_min=-40dB, stronger suppression, faster noise tracking
  */
 static inline MmseLsaConfig mmse_lsa_config_for_mode(int sample_rate, MmseLsaNrMode mode) {
     MmseLsaConfig config = mmse_lsa_default_config(sample_rate);
 
     switch (mode) {
     case MMSE_LSA_NR_MILD:
-        config.g_min_db      = -10.0f;
+        config.g_min_db      = -20.0f;   /* amplitude dB (/20); = old -10 @ /10 */
         config.q             = 0.6f;
         config.xi_min_db     = -15.0f;
         config.alpha_d       = 0.85f;
@@ -133,7 +150,7 @@ static inline MmseLsaConfig mmse_lsa_config_for_mode(int sample_rate, MmseLsaNrM
         break;
 
     case MMSE_LSA_NR_AGGRESSIVE:
-        config.g_min_db      = -20.0f;
+        config.g_min_db      = -40.0f;   /* amplitude dB (/20); = old -20 @ /10 */
         config.q             = 0.35f;
         config.xi_min_db     = -25.0f;
         config.alpha_d       = 0.5f;
@@ -148,6 +165,37 @@ static inline MmseLsaConfig mmse_lsa_config_for_mode(int sample_rate, MmseLsaNrM
     }
 
     return config;
+}
+
+/**
+ * Overlay the `stationary` content-preservation preset onto an already-built config.
+ *
+ * ReSpeaker-like: remove ONLY the stationary noise floor, preserve non-stationary
+ * content (speech / music / transients). Realised by the Wiener gain lower-bound
+ * (ξ/(β+ξ))^p plus a slower noise update and a music-aware (tonal-veto) scene-change.
+ *
+ * This is the C mirror of Python core/nr_modes.py apply_mode(params, 'stationary'):
+ * content mode is an ORTHOGONAL overlay on any strength base (mild/balanced/aggressive),
+ * not a separate config — `full` overlays nothing. On the balanced default it yields a
+ * config byte-identical to the shipped standalone V3-2 stationary path.
+ */
+static inline void mmse_lsa_apply_stationary(MmseLsaConfig* config) {
+    // the mechanism: Wiener gain lower-bound (ξ/(β+ξ))^p
+    config->stationary_floor          = true;
+    config->stationary_floor_exponent = 2.0f;   // p=2 deepens noise removal; music retention ~0
+    config->stationary_floor_beta     = 1.0f;   // remove exactly N
+    // residual-noise depth is set by xi_min (NOT g_min); leave natural comfort noise
+    config->xi_min_db                 = -22.0f;
+    config->alpha_xi                  = 0.92f;   // steadier ξ → steadier bound
+    config->g_min_db                  = -30.0f;  // amplitude dB (/20); mostly inert under the bound
+    // keep N an honest STATIONARY floor: slow the posterior-gated recursive average so
+    // music phrases aren't absorbed (which would collapse ξ and defeat the bound)
+    config->alpha_d                   = 0.95f;
+    // music-aware scene-change: percussion can't confirm; tonal (music) low band is vetoed
+    config->scene_change_min_frames        = 30;
+    config->scene_change_flatness_threshold = 0.6f;
+    config->scene_change_tonal_veto        = true;
+    config->scene_change_lo_flatness_max   = 0.4f;
 }
 
 #ifdef __cplusplus

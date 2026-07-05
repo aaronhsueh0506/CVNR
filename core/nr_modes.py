@@ -39,7 +39,7 @@ NR_MODE_PRESETS = {
         # residual-noise depth is set by xi_min (NOT g_min); leave natural comfort noise
         'xi_min_db': -22.0,
         'alpha_xi': 0.92,                    # steadier ξ → steadier bound
-        'g_min_db': -15.0,                   # unchanged; mostly inert under the bound
+        'g_min_db': -30.0,                   # amplitude dB (/20); = old -15 @ /10, mostly inert under the bound
         # keep N an honest STATIONARY floor: slow the posterior-gated recursive average so
         # music phrases aren't absorbed (which would collapse ξ and defeat the bound)
         'alpha_noise': 0.95,

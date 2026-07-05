@@ -58,7 +58,7 @@ class MmseLsaDenoiser(BaseDenoiser):
         alpha_xi: float = 0.98,
         q: float = 0.5,
         xi_min_db: float = -25.0,
-        g_min_db: float = -20.0,
+        g_min_db: float = -40.0,
         alpha_g: float = 0.7,
         num_init_frames: int = 20,
         # v2.0 MCRA 噪聲估計參數
@@ -342,7 +342,7 @@ class MmseLsaDenoiser(BaseDenoiser):
             'alpha_xi': self.spp_estimator.alpha,
             'q': self.spp_estimator.q,
             'xi_min_db': 10 * np.log10(self.spp_estimator.xi_min),
-            'g_min_db': 10 * np.log10(self.gain_calculator.g_min),
+            'g_min_db': 20 * np.log10(self.gain_calculator.g_min),
             'alpha_g': self.gain_calculator.alpha_g,
             'use_asymmetric_smoothing': self.gain_calculator.use_asymmetric_smoothing,
             'alpha_attack': self.gain_calculator.alpha_attack,

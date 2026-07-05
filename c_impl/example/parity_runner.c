@@ -20,7 +20,9 @@
  *   [n_frames][n_freqs]                                  (2 x int32)
  *   per frame f:  G_c[n_freqs] (float32)
  *
- * Usage: parity_runner <in_spectra.bin> <out_c_gains.bin>
+ * Usage: parity_runner <in_spectra.bin> <out_c_gains.bin> [full|stationary]
+ *   The optional mode selects the C config (default full = balanced V3-2); pass
+ *   'stationary' to mirror parity_nr.py dump --mode stationary.
  */
 
 #include <stdio.h>
@@ -36,9 +38,11 @@
 
 int main(int argc, char* argv[]) {
     if (argc < 3) {
-        fprintf(stderr, "Usage: %s <in_spectra.bin> <out_c_gains.bin>\n", argv[0]);
+        fprintf(stderr, "Usage: %s <in_spectra.bin> <out_c_gains.bin> [full|stationary]\n",
+                argv[0]);
         return 1;
     }
+    int stationary = (argc >= 4 && strcmp(argv[3], "stationary") == 0);
 
     FILE* fin = fopen(argv[1], "rb");
     if (!fin) {
@@ -69,10 +73,12 @@ int main(int argc, char* argv[]) {
     /* n_freqs = fft_size/2 + 1  ->  fft_size = (n_freqs - 1) * 2 */
     int fft_size = (n_freqs - 1) * 2;
 
-    /* Build the production V3-2 balanced config, framing forced to match Python
+    /* Build the production V3-2 config, framing forced to match Python
      * (512/256/512 for n_freqs=257). Sample rate is irrelevant to the gain math
-     * here (spectra are supplied directly); pass 16000 for the default knobs. */
+     * here (spectra are supplied directly); pass 16000 for the default knobs.
+     * stationary → overlay the content-preservation preset on the balanced base. */
     MmseLsaConfig config = mmse_lsa_config_for_mode(16000, MMSE_LSA_NR_BALANCED);
+    if (stationary) mmse_lsa_apply_stationary(&config);
     config.fft_size   = fft_size;
     config.frame_size = fft_size;   /* 512 */
     config.hop_size   = fft_size / 2;

@@ -32,18 +32,18 @@ class SppMmseGainCalculator:
     - use_full_formula=False: E1 形式（實際為 MMSE-LSA，非 MMSE-STSA，誤差 ~13-15%）
 
     參數:
-        g_min_db: 最小增益 (dB)，通常 -15 到 -25 dB
+        g_min_db: 最小增益 (amplitude dB, /20)，通常 -30 到 -50 dB
         alpha_g: 增益時間平滑因子，減少音樂噪聲
         use_full_formula: True=Bessel完整版MMSE-STSA(默認), False=E1近似(MMSE-LSA語義)
     """
 
     def __init__(
         self,
-        g_min_db: float = -20.0,
+        g_min_db: float = -40.0,
         alpha_g: float = 0.7,
         use_full_formula: bool = True
     ):
-        self.g_min = 10 ** (g_min_db / 10)
+        self.g_min = 10 ** (g_min_db / 20)  # amplitude-dB (gain applied to magnitude, no sqrt)
         self.alpha_g = alpha_g
         self.use_full_formula = use_full_formula
         self.gain_prev = None
@@ -282,5 +282,5 @@ class SppMmseGainCalculator:
 
     def __repr__(self):
         formula = "Bessel" if self.use_full_formula else "E1"
-        return (f"SppMmseGainCalculator(g_min={10*np.log10(self.g_min):.1f} dB, "
+        return (f"SppMmseGainCalculator(g_min={20*np.log10(self.g_min):.1f} dB, "
                 f"alpha_g={self.alpha_g}, formula={formula})")

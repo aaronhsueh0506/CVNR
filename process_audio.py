@@ -200,7 +200,7 @@ def create_denoiser_from_config(
             'alpha_xi': spp_config.get('alpha_xi', 0.98),
             'q': spp_config.get('q', 0.5),
             'xi_min_db': spp_config.get('xi_min_db', -25.0),
-            'g_min_db': gain_config.get('g_min_db', -20.0),
+            'g_min_db': gain_config.get('g_min_db', -40.0),
             'alpha_g': gain_config.get('alpha_g', 0.7),
             'num_init_frames': noise_config.get('num_init_frames', 20),
             'use_full_formula': gain_config.get('use_full_formula', False)
@@ -245,7 +245,7 @@ def create_denoiser_from_config(
             'alpha_xi': spp_config.get('alpha_xi', 0.98),
             'q': spp_config.get('q', 0.5),
             'xi_min_db': spp_config.get('xi_min_db', -25.0),
-            'g_min_db': gain_config.get('g_min_db', -20.0),
+            'g_min_db': gain_config.get('g_min_db', -40.0),
             'alpha_g': gain_config.get('alpha_g', 0.7),
             'num_init_frames': noise_config.get('num_init_frames', 20)
         }
@@ -295,7 +295,7 @@ def create_denoiser_from_config(
             'alpha_xi': spp_config.get('alpha_xi', 0.98),
             'q': spp_config.get('q', 0.5),
             'xi_min_db': spp_config.get('xi_min_db', -25.0),
-            'g_min_db': gain_config.get('g_min_db', -20.0),
+            'g_min_db': gain_config.get('g_min_db', -40.0),
             'alpha_g': gain_config.get('alpha_g', 0.7),
             'use_spp_weighting': gain_config.get('use_spp_weighting', True),
             'num_init_frames': noise_config.get('num_init_frames', 20)

@@ -10,7 +10,7 @@ gain_calculation:
   # use_asymmetric_smoothing/alpha_attack/alpha_decay, so `alpha_g` below is the DECAY factor and
   # the fast attack (0.3) is fixed in code (not configurable here). The C port mirrors this.
   alpha_g: 0.88
-  g_min_db: -15.0
+  g_min_db: -30.0             # amplitude dB (/20); = old -15 @ /10 power-dB → same 0.0316 floor
   method: mmse_lsa
 name: MMSE-LSA
 noise_estimation:

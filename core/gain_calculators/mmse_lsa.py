@@ -60,7 +60,7 @@ class MmseLsaGainCalculator:
     - Decay (增益下降): 使用 alpha_decay (慢速抑制 Musical Noise)
 
     參數:
-        g_min_db: 最小增益 (dB), -15 到 -25
+        g_min_db: 最小增益 (amplitude dB, /20), -30 到 -50
         alpha_g: 增益時間平滑因子, 0.6-0.8 (對稱平滑時使用)
         use_asymmetric_smoothing: 是否使用非對稱平滑 (v1.5.0)
         alpha_attack: Attack 平滑因子 (增益上升時使用，預設 0.3)
@@ -69,7 +69,7 @@ class MmseLsaGainCalculator:
 
     def __init__(
         self,
-        g_min_db: float = -20.0,
+        g_min_db: float = -40.0,
         alpha_g: float = 0.7,
         use_asymmetric_smoothing: bool = True,
         alpha_attack: float = 0.3,
@@ -87,11 +87,12 @@ class MmseLsaGainCalculator:
         stationary_floor_exponent: float = 1.0,   # p: 1.0 = pure Wiener (gentle); 0.5 = deeper
         stationary_floor_beta: float = 1.0,        # β: >1 removes slightly more; 1 = remove exactly N
     ):
-        # WARNING: uses power-dB convention (/10), not amplitude-dB (/20).
-        # A label of g_min_db=-20 dB yields g_min=0.01, which corresponds to -40 dB
-        # amplitude — all documented config dB values are effectively half-dB.
-        # Do NOT change to /20 without re-calibrating all config files and the C port.
-        self.g_min = 10 ** (g_min_db / 10)
+        # Amplitude-dB convention (/20): the OM-LSA gain is applied directly to the
+        # magnitude spectrum (enhanced = gain * magnitude, no sqrt), so g_min is an
+        # AMPLITUDE floor. g_min_db=-15 → 10^(-15/20)=0.178 (a true -15 dB amplitude floor).
+        # C mmse_lsa_denoiser.c mirrors this. (SNR/power dB elsewhere — xi_min, delta,
+        # scene_change — correctly stay /10 because they ARE power ratios.)
+        self.g_min = 10 ** (g_min_db / 20)
         self.log_g_min = np.log(self.g_min + 1e-10)
         self.alpha_g = alpha_g
 
@@ -102,7 +103,7 @@ class MmseLsaGainCalculator:
 
         # SPP-protected floor
         self.spp_protect_floor_db = spp_protect_floor_db
-        self.spp_protect_floor = (10 ** (spp_protect_floor_db / 10)
+        self.spp_protect_floor = (10 ** (spp_protect_floor_db / 20)  # amplitude gain floor
                                   if spp_protect_floor_db is not None else None)
         self.spp_protect_threshold = spp_protect_threshold
 
@@ -238,7 +239,7 @@ class MmseLsaGainCalculator:
 
     def __repr__(self):
         return (f"MmseLsaGainCalculator("
-                f"g_min={10*np.log10(self.g_min):.1f} dB, "
+                f"g_min={20*np.log10(self.g_min):.1f} dB, "
                 f"alpha_g={self.alpha_g})")
 
 
