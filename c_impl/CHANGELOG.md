@@ -2,6 +2,26 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [v1.9.0] - 2026-07-05 · stationary 模式 + gain-floor 單位對齊
+
+### 新增功能
+
+- **`--stationary` 內容保留模式**（鏡像 Python `apply_mode`）
+  - `include/mmse_lsa_types.h`：新增 `mmse_lsa_apply_stationary(MmseLsaConfig*)`（overlay mutator，疊在
+    `--nr-mode` base 上）+ 5 個 config 欄位（`stationary_floor` / `_exponent` / `_beta` /
+    `scene_change_tonal_veto` / `_lo_flatness_max`），預設全 off → full 不受影響。
+  - `src/mmse_lsa_denoiser.c`：`calculate_gain` 加 Wiener 增益下界 `gain ≥ (ξ/(β+ξ))^p`（p=2 走 `ratio*ratio`
+    快路徑），gate 於 `stationary_floor`（**僅 stationary 生效**）。
+  - `src/mcra_noise_estimator.c`：tonal-veto scene-change + 新增 `spectral_flatness()` / `mcra_reset_noise_floor()`
+    static helper。
+  - `example/main.c`：`--stationary` CLI arg；`example/parity_runner.c` + `tools/parity_nr.py`：`--mode` 參數。
+  - 驗證：std-math **C↔Python bit-exact**（full worst 6.0e-5 / stationary 1.3e-5，1.79M gain 值）。
+
+### 變更
+
+- **`g_min_db` 改用 audio 振幅 dB（/20）**：`powf(10, g_min_db/20)`（原 /10）。default −30（原 −15）、
+  MILD −20、AGGRESSIVE −40；線性 floor 不變（值加倍）。xi_min/delta/scene_change 維持 /10。
+
 ## [v1.8.0] - 2026-04-17 · Release (Part A Review)
 
 ### 新增功能

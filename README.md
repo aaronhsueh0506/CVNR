@@ -541,6 +541,11 @@ test_set = generator.generate_test_set(
   - 需要減少 Musical Noise
   - 語音通信、會議系統
 - **配置**: `config/v3_2_config.yaml`
+- **內容保留模式** `mode: {full | stationary}`（`core/nr_modes.py`，`create_denoiser_from_config(..., mode=...)`）：
+  - `full`（預設）= 現行全消行為（連非穩態的音樂也壓）；空 overlay → 與原 V3-2 byte-identical。
+  - `stationary` = ReSpeaker-like，只移除穩態底噪，保留語音／音樂／瞬態。機制 = Wiener 增益下界
+    `gain ≥ (ξ/(β+ξ))^p`（p=2）+ music-aware tonal-veto scene-change（**下界僅 stationary 生效**）。
+  - C 端對應 `denoise_wav --stationary` / `mmse_lsa_apply_stationary`，std-math C↔Python bit-exact。
 
 #### V3-3: PMMSE (Perceptually Motivated MMSE)
 - **成本函數**: E[(X-X̂)²/X] (IS 距離)
@@ -830,9 +835,11 @@ gain_calculation:
   - 建議：0.5（平衡）、0.6-0.7（語音多）、0.3-0.4（噪聲多）
 
 - `g_min_db`：**最小增益**
-  - 控制降噪強度
-  - 越小降噪越多，但語音失真越大
-  - 建議：-15dB（輕微降噪）、-20dB（平衡）、-25dB（強力降噪）
+  - 控制降噪強度；越小降噪越多，但語音失真越大
+  - **⚠ 單位為 audio 振幅 dB（/20 換算 `10^(db/20)`）** — gain 直接乘幅度譜（無 sqrt）。
+    先前用功率 dB（/10）；已把所有 shipped 值加倍以保持行為不變（如 v3-2 由 -15@/10 → -30@/20，
+    同為 0.032 floor）。本文件若有舊的 /10 語意數值，需 ×2 換算。（xi_min_db 是 SNR/功率 dB，維持 /10。）
+  - 建議（新 /20，= 舊 /10 值 ×2）：-30dB（輕微降噪）、-40dB（平衡）、-50dB（強力降噪）
 
 - `alpha_g`：**增益時間平滑因子**（已強化）
   - 減少 musical noise 的關鍵參數
