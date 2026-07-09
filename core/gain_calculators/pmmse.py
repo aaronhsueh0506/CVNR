@@ -48,18 +48,18 @@ class PmmseGainCalculator:
         i0e: 指數縮放的 Modified Bessel function (避免數值溢出)
 
     參數:
-        g_min_db: 最小增益 (dB), -15 到 -25
+        g_min_db: 最小增益 (amplitude dB, /20), -30 到 -50
         alpha_g: 增益時間平滑因子, 0.5-0.7
         use_spp_weighting: 是否使用 SPP 加權 (推薦 True)
     """
 
     def __init__(
         self,
-        g_min_db: float = -20.0,
+        g_min_db: float = -40.0,
         alpha_g: float = 0.5,
         use_spp_weighting: bool = True
     ):
-        self.g_min = 10 ** (g_min_db / 10)
+        self.g_min = 10 ** (g_min_db / 20)  # amplitude-dB (gain applied to magnitude, no sqrt)
         self.alpha_g = alpha_g
         self.use_spp_weighting = use_spp_weighting
         self.gain_prev = None
@@ -196,7 +196,7 @@ class PmmseGainCalculator:
     def __repr__(self):
         spp_mode = "with SPP" if self.use_spp_weighting else "no SPP"
         return (f"PmmseGainCalculator(Loizou p=-1, "
-                f"g_min={10*np.log10(self.g_min):.1f} dB, "
+                f"g_min={20*np.log10(self.g_min):.1f} dB, "
                 f"alpha_g={self.alpha_g}, {spp_mode})")
 
 
@@ -229,8 +229,8 @@ if __name__ == "__main__":
     xi_test = np.full_like(spp_values, 2.0)
     gamma_test = np.full_like(spp_values, 3.0)
 
-    calc_spp = PmmseGainCalculator(g_min_db=-20.0, use_spp_weighting=True, alpha_g=0.0)
-    calc_no_spp = PmmseGainCalculator(g_min_db=-20.0, use_spp_weighting=False, alpha_g=0.0)
+    calc_spp = PmmseGainCalculator(g_min_db=-40.0, use_spp_weighting=True, alpha_g=0.0)
+    calc_no_spp = PmmseGainCalculator(g_min_db=-40.0, use_spp_weighting=False, alpha_g=0.0)
 
     print("SPP | 有加權 | 無加權 | 差異")
     print("-" * 40)

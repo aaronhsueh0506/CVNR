@@ -61,11 +61,17 @@ from utils.audio_io import read_audio                 # noqa: E402
 MAGIC = 0x4E525031  # 'NRP1'
 
 
-def _build_reference_denoiser(sample_rate, config_dir):
-    """Build the production V3-2 MmseLsaDenoiser exactly like process_audio.py."""
+def _build_reference_denoiser(sample_rate, config_dir, mode='full', strength='balanced'):
+    """Build the production V3-2 MmseLsaDenoiser exactly like process_audio.py.
+
+    strength = the depth preset (mild|moderate|balanced|aggressive), mirrored by C
+    mmse_lsa_config_for_mode(). mode = content axis (full|stationary), mirrored by C
+    mmse_lsa_apply_stationary(). Pass the SAME two args to parity_runner.
+    """
     # Reuse process_audio's loader so config/v3_2_config.yaml drives the params.
     from process_audio import create_denoiser_from_config
-    return create_denoiser_from_config('V3-2', config_dir, sample_rate)
+    return create_denoiser_from_config('V3-2', config_dir, sample_rate,
+                                        mode=mode, strength=strength)
 
 
 def cmd_dump(args):
@@ -77,7 +83,7 @@ def cmd_dump(args):
     config_dir = args.config_dir or os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config')
 
-    denoiser = _build_reference_denoiser(sr, config_dir)
+    denoiser = _build_reference_denoiser(sr, config_dir, mode=args.mode, strength=args.strength)
     params = denoiser.get_params()
     frame_size = params['frame_size']
     frame_shift = params['frame_shift']
@@ -167,6 +173,11 @@ def main():
     d.add_argument('--wav', required=True)
     d.add_argument('--out', required=True)
     d.add_argument('--config-dir', default=None)
+    d.add_argument('--mode', choices=('full', 'stationary'), default='full',
+                   help="NR content mode (must match parity_runner's mode arg)")
+    d.add_argument('--strength', choices=('mild', 'moderate', 'balanced', 'aggressive'),
+                   default='balanced',
+                   help="NR strength preset (must match parity_runner's strength arg)")
     d.set_defaults(func=cmd_dump)
 
     c = sub.add_parser('compare', help='compare Python vs C gains')

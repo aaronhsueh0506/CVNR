@@ -1,7 +1,7 @@
 """
 Generate Comparison Tables - 生成對比表格
 
-生成 5 個對比表格，比較 V1-V4 傳統算法和 RNNoise 的性能。
+生成 5 個對比表格，比較 V1-V3 傳統算法和 RNNoise 的性能。
 
 Usage:
     python generate_comparison_tables.py --theory-only    # 只生成理論表格
@@ -60,15 +60,6 @@ def calculate_theoretical_flops() -> Dict[str, Dict[str, Any]]:
             'memory': '中',
             'notes': '軟判決'
         },
-        'V4': {
-            'name': 'V4 IMCRA-OMLSA',
-            'fft_count': 2,
-            'matrix_ops': '最小值追蹤、平滑',
-            'special_functions': 'exp1(), log',
-            'flops_per_frame': 2 * fft_flops + num_freq_bins * 25,  # FFT+IFFT + IMCRA最小值追蹤+OMLSA增益
-            'memory': '中高',
-            'notes': '產品級'
-        },
         'RNNoise': {
             'name': 'RNNoise',
             'fft_count': 0,  # 不使用 FFT，使用 Bark-scale 特徵
@@ -102,7 +93,7 @@ def generate_table1_theoretical(flops_data: Dict[str, Dict[str, Any]]) -> str:
     table.append("| 算法 | FFT 次數 | 矩陣運算 | 特殊函數 | FLOPs/幀 | 內存佔用 | 備註 |")
     table.append("|------|---------|---------|---------|----------|---------|------|")
 
-    for algo_id in ['V1', 'V2', 'V3', 'V4', 'RNNoise']:
+    for algo_id in ['V1', 'V2', 'V3', 'RNNoise']:
         data = flops_data[algo_id]
         fft_str = str(data['fft_count']) if data['fft_count'] > 0 else '無'
         if data['fft_count'] == 2:
@@ -120,7 +111,6 @@ def generate_table1_theoretical(flops_data: Dict[str, Dict[str, Any]]) -> str:
     table.append("  - V1: 減法 + 縮放 (~3 ops/bin)")
     table.append("  - V2: 平方 + 除法 + 增益 (~5 ops/bin)")
     table.append("  - V3: SNR 計算 + SPP + MMSE + exp1() (~15 ops/bin)")
-    table.append("  - V4: IMCRA 最小值追蹤 + OMLSA + exp1() + log (~25 ops/bin)")
     table.append("- RNNoise GRU: 3 × (input_size × hidden + hidden × hidden) × 2")
     table.append("  - 特徵提取: ~5K FLOPs")
     table.append("  - GRU(42→24): ~10K FLOPs")
@@ -141,7 +131,6 @@ def generate_table2_template() -> str:
     table.append("| V1 頻譜減法 | - | - | - | - | ? |")
     table.append("| V2 Wiener | - | - | - | - | ? |")
     table.append("| V3 SPP-MMSE | - | - | - | - | ? |")
-    table.append("| V4 IMCRA-OMLSA | - | - | - | - | ? |")
     table.append("| RNNoise | - | - | - | - | ? |")
     table.append("\n**測試條件：**")
     table.append("- 音頻時長：2 秒")
@@ -165,7 +154,6 @@ def generate_table3_template() -> str:
     table.append("| V1 頻譜減法 | 5.0 | - | - | - | - | - | 嚴重 |")
     table.append("| V2 Wiener | 5.0 | - | - | - | - | - | 中等 |")
     table.append("| V3 SPP-MMSE | 5.0 | - | - | - | - | - | 輕微 |")
-    table.append("| V4 IMCRA-OMLSA | 5.0 | - | - | - | - | - | 極少 |")
     table.append("| RNNoise | 5.0 | - | - | - | - | - | 極少 |")
     table.append("\n**說明：** 運行 `python benchmark_all.py --full` 後自動填充\n")
 
@@ -182,7 +170,7 @@ def generate_table4_template() -> str:
     table.append("|---------|------|--------------|------|------|")
 
     for noise_type in ['白噪聲', 'Babble', '車內噪聲']:
-        for algo in ['V1', 'V2', 'V3', 'V4', 'RNNoise']:
+        for algo in ['V1', 'V2', 'V3', 'RNNoise']:
             algo_name = algo if algo == 'RNNoise' else ''
             table.append(f"| {noise_type} | {algo_name} | - | - | - |")
         noise_type = ''  # 後續行留空
@@ -200,22 +188,22 @@ def generate_table5_radar() -> str:
     """
     table = []
     table.append("## 表格 5：綜合對比（雷達圖數據）\n")
-    table.append("| 維度 | V1 | V2 | V3 | V4 | RNNoise |")
-    table.append("|------|----|----|----|----|---------|")
+    table.append("| 維度 | V1 | V2 | V3 | RNNoise |")
+    table.append("|------|----|----|----|---------|")
 
     # 理論評分（基於算法特性）
     scores = {
-        '降噪效果 (0-10)': {'V1': 5, 'V2': 6, 'V3': 8, 'V4': 9, 'RNNoise': 9.5},
-        '計算效率 (0-10)': {'V1': 10, 'V2': 9, 'V3': 7, 'V4': 5, 'RNNoise': 3},
-        '語音質量 (0-10)': {'V1': 6, 'V2': 7, 'V3': 8.5, 'V4': 9, 'RNNoise': 8.5},
-        '實時性 (0-10)': {'V1': 10, 'V2': 10, 'V3': 9, 'V4': 8, 'RNNoise': 6},
-        '易部署性 (0-10)': {'V1': 10, 'V2': 10, 'V3': 9, 'V4': 8, 'RNNoise': 4}
+        '降噪效果 (0-10)': {'V1': 5, 'V2': 6, 'V3': 8, 'RNNoise': 9.5},
+        '計算效率 (0-10)': {'V1': 10, 'V2': 9, 'V3': 7, 'RNNoise': 3},
+        '語音質量 (0-10)': {'V1': 6, 'V2': 7, 'V3': 8.5, 'RNNoise': 8.5},
+        '實時性 (0-10)': {'V1': 10, 'V2': 10, 'V3': 9, 'RNNoise': 6},
+        '易部署性 (0-10)': {'V1': 10, 'V2': 10, 'V3': 9, 'RNNoise': 4}
     }
 
     for dimension, values in scores.items():
         table.append(
             f"| {dimension} | {values['V1']} | {values['V2']} | "
-            f"{values['V3']} | {values['V4']} | {values['RNNoise']} |"
+            f"{values['V3']} | {values['RNNoise']} |"
         )
 
     table.append("\n**評分說明：**")
@@ -241,7 +229,7 @@ def generate_all_tables(theory_only: bool = False) -> str:
     output = []
     output.append("# 語音降噪算法性能對比\n")
     output.append("**生成時間：** 自動生成")
-    output.append("**對比算法：** V1 頻譜減法、V2 Wiener、V3 SPP-MMSE、V4 IMCRA-OMLSA、RNNoise\n")
+    output.append("**對比算法：** V1 頻譜減法、V2 Wiener、V3 SPP-MMSE、RNNoise\n")
     output.append("---\n")
 
     # 計算理論 FLOPs

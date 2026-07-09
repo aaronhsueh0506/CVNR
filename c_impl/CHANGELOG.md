@@ -2,6 +2,39 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [v1.10.0] - 2026-07-10 · 強度預設 4 級 + musical-noise fix
+
+### 變更
+
+- **`mmse_lsa_types.h`**：
+  - `MmseLsaNrMode` 加 `MMSE_LSA_NR_MODERATE`（階梯 mild<moderate<balanced<aggressive，enum 重新編號）。
+  - `mmse_lsa_default_config`：`alpha_xi 0.88 → 0.92`（musical-noise fix，全預設共用；stationary 已用 0.92 → 不受影響）。
+  - `mmse_lsa_config_for_mode`：新增 MODERATE（g_min −25）；AGGRESSIVE `alpha_g 0.75→0.85` / `alpha_decay 0.85→0.88`
+    （深度帶回的 speckle 用下游平滑壓）。全部鏡像 Python `core/nr_strength.py`。
+- **`example/main.c`**：`--nr-mode` 加 `moderate`（4 級）。
+- **`example/parity_runner.c` + `tools/parity_nr.py`**：加 strength 軸（`[mild|moderate|balanced|aggressive]`）。
+- 驗證：4 級 std-math **C↔Python bit-exact**（worst ~1e-5，median ~2e-8）；balanced+stationary 仍 bit-exact。
+
+## [v1.9.0] - 2026-07-05 · stationary 模式 + gain-floor 單位對齊
+
+### 新增功能
+
+- **`--stationary` 內容保留模式**（鏡像 Python `apply_mode`）
+  - `include/mmse_lsa_types.h`：新增 `mmse_lsa_apply_stationary(MmseLsaConfig*)`（overlay mutator，疊在
+    `--nr-mode` base 上）+ 5 個 config 欄位（`stationary_floor` / `_exponent` / `_beta` /
+    `scene_change_tonal_veto` / `_lo_flatness_max`），預設全 off → full 不受影響。
+  - `src/mmse_lsa_denoiser.c`：`calculate_gain` 加 Wiener 增益下界 `gain ≥ (ξ/(β+ξ))^p`（p=2 走 `ratio*ratio`
+    快路徑），gate 於 `stationary_floor`（**僅 stationary 生效**）。
+  - `src/mcra_noise_estimator.c`：tonal-veto scene-change + 新增 `spectral_flatness()` / `mcra_reset_noise_floor()`
+    static helper。
+  - `example/main.c`：`--stationary` CLI arg；`example/parity_runner.c` + `tools/parity_nr.py`：`--mode` 參數。
+  - 驗證：std-math **C↔Python bit-exact**（full worst 6.0e-5 / stationary 1.3e-5，1.79M gain 值）。
+
+### 變更
+
+- **`g_min_db` 改用 audio 振幅 dB（/20）**：`powf(10, g_min_db/20)`（原 /10）。default −30（原 −15）、
+  MILD −20、AGGRESSIVE −40；線性 floor 不變（值加倍）。xi_min/delta/scene_change 維持 /10。
+
 ## [v1.8.0] - 2026-04-17 · Release (Part A Review)
 
 ### 新增功能

@@ -60,7 +60,7 @@ class MmseLsaGainCalculator:
     - Decay (增益下降): 使用 alpha_decay (慢速抑制 Musical Noise)
 
     參數:
-        g_min_db: 最小增益 (dB), -15 到 -25
+        g_min_db: 最小增益 (amplitude dB, /20), -30 到 -50
         alpha_g: 增益時間平滑因子, 0.6-0.8 (對稱平滑時使用)
         use_asymmetric_smoothing: 是否使用非對稱平滑 (v1.5.0)
         alpha_attack: Attack 平滑因子 (增益上升時使用，預設 0.3)
@@ -69,7 +69,7 @@ class MmseLsaGainCalculator:
 
     def __init__(
         self,
-        g_min_db: float = -20.0,
+        g_min_db: float = -40.0,
         alpha_g: float = 0.7,
         use_asymmetric_smoothing: bool = True,
         alpha_attack: float = 0.3,
@@ -78,12 +78,21 @@ class MmseLsaGainCalculator:
         # 強制 gain >= spp_protect_floor（線性），避免 OMLSA (1−spp)·log(g_min) 過壓高信心語音。
         spp_protect_floor_db: Optional[float] = None,
         spp_protect_threshold: float = 0.5,
+        # === Stationary-mode Wiener lower bound (the `stationary` NR mode mechanism).
+        # Default OFF → current (`full`) behaviour, byte-identical. When on, the final gain is
+        # floored at the Wiener gain (ξ/(β+ξ))^p; since ξ/(1+ξ)=S/Y this removes exactly the
+        # estimated stationary floor and preserves everything with sustained SNR (speech/music/
+        # transients). ξ is DD-smoothed → no warble.
+        stationary_floor: bool = False,
+        stationary_floor_exponent: float = 1.0,   # p: 1.0 = pure Wiener (gentle); 0.5 = deeper
+        stationary_floor_beta: float = 1.0,        # β: >1 removes slightly more; 1 = remove exactly N
     ):
-        # WARNING: uses power-dB convention (/10), not amplitude-dB (/20).
-        # A label of g_min_db=-20 dB yields g_min=0.01, which corresponds to -40 dB
-        # amplitude — all documented config dB values are effectively half-dB.
-        # Do NOT change to /20 without re-calibrating all config files and the C port.
-        self.g_min = 10 ** (g_min_db / 10)
+        # Amplitude-dB convention (/20): the OM-LSA gain is applied directly to the
+        # magnitude spectrum (enhanced = gain * magnitude, no sqrt), so g_min is an
+        # AMPLITUDE floor. g_min_db=-15 → 10^(-15/20)=0.178 (a true -15 dB amplitude floor).
+        # C mmse_lsa_denoiser.c mirrors this. (SNR/power dB elsewhere — xi_min, delta,
+        # scene_change — correctly stay /10 because they ARE power ratios.)
+        self.g_min = 10 ** (g_min_db / 20)
         self.log_g_min = np.log(self.g_min + 1e-10)
         self.alpha_g = alpha_g
 
@@ -94,9 +103,14 @@ class MmseLsaGainCalculator:
 
         # SPP-protected floor
         self.spp_protect_floor_db = spp_protect_floor_db
-        self.spp_protect_floor = (10 ** (spp_protect_floor_db / 10)
+        self.spp_protect_floor = (10 ** (spp_protect_floor_db / 20)  # amplitude gain floor
                                   if spp_protect_floor_db is not None else None)
         self.spp_protect_threshold = spp_protect_threshold
+
+        # Stationary-mode Wiener lower bound
+        self.stationary_floor = stationary_floor
+        self.stationary_floor_exponent = stationary_floor_exponent
+        self.stationary_floor_beta = stationary_floor_beta
 
         self.log_gain_prev = None
 
@@ -177,6 +191,17 @@ class MmseLsaGainCalculator:
                 gain,
             )
 
+        # Stationary-mode Wiener lower bound（`stationary` NR mode 的核心機制）。
+        # gain 不得低於 Wiener 增益 (ξ/(β+ξ))^p。因 ξ/(1+ξ)=S/Y，此下界剛好只減掉估到的
+        # 穩態噪聲底：持續高 SNR 的內容（語音/音樂/瞬態）ξ 大 → 下界≈1 → 保留；穩態噪聲
+        # ξ→xi_min → 下界小 → 照壓。ξ 為 DD 平滑 → 無 warble。存入 log_gain_prev 的是「套過
+        # 下界後」的 gain，讓時間平滑從被保護的值出發（與 spp_protect 同一 pattern）。
+        if self.stationary_floor:
+            # g_floor = (ξ/(β+ξ))^p ≤ 1 for β≥1, and gain is already clipped ≤ 1, so a plain
+            # lower bound suffices (no outer min-with-1 needed).
+            g_floor = (xi / (self.stationary_floor_beta + xi)) ** self.stationary_floor_exponent
+            gain = np.maximum(gain, g_floor)
+
         # 保存對數域增益
         self.log_gain_prev = np.log(gain + 1e-10)
 
@@ -214,7 +239,7 @@ class MmseLsaGainCalculator:
 
     def __repr__(self):
         return (f"MmseLsaGainCalculator("
-                f"g_min={10*np.log10(self.g_min):.1f} dB, "
+                f"g_min={20*np.log10(self.g_min):.1f} dB, "
                 f"alpha_g={self.alpha_g})")
 
 

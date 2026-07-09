@@ -568,6 +568,28 @@ def calculate_lsd(
     return float(lsd)
 
 
+def suppression_db(noisy: np.ndarray, enhanced: np.ndarray) -> float:
+    """
+    Overall suppression depth in dB = 10·log10(energy(enhanced) / energy(noisy)).
+
+    For music/noise input with no clean reference this is a coarse depth gauge: more
+    negative = more energy removed (deeper suppression). Pair it with detect_musical_noise
+    (artifact proxy) — you want deep suppression WITHOUT a musical-noise rise. Inputs are
+    truncated to the shorter length (denoiser output is cropped to the input length).
+
+    Args:
+        noisy:    input (pre-NR) signal
+        enhanced: output (post-NR) signal
+
+    Returns:
+        Suppression in dB (<0 = suppression; ~0 = passthrough).
+    """
+    n = min(len(noisy), len(enhanced))
+    e_in = float(np.sum(noisy[:n].astype(np.float64) ** 2))
+    e_out = float(np.sum(enhanced[:n].astype(np.float64) ** 2))
+    return 10.0 * np.log10((e_out + 1e-12) / (e_in + 1e-12))
+
+
 def detect_musical_noise(
     enhanced: np.ndarray,
     frame_size: int = 512,

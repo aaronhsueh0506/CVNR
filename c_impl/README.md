@@ -210,8 +210,20 @@ MCRA 噪聲估計的瓶頸是每幀掃描 ring buffer（L=32 幀）找最小值�
 ### 命令列工具
 
 ```bash
-./bin/denoise_wav input.wav output.wav
+./bin/denoise_wav input.wav output.wav                     # 預設 balanced
+./bin/denoise_wav input.wav output.wav --nr-mode moderate  # 強度：mild|moderate|balanced|aggressive
+./bin/denoise_wav input.wav output.wav --stationary        # 內容保留模式（見下）
+./bin/denoise_wav input.wav output.wav --bypass            # 不處理，原樣複製
 ```
+
+**兩條正交的模式軸：**
+- **強度軸** `--nr-mode {mild|moderate|balanced|aggressive}`（`mmse_lsa_config_for_mode`）：全消，越強壓越深。
+  4 級深度階梯 g_min = −20 / −25 / −30 / −40 dB（振幅 /20）。所有預設共用 `alpha_xi=0.92`
+  （2026-07 musical-noise fix：DD ξ 平滑，壓掉 SPP 抖動＝musical noise；對語音幾乎零成本）。
+- **內容軸** `--stationary`（`mmse_lsa_apply_stationary`，疊在強度 base 上）：ReSpeaker-like，**只**移除穩態
+  噪聲底噪，保留非穩態內容（語音／音樂／瞬態）。機制 = Wiener 增益下界 `gain ≥ (ξ/(β+ξ))^p`（p=2）
+  + music-aware tonal-veto scene-change。此下界**只在 stationary 生效**（`stationary_floor` 預設 false，
+  full 模式完全略過 → 與原 V3-2 byte-identical）。鏡像 Python `core/nr_modes.py` 的 `apply_mode`。
 
 ### 程式碼整合（freq-domain：caller 自備 FFT / 窗 / OLA）
 
@@ -286,12 +298,17 @@ Taylor 近似（小引數 worst ~0.11），會經遞迴平滑放大；屬 fast-m
 
 ## 調參指引 (Quick Tuning)
 
-> **優先使用 strength mode**：呼叫 `mmse_lsa_config_for_mode(sample_rate, MMSE_LSA_NR_MILD | BALANCED | AGGRESSIVE)`，多數情境足矣。
+> **優先使用 strength mode**：呼叫 `mmse_lsa_config_for_mode(sample_rate, MMSE_LSA_NR_MILD | MODERATE | BALANCED | AGGRESSIVE)`，多數情境足矣。
+
+> **⚠ g_min_db 為 audio 振幅 dB（/20 換算 `10^(db/20)`）** — gain 直接乘幅度譜（無 sqrt），故 floor 是
+> 振幅量。越負壓越深（-40 ≈ 0.01、-30 ≈ 0.032、-20 ≈ 0.1）。（xi_min_db / delta_db / scene_change 是
+> 功率/SNR dB，維持 /10。）
 
 | Symptom | 建議動作 |
 |---|---|
-| 殘留底噪吵 | 換 AGGRESSIVE 模式，或手動 `config.g_min_db = -20.0f` |
-| 語音變悶 / 細節掉 | 換 MILD 模式，或 `config.g_min_db = -10.0f`、`config.alpha_g = 0.92f` |
+| 殘留底噪吵 | 換 AGGRESSIVE 模式，或手動 `config.g_min_db = -40.0f`（壓更深） |
+| 語音變悶 / 細節掉 | 換 MILD 模式，或 `config.g_min_db = -20.0f`、`config.alpha_g = 0.92f` |
+| 音樂 / 非穩態內容被吃掉 | 改用 `--stationary`（只移除穩態底噪，保留音樂／瞬態） |
 | Musical noise | `config.alpha_g = 0.92f`、`config.xi_min_db = -25.0f` |
 | 場景切換慢（開冷氣、進車廂） | `config.scene_change_threshold_db = 7.0f` |
 | 場景偵測誤觸發 | `config.scene_change_threshold_db = 12.0f`、`config.scene_change_min_frames = 8` |
@@ -305,7 +322,8 @@ Taylor 近似（小引數 worst ~0.11），會經遞迴平滑放大；屬 fast-m
 ### 當這些都不夠
 - 檢查是否屬於「不適用情境」—— 本模組 by design 無法處理風聲 / 衝擊 / 重疊干擾
 - 用 `make debug` 重編並開啟 `DEBUG_DUMP` 輸出 `noise_psd / spp / xi / gamma / gain`，與 Python 逐幀對比
-- V4 OMLSA + wind handler 為 Python-only research 框架，C 端暫不提供
+- 若非穩態內容（音樂／人聲）被過度壓抑，改用 `--stationary` 內容保留模式
+- 註：舊「V4 OMLSA + wind handler」子系統已整個移除（Python 與 C 皆不再提供；adaptive-q 亦驗證 NO-SHIP）
 
 ## 配置參數
 
@@ -314,7 +332,7 @@ Taylor 近似（小引數 worst ~0.11），會經遞迴平滑放大；屬 fast-m
 | `frame_size` | `sample_rate × 20 / 1000` | 幀長 (20 ms)，例如 16 kHz → 320 samples |
 | `hop_size` | `frame_size / 2` | 幀移 (10 ms)，50% overlap；例如 16 kHz → 160 samples |
 | `fft_size` | 自動計算 | 次方 2 且 ≥ frame_size。8 kHz → 256；16 kHz → 512；48 kHz → 1024 |
-| `alpha_xi` | 0.88 | 先驗 SNR 平滑因子 |
+| `alpha_xi` | 0.92 | 先驗 SNR (ξ) DD 平滑；2026-07 musical-noise fix（was 0.88），全預設共用 |
 | `q` | 0.5 | 語音先驗機率 |
 | `xi_min_db` | -20 | 先驗 SNR 下限 (dB) |
 | `alpha_s` | 0.95 | MCRA 時間平滑 |
@@ -325,10 +343,12 @@ Taylor 近似（小引數 worst ~0.11），會經遞迴平滑放大；屬 fast-m
 | `scene_change_min_frames` | 5 | 場景轉換需連續幀數 |
 | `scene_change_blend` | 0.5 | 場景轉換噪聲重置混合比 |
 | `scene_change_flatness_threshold` | 0.4 | 場景轉換高頻 spectral flatness 閾值 (Fix #6 v4.2 新增) |
-| `g_min_db` | -15.0 | 最小增益 (dB) |
+| `g_min_db` | -30.0 | 最小增益（**audio 振幅 dB，/20**；= 0.032 floor） |
 | `alpha_g` | 0.88 | 增益平滑因子 |
 | `alpha_attack` | 0.3 | 非對稱平滑 Attack |
 | `alpha_decay` | 0.88 | 非對稱平滑 Decay (= alpha_g) |
+| `stationary_floor` | false | Wiener 增益下界 `(ξ/(β+ξ))^p`；**僅 `--stationary` 開啟**，full 不受影響 |
+| `scene_change_tonal_veto` | false | tonal 低頻（音樂）跳過噪聲底噪重置；僅 stationary |
 
 ## 延遲
 

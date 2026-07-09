@@ -54,8 +54,8 @@ TEST_CASES = [
     'street_0dB', 'street_5dB', 'street_10dB', 'street_15dB'
 ]
 
-# 我們的七種方法
-OUR_METHODS = ['V1', 'V2', 'V3', 'V3-2', 'V3-3', 'V3-4', 'V4']
+# 我們的降噪方法
+OUR_METHODS = ['V1', 'V2', 'V3', 'V3-2', 'V3-3', 'V3-4']
 
 # Benchmark 方法
 BENCHMARK_METHODS = {

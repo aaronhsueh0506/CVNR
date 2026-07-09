@@ -307,7 +307,7 @@ def estimate_flops(
     估算算法的理論 FLOPs
 
     Args:
-        algorithm: 算法名稱（'V1', 'V2', 'V3', 'V4', 'RNNoise'）
+        algorithm: 算法名稱（'V1', 'V2', 'V3', 'RNNoise'）
         fft_size: FFT 大小
         num_freq_bins: 頻率點數（默認 fft_size//2 + 1）
 
@@ -331,10 +331,6 @@ def estimate_flops(
     elif algorithm == 'V3':
         # FFT + IFFT + SNR計算 + SPP + MMSE + exp1()
         return 2 * fft_flops + num_freq_bins * 15
-
-    elif algorithm == 'V4':
-        # FFT + IFFT + IMCRA + OMLSA
-        return 2 * fft_flops + num_freq_bins * 25
 
     elif algorithm == 'RNNoise':
         # 特徵提取 + GRU + FC
@@ -395,7 +391,7 @@ if __name__ == "__main__":
     print("\nTheoretical FLOPs Comparison:")
     print("="*60)
 
-    algos = ['V1', 'V2', 'V3', 'V4', 'RNNoise']
+    algos = ['V1', 'V2', 'V3', 'RNNoise']
     flops_comparison = compare_algorithms_theoretical(algos)
 
     for algo, data in flops_comparison.items():

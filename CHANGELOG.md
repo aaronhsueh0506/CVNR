@@ -4,6 +4,57 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [4.4.0] - 2026-07-10 · musical-noise fix + V3-2 強度預設（4 級）
+
+### 修復 (Fixed)
+
+**balanced 的 musical noise（root cause = ξ 抖動經 SPP 放大）**
+- `config/v3_2_config.yaml`：`alpha_xi 0.88 → 0.92`（DD ξ 平滑 lever，全預設共用）。musical noise 來自
+  未平滑的 ξ 經 SPP（`G=G_H1^spp·g_min^(1-spp)` 的指數）放大成孤立增益尖峰；提高 alpha_xi 即壓掉。
+- 語音守門（12-file PESQ/STOI 拆解）：alpha_xi 幾乎零成本（PESQ −0.001）；額外 attack/decay 平滑對音樂
+  只再 −4% 卻吃掉語音（PESQ −0.021 / segSNR −0.38），已捨棄。stationary 模式（已用 0.92）不受影響。
+
+### 新增 (Added)
+
+**V3-2 強度預設（深度軸，`mild | moderate | balanced | aggressive`）**
+- 新 `core/nr_strength.py`：`NR_STRENGTH_PRESETS` + `apply_strength`，鏡像 C `mmse_lsa_config_for_mode`。
+  深度 g_min = −20/−25/−30/−40 dB；`moderate` 為本次新增（mild↔balanced 之間）；`aggressive` 加重下游平滑
+  （alpha_g 0.75→0.85）壓深度帶回的 speckle。與內容軸（full/stationary）正交，先 strength 再 mode。
+- CLI：`process_audio.py --nr-mode {mild,moderate,balanced,aggressive}` + `--mode {full,stationary}`
+  （之前 mode 只有函式 kwarg，未上 CLI，本次補上）。
+- `tools/ablate_nr_music.py`：committed ablation（4 級 × wav + 頻譜圖 + musical_noise/suppression_db 表）；
+  `utils/metrics.py` 新增 `suppression_db`。`process_audio.build_v3_2_base_params` 抽出共用。
+- 測試音 `test_wav/music/fix_gain_{music,noise}.wav`。
+
+### C 對齊
+
+`c_impl`：`mmse_lsa_types.h` 加 `MMSE_LSA_NR_MODERATE`、default alpha_xi 0.92、config_for_mode 4 級；
+`main.c` / `parity_runner.c` / `tools/parity_nr.py` 加 strength 軸。4 級 std-math **C↔Python bit-exact**
+（worst ~1e-5）；stationary 仍 bit-exact。
+
+## [4.3.0] - 2026-07-05 · stationary 內容保留模式 + gain-floor 單位對齊
+
+### 新增 (Added)
+
+**V3-2 `stationary` 內容保留模式**（Python + C，`mode: {full | stationary}`）
+- `full`（預設）＝現行全消，空 overlay → 與原 V3-2 **byte-identical**。
+- `stationary` ＝只移除穩態底噪、保留語音／音樂／瞬態。機制 = Wiener 增益下界 `gain ≥ (ξ/(β+ξ))^p`
+  （p=2，`core/gain_calculators/mmse_lsa.py`）+ MCRA music-aware tonal-veto scene-change。**下界僅 stationary
+  生效**（`stationary_floor` 預設 false）。架構 = `core/nr_modes.py` `NR_MODE_PRESETS` + `apply_mode`。
+- C 端：`denoise_wav --stationary`、`mmse_lsa_apply_stationary()`（overlay，疊在 `--nr-mode` base 上）；
+  parity harness 加 `--mode`，std-math **C↔Python bit-exact**（full worst 6e-5 / stationary 1.3e-5）。
+
+### 變更 (Changed)
+
+**gain-floor dB 對齊 audio 振幅慣例（/10 → /20）**
+- `g_min_db`（及 `spp_protect_floor_db`）改用 `10^(db/20)`：gain 直接乘幅度譜（無 sqrt），故 floor 是振幅量。
+- **所有 shipped 值加倍以保持行為不變**（v3-2 −15→−30、v3−19.5→−39、v3-3 −14→−28，皆同一線性 floor）。
+- 涵蓋 mmse_lsa / spp_mmse / pmmse、denoisers、C（mmse_lsa_denoiser.c / mmse_lsa_types.h）。
+- xi_min_db / delta_db / scene_change 為 SNR/功率 dB，維持 /10 不變。AEC 未動（功率域 floor 再 sqrt，本就正確）。
+
+### 移除 (Removed)
+- 舊「V4 wind-handler」子系統整個移除（16 檔）；adaptive-q lever 驗證 NO-SHIP 後移除。
+
 ## [4.2.2] - 2026-06-11 · IMCRA 正名 + D2 修復
 
 ### 修復 (Fixed)

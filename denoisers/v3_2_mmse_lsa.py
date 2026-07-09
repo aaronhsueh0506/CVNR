@@ -58,7 +58,7 @@ class MmseLsaDenoiser(BaseDenoiser):
         alpha_xi: float = 0.98,
         q: float = 0.5,
         xi_min_db: float = -25.0,
-        g_min_db: float = -20.0,
+        g_min_db: float = -40.0,
         alpha_g: float = 0.7,
         num_init_frames: int = 20,
         # v2.0 MCRA 噪聲估計參數
@@ -81,9 +81,19 @@ class MmseLsaDenoiser(BaseDenoiser):
         # default for standalone NR); False = plain MCRA (use in AEC pipeline
         # to prevent residual-echo from freezing noise tracking).
         mcra_accept_external_spp: bool = True,
+        # NR mode ('full' | 'stationary'). Set by nr_modes.apply_mode() upstream; the
+        # stationary-floor / scene-change params below carry the preset. Default 'full' +
+        # all-off → byte-identical shipped V3-2.
+        mode: str = 'full',
+        stationary_floor: bool = False,
+        stationary_floor_exponent: float = 1.0,
+        stationary_floor_beta: float = 1.0,
+        scene_change_tonal_veto: bool = False,
+        scene_change_lo_flatness_max: float = 0.4,
     ):
         super().__init__(sample_rate, n_fft=fft_size)
         self.noise_method = noise_method
+        self.mode = mode
 
         # alpha_d 優先於 alpha_noise（兩者同義；alpha_noise 為舊名保留相容）
         alpha_d_effective = alpha_d if alpha_d is not None else alpha_noise
@@ -117,6 +127,8 @@ class MmseLsaDenoiser(BaseDenoiser):
                 scene_change_min_frames=scene_change_min_frames,
                 scene_change_blend=scene_change_blend,
                 scene_change_flatness_threshold=scene_change_flatness_threshold,
+                scene_change_tonal_veto=scene_change_tonal_veto,
+                scene_change_lo_flatness_max=scene_change_lo_flatness_max,
                 accept_external_spp=mcra_accept_external_spp,
             )
         else:
@@ -130,7 +142,7 @@ class MmseLsaDenoiser(BaseDenoiser):
         self.spp_estimator = SppEstimator(
             alpha=alpha_xi,
             q=q,
-            xi_min_db=xi_min_db
+            xi_min_db=xi_min_db,
         )
 
         # 創建 MMSE-LSA / OMLSA 增益計算器
@@ -140,12 +152,16 @@ class MmseLsaDenoiser(BaseDenoiser):
             use_asymmetric_smoothing=use_asymmetric_smoothing,
             alpha_attack=alpha_attack,
             alpha_decay=alpha_decay,
+            stationary_floor=stationary_floor,
+            stationary_floor_exponent=stationary_floor_exponent,
+            stationary_floor_beta=stationary_floor_beta,
         )
 
         # 存儲上一幀的增益（Decision Directed）
         self.gain_prev = None
 
-    def denoise(self, noisy_signal: np.ndarray, return_spp: bool = False, return_gain: bool = False):
+    def denoise(self, noisy_signal: np.ndarray, return_spp: bool = False,
+                return_gain: bool = False, return_noise_psd: bool = False):
         """
         對帶噪信號進行降噪
 
@@ -163,15 +179,14 @@ class MmseLsaDenoiser(BaseDenoiser):
         magnitudes, phases, spectra = self.processor.process_signal(noisy_signal)
 
         # 2. 降噪
-        result = self.denoise_spectrum(magnitudes, phases, return_spp=return_spp, return_gain=return_gain)
-        if return_spp and return_gain:
-            enhanced_magnitudes, enhanced_phases, spp_history, gain_history = result
-        elif return_spp:
-            enhanced_magnitudes, enhanced_phases, spp_history = result
-        elif return_gain:
-            enhanced_magnitudes, enhanced_phases, gain_history = result
-        else:
-            enhanced_magnitudes, enhanced_phases = result
+        # denoise_spectrum 回傳 (mag, phase, [spp], [gain], [noise_psd])，附加項依旗標順序附加。
+        result = self.denoise_spectrum(
+            magnitudes, phases,
+            return_spp=return_spp, return_gain=return_gain,
+            return_noise_psd=return_noise_psd,
+        )
+        enhanced_magnitudes, enhanced_phases = result[0], result[1]
+        extras = result[2:]  # spp / gain / noise_psd，順序與旗標一致
 
         # 3. 重建信號
         enhanced_signal = self.reconstructor.reconstruct_signal(
@@ -180,12 +195,8 @@ class MmseLsaDenoiser(BaseDenoiser):
             original_length=len(noisy_signal)
         )
 
-        if return_spp and return_gain:
-            return enhanced_signal, spp_history, gain_history
-        if return_spp:
-            return enhanced_signal, spp_history
-        if return_gain:
-            return enhanced_signal, gain_history
+        if extras:
+            return (enhanced_signal, *extras)
         return enhanced_signal
 
     def denoise_spectrum(
@@ -194,8 +205,9 @@ class MmseLsaDenoiser(BaseDenoiser):
         noisy_phase: np.ndarray,
         return_spp: bool = False,
         return_gain: bool = False,
+        return_noise_psd: bool = False,
         extra_noise_psd: np.ndarray = None
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> tuple:  # (mag, phase, [spp], [gain], [noise_psd]) — extras per the return_* flags
         """
         在頻域進行降噪
 
@@ -231,9 +243,12 @@ class MmseLsaDenoiser(BaseDenoiser):
         # 初始化輸出
         enhanced_magnitude = np.zeros_like(noisy_magnitude)
 
-        # SPP / Gain 歷史記錄（用於可視化）
+        # SPP / Gain / noise-PSD 歷史記錄（用於可視化）
         spp_history = [] if return_spp else None
         gain_history = [] if return_gain else None
+        # noise-PSD tracking：記錄每幀「用來算該幀增益」的估計噪聲 PSD（估計器內部值，
+        # 不含 extra_noise_psd 的 echo 增量），供 music/noise 追蹤圖使用。
+        noise_psd_history = [] if return_noise_psd else None
 
         # v1.5.0: 保存上一幀增強功率譜（用於正確的 DD 計算）
         enhanced_psd_prev = None
@@ -252,6 +267,8 @@ class MmseLsaDenoiser(BaseDenoiser):
                     spp_history.append(np.zeros(n_freqs))
                 if return_gain:
                     gain_history.append(gain.copy())
+                if return_noise_psd:
+                    noise_psd_history.append(self.noise_estimator.noise_psd.copy())
                 enhanced_magnitude[i] = noisy_magnitude[i]
                 # DD state：gain_prev = 1.0, enhanced_psd_prev = Y_psd
                 self.gain_prev = gain.copy()
@@ -279,6 +296,9 @@ class MmseLsaDenoiser(BaseDenoiser):
             gain = self.gain_calculator.calculate(spp, xi, gamma)
             if return_gain:
                 gain_history.append(gain.copy())
+            if return_noise_psd:
+                # 估計器內部噪聲（尚未經 update()；即算此幀增益所用的噪聲底）
+                noise_psd_history.append(self.noise_estimator.noise_psd.copy())
 
             enhanced_magnitude[i] = gain * noisy_magnitude[i]
             self.gain_prev = gain.copy()
@@ -289,13 +309,16 @@ class MmseLsaDenoiser(BaseDenoiser):
         # 相位保持不變
         enhanced_phase = noisy_phase
 
-        if return_spp and return_gain:
-            return enhanced_magnitude, enhanced_phase, np.array(spp_history), np.array(gain_history)
+        # 動態組裝回傳：(mag, phase, [spp], [gain], [noise_psd])，附加項依旗標順序附加。
+        # 無旗標時退化為既有的 (mag, phase) 2-tuple，向後相容。
+        outputs = [enhanced_magnitude, enhanced_phase]
         if return_spp:
-            return enhanced_magnitude, enhanced_phase, np.array(spp_history)
+            outputs.append(np.array(spp_history))
         if return_gain:
-            return enhanced_magnitude, enhanced_phase, np.array(gain_history)
-        return enhanced_magnitude, enhanced_phase
+            outputs.append(np.array(gain_history))
+        if return_noise_psd:
+            outputs.append(np.array(noise_psd_history))
+        return tuple(outputs)
 
     def reset(self):
         """重置降噪器狀態"""
@@ -309,6 +332,8 @@ class MmseLsaDenoiser(BaseDenoiser):
         params = {
             'version': 'V3-2',
             'name': 'OMLSA (MMSE-LSA + SPP weighting)',
+            'mode': self.mode,
+            'stationary_floor': self.gain_calculator.stationary_floor,
             'sample_rate': self.sample_rate,
             'frame_size': self.processor.frame_size,
             'frame_shift': self.processor.frame_shift,
@@ -317,7 +342,7 @@ class MmseLsaDenoiser(BaseDenoiser):
             'alpha_xi': self.spp_estimator.alpha,
             'q': self.spp_estimator.q,
             'xi_min_db': 10 * np.log10(self.spp_estimator.xi_min),
-            'g_min_db': 10 * np.log10(self.gain_calculator.g_min),
+            'g_min_db': 20 * np.log10(self.gain_calculator.g_min),
             'alpha_g': self.gain_calculator.alpha_g,
             'use_asymmetric_smoothing': self.gain_calculator.use_asymmetric_smoothing,
             'alpha_attack': self.gain_calculator.alpha_attack,

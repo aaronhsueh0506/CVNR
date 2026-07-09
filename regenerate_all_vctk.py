@@ -19,7 +19,7 @@ from pathlib import Path
 from glob import glob
 
 from regenerate_all import load_config, get_denoiser_params_from_config
-from denoisers import MmseLsaDenoiser, OmlsaDenoiser
+from denoisers import MmseLsaDenoiser
 
 
 def main():
@@ -80,21 +80,7 @@ def main():
             # 從配置獲取參數並建立降噪器
             fft_size = config['audio']['fft_size']
             denoiser_params = get_denoiser_params_from_config(config, sr, fft_size)
-            # 依 config 版本自動選擇 denoiser class
-            if str(config.get('version', '')).startswith('4') or 'wind_handler' in config:
-                wh = config.get('wind_handler', {})
-                denoiser_params['enable_wind_handler'] = wh.get('enable', False)
-                if 'detector' in wh:
-                    denoiser_params['wind_detector_config'] = wh['detector']
-                if 'freq_adaptive' in wh:
-                    denoiser_params['freq_adaptive_config'] = wh['freq_adaptive']
-                if 'transient_suppressor' in wh:
-                    ts = dict(wh['transient_suppressor'])
-                    denoiser_params['enable_transient_suppressor'] = ts.pop('enable', False)
-                    denoiser_params['transient_suppressor_config'] = ts
-                denoiser = OmlsaDenoiser(**denoiser_params)
-            else:
-                denoiser = MmseLsaDenoiser(**denoiser_params)
+            denoiser = MmseLsaDenoiser(**denoiser_params)
 
             # 降噪
             enhanced = denoiser.denoise(noisy)

@@ -48,7 +48,9 @@ void print_usage(const char* prog) {
     printf("\n");
     printf("Options:\n");
     printf("  --bypass       Bypass mode (no processing, copy input to output)\n");
-    printf("  --nr-mode <m>  NR strength: mild|balanced|aggressive (default: balanced)\n");
+    printf("  --nr-mode <m>  NR strength: mild|moderate|balanced|aggressive (default: balanced)\n");
+    printf("  --stationary   Content-preservation mode: remove only the stationary noise\n");
+    printf("                 floor, preserve speech/music/transients (layered on --nr-mode)\n");
     printf("\n");
     printf("Framing is fixed to the Python V3-2 reference (512/256/512, sqrt-Hann)\n");
     printf("so output is parity-comparable; see tools/parity_nr.py.\n");
@@ -100,14 +102,18 @@ int main(int argc, char* argv[]) {
     const char* input_path = argv[1];
     const char* output_path = argv[2];
     int bypass = 0;
+    int stationary = 0;
     MmseLsaNrMode nr_mode = MMSE_LSA_NR_BALANCED;
 
     for (int i = 3; i < argc; i++) {
         if (strcmp(argv[i], "--bypass") == 0) {
             bypass = 1;
+        } else if (strcmp(argv[i], "--stationary") == 0) {
+            stationary = 1;
         } else if (strcmp(argv[i], "--nr-mode") == 0 && i + 1 < argc) {
             const char *m = argv[++i];
-            if (strcmp(m, "mild") == 0)            nr_mode = MMSE_LSA_NR_MILD;
+            if (strcmp(m, "mild") == 0)             nr_mode = MMSE_LSA_NR_MILD;
+            else if (strcmp(m, "moderate") == 0)    nr_mode = MMSE_LSA_NR_MODERATE;
             else if (strcmp(m, "aggressive") == 0)  nr_mode = MMSE_LSA_NR_AGGRESSIVE;
             else                                    nr_mode = MMSE_LSA_NR_BALANCED;
         }
@@ -156,8 +162,10 @@ int main(int argc, char* argv[]) {
     }
 
     /* 4. Build config — framing forced to the Python V3-2 reference (512/256/512)
-     *    so this runner is parity-comparable. NR-strength knobs come from nr_mode. */
+     *    so this runner is parity-comparable. NR-strength knobs come from nr_mode;
+     *    the stationary content preset (if requested) overlays on top of that base. */
     MmseLsaConfig config = mmse_lsa_config_for_mode(sample_rate, nr_mode);
+    if (stationary) mmse_lsa_apply_stationary(&config);
     config.frame_size = 512;
     config.hop_size   = 256;
     config.fft_size   = 512;
@@ -178,9 +186,10 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    const char *mode_names[] = {"mild", "balanced", "aggressive"};
+    const char *mode_names[] = {"mild", "moderate", "balanced", "aggressive"};
     printf("\nDenoiser configuration (freq-domain runner):\n");
-    printf("  NR mode: %s\n", mode_names[nr_mode]);
+    printf("  NR mode: %s\n", stationary ? "stationary (content-preservation)"
+                                          : mode_names[nr_mode]);
     printf("  Frame size: %d samples (%.1f ms)\n", frame_size, frame_size * 1000.0f / sample_rate);
     printf("  Hop size: %d samples (%.1f ms)\n", hop, hop * 1000.0f / sample_rate);
     printf("  FFT size: %d  Frequency bins: %d\n", fft_size, n_freqs);

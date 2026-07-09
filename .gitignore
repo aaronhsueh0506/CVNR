@@ -43,6 +43,7 @@ ENV/
 *.wav
 !test_*.wav
 !*_2s_silence.wav
+# test_wav/music/*.wav 為 ablation 測試輸入，已 git add -f 納入版控（*.wav 廣規則擋不住已追蹤檔）
 
 # 輸出文件
 output/
@@ -60,6 +61,11 @@ benchmark_results/
 comparison_results/
 *.txt
 !requirements.txt
+
+# 音樂保留 eval harness 產物（tools/eval_music_preservation.py 的輸出，含 wav/png/json）
+results/music_eval*/
+# NR 強度 ablation harness 產物（tools/ablate_nr_music.py 的 wav/png/json）
+results/ablate_nr/
 
 # 臨時文件
 *.tmp

@@ -36,7 +36,7 @@ spp:
 
 gain_calculation:
   method: pmmse               # Wolfe & Godsill β=0.5 公式
-  g_min_db: -14.0             # Optuna 500-trial (2026-01-12)
+  g_min_db: -28.0             # Optuna 500-trial (2026-01-12); amplitude dB (/20) = old -14 @ /10
   alpha_g: 0.70               # Optuna 500-trial (2026-01-12)
   use_spp_weighting: true
 

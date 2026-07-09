@@ -58,6 +58,11 @@ struct MmseLsaDenoiser {
     float  alpha_decay;
     float* log_gain_prev;
     bool   gain_initialized;
+
+    /* Stationary-mode Wiener gain lower-bound (default off → full behaviour). */
+    bool   stationary_floor;
+    float  stationary_floor_exponent;   /* p */
+    float  stationary_floor_beta;       /* β */
 };
 
 /* -------------------------------------------------------------------------
@@ -66,15 +71,20 @@ struct MmseLsaDenoiser {
 
 static void init_gain_params(MmseLsaDenoiser* self,
                               const MmseLsaConfig* config) {
-    /* D4 note: /10.0f → power-domain conversion. g_min_db=-20 yields g_min=0.01
-     * (≡ −40 dB amplitude). Label is intentionally half-value; calibrated configs
-     * must account for this (matches Python mmse_lsa.py L89 comment). */
-    self->g_min        = powf(10.0f, config->g_min_db / 10.0f);
+    /* Amplitude-dB (/20): the gain is applied directly to the magnitude spectrum
+     * (fft_apply_gain multiplies each bin, no sqrt), so g_min is an AMPLITUDE floor.
+     * g_min_db=-15 → 10^(-15/20)=0.178 (a true -15 dB amplitude floor). Mirrors Python
+     * mmse_lsa.py. (SNR/power dB — xi_min, delta, scene_change — correctly stay /10.) */
+    self->g_min        = powf(10.0f, config->g_min_db / 20.0f);
     self->log_g_min    = logf(self->g_min + 1e-10f);
     self->alpha_g      = config->alpha_g;
     self->alpha_attack = config->alpha_attack;
     self->alpha_decay  = config->alpha_decay;
     self->gain_initialized = false;
+
+    self->stationary_floor          = config->stationary_floor;
+    self->stationary_floor_exponent = config->stationary_floor_exponent;
+    self->stationary_floor_beta     = config->stationary_floor_beta;
 }
 
 static void reset_gain_state(MmseLsaDenoiser* self) {
@@ -94,6 +104,11 @@ static void calculate_gain(MmseLsaDenoiser* self,
     float log_g_min    = self->log_g_min;
     float alpha_attack = self->alpha_attack;
     float alpha_decay  = self->alpha_decay;
+    /* Stationary-mode Wiener lower-bound (default off): gain >= (ξ/(β+ξ))^p. */
+    bool  stat_floor   = self->stationary_floor;
+    float stat_p       = self->stationary_floor_exponent;
+    float stat_beta    = self->stationary_floor_beta;
+    bool  stat_p2      = (stat_p == 2.0f);  /* preset p; skip powf on the common path */
 
     for (int k = 0; k < n_freqs; k++) {
         float xi_k    = xi[k];
@@ -143,6 +158,13 @@ static void calculate_gain(MmseLsaDenoiser* self,
         } else {
             gain = fast_exp(log_gain);  log_gain_save = log_gain;
         }
+        /* Stationary Wiener lower-bound: gain = max(gain, (ξ/(β+ξ))^p), then re-derive
+         * the saved log gain from the floored value (Python mmse_lsa.py:199-206). */
+        if (stat_floor) {
+            float ratio   = xi_k / (stat_beta + xi_k);
+            float g_floor = stat_p2 ? ratio * ratio : powf(ratio, stat_p);
+            if (g_floor > gain) { gain = g_floor; log_gain_save = fast_log(gain + 1e-10f); }
+        }
         gain_out[k] = gain;
         self->log_gain_prev[k] = log_gain_save;
 #else
@@ -151,6 +173,11 @@ static void calculate_gain(MmseLsaDenoiser* self,
         if (gain < g_min) gain = g_min;
         if (gain > 1.0f)  gain = 1.0f;
 #endif
+        if (stat_floor) {
+            float ratio   = xi_k / (stat_beta + xi_k);
+            float g_floor = stat_p2 ? ratio * ratio : powf(ratio, stat_p);
+            if (g_floor > gain) gain = g_floor;
+        }
         gain_out[k] = gain;
         self->log_gain_prev[k] = fast_log(gain + 1e-10f);
 #endif
