@@ -6,18 +6,21 @@
 
 ---
 
-## 🪜 先試 Strength Mode（C 實作 only）
+## 🪜 先試 Strength Mode（Python + C 都有）
 
-> ⚠️ **命名好的 strength mode 只存在於 C 實作**：`mmse_lsa_config_for_mode(sample_rate, MMSE_LSA_NR_MILD | BALANCED | AGGRESSIVE)`（見 `c_impl/include/mmse_lsa_types.h`）。
-> **Python `MmseLsaDenoiser` 沒有 `config_for_mode` 方法**，不吃 MILD/BALANCED/AGGRESSIVE 字串；Python 端請直接在 `config.yaml`（或建構參數）設 `g_min_db` 等數值來達成等效強度。下表的 g_min 即各模式對應的 `g_min_db`，Python 直接填這個值。
+> **命名好的 4 級 strength mode 兩端都有**（2026-07）：
+> - **Python**：`core/nr_strength.py`（`create_denoiser_from_config(..., strength=...)`）或 CLI `process_audio.py --nr-mode {mild,moderate,balanced,aggressive}`。
+> - **C**：`mmse_lsa_config_for_mode(sample_rate, MMSE_LSA_NR_MILD|MODERATE|BALANCED|AGGRESSIVE)`（`c_impl/include/mmse_lsa_types.h`）或 `denoise_wav --nr-mode`。
+> 兩端 4 級 std-math **bit-exact**。g_min_db 為 **audio 振幅 dB（/20）**。
 
 | 模式 | g_min_db | 適用 |
 |---|---|---|
-| MILD | -10 dB | 安靜 / 室內、重視語音自然度 |
-| BALANCED（預設） | -15 dB | 一般使用 |
-| AGGRESSIVE | -20 dB | 高噪 / 戶外、可接受些微失真 |
+| mild | -20 dB | 安靜 / 室內、重視語音自然度（最淺） |
+| moderate | -25 dB | mild 與 balanced 之間 |
+| balanced（預設） | -30 dB | 一般使用 |
+| aggressive | -40 dB | 高噪 / 戶外、可接受些微失真（最深） |
 
-**多數情境切模式（C）或設對應 `g_min_db`（Python）就夠了**，以下細節調參僅在這一步不符需求時再看。
+**多數情境切 `--nr-mode` 就夠了**，以下細節調參僅在這一步不符需求時再看。
 
 ---
 
@@ -25,7 +28,7 @@
 
 | 參數 | 作用 | 範圍 | 調高效果 | 調低效果 |
 |------|------|------|----------|----------|
-| `g_min_db` | 增益地板 | -10 ~ -25 dB | 背景殘留多，語音自然 | 背景乾淨，可能死寂 |
+| `g_min_db` | 增益地板（振幅 dB /20） | -20 ~ -45 dB | 背景殘留多，語音自然 | 背景乾淨，可能死寂 |
 | `xi_min_db` | 最小先驗 SNR | -20 ~ -35 dB | 微弱語音被切 | 保留細節，殘留噪聲 |
 | `q` | 語音缺失機率 | 0.2 ~ 0.7 | 更激進降噪 | 更保守，保留語音 |
 | `alpha_g` | 增益平滑 | 0.5 ~ 0.95 | 平滑，可能拖泥帶水 | 乾脆，可能粗糙 |
@@ -36,8 +39,8 @@
 
 | 症狀 | 可能原因 | 建議調整 |
 |------|----------|----------|
-| 聲音太乾、有機械音 | g_min_db 過低 | 調高 (如 -17 → -14) |
-| 背景太吵、降噪無感 | g_min_db 過高 | 調低 (如 -13 → -18) |
+| 聲音太乾、有機械音 | g_min_db 過低 | 調高 (如 -35 → -28) |
+| 背景太吵、降噪無感 | g_min_db 過高 | 調低 (如 -26 → -36) |
 | 微弱語音被截斷 | xi_min_db 過高 | 調低 (如 -15 → -25) |
 | 殘留太多突發噪聲 | q 過低 | 調高 (如 0.3 → 0.5) |
 | 輔音 (f, s, th) 消失 | q 過高 | 調低 (如 0.6 → 0.4) |
@@ -52,20 +55,20 @@
 
 **物理意義**：算法被允許執行的「最大衰減量」。簡單說，就是「最安靜的時候，要把背景壓多低」。
 
-**參數範圍**：通常在 -10 dB 到 -25 dB 之間。
+**參數範圍**：通常在 -20 dB 到 -45 dB 之間（振幅 dB /20）。
 
 **直觀理解**：
 
 | 設定 | 效果 |
 |------|------|
-| 數值越小 (如 -25dB) | 壓得越深，背景越乾淨，但風險是容易把語音的尾音切斷，且容易暴露「音樂噪聲」 |
-| 數值越大 (如 -12dB) | 壓得較淺，背景會殘留底噪，但語音聽起來更自然、飽滿，音樂噪聲會被底噪掩蓋住 (Masking Effect) |
+| 數值越小 (如 -40dB) | 壓得越深，背景越乾淨，但風險是容易把語音的尾音切斷，且容易暴露「音樂噪聲」 |
+| 數值越大 (如 -20dB) | 壓得較淺，背景會殘留底噪，但語音聽起來更自然、飽滿，音樂噪聲會被底噪掩蓋住 (Masking Effect) |
 
 **調整建議**：
-- 覺得聲音太乾、有機械音、斷斷續續 → 調高 (例如從 -17 改到 -14)
-- 覺得背景太吵、降噪無感 → 調低 (例如從 -13 改到 -18)
+- 覺得聲音太乾、有機械音、斷斷續續 → 調高 (例如從 -35 改到 -28)
+- 覺得背景太吵、降噪無感 → 調低 (例如從 -26 改到 -36)
 
-> 💡 **提示**：V3-2 的 STOI 高就是因為這個值設得很高 (-13dB)
+> 💡 **提示**：g_min_db 設得越高（越接近 0），STOI 通常越好——current V3-2 balanced 預設為 -30 dB（振幅 /20）。
 
 ---
 
@@ -145,7 +148,7 @@ IMCRA/MCRA 的 scene change detector 用「高頻 gamma + spectral flatness」�
 
 下列參數會改變演算法內部穩定性，預設值是 Optuna / Cohen 文獻 / VCTK 驗證的結果：
 
-- `alpha_xi` (0.88)：DD 平滑；動會造成 musical noise 或反應遲鈍
+- `alpha_xi` (0.92)：DD ξ 平滑 = **musical-noise lever**（2026-07 由 0.88 調高至 0.92，全預設共用，語音幾乎零成本）。調更高 → ξ 更平滑 → musical noise 更少，但過高會平滑掉語音瞬態；調低會帶回 musical noise。
 - `alpha_s` (0.95) / `alpha_d` (0.7) / `alpha_p` (0.2) / `L` (32)：IMCRA/MCRA 核心常數
 - `num_init_frames` (20 = 200 ms)：調短會讓底噪估計 under-fit
 - `delta_db` (10)：IMCRA/MCRA 內部 speech indicator 偏移（IMCRA 另有 OM-LSA posterior 作為主要 gate）
@@ -169,7 +172,7 @@ IMCRA/MCRA 的 scene change detector 用「高頻 gamma + spectral flatness」�
 
 ## 📝 調參流程建議
 
-1. 先換 strength mode（C 端 `mmse_lsa_config_for_mode`）／設對應 `g_min_db`（Python 端，無 mode API）（**80% 的情境止於這一步**）
+1. 先換 strength mode（`--nr-mode mild|moderate|balanced|aggressive`，Python + C 皆可）（**80% 的情境止於這一步**）
 2. 遇到 symptom 對照「調參決策表」調四大核心旋鈕
 3. 遇到場景切換問題調 `scene_change_*`
 4. 每次只動一個參數，用同一批測試音檔 A/B 比對

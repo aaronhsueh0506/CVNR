@@ -1,5 +1,7 @@
 # V3 MMSE 變體詳細對比
 
+> ⚠️ **g_min_db 單位變更（2026-07-05）**：本文件多數 g_min_db 為當時的功率 dB (/10)；現行改為 audio 振幅 dB (/20)，數值需 ×2 換算。現行 shipped：V3 = −39、V3-2 = −30、V3-3 = −28。alpha_xi / xi_min_db 不受影響。
+
 ## 目錄
 
 1. [概述](#概述)
@@ -374,7 +376,7 @@ spp:
   q: 0.40
   xi_min_db: -22.0
 gain_calculation:
-  g_min_db: -19.5
+  g_min_db: -39.0
   alpha_g: 0.65
   use_full_formula: true
 ```
@@ -393,7 +395,7 @@ spp:
   q: 0.50
   xi_min_db: -20.0
 gain_calculation:
-  g_min_db: -12.5
+  g_min_db: -30.0
   alpha_g: 0.80
 ```
 
@@ -411,7 +413,7 @@ spp:
   q: 0.45
   xi_min_db: -19.0
 gain_calculation:
-  g_min_db: -14.0
+  g_min_db: -28.0
   alpha_g: 0.70
 ```
 
@@ -429,7 +431,7 @@ spp:
   q: 0.30
   xi_min_db: -23.0
 gain_calculation:
-  g_min_db: -20.0
+  g_min_db: -20.0  # V3-4 config 已移除 (deprecated)
   alpha_g: 0.70
 ```
 
@@ -495,13 +497,13 @@ gain_calculation:
 
 ### Q6: 如何選擇 g_min_db 參數？
 
-**A**: g_min_db 決定最大噪聲抑制量:
-- **-15 dB**: 適度降噪（保真度高）
-- **-20 dB**: 標準降噪（平衡）
-- **-25 dB**: 強降噪（可能失真）
-- **-30 dB**: 極強降噪（高風險）
+**A**: g_min_db 決定最大噪聲抑制量（以下為現行 audio 振幅 dB /20 尺度）:
+- **-20 dB**: 溫和降噪（保真度高）
+- **-30 dB**: 平衡降噪（V3-2 現行預設）
+- **-40 dB**: 強降噪（V3 現行預設等級）
+- **更低**: 更深的抑制（可能失真、風險較高）
 
-**建議**: 從 -20 dB 開始，根據效果調整
+**建議**: 從 -30 dB 開始，根據效果調整（注意：舊版 /10 功率 dB 尺度數值為此半）
 
 ### Q7: alpha_g 平滑因子怎麼設置？
 
