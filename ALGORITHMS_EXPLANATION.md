@@ -445,9 +445,9 @@ G(ω) = p(ω) · G_MMSE(ω) + (1-p(ω)) · G_min
 
 | 參數 | 默認值 | 作用 |
 |------|--------|------|
-| alpha_xi | 0.98 | 先驗 SNR 平滑因子（核心參數） |
+| alpha_xi | 0.90 | 先驗 SNR 平滑因子（核心參數） |
 | q | 0.5 | 語音先驗機率 |
-| g_min_db | -20 dB | 最小增益 |
+| g_min_db | -39 dB（振幅 /20） | 最小增益 |
 | alpha_g | 0.85 | 增益時間平滑（v1.1.0 強化） |
 
 #### 技術特點
@@ -502,9 +502,9 @@ G = (ξ/(1+ξ)) * exp(0.5 * E1(v))
 | 參數 | 默認值 | 作用 |
 |------|--------|------|
 | use_full_formula | false | true=Bessel, false=E1簡化(推薦) |
-| g_min_db | -20 dB | 最小增益 |
+| g_min_db | -39 dB（振幅 /20） | 最小增益 |
 | alpha_g | 0.7 | 增益時間平滑 |
-| alpha_xi | 0.98 | 先驗 SNR 平滑 |
+| alpha_xi | 0.90 | 先驗 SNR 平滑 |
 
 #### 技術特點
 
@@ -548,8 +548,10 @@ G_H1 = (ξ/(1+ξ)) * exp(0.5 * E1(v))
 
 | 參數 | 默認值 | 作用 |
 |------|--------|------|
-| g_min_db | -20 dB（建構預設；config 預設 -15） | 最小增益（log 域混合下限） |
+| g_min_db | -30 dB（振幅 /20） | 最小增益（log 域混合下限） |
 | alpha_g | 0.7（建構預設；config 預設 0.88） | 增益時間平滑 |
+
+> 🎚️ **強度預設**：V3-2 現有 4 檔強度預設 mild/moderate/balanced/aggressive，對應 `g_min_db` = -20 / -25 / -30 / -40 dB（振幅 /20）、`alpha_xi` = 0.92。Python 端經 `--nr-mode`（`core/nr_strength.py`）、C 端經 `mmse_lsa_config_for_mode` 選擇。
 
 > 📌 歷史註：舊版文件曾列 `use_linear_spp_weighting`（true=線性域退化為 STSA）。**現行 `MmseLsaGainCalculator` 已無此旗標**——SPP 混合一律走 log 域（OM-LSA），無線性退化路徑。
 
@@ -599,7 +601,7 @@ gain = np.sqrt(v) / (np.sqrt(np.pi) * gamma) / i0e(v / 2)
 | 參數 | 默認值 | 作用 |
 |------|--------|------|
 | use_spp_weighting | true | 是否使用 SPP 加權 |
-| g_min_db | -20 dB | 最小增益 |
+| g_min_db | -28 dB（振幅 /20） | 最小增益 |
 | alpha_g | 0.7 | 增益時間平滑 |
 
 #### 技術特點
@@ -646,7 +648,7 @@ G_Lap = (√π/2) · √v · exp(-v/2) · I₀(v/2)
 | 參數 | 默認值 | 作用 |
 |------|--------|------|
 | beta_laplacian | 1.0 | Laplacian 形狀參數（Chen & Loizou 原始值）|
-| g_min_db | -20 dB | 最小增益 |
+| g_min_db | -20 dB（已移除） | 最小增益 |
 | alpha_g | 0.7 | 增益時間平滑 |
 
 **beta_laplacian 調優**:
@@ -1097,10 +1099,10 @@ log G_t(ω) = α · log G_{t-1}(ω) + (1-α) · log G_t_current(ω)
 ```yaml
 # V3 配置
 spp:
-  alpha_xi: 0.98  # 穩定估計
+  alpha_xi: 0.90  # 穩定估計
   q: 0.5
 gain_calculation:
-  g_min_db: -20.0
+  g_min_db: -39.0
   alpha_g: 0.85
 ```
 
@@ -1121,7 +1123,7 @@ noise_estimation:
   alpha_d: 0.85
   L: 180  # 更長窗口，更準確
 gain_calculation:
-  g_min_db: -20.0
+  g_min_db: -30.0
   alpha_g: 0.9  # 更平滑
 ```
 

@@ -237,7 +237,7 @@ plt.savefig('spp_visualization.png', dpi=150)
 - 用於軟判決：比 VAD 硬判決更平滑
 
 **關鍵參數**（在 `config/v3_config.yaml` 中調整）：
-- `alpha_xi`：先驗 SNR 平滑因子（0.92-0.98），越大越平滑
+- `alpha_xi`：先驗 SNR 平滑因子（現值 0.90，V3-2=0.92），越大越平滑
 - `q`：語音先驗機率（通常 0.5），語音多可調高到 0.6-0.7
 - `xi_min_db`：先驗 SNR 下限（-25 dB），防止數值問題
 
@@ -607,11 +607,11 @@ python3 process_audio.py input.wav --versions V3 V3-2 V3-3 V3-4
 不同變體的關鍵參數：
 
 **V3-2 (MMSE-LSA)**:
-- `g_min_db`: -20 dB (可適度降低到 -25 dB)
+- `g_min_db`: -30 dB（振幅 dB /20；4 級 strength preset：mild −20 / moderate −25 / balanced −30 / aggressive −40，見 `--nr-mode`）
 - `alpha_g`: 0.7 (平滑度，減少 Musical Noise)
 
 **V3-3 (PMMSE)**:
-- `g_min_db`: -20 dB (建議範圍: -15 到 -25)
+- `g_min_db`: -28 dB（振幅 dB /20）
 - `alpha_g`: 0.7 (增益時間平滑因子)
 - `use_full_formula`: false (推薦數值穩定簡化版)
 
@@ -821,12 +821,12 @@ gain_calculation:
 ```yaml
 # config/v3_config.yaml
 spp:
-  alpha_xi: 0.98          # 先驗SNR平滑因子（0.92-0.98）
+  alpha_xi: 0.90          # 先驗SNR平滑因子（現值 0.90；V3-2=0.92）
   q: 0.5                  # 語音先驗機率
   xi_min_db: -25.0        # 最小先驗SNR (dB)
 
 gain_calculation:
-  g_min_db: -20.0         # 最小增益 (dB)
+  g_min_db: -39.0         # 最小增益 (dB)
   alpha_g: 0.85           # 增益平滑因子 ⭐
 ```
 
@@ -834,7 +834,7 @@ gain_calculation:
 - `alpha_xi`：**先驗 SNR 平滑因子**
   - Decision Directed 方法的核心參數
   - 越接近 1 越平滑，但反應越慢
-  - 建議：0.95-0.98（語音變化慢）、0.92-0.95（語音變化快）
+  - 現值：0.90（V3=0.90 / V3-2=0.92）
 
 - `q`：語音先驗機率
   - 影響 SPP 的計算偏向
@@ -919,9 +919,9 @@ gain_calculation:
 ```yaml
 # V3 配置
 spp:
-  alpha_xi: 0.98      # 高平滑（噪聲穩定）
+  alpha_xi: 0.90      # 高平滑（噪聲穩定）
 gain_calculation:
-  g_min_db: -20.0     # 平衡降噪
+  g_min_db: -39.0     # 平衡降噪
 
 # V4 配置
 noise_estimation:
@@ -948,7 +948,7 @@ gain_calculation:
 spp:
   q: 0.6              # 語音先驗提高
 gain_calculation:
-  g_min_db: -15.0     # 輕微降噪
+  g_min_db: -30.0     # 輕微降噪
   alpha_g: 0.7        # 較低平滑（保留細節）
 ```
 
@@ -960,7 +960,7 @@ noise_estimation:
   alpha_d: 0.85       # 平衡
   L: 200              # 長窗口（更準確）
 gain_calculation:
-  g_min_db: -25.0     # 強力降噪
+  g_min_db: -25.0     # 強力降噪（V4 已 deprecated，功率 dB /10 舊值）
   alpha_g: 0.9        # 強平滑（減少失真）
 ```
 
@@ -1000,7 +1000,7 @@ alpha_g: 0.7        # V3/V4（原 0.85）
 alpha: 2.0  # 原 1.0
 
 # V3/V4: 降低最小增益
-g_min_db: -25.0  # 原 -20.0
+g_min_db: -50.0  # 原 -40.0（振幅 dB /20）
 ```
 
 ### 語音失真嚴重
@@ -1011,7 +1011,7 @@ g_min_db: -25.0  # 原 -20.0
 alpha: 1.0  # 原 2.0
 
 # V3/V4: 提高最小增益
-g_min_db: -15.0  # 原 -20.0
+g_min_db: -30.0  # 原 -40.0（振幅 dB /20）
 ```
 
 ## 🎓 學習路徑
@@ -1268,6 +1268,8 @@ MIT License
 ### v2.4.0 (2026-01-11)
 - ✨ **Optuna 貝葉斯優化**: 全版本 1000-trial 參數優化
 
+  > ⚠️ 下表 g_min_db 為 2026-07 前功率 dB (/10)；現行為振幅 dB (/20)，需 ×2（現行 V3=−39 / V3-2=−30 / V3-3=−28）。xi_min_db 不變。
+
   | 版本 | PESQ | STOI | segSNR | xi_min_db | g_min_db | alpha_g |
   |------|------|------|--------|-----------|----------|---------|
   | V4 (IMCRA-OMLSA) | **1.747** | **0.859** | +5.22 dB | -19.0 | -17.0 | 0.87 |
@@ -1296,6 +1298,8 @@ MIT License
 ### v2.1.2 (2026-01-06)
 - 🐛 **修復 segSNR 計算 bug**: benchmark_comparison.py 錯誤地將 sample_rate 傳遞給 frame_size 參數
 - ✅ **更新基準測試結果**: 使用正確的 frame_size=256, hop_size=128 計算 segSNR
+
+> ⚠️ 以下 v2.1.x changelog 之 g_min_db 為 2026-07 前功率 dB (/10)；現行為振幅 dB (/20)，需 ×2（現行 V3=−39 / V3-2=−30 / V3-3=−28）。xi_min_db 不變。
 
 ### v2.1.1 (2026-01-06)
 - ✅ **V3 系列參數同步優化**: alpha_xi=0.96 同步到所有 V3 變體
@@ -1495,7 +1499,7 @@ MIT License
 | **SPP 二元假設** | $H_0$ (純噪聲) vs $H_1$ (語音+噪聲) | 對音樂、樂音、其他人語音等「類語音」訊號分類錯誤 |
 | **OMLSA 對數域限制** | gain 在對數域平滑（保護 weak speech） | 強瞬態（爆音、敲擊）的 attack 邊緣可能被柔化 |
 | **a priori SNR 估計（Decision-Directed）** | $\xi(k,n) = \alpha \cdot G^2 \xi_{prev} + (1-\alpha) \cdot \max(\gamma-1, 0)$ | 語音/噪音瞬間切換時有 1-2 幀延遲；產生 musical noise 風險 |
-| **g_min 下限** | Balanced -15dB / Aggressive -20dB | 噪音無法完全消除，殘留底噪可聽到 |
+| **g_min 下限** | mild −20 / moderate −25 / balanced −30 / aggressive −40 dB（振幅 dB /20） | 噪音無法完全消除，殘留底噪可聽到 |
 | **頻譜缺口** | 過度抑制低能量 bin → 頻譜出現「洞」 | 低 SNR 下產生 musical noise 殘留 |
 | **transient suppressor 預設關閉** | `core/transient_suppressor.py`（`TransientSuppressor`）存在，但 `v4_config.yaml` 預設 `transient_suppressor.enable: false`（research subset 顯示一般場景反而輕微有害） | 預設管線無獨立脈衝偵測；短脈衝（< 10ms）依靠 MCRA 慢追蹤，效果有限 |
 
@@ -1505,7 +1509,7 @@ MIT License
 |----------|------|
 | **固定取樣率** | 僅支持 8000 / 16000 / 48000 Hz，不支持 22050 / 44100 Hz 等非標準率 |
 | **固定幀長** | 20ms frame / 10ms hop 不可動態調整（編譯時決定） |
-| **最大抑制量** | 由 g_min 決定：Balanced 模式最多抑制 15 dB，Aggressive 最多 20 dB |
+| **最大抑制量** | 由 g_min 決定：Balanced 約 30 dB，Aggressive 約 40 dB（振幅 dB /20） |
 | **Musical Noise** | 已大幅改善（增益時間平滑 + LSA 對數域），但極低 SNR 下仍可能出現微弱殘留 |
 | **語音失真** | 高抑噪強度下（Aggressive 模式, SNR < 5dB），語音會有可察覺的失真 |
 | **場景切換延遲** | 噪聲環境突變時，需約 50ms（5 幀 × 10ms）偵測 + 320ms 完全收斂 |
@@ -1547,7 +1551,7 @@ MIT License
 |---|---|---|
 | 殘留底噪太吵 | 換強 `--nr-mode`（balanced −30 → aggressive −40，振幅 dB /20） | 更強抑制，可能略增語音失真 |
 | 語音被抑制 / 變悶 | 換弱 `--nr-mode`（balanced −30 → moderate −25 → mild −20） 或 `alpha_g` ↑ | 保留更多細節，底噪增多 |
-| Musical noise / 水聲 | `alpha_g` ↑（0.88 → 0.92）、`xi_min_db` ↓（−20 → −25） | 增益更平滑，最小 SNR 更低 |
+| Musical noise / 水聲 | `alpha_xi` ↑（0.88 → 0.92）、`xi_min_db` ↓（−20 → −25） | 增益更平滑，最小 SNR 更低 |
 | 噪聲場景切換慢（進地鐵/上車） | `scene_change_threshold_db` ↓（10 → 7） | 更容易觸發 noise reset |
 | 過度觸發 scene reset（語音被當成噪聲重估） | `scene_change_threshold_db` ↑（10 → 12） 或 `scene_change_min_frames` ↑（5 → 8） | 提高切換門檻 |
 | 語音抓不到（被當噪聲） | `q` ↑（0.5 → 0.6）、`xi_min_db` ↑（−20 → −15） | SPP 更傾向判定為語音 |
