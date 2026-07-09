@@ -2,6 +2,19 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [v1.10.0] - 2026-07-10 · 強度預設 4 級 + musical-noise fix
+
+### 變更
+
+- **`mmse_lsa_types.h`**：
+  - `MmseLsaNrMode` 加 `MMSE_LSA_NR_MODERATE`（階梯 mild<moderate<balanced<aggressive，enum 重新編號）。
+  - `mmse_lsa_default_config`：`alpha_xi 0.88 → 0.92`（musical-noise fix，全預設共用；stationary 已用 0.92 → 不受影響）。
+  - `mmse_lsa_config_for_mode`：新增 MODERATE（g_min −25）；AGGRESSIVE `alpha_g 0.75→0.85` / `alpha_decay 0.85→0.88`
+    （深度帶回的 speckle 用下游平滑壓）。全部鏡像 Python `core/nr_strength.py`。
+- **`example/main.c`**：`--nr-mode` 加 `moderate`（4 級）。
+- **`example/parity_runner.c` + `tools/parity_nr.py`**：加 strength 軸（`[mild|moderate|balanced|aggressive]`）。
+- 驗證：4 級 std-math **C↔Python bit-exact**（worst ~1e-5，median ~2e-8）；balanced+stationary 仍 bit-exact。
+
 ## [v1.9.0] - 2026-07-05 · stationary 模式 + gain-floor 單位對齊
 
 ### 新增功能

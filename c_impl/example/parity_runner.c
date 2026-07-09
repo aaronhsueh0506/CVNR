@@ -38,11 +38,18 @@
 
 int main(int argc, char* argv[]) {
     if (argc < 3) {
-        fprintf(stderr, "Usage: %s <in_spectra.bin> <out_c_gains.bin> [full|stationary]\n",
-                argv[0]);
+        fprintf(stderr, "Usage: %s <in_spectra.bin> <out_c_gains.bin> "
+                        "[full|stationary] [mild|moderate|balanced|aggressive]\n", argv[0]);
         return 1;
     }
     int stationary = (argc >= 4 && strcmp(argv[3], "stationary") == 0);
+    MmseLsaNrMode nr_mode = MMSE_LSA_NR_BALANCED;
+    if (argc >= 5) {
+        if (strcmp(argv[4], "mild") == 0)            nr_mode = MMSE_LSA_NR_MILD;
+        else if (strcmp(argv[4], "moderate") == 0)   nr_mode = MMSE_LSA_NR_MODERATE;
+        else if (strcmp(argv[4], "aggressive") == 0) nr_mode = MMSE_LSA_NR_AGGRESSIVE;
+        else                                         nr_mode = MMSE_LSA_NR_BALANCED;
+    }
 
     FILE* fin = fopen(argv[1], "rb");
     if (!fin) {
@@ -76,8 +83,8 @@ int main(int argc, char* argv[]) {
     /* Build the production V3-2 config, framing forced to match Python
      * (512/256/512 for n_freqs=257). Sample rate is irrelevant to the gain math
      * here (spectra are supplied directly); pass 16000 for the default knobs.
-     * stationary → overlay the content-preservation preset on the balanced base. */
-    MmseLsaConfig config = mmse_lsa_config_for_mode(16000, MMSE_LSA_NR_BALANCED);
+     * strength = depth preset; stationary → overlay the content preset on top. */
+    MmseLsaConfig config = mmse_lsa_config_for_mode(16000, nr_mode);
     if (stationary) mmse_lsa_apply_stationary(&config);
     config.fft_size   = fft_size;
     config.frame_size = fft_size;   /* 512 */

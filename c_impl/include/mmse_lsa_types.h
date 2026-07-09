@@ -19,9 +19,10 @@ extern "C" {
  * NR strength mode
  */
 typedef enum {
-    MMSE_LSA_NR_MILD       = 0,   // Less aggressive, preserve speech detail
-    MMSE_LSA_NR_BALANCED   = 1,   // Default
-    MMSE_LSA_NR_AGGRESSIVE = 2    // More aggressive noise removal
+    MMSE_LSA_NR_MILD       = 0,   // Gentlest, preserve speech detail (g_min -20)
+    MMSE_LSA_NR_MODERATE   = 1,   // Between mild and balanced (g_min -25)
+    MMSE_LSA_NR_BALANCED   = 2,   // Default (g_min -30)
+    MMSE_LSA_NR_AGGRESSIVE = 3    // Deepest noise removal (g_min -40)
 } MmseLsaNrMode;
 
 /**
@@ -60,8 +61,8 @@ typedef struct {
     float alpha_decay;      // Asymmetric decay (0.88 = alpha_g)
 
     // Content-preservation mode (full | stationary) — orthogonal to the strength axis.
-    // Default (all off / full) is byte-identical to the shipped V3-2. The `stationary`
-    // preset (mmse_lsa_config_stationary) turns these on. Mirrors Python core/nr_modes.py.
+    // Default (all off / full) leaves the strength preset untouched. The `stationary`
+    // preset (mmse_lsa_apply_stationary) turns these on. Mirrors Python core/nr_modes.py.
     bool  stationary_floor;              // Wiener gain lower-bound gain>=(ξ/(β+ξ))^p (default off)
     float stationary_floor_exponent;     // p (1.0 = pure Wiener; stationary preset uses 2.0)
     float stationary_floor_beta;         // β (1.0 = remove exactly the stationary floor N)
@@ -89,7 +90,10 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
     config.fft_size = fft_size;           // 512 @ 16kHz (next pow2 >= frame_size)
 
     // SPP parameters (sync with Python v3_2_config.yaml)
-    config.alpha_xi = 0.88f;
+    config.alpha_xi = 0.92f;    // 2026-07 musical-noise fix (was 0.88): DD ξ-smoothing lever.
+                                 // Shared across all strength presets; damps ξ→SPP jitter (the
+                                 // isolated gain peaks = musical noise). ~free on speech (guard
+                                 // PESQ −0.001). Stationary already used 0.92 → undisturbed.
     config.q = 0.5f;
     config.xi_min_db = -20.0f;
 
@@ -130,17 +134,18 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
 /**
  * Create configuration for given NR strength mode
  *
- * (g_min in amplitude dB, /20 convention)
- * MILD:       g_min=-20dB, preserve speech, slower noise tracking
+ * (g_min in amplitude dB, /20 convention; mirrors Python core/nr_strength.py)
+ * MILD:       g_min=-20dB, gentlest, preserve speech, slower noise tracking
+ * MODERATE:   g_min=-25dB, between mild and balanced
  * BALANCED:   g_min=-30dB, default (same as mmse_lsa_default_config)
- * AGGRESSIVE: g_min=-40dB, stronger suppression, faster noise tracking
+ * AGGRESSIVE: g_min=-40dB, deepest suppression, faster noise tracking, extra gain smoothing
  */
 static inline MmseLsaConfig mmse_lsa_config_for_mode(int sample_rate, MmseLsaNrMode mode) {
     MmseLsaConfig config = mmse_lsa_default_config(sample_rate);
 
     switch (mode) {
     case MMSE_LSA_NR_MILD:
-        config.g_min_db      = -20.0f;   /* amplitude dB (/20); = old -10 @ /10 */
+        config.g_min_db      = -20.0f;   /* amplitude dB (/20) → 0.10 floor */
         config.q             = 0.6f;
         config.xi_min_db     = -15.0f;
         config.alpha_d       = 0.85f;
@@ -149,14 +154,24 @@ static inline MmseLsaConfig mmse_lsa_config_for_mode(int sample_rate, MmseLsaNrM
         config.alpha_decay   = 0.92f;
         break;
 
+    case MMSE_LSA_NR_MODERATE:
+        config.g_min_db      = -25.0f;   /* amplitude dB (/20) → 0.056 floor (mild ↔ balanced) */
+        config.q             = 0.55f;
+        config.xi_min_db     = -18.0f;
+        config.alpha_d       = 0.85f;
+        config.alpha_g       = 0.92f;
+        config.alpha_attack  = 0.4f;
+        config.alpha_decay   = 0.92f;
+        break;
+
     case MMSE_LSA_NR_AGGRESSIVE:
-        config.g_min_db      = -40.0f;   /* amplitude dB (/20); = old -20 @ /10 */
+        config.g_min_db      = -40.0f;   /* amplitude dB (/20) → 0.01 floor */
         config.q             = 0.35f;
         config.xi_min_db     = -25.0f;
         config.alpha_d       = 0.5f;
-        config.alpha_g       = 0.75f;
+        config.alpha_g       = 0.85f;    /* more downstream smoothing than old 0.75 (musical noise) */
         config.alpha_attack  = 0.15f;
-        config.alpha_decay   = 0.85f;
+        config.alpha_decay   = 0.88f;    /* was 0.85 */
         break;
 
     case MMSE_LSA_NR_BALANCED:

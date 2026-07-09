@@ -68,6 +68,7 @@ from denoisers import (
     PmmseDenoiser,
 )
 from core.nr_modes import apply_mode
+from core.nr_strength import apply_strength
 
 
 def load_config(config_file: str) -> dict:
@@ -96,11 +97,59 @@ def load_config(config_file: str) -> dict:
         return {}
 
 
+def build_v3_2_base_params(config, sample_rate, frame_size, frame_shift, fft_size):
+    """Build the base MmseLsaDenoiser kwargs from a V3-2 config dict (BEFORE the strength/mode
+    overlays). Shared by create_denoiser_from_config and tools/ablate_nr_music.py so the
+    config→params mapping lives in exactly one place.
+    """
+    spp_config = config.get('spp', {})
+    gain_config = config.get('gain_calculation', {})
+    noise_config = config.get('noise_estimation', {})
+
+    params = {
+        'sample_rate': sample_rate,
+        'frame_size': frame_size,
+        'frame_shift': frame_shift,
+        'fft_size': fft_size,
+        'alpha_xi': spp_config.get('alpha_xi', 0.98),
+        'q': spp_config.get('q', 0.5),
+        'xi_min_db': spp_config.get('xi_min_db', -25.0),
+        'g_min_db': gain_config.get('g_min_db', -40.0),
+        'alpha_g': gain_config.get('alpha_g', 0.7),
+        'num_init_frames': noise_config.get('num_init_frames', 20),
+    }
+
+    ne_method = noise_config.get('method', 'recursive_average')
+    if ne_method == 'mcra':
+        params.update({
+            'noise_method': 'mcra',
+            'alpha_s': noise_config.get('alpha_s', 0.9),
+            'alpha_noise': noise_config.get('alpha_d', 0.85),
+            'alpha_p': noise_config.get('alpha_p', 0.2),
+            'L': noise_config.get('L', 96),
+            'delta_db': noise_config.get('delta_db', 5.0),
+            'broadband_threshold': noise_config.get('broadband_threshold', 0.8),
+            'scene_change_threshold_db': noise_config.get('scene_change_threshold_db', 10.0),
+            'scene_change_min_frames': noise_config.get('scene_change_min_frames', 5),
+            'scene_change_blend': noise_config.get('scene_change_blend', 0.5),
+            'scene_change_flatness_threshold': noise_config.get('scene_change_flatness_threshold', 0.4),
+            'mcra_accept_external_spp': noise_config.get('mcra_accept_external_spp', True),
+        })
+    else:
+        params.update({
+            'noise_method': 'recursive_average',
+            'alpha_noise': noise_config.get('alpha', 0.95),
+        })
+
+    return params
+
+
 def create_denoiser_from_config(
     version: str,
     config_dir: str,
     sample_rate: int,
-    mode: str = None
+    mode: str = None,
+    strength: str = None
 ):
     """
     根據配置文件創建降噪器
@@ -111,6 +160,10 @@ def create_denoiser_from_config(
         sample_rate: 採樣率
         mode: NR 內容保留模式 ('full' | 'stationary')，僅 V3-2 有效；
               None 則取 config 的 mode，預設 'full'。
+        strength: NR 強度預設 ('mild' | 'balanced' | 'aggressive')，僅 V3-2 有效；
+              None 則取 config 的 strength，預設 'balanced'（= base YAML）。
+              強度軸（深度）與 mode 軸（內容保留）正交，先套 strength 再套 mode，
+              對應 C mmse_lsa_config_for_mode() 後接 mmse_lsa_apply_stationary()。
 
     Returns:
         降噪器實例
@@ -232,46 +285,13 @@ def create_denoiser_from_config(
 
     elif version == 'V3-2':
         # V3-2: MMSE-LSA (Ephraim-Malah 1985)
-        spp_config = config.get('spp', {})
-        gain_config = config.get('gain_calculation', {})
-        noise_config = config.get('noise_estimation', {})
+        params = build_v3_2_base_params(config, sample_rate, frame_size, frame_shift, fft_size)
 
-        # 基本參數
-        params = {
-            'sample_rate': sample_rate,
-            'frame_size': frame_size,
-            'frame_shift': frame_shift,
-            'fft_size': fft_size,
-            'alpha_xi': spp_config.get('alpha_xi', 0.98),
-            'q': spp_config.get('q', 0.5),
-            'xi_min_db': spp_config.get('xi_min_db', -25.0),
-            'g_min_db': gain_config.get('g_min_db', -40.0),
-            'alpha_g': gain_config.get('alpha_g', 0.7),
-            'num_init_frames': noise_config.get('num_init_frames', 20)
-        }
-
-        # 噪聲估計方法
-        ne_method = noise_config.get('method', 'recursive_average')
-        if ne_method == 'mcra':
-            params.update({
-                'noise_method': 'mcra',
-                'alpha_s': noise_config.get('alpha_s', 0.9),
-                'alpha_noise': noise_config.get('alpha_d', 0.85),
-                'alpha_p': noise_config.get('alpha_p', 0.2),
-                'L': noise_config.get('L', 96),
-                'delta_db': noise_config.get('delta_db', 5.0),
-                'broadband_threshold': noise_config.get('broadband_threshold', 0.8),
-                'scene_change_threshold_db': noise_config.get('scene_change_threshold_db', 10.0),
-                'scene_change_min_frames': noise_config.get('scene_change_min_frames', 5),
-                'scene_change_blend': noise_config.get('scene_change_blend', 0.5),
-                'scene_change_flatness_threshold': noise_config.get('scene_change_flatness_threshold', 0.4),
-                'mcra_accept_external_spp': noise_config.get('mcra_accept_external_spp', True),
-            })
-        else:
-            params.update({
-                'noise_method': 'recursive_average',
-                'alpha_noise': noise_config.get('alpha', 0.95)
-            })
+        # NR strength preset (mild | balanced | aggressive) — the DEPTH axis. Applied FIRST so the
+        # content mode composes on top (mirrors C config_for_mode() then apply_stationary()).
+        # 'balanced' == base YAML (empty overlay). Explicit arg wins over config.
+        strength = strength or config.get('strength', 'balanced')
+        params = apply_strength(params, strength)
 
         # NR content-preservation mode (full | stationary). Explicit arg wins over config; the
         # preset overlay sets the stationary levers, then params['mode'] records the choice.
@@ -412,7 +432,9 @@ def process_audio_file(
     input_file: str,
     output_dir: str,
     versions: list,
-    config_dir: str
+    config_dir: str,
+    mode: str = None,
+    strength: str = None
 ):
     """
     處理音頻文件
@@ -468,7 +490,8 @@ def process_audio_file(
     denoisers = {}
     for version in versions:
         try:
-            denoiser = create_denoiser_from_config(version, config_dir, sample_rate)
+            denoiser = create_denoiser_from_config(
+                version, config_dir, sample_rate, mode=mode, strength=strength)
             denoisers[version] = denoiser
             params = denoiser.get_params()
             print(f"  ✓ {version}: {params['name']}")
@@ -610,6 +633,10 @@ def main():
 
   # 使用自定義配置
   python process_audio.py input.wav --config-dir ./my_configs
+
+  # V3-2 強度預設 + 內容保留模式（僅影響 V3-2）
+  python process_audio.py input.wav --versions V3-2 --nr-mode aggressive
+  python process_audio.py music.wav --versions V3-2 --mode stationary
         """
     )
 
@@ -638,6 +665,20 @@ def main():
         help='配置文件目錄（默認: ./config，相對於腳本目錄）'
     )
 
+    parser.add_argument(
+        '--nr-mode',
+        default=None,
+        choices=['mild', 'moderate', 'balanced', 'aggressive'],
+        help='V3-2 強度預設（深度軸）：mild|moderate|balanced|aggressive（默認: balanced = base config）'
+    )
+
+    parser.add_argument(
+        '--mode',
+        default=None,
+        choices=['full', 'stationary'],
+        help='V3-2 內容保留模式（內容軸）：full|stationary（默認: full）。stationary 只移除穩態底噪，保留音樂/瞬態'
+    )
+
     args = parser.parse_args()
 
     # 如果沒有指定 config_dir，使用相對於腳本的路徑
@@ -650,7 +691,9 @@ def main():
         args.input_file,
         args.output_dir,
         args.versions,
-        args.config_dir
+        args.config_dir,
+        mode=args.mode,
+        strength=args.nr_mode
     )
 
     # 返回退出碼

@@ -48,7 +48,7 @@ void print_usage(const char* prog) {
     printf("\n");
     printf("Options:\n");
     printf("  --bypass       Bypass mode (no processing, copy input to output)\n");
-    printf("  --nr-mode <m>  NR strength: mild|balanced|aggressive (default: balanced)\n");
+    printf("  --nr-mode <m>  NR strength: mild|moderate|balanced|aggressive (default: balanced)\n");
     printf("  --stationary   Content-preservation mode: remove only the stationary noise\n");
     printf("                 floor, preserve speech/music/transients (layered on --nr-mode)\n");
     printf("\n");
@@ -112,7 +112,8 @@ int main(int argc, char* argv[]) {
             stationary = 1;
         } else if (strcmp(argv[i], "--nr-mode") == 0 && i + 1 < argc) {
             const char *m = argv[++i];
-            if (strcmp(m, "mild") == 0)            nr_mode = MMSE_LSA_NR_MILD;
+            if (strcmp(m, "mild") == 0)             nr_mode = MMSE_LSA_NR_MILD;
+            else if (strcmp(m, "moderate") == 0)    nr_mode = MMSE_LSA_NR_MODERATE;
             else if (strcmp(m, "aggressive") == 0)  nr_mode = MMSE_LSA_NR_AGGRESSIVE;
             else                                    nr_mode = MMSE_LSA_NR_BALANCED;
         }
@@ -185,7 +186,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    const char *mode_names[] = {"mild", "balanced", "aggressive"};
+    const char *mode_names[] = {"mild", "moderate", "balanced", "aggressive"};
     printf("\nDenoiser configuration (freq-domain runner):\n");
     printf("  NR mode: %s\n", stationary ? "stationary (content-preservation)"
                                           : mode_names[nr_mode]);

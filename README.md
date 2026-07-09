@@ -541,7 +541,13 @@ test_set = generator.generate_test_set(
   - 需要減少 Musical Noise
   - 語音通信、會議系統
 - **配置**: `config/v3_2_config.yaml`
-- **內容保留模式** `mode: {full | stationary}`（`core/nr_modes.py`，`create_denoiser_from_config(..., mode=...)`）：
+- **強度預設** `strength: {mild | moderate | balanced | aggressive}`（`core/nr_strength.py`，
+  `create_denoiser_from_config(..., strength=...)` / CLI `--nr-mode`）：深度階梯 g_min = −20/−25/−30/−40 dB。
+  `balanced`（預設）= base YAML。C 端鏡像 `mmse_lsa_config_for_mode`，4 級皆 std-math C↔Python bit-exact。
+  - **2026-07 musical-noise fix**：全預設共用 `alpha_xi=0.92`（was 0.88）。root cause = musical noise 來自
+    ξ 抖動經 SPP（`G=G_H1^spp·g_min^(1-spp)` 的指數）放大成孤立增益尖峰；提高 alpha_xi 平滑 ξ 即壓掉。
+    對語音幾乎零成本（12-file guard PESQ −0.001）。曾試的額外 attack/decay 平滑對語音不划算，已捨棄。
+- **內容保留模式** `mode: {full | stationary}`（`core/nr_modes.py`，`create_denoiser_from_config(..., mode=...)`），與強度軸正交：
   - `full`（預設）= 現行全消行為（連非穩態的音樂也壓）；空 overlay → 與原 V3-2 byte-identical。
   - `stationary` = ReSpeaker-like，只移除穩態底噪，保留語音／音樂／瞬態。機制 = Wiener 增益下界
     `gain ≥ (ξ/(β+ξ))^p`（p=2）+ music-aware tonal-veto scene-change（**下界僅 stationary 生效**）。

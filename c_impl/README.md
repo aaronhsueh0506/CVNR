@@ -210,14 +210,16 @@ MCRA 噪聲估計的瓶頸是每幀掃描 ring buffer（L=32 幀）找最小值�
 ### 命令列工具
 
 ```bash
-./bin/denoise_wav input.wav output.wav                 # 預設 balanced
-./bin/denoise_wav input.wav output.wav --nr-mode mild  # 強度：mild | balanced | aggressive
-./bin/denoise_wav input.wav output.wav --stationary    # 內容保留模式（見下）
-./bin/denoise_wav input.wav output.wav --bypass        # 不處理，原樣複製
+./bin/denoise_wav input.wav output.wav                     # 預設 balanced
+./bin/denoise_wav input.wav output.wav --nr-mode moderate  # 強度：mild|moderate|balanced|aggressive
+./bin/denoise_wav input.wav output.wav --stationary        # 內容保留模式（見下）
+./bin/denoise_wav input.wav output.wav --bypass            # 不處理，原樣複製
 ```
 
 **兩條正交的模式軸：**
-- **強度軸** `--nr-mode {mild|balanced|aggressive}`（`mmse_lsa_config_for_mode`）：全消，越強壓越深。
+- **強度軸** `--nr-mode {mild|moderate|balanced|aggressive}`（`mmse_lsa_config_for_mode`）：全消，越強壓越深。
+  4 級深度階梯 g_min = −20 / −25 / −30 / −40 dB（振幅 /20）。所有預設共用 `alpha_xi=0.92`
+  （2026-07 musical-noise fix：DD ξ 平滑，壓掉 SPP 抖動＝musical noise；對語音幾乎零成本）。
 - **內容軸** `--stationary`（`mmse_lsa_apply_stationary`，疊在強度 base 上）：ReSpeaker-like，**只**移除穩態
   噪聲底噪，保留非穩態內容（語音／音樂／瞬態）。機制 = Wiener 增益下界 `gain ≥ (ξ/(β+ξ))^p`（p=2）
   + music-aware tonal-veto scene-change。此下界**只在 stationary 生效**（`stationary_floor` 預設 false，
@@ -296,7 +298,7 @@ Taylor 近似（小引數 worst ~0.11），會經遞迴平滑放大；屬 fast-m
 
 ## 調參指引 (Quick Tuning)
 
-> **優先使用 strength mode**：呼叫 `mmse_lsa_config_for_mode(sample_rate, MMSE_LSA_NR_MILD | BALANCED | AGGRESSIVE)`，多數情境足矣。
+> **優先使用 strength mode**：呼叫 `mmse_lsa_config_for_mode(sample_rate, MMSE_LSA_NR_MILD | MODERATE | BALANCED | AGGRESSIVE)`，多數情境足矣。
 
 > **⚠ g_min_db 為 audio 振幅 dB（/20 換算 `10^(db/20)`）** — gain 直接乘幅度譜（無 sqrt），故 floor 是
 > 振幅量。越負壓越深（-40 ≈ 0.01、-30 ≈ 0.032、-20 ≈ 0.1）。（xi_min_db / delta_db / scene_change 是
@@ -330,7 +332,7 @@ Taylor 近似（小引數 worst ~0.11），會經遞迴平滑放大；屬 fast-m
 | `frame_size` | `sample_rate × 20 / 1000` | 幀長 (20 ms)，例如 16 kHz → 320 samples |
 | `hop_size` | `frame_size / 2` | 幀移 (10 ms)，50% overlap；例如 16 kHz → 160 samples |
 | `fft_size` | 自動計算 | 次方 2 且 ≥ frame_size。8 kHz → 256；16 kHz → 512；48 kHz → 1024 |
-| `alpha_xi` | 0.88 | 先驗 SNR 平滑因子 |
+| `alpha_xi` | 0.92 | 先驗 SNR (ξ) DD 平滑；2026-07 musical-noise fix（was 0.88），全預設共用 |
 | `q` | 0.5 | 語音先驗機率 |
 | `xi_min_db` | -20 | 先驗 SNR 下限 (dB) |
 | `alpha_s` | 0.95 | MCRA 時間平滑 |
