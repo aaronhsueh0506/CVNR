@@ -18,6 +18,21 @@ extern "C" {
 // Opaque structure
 typedef struct McraNoiseEstimator McraNoiseEstimator;
 
+#ifdef USE_EXT_MEM
+/**
+ * Query the memory size needed for an MCRA estimator (for external allocation).
+ */
+size_t mcra_query_memsize(int n_freqs, const MmseLsaConfig* config);
+
+/**
+ * Create MCRA noise estimator in caller-provided memory (no internal malloc).
+ *
+ * @param mem      Pre-allocated buffer (NR_MEM_ALIGN-aligned)
+ * @param mem_size Size of buffer (>= mcra_query_memsize(...))
+ */
+McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config,
+                                void* mem, size_t mem_size);
+#else
 /**
  * Create MCRA noise estimator (malloc version)
  *
@@ -26,9 +41,10 @@ typedef struct McraNoiseEstimator McraNoiseEstimator;
  * @return Estimator instance, or NULL on error
  */
 McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config);
+#endif
 
 /**
- * Destroy MCRA estimator.
+ * Destroy MCRA estimator. Under USE_EXT_MEM this is a no-op (caller owns memory).
  */
 void mcra_destroy(McraNoiseEstimator* self);
 

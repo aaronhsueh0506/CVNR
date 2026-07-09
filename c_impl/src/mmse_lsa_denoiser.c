@@ -15,8 +15,10 @@
 #include "spp_estimator.h"
 #include "fft_wrapper.h"
 #include "fast_math.h"
+#include "nr_ext_mem.h"
 
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <math.h>
 
@@ -199,8 +201,87 @@ static void _setup(MmseLsaDenoiser* self, const MmseLsaConfig* config) {
 }
 
 /* -------------------------------------------------------------------------
- * Heap (malloc) version
+ * Create / Destroy
  * ---------------------------------------------------------------------- */
+
+#ifdef USE_EXT_MEM
+/* ---- External-memory (no malloc) variant --------------------------------- *
+ * The whole instance — struct, all spectral state arrays, and the MCRA + SPP
+ * sub-modules — is bump-allocated from a single caller-provided block. */
+
+size_t mmse_lsa_query_memsize(const MmseLsaConfig* config) {
+    if (!config) return 0;
+    int nf = config->fft_size / 2 + 1;
+    size_t arr = nr_aligned_size((size_t)nf * sizeof(float));
+
+    size_t total = nr_aligned_size(sizeof(MmseLsaDenoiser));
+    total += arr;   /* power             */
+    total += arr;   /* noise_aug         */
+    total += arr;   /* spp               */
+    total += arr;   /* xi                */
+    total += arr;   /* gamma             */
+    total += arr;   /* gain              */
+#ifdef USE_SHARED_XI_RATIO
+    total += arr;   /* v                 */
+#endif
+    total += arr;   /* gain_prev         */
+    total += arr;   /* enhanced_psd_prev */
+    total += arr;   /* init_power_sum    */
+    total += arr;   /* log_gain_prev     */
+    total += mcra_query_memsize(nf, config);
+    total += spp_query_memsize(nf);
+    return total;
+}
+
+MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config,
+                                 void* mem, size_t mem_size) {
+    if (!config || !mem) return NULL;
+    if (mem_size < mmse_lsa_query_memsize(config)) return NULL;
+    int nf = config->fft_size / 2 + 1;
+
+    memset(mem, 0, mmse_lsa_query_memsize(config));   /* calloc-equivalent */
+    uint8_t* cursor = (uint8_t*)mem;
+    size_t arr = nr_aligned_size((size_t)nf * sizeof(float));
+
+    MmseLsaDenoiser* self = (MmseLsaDenoiser*)cursor;
+    cursor += nr_aligned_size(sizeof(MmseLsaDenoiser));
+
+    self->power             = (float*)cursor; cursor += arr;
+    self->noise_aug         = (float*)cursor; cursor += arr;
+    self->spp               = (float*)cursor; cursor += arr;
+    self->xi                = (float*)cursor; cursor += arr;
+    self->gamma             = (float*)cursor; cursor += arr;
+    self->gain              = (float*)cursor; cursor += arr;
+#ifdef USE_SHARED_XI_RATIO
+    self->v                 = (float*)cursor; cursor += arr;
+#endif
+    self->gain_prev         = (float*)cursor; cursor += arr;
+    self->enhanced_psd_prev = (float*)cursor; cursor += arr;
+    self->init_power_sum    = (float*)cursor; cursor += arr;
+    self->log_gain_prev     = (float*)cursor; cursor += arr;
+
+    /* Sub-modules carved from the same block (no malloc). */
+    size_t mcra_sz = mcra_query_memsize(nf, config);
+    self->noise_est = mcra_create(nf, config, cursor, mcra_sz);
+    cursor += mcra_sz;
+
+    size_t spp_sz = spp_query_memsize(nf);
+    self->spp_est = spp_create(nf, config, cursor, spp_sz);
+    cursor += spp_sz;
+
+    if (!self->noise_est || !self->spp_est) return NULL;
+
+    _setup(self, config);
+    return self;
+}
+
+void mmse_lsa_destroy(MmseLsaDenoiser* self) {
+    /* External memory: caller owns and releases the block; free nothing. */
+    (void)self;
+}
+
+#else /* !USE_EXT_MEM */
+/* ---- Heap (malloc) version ----------------------------------------------- */
 
 MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config) {
     if (!config) return NULL;
@@ -242,10 +323,6 @@ MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config) {
     return self;
 }
 
-/* -------------------------------------------------------------------------
- * Destroy
- * ---------------------------------------------------------------------- */
-
 void mmse_lsa_destroy(MmseLsaDenoiser* self) {
     if (!self) return;
 
@@ -266,6 +343,8 @@ void mmse_lsa_destroy(MmseLsaDenoiser* self) {
     free(self->log_gain_prev);
     free(self);
 }
+
+#endif /* USE_EXT_MEM */
 
 /* -------------------------------------------------------------------------
  * Core processing

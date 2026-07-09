@@ -27,12 +27,36 @@ typedef struct MmseLsaDenoiser MmseLsaDenoiser;
  * Core API
  * ========================================================================== */
 
+#ifdef USE_EXT_MEM
+/**
+ * Query the total memory size (bytes) needed for a denoiser instance, including
+ * its MCRA and SPP sub-modules. Call this to size the single block you hand to
+ * mmse_lsa_create(). Depends only on config (fft_size/L/num_init_frames), so it
+ * can be evaluated once at startup.
+ */
+size_t mmse_lsa_query_memsize(const MmseLsaConfig* config);
+
+/**
+ * Create denoiser in caller-provided memory (no internal malloc). The whole
+ * instance — struct, all spectral state arrays, and the MCRA/SPP sub-modules —
+ * lives in `mem`. mmse_lsa_destroy() frees nothing; the caller owns and releases
+ * the block (which may be a static array or a Novatek hd_common_mem block).
+ *
+ * @param config   Configuration parameters
+ * @param mem      Pre-allocated buffer (NR_MEM_ALIGN-aligned)
+ * @param mem_size Size of buffer (>= mmse_lsa_query_memsize(config))
+ * @return Denoiser instance (points into mem), or NULL on error
+ */
+MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config,
+                                 void* mem, size_t mem_size);
+#else
 /**
  * Create denoiser (heap allocation).
  */
 MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config);
+#endif
 
-/** Destroy and free resources. */
+/** Destroy and free resources. Under USE_EXT_MEM this is a no-op (caller owns memory). */
 void mmse_lsa_destroy(MmseLsaDenoiser* self);
 
 /**

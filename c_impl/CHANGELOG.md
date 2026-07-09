@@ -2,6 +2,36 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [v1.11.0] - 2026-07-10 · 靜態記憶體版本（`USE_EXT_MEM`，零 malloc）
+
+> 此版本僅存在於 `feature/static-memory` 分支。預設（malloc）build 逐位元不受影響。
+
+### 新增功能
+
+- **`-DUSE_EXT_MEM` 靜態記憶體模式**：denoiser 及其 MCRA / SPP / FFT 子模組的所有內部狀態改由
+  呼叫端提供的**單一記憶體區塊** bump-allocate，音訊路徑上**零 malloc/free**（Novatek 嵌入式契約）。
+  - **`include/nr_ext_mem.h`**（新）：共用 16-byte 對齊 bump helper `nr_aligned_size()`。
+  - **`mmse_lsa_denoiser.h/.c`**：`mmse_lsa_query_memsize(cfg)` +
+    `mmse_lsa_create(cfg, void* mem, size_t)`（含 MCRA/SPP 子區塊）；`mmse_lsa_destroy` 於 ext-mem 下為 no-op。
+  - **`mcra_noise_estimator.h/.c`**、**`spp_estimator.h/.c`**、**`fft_wrapper.h/.c`**：各加
+    `*_query_memsize()` + `create(..., mem, size)`（FFT 連 KISS twiddle 也就地配置）。malloc 路徑抽出
+    `mcra_init_scalars` / `spp_init_scalars` 共用（值不變）。
+  - **`example/main_mem.c`**（新）：static-pool 範例（query → static 陣列 → create → 迴圈零 malloc）。
+  - **`Makefile`**：`make mem` → `bin/denoise_mem`（單次編譯，避免 `.o` 混旗標）。
+- 每個 `create(mem)` 開頭 `memset(mem, 0, query)` → 與 calloc 版逐位元等價。
+
+### 驗證
+
+- `bin/denoise_mem`（static）輸出 == `bin/denoise_wav`（malloc）**byte-for-byte**，涵蓋
+  mild/moderate/balanced/aggressive + stationary、兩個測試檔。
+- malloc 路徑重構（`init_scalars` 抽出）輸出 == 改動前 main，**byte-for-byte**（未改變原行為）。
+- footprint（fft=512）：denoiser+MCRA+SPP ~72.6 KB，FFT ~17 KB。
+
+### 已知限制
+
+- KISS FFT backend only；NE10 的 ext-mem 變體尚未接（NE10 自行管理 twiddle 配置）。
+  denoiser/MCRA/SPP 的 ext-mem 路徑與 backend 無關。
+
 ## [v1.10.0] - 2026-07-10 · 強度預設 4 級 + musical-noise fix
 
 ### 變更

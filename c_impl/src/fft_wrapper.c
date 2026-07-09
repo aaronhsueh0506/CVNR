@@ -9,7 +9,9 @@
 
 #include "fft_wrapper.h"
 #include "kiss_fft.h"
+#include "nr_ext_mem.h"
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <math.h>
 
@@ -24,6 +26,66 @@ struct FftHandle {
     kiss_fft_cpx* fft_in;   // Complex input buffer [fft_size]
     kiss_fft_cpx* fft_out;  // Complex output buffer [fft_size]
 };
+
+#ifdef USE_EXT_MEM
+/* ---- External-memory (no malloc) variant --------------------------------- */
+
+size_t fft_query_memsize(int fft_size) {
+    if (fft_size <= 0 || (fft_size & (fft_size - 1)) != 0) return 0;
+
+    size_t fwd_size = 0, inv_size = 0;
+    kiss_fft_alloc(fft_size, 0, NULL, &fwd_size);   /* sizing query only */
+    kiss_fft_alloc(fft_size, 1, NULL, &inv_size);
+
+    size_t total = nr_aligned_size(sizeof(FftHandle));
+    total += nr_aligned_size(fwd_size);                             /* fft_cfg  */
+    total += nr_aligned_size(inv_size);                             /* ifft_cfg */
+    total += nr_aligned_size((size_t)fft_size * sizeof(kiss_fft_cpx)); /* fft_in  */
+    total += nr_aligned_size((size_t)fft_size * sizeof(kiss_fft_cpx)); /* fft_out */
+    return total;
+}
+
+FftHandle* fft_create(int fft_size, void* mem, size_t mem_size) {
+    if (!mem || fft_size <= 0 || (fft_size & (fft_size - 1)) != 0) return NULL;
+    if (mem_size < fft_query_memsize(fft_size)) return NULL;
+
+    memset(mem, 0, fft_query_memsize(fft_size));   /* calloc-equivalent zero-init */
+    uint8_t* cursor = (uint8_t*)mem;
+
+    FftHandle* h = (FftHandle*)cursor;
+    cursor += nr_aligned_size(sizeof(FftHandle));
+
+    h->fft_size = fft_size;
+    h->n_freqs = fft_size / 2 + 1;
+
+    /* KISS configs placed into the caller buffer (kiss_fft_alloc writes twiddles
+     * into `cursor` when mem != NULL and *lenmem >= needed). */
+    size_t fwd_size = 0, inv_size = 0;
+    kiss_fft_alloc(fft_size, 0, NULL, &fwd_size);
+    h->fft_cfg = kiss_fft_alloc(fft_size, 0, cursor, &fwd_size);
+    cursor += nr_aligned_size(fwd_size);
+
+    kiss_fft_alloc(fft_size, 1, NULL, &inv_size);
+    h->ifft_cfg = kiss_fft_alloc(fft_size, 1, cursor, &inv_size);
+    cursor += nr_aligned_size(inv_size);
+
+    if (!h->fft_cfg || !h->ifft_cfg) return NULL;
+
+    h->fft_in = (kiss_fft_cpx*)cursor;
+    cursor += nr_aligned_size((size_t)fft_size * sizeof(kiss_fft_cpx));
+    h->fft_out = (kiss_fft_cpx*)cursor;
+    cursor += nr_aligned_size((size_t)fft_size * sizeof(kiss_fft_cpx));
+
+    return h;
+}
+
+void fft_destroy(FftHandle* h) {
+    /* External memory: caller owns and releases the block; free nothing. */
+    (void)h;
+}
+
+#else /* !USE_EXT_MEM */
+/* ---- Heap (malloc) variant ----------------------------------------------- */
 
 FftHandle* fft_create(int fft_size) {
     if (fft_size <= 0 || (fft_size & (fft_size - 1)) != 0) {
@@ -68,6 +130,8 @@ void fft_destroy(FftHandle* h) {
 
     free(h);
 }
+
+#endif /* USE_EXT_MEM */
 
 int fft_get_size(const FftHandle* h) {
     return h ? h->fft_size : 0;

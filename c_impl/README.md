@@ -109,6 +109,30 @@ make debug
 make EXTRA_CFLAGS="-DUSE_FAST_PERCENTILE"
 ```
 
+### 靜態記憶體版本（嵌入式，零 malloc / `USE_EXT_MEM`）
+
+```bash
+make mem            # → bin/denoise_mem（範例 example/main_mem.c）
+```
+
+`-DUSE_EXT_MEM` 下，denoiser、MCRA、SPP、FFT 的**所有內部狀態都從呼叫端提供的一塊記憶體切出**，
+音訊路徑上**完全不呼叫 malloc/free**。用法：先用 `query_memsize()` 問要多少，配一塊
+（static 陣列，或 Novatek `hd_common_mem` block），交給 `create(..., mem, size)`：
+
+```c
+static uint8_t pool[/* >= mmse_lsa_query_memsize(&cfg) */] __attribute__((aligned(16)));
+size_t need = mmse_lsa_query_memsize(&cfg);          // 先問大小
+MmseLsaDenoiser* d = mmse_lsa_create(&cfg, pool, sizeof pool);  // 零 malloc
+/* ... 每幀 mmse_lsa_process()，音訊路徑無任何配置 ... */
+mmse_lsa_destroy(d);                                 // no-op（記憶體由呼叫端持有）
+```
+
+演算法與 malloc 版**逐位元相同**（只差配置方式）：`bin/denoise_mem` 輸出與 `bin/denoise_wav`
+byte-for-byte 一致，已對 4 個 preset + stationary 驗證。同一機制也覆蓋子模組
+`fft_query_memsize`/`mcra_query_memsize`/`spp_query_memsize` + 各自的 `create(..., mem, size)`。
+> 目前 `make mem` 為 KISS FFT backend；NE10（`fft_wrapper_ne10.c`）的 ext-mem 變體尚未接（NE10 自行
+> 管理 twiddle 配置），但 denoiser/MCRA/SPP 的 ext-mem 路徑與 backend 無關。
+
 > **Note:** v1.3.0 起 `make` 預設啟用 6 個數學等價優化（100% 相關度），不需要手動指定。
 
 ## 編譯開關說明
@@ -143,6 +167,7 @@ make EXTRA_CFLAGS="-DUSE_FAST_PERCENTILE"
 | 調試/驗證 | `make debug` |
 | 標準使用 | `make` |
 | 嵌入式/最小記憶體 | `make EXTRA_CFLAGS="-DUSE_FAST_PERCENTILE"` |
+| 嵌入式/零 malloc（呼叫端提供記憶體） | `make mem`（`-DUSE_EXT_MEM`） |
 
 ## 嵌入式優化詳解（v1.3.0）
 

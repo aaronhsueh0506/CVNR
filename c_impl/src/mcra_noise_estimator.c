@@ -14,7 +14,9 @@
 
 #include "mcra_noise_estimator.h"
 #include "fast_math.h"
+#include "nr_ext_mem.h"
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <math.h>
 #include <float.h>
@@ -103,33 +105,17 @@ static void mcra_reset_noise_floor(McraNoiseEstimator* self, const float* power)
 #endif
 }
 
-McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config) {
-    if (n_freqs <= 0 || !config) return NULL;
-
-    McraNoiseEstimator* self = (McraNoiseEstimator*)calloc(1, sizeof(McraNoiseEstimator));
-    if (!self) return NULL;
-
+/* Shared scalar/config initialisation — identical for both malloc and ext-mem
+ * builds (arrays are zeroed separately: calloc in the malloc path, memset of the
+ * whole block in the ext-mem path). */
+static void mcra_init_scalars(McraNoiseEstimator* self, int n_freqs,
+                              const MmseLsaConfig* config) {
     self->n_freqs = n_freqs;
     self->L = config->L;
     self->alpha_s = config->alpha_s;
     self->alpha_d = config->alpha_d;
     self->alpha_p = config->alpha_p;
     self->delta = powf(10.0f, config->delta_db / 10.0f);
-
-    // Allocate state arrays
-    self->noise_psd = (float*)calloc(n_freqs, sizeof(float));
-    self->S = (float*)calloc(n_freqs, sizeof(float));
-    self->S_min = (float*)calloc(n_freqs, sizeof(float));
-    self->spp = (float*)calloc(n_freqs, sizeof(float));
-
-    // Allocate min tracking buffer
-    self->min_buffer = (float*)calloc(self->L * n_freqs, sizeof(float));
-
-    if (!self->noise_psd || !self->S || !self->S_min ||
-        !self->spp || !self->min_buffer) {
-        mcra_destroy(self);
-        return NULL;
-    }
 
     self->ring_idx = 0;
     self->is_initialized = false;
@@ -146,8 +132,87 @@ McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config) {
     self->scene_change_count = 0;
 
 #ifndef USE_FAST_PERCENTILE
-    // Allocate buffer for exact percentile calculation
     self->num_init_frames = config->num_init_frames;
+#endif
+}
+
+#ifdef USE_EXT_MEM
+/* ---- External-memory (no malloc) variant --------------------------------- */
+
+size_t mcra_query_memsize(int n_freqs, const MmseLsaConfig* config) {
+    if (n_freqs <= 0 || !config) return 0;
+
+    size_t total = nr_aligned_size(sizeof(McraNoiseEstimator));
+    total += nr_aligned_size((size_t)n_freqs * sizeof(float));                 /* noise_psd  */
+    total += nr_aligned_size((size_t)n_freqs * sizeof(float));                 /* S          */
+    total += nr_aligned_size((size_t)n_freqs * sizeof(float));                 /* S_min      */
+    total += nr_aligned_size((size_t)n_freqs * sizeof(float));                 /* spp        */
+    total += nr_aligned_size((size_t)config->L * n_freqs * sizeof(float));     /* min_buffer */
+#ifndef USE_FAST_PERCENTILE
+    total += nr_aligned_size((size_t)config->num_init_frames * n_freqs * sizeof(float)); /* init_power_buffer */
+#endif
+    return total;
+}
+
+McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config,
+                                void* mem, size_t mem_size) {
+    if (n_freqs <= 0 || !config || !mem) return NULL;
+    if (mem_size < mcra_query_memsize(n_freqs, config)) return NULL;
+
+    memset(mem, 0, mcra_query_memsize(n_freqs, config));   /* calloc-equivalent */
+    uint8_t* cursor = (uint8_t*)mem;
+
+    McraNoiseEstimator* self = (McraNoiseEstimator*)cursor;
+    cursor += nr_aligned_size(sizeof(McraNoiseEstimator));
+
+    mcra_init_scalars(self, n_freqs, config);
+
+    self->noise_psd  = (float*)cursor; cursor += nr_aligned_size((size_t)n_freqs * sizeof(float));
+    self->S          = (float*)cursor; cursor += nr_aligned_size((size_t)n_freqs * sizeof(float));
+    self->S_min      = (float*)cursor; cursor += nr_aligned_size((size_t)n_freqs * sizeof(float));
+    self->spp        = (float*)cursor; cursor += nr_aligned_size((size_t)n_freqs * sizeof(float));
+    self->min_buffer = (float*)cursor; cursor += nr_aligned_size((size_t)self->L * n_freqs * sizeof(float));
+#ifndef USE_FAST_PERCENTILE
+    self->init_power_buffer = (float*)cursor;
+    cursor += nr_aligned_size((size_t)self->num_init_frames * n_freqs * sizeof(float));
+#endif
+
+    return self;
+}
+
+void mcra_destroy(McraNoiseEstimator* self) {
+    /* External memory: caller owns and releases the block; free nothing. */
+    (void)self;
+}
+
+#else /* !USE_EXT_MEM */
+/* ---- Heap (malloc) variant ----------------------------------------------- */
+
+McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config) {
+    if (n_freqs <= 0 || !config) return NULL;
+
+    McraNoiseEstimator* self = (McraNoiseEstimator*)calloc(1, sizeof(McraNoiseEstimator));
+    if (!self) return NULL;
+
+    mcra_init_scalars(self, n_freqs, config);
+
+    // Allocate state arrays
+    self->noise_psd = (float*)calloc(n_freqs, sizeof(float));
+    self->S = (float*)calloc(n_freqs, sizeof(float));
+    self->S_min = (float*)calloc(n_freqs, sizeof(float));
+    self->spp = (float*)calloc(n_freqs, sizeof(float));
+
+    // Allocate min tracking buffer
+    self->min_buffer = (float*)calloc(self->L * n_freqs, sizeof(float));
+
+    if (!self->noise_psd || !self->S || !self->S_min ||
+        !self->spp || !self->min_buffer) {
+        mcra_destroy(self);
+        return NULL;
+    }
+
+#ifndef USE_FAST_PERCENTILE
+    // Allocate buffer for exact percentile calculation
     self->init_power_buffer = (float*)calloc(self->num_init_frames * n_freqs, sizeof(float));
     if (!self->init_power_buffer) {
         mcra_destroy(self);
@@ -172,6 +237,8 @@ void mcra_destroy(McraNoiseEstimator* self) {
 
     free(self);
 }
+
+#endif /* USE_EXT_MEM */
 
 #ifndef USE_FAST_PERCENTILE
 /**

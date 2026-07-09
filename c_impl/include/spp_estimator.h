@@ -18,6 +18,21 @@ extern "C" {
 // Opaque structure
 typedef struct SppEstimator SppEstimator;
 
+#ifdef USE_EXT_MEM
+/**
+ * Query the memory size needed for an SPP estimator (for external allocation).
+ */
+size_t spp_query_memsize(int n_freqs);
+
+/**
+ * Create SPP estimator in caller-provided memory (no internal malloc).
+ *
+ * @param mem      Pre-allocated buffer (NR_MEM_ALIGN-aligned)
+ * @param mem_size Size of buffer (>= spp_query_memsize(n_freqs))
+ */
+SppEstimator* spp_create(int n_freqs, const MmseLsaConfig* config,
+                         void* mem, size_t mem_size);
+#else
 /**
  * Create SPP estimator (malloc version)
  *
@@ -26,9 +41,10 @@ typedef struct SppEstimator SppEstimator;
  * @return Estimator instance, or NULL on error
  */
 SppEstimator* spp_create(int n_freqs, const MmseLsaConfig* config);
+#endif
 
 /**
- * Destroy SPP estimator.
+ * Destroy SPP estimator. Under USE_EXT_MEM this is a no-op (caller owns memory).
  */
 void spp_destroy(SppEstimator* self);
 

@@ -24,6 +24,26 @@ typedef struct {
 // Opaque FFT handle
 typedef struct FftHandle FftHandle;
 
+#ifdef USE_EXT_MEM
+/**
+ * Query the memory size needed for an FFT handle (for external allocation).
+ * Includes the handle, the KISS forward/inverse configs, and the work buffers.
+ *
+ * @param fft_size FFT size (must be power of 2)
+ * @return Bytes required, or 0 on invalid fft_size
+ */
+size_t fft_query_memsize(int fft_size);
+
+/**
+ * Create FFT handle in caller-provided memory (no internal malloc).
+ *
+ * @param fft_size FFT size (must be power of 2)
+ * @param mem      Pre-allocated buffer (NR_MEM_ALIGN-aligned)
+ * @param mem_size Size of buffer (>= fft_query_memsize(fft_size))
+ * @return FFT handle (points into mem), or NULL on error
+ */
+FftHandle* fft_create(int fft_size, void* mem, size_t mem_size);
+#else
 /**
  * Create FFT handle for given size (malloc version)
  *
@@ -31,9 +51,10 @@ typedef struct FftHandle FftHandle;
  * @return FFT handle, or NULL on error
  */
 FftHandle* fft_create(int fft_size);
+#endif
 
 /**
- * Destroy FFT handle.
+ * Destroy FFT handle. Under USE_EXT_MEM this is a no-op (caller owns the buffer).
  */
 void fft_destroy(FftHandle* handle);
 

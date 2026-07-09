@@ -10,7 +10,9 @@
 
 #include "spp_estimator.h"
 #include "fast_math.h"
+#include "nr_ext_mem.h"
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <math.h>
 
@@ -32,12 +34,10 @@ struct SppEstimator {
     int frame_count;
 };
 
-SppEstimator* spp_create(int n_freqs, const MmseLsaConfig* config) {
-    if (n_freqs <= 0 || !config) return NULL;
-
-    SppEstimator* self = (SppEstimator*)calloc(1, sizeof(SppEstimator));
-    if (!self) return NULL;
-
+/* Shared scalar/config initialisation — identical for both malloc and ext-mem
+ * builds (state arrays are zeroed separately: calloc / block memset). */
+static void spp_init_scalars(SppEstimator* self, int n_freqs,
+                             const MmseLsaConfig* config) {
     self->n_freqs = n_freqs;
     self->alpha = config->alpha_xi;
     // Fix #9: clip q to (eps, 1-eps) so prior_ratio is well defined
@@ -50,6 +50,57 @@ SppEstimator* spp_create(int n_freqs, const MmseLsaConfig* config) {
         self->prior_ratio = (1.0f - q_clipped) / q_clipped;
     }
     self->xi_min = powf(10.0f, config->xi_min_db / 10.0f);
+    self->is_initialized = false;
+    self->frame_count = 0;
+}
+
+#ifdef USE_EXT_MEM
+/* ---- External-memory (no malloc) variant --------------------------------- */
+
+size_t spp_query_memsize(int n_freqs) {
+    if (n_freqs <= 0) return 0;
+    size_t total = nr_aligned_size(sizeof(SppEstimator));
+    total += nr_aligned_size((size_t)n_freqs * sizeof(float));  /* xi_prev        */
+    total += nr_aligned_size((size_t)n_freqs * sizeof(float));  /* gamma_prev     */
+    total += nr_aligned_size((size_t)n_freqs * sizeof(float));  /* noise_psd_prev */
+    return total;
+}
+
+SppEstimator* spp_create(int n_freqs, const MmseLsaConfig* config,
+                         void* mem, size_t mem_size) {
+    if (n_freqs <= 0 || !config || !mem) return NULL;
+    if (mem_size < spp_query_memsize(n_freqs)) return NULL;
+
+    memset(mem, 0, spp_query_memsize(n_freqs));   /* calloc-equivalent */
+    uint8_t* cursor = (uint8_t*)mem;
+
+    SppEstimator* self = (SppEstimator*)cursor;
+    cursor += nr_aligned_size(sizeof(SppEstimator));
+
+    spp_init_scalars(self, n_freqs, config);
+
+    self->xi_prev        = (float*)cursor; cursor += nr_aligned_size((size_t)n_freqs * sizeof(float));
+    self->gamma_prev     = (float*)cursor; cursor += nr_aligned_size((size_t)n_freqs * sizeof(float));
+    self->noise_psd_prev = (float*)cursor; cursor += nr_aligned_size((size_t)n_freqs * sizeof(float));
+
+    return self;
+}
+
+void spp_destroy(SppEstimator* self) {
+    /* External memory: caller owns and releases the block; free nothing. */
+    (void)self;
+}
+
+#else /* !USE_EXT_MEM */
+/* ---- Heap (malloc) variant ----------------------------------------------- */
+
+SppEstimator* spp_create(int n_freqs, const MmseLsaConfig* config) {
+    if (n_freqs <= 0 || !config) return NULL;
+
+    SppEstimator* self = (SppEstimator*)calloc(1, sizeof(SppEstimator));
+    if (!self) return NULL;
+
+    spp_init_scalars(self, n_freqs, config);
 
     // Allocate state arrays
     self->xi_prev = (float*)calloc(n_freqs, sizeof(float));
@@ -60,9 +111,6 @@ SppEstimator* spp_create(int n_freqs, const MmseLsaConfig* config) {
         spp_destroy(self);
         return NULL;
     }
-
-    self->is_initialized = false;
-    self->frame_count = 0;
 
     return self;
 }
@@ -76,6 +124,8 @@ void spp_destroy(SppEstimator* self) {
 
     free(self);
 }
+
+#endif /* USE_EXT_MEM */
 
 void spp_estimate(
     SppEstimator* self,

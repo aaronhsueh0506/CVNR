@@ -194,6 +194,25 @@ parity: dirs $(OBJS) $(LIB_OBJS) $(OBJ_DIR)/parity_runner.o
 	$(CC) $(CFLAGS) -o $(PARITY_TARGET) $(OBJS) $(LIB_OBJS) $(OBJ_DIR)/parity_runner.o $(LDFLAGS)
 	@echo "Build complete: $(PARITY_TARGET)"
 
+# =============================================================================
+# Static-memory build (USE_EXT_MEM): the NR engine + MCRA/SPP + FFT allocate ALL
+# state from caller-provided memory — zero malloc/free on the audio path. Links
+# the static-memory example (example/main_mem.c). Compiled in a single shot so
+# the -DUSE_EXT_MEM objects never mix with the default (malloc) objects in obj/.
+# Honors EXTRA_CFLAGS, e.g.:  make mem EXTRA_CFLAGS="-DUSE_STANDARD_MATH"
+# NOTE: KISS FFT backend only. NE10 (fft_wrapper_ne10.c) has no ext-mem variant
+#       yet — NE10 owns its own twiddle allocation — so `make mem NE10_DIR=...`
+#       is not wired. The denoiser/MCRA/SPP ext-mem paths are backend-agnostic.
+# =============================================================================
+MEM_TARGET = $(BIN_DIR)/denoise_mem
+
+mem: dirs
+	$(CC) $(CFLAGS) -DUSE_EXT_MEM -o $(MEM_TARGET) \
+	    $(SRC_DIR)/mmse_lsa_denoiser.c $(SRC_DIR)/mcra_noise_estimator.c \
+	    $(SRC_DIR)/spp_estimator.c $(FFT_SRC) $(LIB_SRCS) \
+	    $(EXAMPLE_DIR)/main_mem.c $(LDFLAGS)
+	@echo "Static-memory build complete: $(MEM_TARGET)"
+
 # Help
 help:
 	@echo "MMSE-LSA Denoiser Build System"
@@ -225,4 +244,4 @@ help:
 	@echo "After building:"
 	@echo "  ./bin/denoise_wav input.wav output.wav"
 
-.PHONY: all dirs clean install uninstall test lib help debug parity
+.PHONY: all dirs clean install uninstall test lib help debug parity mem
