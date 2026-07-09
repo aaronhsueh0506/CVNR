@@ -1405,13 +1405,14 @@ MIT License
 
 ### 降噪強度模式
 
-> ⚠️ **命名好的 strength mode 僅 C 實作提供**（`mmse_lsa_config_for_mode(sample_rate, MMSE_LSA_NR_MILD|BALANCED|AGGRESSIVE)`，見 `c_impl/include/mmse_lsa_types.h`）。Python `MmseLsaDenoiser` **沒有 `config_for_mode` 方法**；Python 端透過 `config.yaml` 的 `g_min_db` 等數值（下表 g_min 欄）達到等效強度。
+> **4 級 strength mode 兩端都有**（2026-07）：Python `core/nr_strength.py` / `--nr-mode`，C `mmse_lsa_config_for_mode` / `denoise_wav --nr-mode`；std-math bit-exact。g_min_db = **audio 振幅 dB（/20）**。
 
-| 模式（C） | g_min_db（Python 等效值） | 特性 |
+| 模式 | g_min_db | 特性 |
 |------|-------|------|
-| MILD | -10 dB | 保留語音細節，適合低噪環境 |
-| BALANCED（預設） | -15 dB | 平衡降噪與語音品質 |
-| AGGRESSIVE | -20 dB | 強力抑噪，適合高噪環境 |
+| mild | -20 dB | 保留語音細節，適合低噪環境（最淺） |
+| moderate | -25 dB | mild 與 balanced 之間 |
+| balanced（預設） | -30 dB | 平衡降噪與語音品質 |
+| aggressive | -40 dB | 強力抑噪，適合高噪環境（最深） |
 
 ### 品質指標（V3-2 OMLSA, Balanced 模式）
 
@@ -1536,16 +1537,16 @@ MIT License
 
 ## 🔧 調參指引 (Quick Tuning for Release)
 
-> **第一原則：先試 strength mode（MILD / BALANCED / AGGRESSIVE），大部分情境不需要動其它參數**
+> **第一原則：先試 strength mode（mild / moderate / balanced / aggressive），大部分情境不需要動其它參數**
 >
-> ⚠️ strength mode 是 **C 實作 only**（`mmse_lsa_config_for_mode`）。Python `MmseLsaDenoiser` 無 mode API，請改設對應 `g_min_db`（MILD −10 / BALANCED −15 / AGGRESSIVE −20）達到等效強度。
+> 兩端都有（2026-07）：Python `--nr-mode` / `core/nr_strength.py`，C `mmse_lsa_config_for_mode` / `denoise_wav --nr-mode`。g_min_db（振幅 dB /20）= mild −20 / moderate −25 / balanced −30 / aggressive −40。
 
 ### 依 symptom 調參（四個關鍵旋鈕）
 
 | Symptom | 推薦動作 | 效應 |
 |---|---|---|
-| 殘留底噪太吵 | `g_min_db` ↓（BALANCED −15 → AGGRESSIVE −20） | 更強抑制，可能略增語音失真 |
-| 語音被抑制 / 變悶 | `g_min_db` ↑（BALANCED −15 → MILD −10） 或 `alpha_g` ↑ | 保留更多細節，底噪增多 |
+| 殘留底噪太吵 | 換強 `--nr-mode`（balanced −30 → aggressive −40，振幅 dB /20） | 更強抑制，可能略增語音失真 |
+| 語音被抑制 / 變悶 | 換弱 `--nr-mode`（balanced −30 → moderate −25 → mild −20） 或 `alpha_g` ↑ | 保留更多細節，底噪增多 |
 | Musical noise / 水聲 | `alpha_g` ↑（0.88 → 0.92）、`xi_min_db` ↓（−20 → −25） | 增益更平滑，最小 SNR 更低 |
 | 噪聲場景切換慢（進地鐵/上車） | `scene_change_threshold_db` ↓（10 → 7） | 更容易觸發 noise reset |
 | 過度觸發 scene reset（語音被當成噪聲重估） | `scene_change_threshold_db` ↑（10 → 12） 或 `scene_change_min_frames` ↑（5 → 8） | 提高切換門檻 |
