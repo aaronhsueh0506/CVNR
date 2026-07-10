@@ -131,6 +131,12 @@ mmse_lsa_destroy(d);                                 // no-op（記憶體由呼�
 byte-for-byte 一致，已對 4 個 preset + stationary 驗證。同一機制也覆蓋子模組
 `fft_query_memsize`/`mcra_query_memsize`/`spp_query_memsize` + 各自的 `create(..., mem, size)`。
 
+**零 malloc 保證（KISS）**：連預設的 exact-percentile 初始化路徑也不配置——MCRA 的
+percentile gather/quickselect 用預先配好的 `percentile_scratch`（in-place quickselect，免複製）。
+以 `nm` 檢查 `-DUSE_EXT_MEM` 編出的 denoiser/MCRA/SPP/FFT object，**完全無 malloc/calloc/realloc/free
+符號引用**；`example/main_mem.c` 本身也 0 malloc。（`USE_FAST_PERCENTILE` 開或關都零 malloc，差別只在是否
+需要那塊 init 緩衝。）
+
 **FFT backend 差異**：KISS 是 **100% 零 malloc**;NE10（`make mem NE10_DIR=...`）是 **partial**——
 handle 與 work buffer 從 pool 切出,但 NE10 的 twiddle cfg 仍走它自己的一次性內部 malloc(標準 NE10
 無外部記憶體 API),**每幀音訊路徑仍零 malloc**。NE10 版須在 ARM target 上實測(此 repo 無法在 x86 編 NE10)。

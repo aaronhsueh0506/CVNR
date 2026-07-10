@@ -2,6 +2,24 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [v1.11.1] - 2026-07-10 · 補：exact-percentile 初始化路徑消除 malloc
+
+> 承 v1.11.0。`feature/static-memory` 分支。預設（malloc）build 逐位元不受影響（已驗）。
+
+### 修正
+
+- **`mcra_noise_estimator.c`**：exact-percentile（`#ifndef USE_FAST_PERCENTILE`，即**預設**）的初始化
+  `mcra_init_noise()` 原本有兩個 `malloc`（`freq_powers` gather 緩衝 + `calculate_percentile` 內的
+  `temp` 複製）——雖只在 init 呼叫一次、非每幀,但破壞「USE_EXT_MEM 完全零 malloc」的保證。
+  - 新增 `percentile_scratch`（`[num_init_frames]`）到 struct,create 時一併配（malloc 版 calloc /
+    ext-mem 版從 pool 切),`mcra_init_noise` 改用它。
+  - `calculate_percentile` 改為 **in-place quickselect**（gather 緩衝每輪重填、可直接被 reorder,故免去
+    `temp` 複製）——結果值不變。
+- 驗證:
+  - `nm` 檢查 `-DUSE_EXT_MEM` 編出的 4 個 NR 模組 object,**完全無 malloc/calloc/realloc/free 符號引用**。
+  - byte-identical 不變:ext-mem == malloc（exact-percentile）；且此修正對 malloc build 逐位元無影響（∴ 仍 == main）。
+  - ext-mem pool 也少一次 init 配置;`example/main_mem.c` 本來就 0 malloc。
+
 ## [v1.11.0] - 2026-07-10 · 靜態記憶體版本（`USE_EXT_MEM`，零 malloc）
 
 > 此版本僅存在於 `feature/static-memory` 分支。預設（malloc）build 逐位元不受影響。

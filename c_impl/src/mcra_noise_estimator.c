@@ -65,6 +65,9 @@ struct McraNoiseEstimator {
     // Layout: init_power_buffer[frame_idx * n_freqs + freq_idx]
     float* init_power_buffer;
     int num_init_frames;    // Max number of init frames (from config)
+    // Per-bin gather + quickselect scratch [num_init_frames] — pre-allocated so
+    // the exact-percentile init path never calls malloc (matters for USE_EXT_MEM).
+    float* percentile_scratch;
 #endif
 };
 
@@ -149,7 +152,8 @@ size_t mcra_query_memsize(int n_freqs, const MmseLsaConfig* config) {
     total += nr_aligned_size((size_t)n_freqs * sizeof(float));                 /* spp        */
     total += nr_aligned_size((size_t)config->L * n_freqs * sizeof(float));     /* min_buffer */
 #ifndef USE_FAST_PERCENTILE
-    total += nr_aligned_size((size_t)config->num_init_frames * n_freqs * sizeof(float)); /* init_power_buffer */
+    total += nr_aligned_size((size_t)config->num_init_frames * n_freqs * sizeof(float)); /* init_power_buffer  */
+    total += nr_aligned_size((size_t)config->num_init_frames * sizeof(float));           /* percentile_scratch */
 #endif
     return total;
 }
@@ -175,6 +179,8 @@ McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config,
 #ifndef USE_FAST_PERCENTILE
     self->init_power_buffer = (float*)cursor;
     cursor += nr_aligned_size((size_t)self->num_init_frames * n_freqs * sizeof(float));
+    self->percentile_scratch = (float*)cursor;
+    cursor += nr_aligned_size((size_t)self->num_init_frames * sizeof(float));
 #endif
 
     return self;
@@ -212,9 +218,10 @@ McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config) {
     }
 
 #ifndef USE_FAST_PERCENTILE
-    // Allocate buffer for exact percentile calculation
+    // Allocate buffer for exact percentile calculation + its quickselect scratch
     self->init_power_buffer = (float*)calloc(self->num_init_frames * n_freqs, sizeof(float));
-    if (!self->init_power_buffer) {
+    self->percentile_scratch = (float*)calloc(self->num_init_frames, sizeof(float));
+    if (!self->init_power_buffer || !self->percentile_scratch) {
         mcra_destroy(self);
         return NULL;
     }
@@ -233,6 +240,7 @@ void mcra_destroy(McraNoiseEstimator* self) {
     if (self->min_buffer) free(self->min_buffer);
 #ifndef USE_FAST_PERCENTILE
     if (self->init_power_buffer) free(self->init_power_buffer);
+    if (self->percentile_scratch) free(self->percentile_scratch);
 #endif
 
     free(self);
@@ -314,29 +322,22 @@ static float quickselect(float* arr, int n, int k) {
 }
 
 /**
- * Calculate p-th percentile using quickselect
- * @param data Input data (will be copied, not modified)
+ * Calculate p-th percentile using quickselect, IN PLACE.
+ * @param data Scratch data — REORDERED by quickselect (caller passes a disposable
+ *             buffer, so no temporary allocation is needed). Result is unchanged
+ *             vs the previous copy-then-select version (same k-th smallest value).
  * @param n Number of elements
  * @param p Percentile (0-100)
  * @return The p-th percentile value
  */
-static float calculate_percentile(const float* data, int n, int p) {
+static float calculate_percentile(float* data, int n, int p) {
     if (n <= 0) return 0.0f;
     if (n == 1) return data[0];
 
-    // Copy data since quickselect modifies the array
-    float* temp = (float*)malloc(n * sizeof(float));
-    if (!temp) return data[0];  // Fallback
-    memcpy(temp, data, n * sizeof(float));
-
-    // Calculate index for p-th percentile
     // k = floor((n-1) * p / 100)
     int k = ((n - 1) * p) / 100;
 
-    float result = quickselect(temp, n, k);
-    free(temp);
-
-    return result;
+    return quickselect(data, n, k);
 }
 #else
 /**
@@ -373,10 +374,10 @@ void mcra_init_noise(McraNoiseEstimator* self, const float* power_sum, int n_fra
     // Exact 30th percentile using quickselect (v4.0 optimized)
     // Requires init_power_buffer to be filled via mcra_accumulate_init_power()
 
-    // Temporary buffer to hold power values for one frequency bin
-    float* freq_powers = (float*)malloc(n_frames * sizeof(float));
+    // Per-bin gather + quickselect scratch — pre-allocated, no malloc.
+    float* freq_powers = self->percentile_scratch;
     if (!freq_powers) {
-        // Fallback to approximation if allocation fails
+        // Fallback to approximation if the scratch is unavailable
         for (int k = 0; k < n_freqs; k++) {
             float avg_power = power_sum[k] / (float)n_frames;
             float init_psd = avg_power * 0.23f;  // v4.0: 30th percentile
@@ -403,7 +404,7 @@ void mcra_init_noise(McraNoiseEstimator* self, const float* power_sum, int n_fra
             self->S_min[k] = init_psd;
             self->spp[k] = 0.0f;
         }
-        free(freq_powers);
+        // no free — percentile_scratch is owned by the estimator
     }
 #endif
 
