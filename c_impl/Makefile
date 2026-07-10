@@ -200,9 +200,10 @@ parity: dirs $(OBJS) $(LIB_OBJS) $(OBJ_DIR)/parity_runner.o
 # the static-memory example (example/main_mem.c). Compiled in a single shot so
 # the -DUSE_EXT_MEM objects never mix with the default (malloc) objects in obj/.
 # Honors EXTRA_CFLAGS, e.g.:  make mem EXTRA_CFLAGS="-DUSE_STANDARD_MATH"
-# NOTE: KISS FFT backend only. NE10 (fft_wrapper_ne10.c) has no ext-mem variant
-#       yet — NE10 owns its own twiddle allocation — so `make mem NE10_DIR=...`
-#       is not wired. The denoiser/MCRA/SPP ext-mem paths are backend-agnostic.
+# FFT backends: KISS is 100% no-malloc. NE10 (make mem NE10_DIR=...) is PARTIAL —
+#       handle + work buffers come from the pool, but NE10's twiddle cfg keeps its
+#       one-time internal malloc at create (standard NE10 has no ext-mem API for
+#       it); the per-frame audio path is still malloc-free.
 # =============================================================================
 MEM_TARGET = $(BIN_DIR)/denoise_mem
 

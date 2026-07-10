@@ -27,10 +27,12 @@
 - malloc 路徑重構（`init_scalars` 抽出）輸出 == 改動前 main，**byte-for-byte**（未改變原行為）。
 - footprint（fft=512）：denoiser+MCRA+SPP ~72.6 KB，FFT ~17 KB。
 
-### 已知限制
+### FFT backend
 
-- KISS FFT backend only；NE10 的 ext-mem 變體尚未接（NE10 自行管理 twiddle 配置）。
-  denoiser/MCRA/SPP 的 ext-mem 路徑與 backend 無關。
+- **KISS**：100% 零 malloc（已在 x86 byte-verified）。
+- **NE10**（`fft_wrapper_ne10.c`，`make mem NE10_DIR=...`）：**partial** ext-mem——handle + work buffer
+  進 pool,NE10 twiddle cfg 維持 create 時一次性內部 malloc（標準 NE10 無外部記憶體 API），每幀路徑零 malloc；
+  `fft_destroy` 仍釋放該 cfg。⚠ 未在 x86 編譯驗證,須在 ARM target 上 build + NE10-malloc vs NE10-extmem byte 比對。
 
 ## [v1.10.0] - 2026-07-10 · 強度預設 4 級 + musical-noise fix
 

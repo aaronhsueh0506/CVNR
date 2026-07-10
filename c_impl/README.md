@@ -130,8 +130,10 @@ mmse_lsa_destroy(d);                                 // no-op（記憶體由呼�
 演算法與 malloc 版**逐位元相同**（只差配置方式）：`bin/denoise_mem` 輸出與 `bin/denoise_wav`
 byte-for-byte 一致，已對 4 個 preset + stationary 驗證。同一機制也覆蓋子模組
 `fft_query_memsize`/`mcra_query_memsize`/`spp_query_memsize` + 各自的 `create(..., mem, size)`。
-> 目前 `make mem` 為 KISS FFT backend；NE10（`fft_wrapper_ne10.c`）的 ext-mem 變體尚未接（NE10 自行
-> 管理 twiddle 配置），但 denoiser/MCRA/SPP 的 ext-mem 路徑與 backend 無關。
+
+**FFT backend 差異**：KISS 是 **100% 零 malloc**;NE10（`make mem NE10_DIR=...`）是 **partial**——
+handle 與 work buffer 從 pool 切出,但 NE10 的 twiddle cfg 仍走它自己的一次性內部 malloc(標準 NE10
+無外部記憶體 API),**每幀音訊路徑仍零 malloc**。NE10 版須在 ARM target 上實測(此 repo 無法在 x86 編 NE10)。
 
 > **Note:** v1.3.0 起 `make` 預設啟用 6 個數學等價優化（100% 相關度），不需要手動指定。
 
