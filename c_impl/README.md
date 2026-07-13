@@ -163,7 +163,7 @@ mem==malloc byte-for-byte（NE10 輸出本身跟 KISS 不同屬預期，兩個 b
 | `USE_SHARED_XI_RATIO` | SPP 和 Gain 共用 v 計算結果 | 每頻點省 1 次除法 | 100% |
 | `USE_OPTIMIZED_MIN_BUFFER` | MCRA 最小值緩衝改為連續記憶體佈局 | 改善 cache 效率 | 100% |
 | `USE_OPTIMIZED_E1` | E1(v) 指數積分分支重排 + 共用 log10 | 每頻點省 ~50 cycles | 100% |
-| `USE_SINGLE_CLAMP` | 移除冗餘的 gain clamp | 每頻點省 ~10 cycles | 100% |
+| `USE_SINGLE_CLAMP` | 移除冗餘的 gain clamp（僅在 `USE_FAST_GAIN_SMOOTHING` **關閉**時有作用——預設兩者皆開,此 flag 守的分支不會被編譯,等於 no-op;FAST_GAIN_SMOOTHING 的 log-域 clamp 已結構性避免 double-clamp） | (預設組合下無效果) | 100% |
 | `USE_INCREMENTAL_MIN` | MCRA 增量最小值追蹤（O(1) 平均） | 省 ~59K cycles/幀 | 100% |
 
 ### 手動啟用
