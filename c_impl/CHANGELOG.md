@@ -27,8 +27,8 @@
     檔頭文件條目）——這兩個函式的唯一消費者就是本旗標。全 repo consumer 掃描
     （AEC/NR/Audio_ALG/audio_common 的 `.c`/`.h`/Makefile）僅剩一處文字殘留：
     `Audio_ALG/lib/nr` git submodule 快照仍 pin 在 `f573f48`（本次移除前的
-    tip；guarded call site 預設不編譯，非活的 consumer），該 pin 於同一批
-    整合改動中前推，之後即無任何殘留。
+    tip；guarded call site 預設不編譯，非活的 consumer），該 pin 已於同一批
+    整合改動中前推至 `1fe1658`（Audio_ALG `5ad7ae3` 驗證），無任何殘留。
 - **驗證**：`make clean && make && make mem`，`bin/denoise_wav`
   （mild/moderate/balanced/aggressive 4 個 preset + `--stationary`）與
   `bin/denoise_mem`（預設設定）全部跟移除前建置的參考輸出 **byte-for-byte
