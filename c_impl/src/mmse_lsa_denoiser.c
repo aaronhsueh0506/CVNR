@@ -548,3 +548,38 @@ const float* mmse_lsa_get_gain(const MmseLsaDenoiser* self, int* n_freqs) {
     if (n_freqs) *n_freqs = self->n_freqs;
     return self->gain;
 }
+
+/* Aggregate debug/status snapshot (see MmseLsaDebugStatus). Read-only:
+ * reduces the existing gain/SPP/noise-PSD arrays of the last frame; runs
+ * only when the caller actually invokes this, so it costs nothing on the
+ * hot path otherwise. Standard math (logf/log10f), not fast_math — this is
+ * a diagnostics path, not the DSP gain loop. */
+void mmse_lsa_debug_status(const MmseLsaDenoiser* self, MmseLsaDebugStatus* out) {
+    if (!out) return;
+    memset(out, 0, sizeof(*out));
+    if (!self) return;
+
+    out->initialized = self->is_initialized ? 1 : 0;
+
+    const int n = self->n_freqs;
+    const float* gain = self->gain;
+    const float* spp  = self->spp;
+    const float* noise_psd = self->noise_est ? mcra_get_noise_psd(self->noise_est) : NULL;
+    if (n <= 0 || !gain) return;
+
+    double gain_sum = 0.0, spp_sum = 0.0, noise_sum = 0.0;
+    float  gain_min = gain[0];
+    for (int k = 0; k < n; ++k) {
+        float g = gain[k];
+        gain_sum += (double)g;
+        if (g < gain_min) gain_min = g;
+        if (spp)       spp_sum   += (double)spp[k];
+        if (noise_psd) noise_sum += (double)noise_psd[k];
+    }
+
+    float mean_gain = (float)(gain_sum / n);
+    out->mean_gain_db   = 20.0f * log10f(mean_gain + 1e-10f);
+    out->min_gain_db    = 20.0f * log10f(gain_min + 1e-10f);
+    out->mean_spp       = spp ? (float)(spp_sum / n) : 0.0f;
+    out->noise_floor_db = 10.0f * log10f((float)(noise_sum / n) + 1e-10f);
+}

@@ -138,6 +138,33 @@ const float* mmse_lsa_get_noise_psd(const MmseLsaDenoiser* self, int* n_freqs);
  */
 const float* mmse_lsa_get_gain(const MmseLsaDenoiser* self, int* n_freqs);
 
+/**
+ * Aggregate debug/status snapshot — a convenience over the per-bin query API
+ * above, for an integrator to poll (e.g. once per second) to tell whether the
+ * denoiser is behaving on an embedded target. All fields are reductions over
+ * the existing gain/SPP/noise-PSD arrays of the last processed frame; nothing
+ * extra is tracked between frames, so there is zero cost unless this is
+ * actually called. (No frame counter exists in MmseLsaDenoiser, so
+ * frames_processed from the original ask is dropped rather than added as new
+ * per-frame state.)
+ */
+typedef struct MmseLsaDebugStatus {
+    int   initialized;      /* noise-floor init done (== mmse_lsa_is_initialized) */
+    float mean_gain_db;     /* 20*log10(mean linear gain), dB, last frame          */
+    float min_gain_db;      /* 20*log10(deepest per-bin linear gain), dB, last frame */
+    float mean_spp;         /* mean speech-presence probability [0,1], last frame  */
+    float noise_floor_db;   /* 10*log10(mean noise PSD), dB (power), last frame    */
+} MmseLsaDebugStatus;
+
+/**
+ * Fill *out with an aggregate snapshot of the denoiser's current per-bin
+ * state. Read-only / const — does not perturb any DSP state (no mutation,
+ * no fast_math approximations; this diagnostics path uses standard logf/
+ * log10f for precision and simplicity over speed). The n_freqs-long
+ * reduction only runs when the caller actually invokes this function.
+ */
+void mmse_lsa_debug_status(const MmseLsaDenoiser* self, MmseLsaDebugStatus* out);
+
 #ifdef __cplusplus
 }
 #endif

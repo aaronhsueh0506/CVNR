@@ -51,6 +51,7 @@ void print_usage(const char* prog) {
     printf("  --nr-mode <m>  NR strength: mild|moderate|balanced|aggressive (default: balanced)\n");
     printf("  --stationary   Content-preservation mode: remove only the stationary noise\n");
     printf("                 floor, preserve speech/music/transients (layered on --nr-mode)\n");
+    printf("  --debug        Print one mmse_lsa_debug_status() line per second of audio\n");
     printf("\n");
     printf("Framing is fixed to the Python V3-2 reference (512/256/512, sqrt-Hann)\n");
     printf("so output is parity-comparable; see tools/parity_nr.py.\n");
@@ -103,6 +104,7 @@ int main(int argc, char* argv[]) {
     const char* output_path = argv[2];
     int bypass = 0;
     int stationary = 0;
+    int debug = 0;
     MmseLsaNrMode nr_mode = MMSE_LSA_NR_BALANCED;
 
     for (int i = 3; i < argc; i++) {
@@ -110,6 +112,8 @@ int main(int argc, char* argv[]) {
             bypass = 1;
         } else if (strcmp(argv[i], "--stationary") == 0) {
             stationary = 1;
+        } else if (strcmp(argv[i], "--debug") == 0) {
+            debug = 1;
         } else if (strcmp(argv[i], "--nr-mode") == 0 && i + 1 < argc) {
             const char *m = argv[++i];
             if (strcmp(m, "mild") == 0)             nr_mode = MMSE_LSA_NR_MILD;
@@ -225,6 +229,7 @@ int main(int argc, char* argv[]) {
 
     /* 6. Per-frame: window -> rFFT -> mmse_lsa_process -> iFFT -> window -> OLA. */
     printf("\nProcessing %d frames...\n", n_frames);
+    int debug_last_sec = -1;
     for (int f = 0; f < n_frames; f++) {
         int start = f * hop;
 
@@ -256,6 +261,19 @@ int main(int argc, char* argv[]) {
         if ((f % 100) == 0) {
             printf("\r  Progress: %.1f%%", 100.0f * (f + 1) / n_frames);
             fflush(stdout);
+        }
+
+        if (debug) {
+            int cur_sec = start / sample_rate;
+            if (cur_sec != debug_last_sec) {
+                debug_last_sec = cur_sec;
+                MmseLsaDebugStatus st;
+                mmse_lsa_debug_status(denoiser, &st);
+                fprintf(stderr,
+                    "[dbg %d.0s] init=%d gain(mean/min)=%.1f/%.1fdB spp=%.2f noise=%.1fdB\n",
+                    cur_sec, st.initialized, st.mean_gain_db, st.min_gain_db,
+                    st.mean_spp, st.noise_floor_db);
+            }
         }
     }
     printf("\r  Progress: 100.0%%\n");
