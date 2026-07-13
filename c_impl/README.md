@@ -1,6 +1,6 @@
 # OMLSA Speech Denoiser — C Implementation (V3-2 主線)
 
-> **Release**: v1.12.2（c_impl）· 移除 `USE_FAST_RECIPROCAL` 編譯開關（維持單一 bit-exact IEEE 除法路徑；`audio_common/fast_math.h` 的 `fast_recip`/`fast_div` 移除待 `Audio_ALG/lib/nr` submodule pin 更新後再處理，見 CHANGELOG）
+> **Release**: v1.12.2（c_impl）· 移除 `USE_FAST_RECIPROCAL` 編譯開關（維持單一 bit-exact IEEE 除法路徑；`fast_recip`/`fast_div` 也一併從 `audio_common/fast_math.h` 移除）
 > **對應 Python**: `denoisers/v3_2_mmse_lsa.py`
 
 基於 Ephraim-Malah 1985 的 MMSE-LSA (Minimum Mean Square Error Log-Spectral Amplitude) 語音降噪演算法 C 實現，搭配 Cohen & Berdugo (2002) MCRA 噪聲估計與 Cohen & Berdugo (2001) Bayesian SPP 軟判決。整體通稱 **OMLSA**。

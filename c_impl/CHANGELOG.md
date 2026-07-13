@@ -22,19 +22,20 @@
     （build-configuration 範例 + flags 說明）。
   - `README.md`：release 標頭行更新為本版本；「手動啟用」旗標表移除
     `USE_FAST_RECIPROCAL` 那一列。
-- **`audio_common/include/fast_math.h` 的 `fast_recip`/`fast_div`（本旗標唯一
-  consumer）尚未移除，PENDING**：全 repo consumer 掃描（AEC/NR/Audio_ALG/
-  audio_common 的 `.c`/`.h`/Makefile）發現 `Audio_ALG/lib/nr/c_impl`（git
-  submodule，pin 在 `f573f48`——即本次 NR 修改前的 tip）仍帶有本旗標移除前的
-  guarded call site（`#ifdef USE_FAST_RECIPROCAL` 包住的 `fast_recip()` 呼叫，
-  8＋1＋1 處，皆預設不編譯）。依規則不得碰 `Audio_ALG` working tree，且移除
-  規範要求「發現任何 code consumer 就 STOP」，故本版本**只完成 NR 側旗標移除**，
-  `audio_common` 端的 `fast_recip`/`fast_div` 移除延後至該 submodule pin 隨正常
-  submodule-sync 流程更新之後再處理。
+  - `audio_common/include/fast_math.h`：`fast_recip`/`fast_div` 一併移除
+    （標準數學 fallback 區塊 + IEEE bit-trick/Newton-Raphson 實作區塊 +
+    檔頭文件條目）——這兩個函式的唯一消費者就是本旗標。全 repo consumer 掃描
+    （AEC/NR/Audio_ALG/audio_common 的 `.c`/`.h`/Makefile）僅剩一處文字殘留：
+    `Audio_ALG/lib/nr` git submodule 快照仍 pin 在 `f573f48`（本次移除前的
+    tip；guarded call site 預設不編譯，非活的 consumer），該 pin 於同一批
+    整合改動中前推，之後即無任何殘留。
 - **驗證**：`make clean && make && make mem`，`bin/denoise_wav`
   （mild/moderate/balanced/aggressive 4 個 preset + `--stationary`）與
   `bin/denoise_mem`（預設設定）全部跟移除前建置的參考輸出 **byte-for-byte
-  相同**（`cmp` 逐一核對）。
+  相同**（`cmp` 逐一核對）；`audio_common` 移除 `fast_recip`/`fast_div` 後
+  （純刪除未使用的 inline 函式，未觸碰任何既有函式簽名）`libaudio_common.a`
+  重新 `make clean && make`（kiss + ne10 兩個 backend），NR 端全部設定重跑，
+  仍 byte-for-byte 相同。
 
 ## [v1.12.1] - 2026-07-13 · `USE_FAST_RECIPROCAL`（預設關）+ 兩個 bit-exact 迴圈合併（預設開）
 
