@@ -123,11 +123,7 @@ static void calculate_gain(MmseLsaDenoiser* self,
 #ifdef USE_SHARED_XI_RATIO
         if (v_in != NULL) {
             v        = v_in[k];
-#ifdef USE_FAST_RECIPROCAL
-            xi_ratio = v * fast_recip(gamma_k + 1e-10f);
-#else
             xi_ratio = v / (gamma_k + 1e-10f);
-#endif
         } else {
             xi_ratio = xi_k / (1.0f + xi_k);
             v        = xi_ratio * gamma_k;

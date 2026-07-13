@@ -94,17 +94,6 @@ CFLAGS += -DUSE_INCREMENTAL_MIN
 #   When not defined: Performs clamp twice (gain_mmse and final gain)
 #   Example: make EXTRA_CFLAGS="-DUSE_SINGLE_CLAMP"
 #
-# USE_FAST_RECIPROCAL - Replace per-bin IEEE float divisions with fast_recip()
-#   (IEEE-754 bit-trick seed + 2 Newton-Raphson iterations, audio_common/fast_math.h)
-#   in the SPP/gain/MCRA hot path (spp_estimator.c gamma & xi_dd_term1 & v & spp
-#   divisions, mmse_lsa_denoiser.c xi_ratio reconstruction, mcra_noise_estimator.c
-#   Loop C1 indicator ratio). Default OFF (real FDIV is cheap on this dev box;
-#   the win targets embedded cores where hardware FDIV is slow/absent).
-#   When defined: ~1e-6 relative error per division (measured, see fast_math.h);
-#     NOT bit-exact vs the default build.
-#   When not defined: standard IEEE division (bit-exact, current default).
-#   Example: make EXTRA_CFLAGS="-DUSE_FAST_RECIPROCAL"
-#
 # Recommended build configurations:
 #   1. Debug build (standard math, no optimizations, matches Python most closely):
 #      make debug
@@ -274,12 +263,10 @@ help:
 	@echo "  make BACKEND=ne10                             - NE10 R2C/C2R build (ARM NEON, embedded deliverable)"
 	@echo "  make EXTRA_CFLAGS=\"-DUSE_STANDARD_MATH\"      - Debug build (matches Python output)"
 	@echo "  make EXTRA_CFLAGS=\"-DUSE_FAST_PERCENTILE\"    - Optimized build (all approximations)"
-	@echo "  make EXTRA_CFLAGS=\"-DUSE_FAST_RECIPROCAL\"   - Fast reciprocal build (embedded FDIV-slow cores)"
 	@echo ""
 	@echo "Flags:"
 	@echo "  USE_STANDARD_MATH   - Use standard math functions (expf, logf, etc.)"
 	@echo "  USE_FAST_PERCENTILE - Use mean*0.17 approximation instead of exact percentile"
-	@echo "  USE_FAST_RECIPROCAL - Replace hot-path IEEE division with fast_recip() (not bit-exact)"
 	@echo ""
 	@echo "Memory usage:"
 	@echo "  Without USE_FAST_PERCENTILE: +20KB for exact percentile buffer"

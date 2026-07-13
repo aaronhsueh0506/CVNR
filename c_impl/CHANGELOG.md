@@ -2,6 +2,40 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [v1.12.2] - 2026-07-13 · 移除 `USE_FAST_RECIPROCAL` 編譯開關
+
+> 承 v1.12.1。`feature/static-memory` 分支。
+
+### 變更
+
+- **移除 `USE_FAST_RECIPROCAL` 編譯開關**：v1.12.1 引入時的 12-file PESQ
+  把關數據已證實此旗標在嵌入式目標上安全（mean ΔPESQ **−0.0005**、worst
+  **−0.0033**，car_15dB，見上一版本紀錄），但專案決定維持**單一** bit-exact
+  IEEE 除法路徑，不保留第二條近似路徑。移除範圍：
+  - `src/spp_estimator.c`（`spp_estimate`/`spp_estimate_ex` 兩個函式，共 8 處
+    `#ifdef USE_FAST_RECIPROCAL` / `#else` / `#endif` 三明治）、
+    `src/mmse_lsa_denoiser.c`（`calculate_gain` 的 `xi_ratio` 重建，1 處）、
+    `src/mcra_noise_estimator.c`（`mcra_update` Loop C1 的 `ratio`，1 處）：
+    刪除 `#ifdef`/`#else` 兩段落，只保留原本 `#else` 分支的標準除法碼，變成
+    無條件執行；不留旗標殘跡。
+  - `Makefile`：刪除旗標說明文件區塊（約 10 行）與 `help` target 的兩行
+    （build-configuration 範例 + flags 說明）。
+  - `README.md`：release 標頭行更新為本版本；「手動啟用」旗標表移除
+    `USE_FAST_RECIPROCAL` 那一列。
+- **`audio_common/include/fast_math.h` 的 `fast_recip`/`fast_div`（本旗標唯一
+  consumer）尚未移除，PENDING**：全 repo consumer 掃描（AEC/NR/Audio_ALG/
+  audio_common 的 `.c`/`.h`/Makefile）發現 `Audio_ALG/lib/nr/c_impl`（git
+  submodule，pin 在 `f573f48`——即本次 NR 修改前的 tip）仍帶有本旗標移除前的
+  guarded call site（`#ifdef USE_FAST_RECIPROCAL` 包住的 `fast_recip()` 呼叫，
+  8＋1＋1 處，皆預設不編譯）。依規則不得碰 `Audio_ALG` working tree，且移除
+  規範要求「發現任何 code consumer 就 STOP」，故本版本**只完成 NR 側旗標移除**，
+  `audio_common` 端的 `fast_recip`/`fast_div` 移除延後至該 submodule pin 隨正常
+  submodule-sync 流程更新之後再處理。
+- **驗證**：`make clean && make && make mem`，`bin/denoise_wav`
+  （mild/moderate/balanced/aggressive 4 個 preset + `--stationary`）與
+  `bin/denoise_mem`（預設設定）全部跟移除前建置的參考輸出 **byte-for-byte
+  相同**（`cmp` 逐一核對）。
+
 ## [v1.12.1] - 2026-07-13 · `USE_FAST_RECIPROCAL`（預設關）+ 兩個 bit-exact 迴圈合併（預設開）
 
 > 承 v1.12.0。`feature/static-memory` 分支。效能 review 的兩個已核准項目。
