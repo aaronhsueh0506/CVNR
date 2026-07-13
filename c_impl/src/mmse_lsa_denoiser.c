@@ -123,7 +123,11 @@ static void calculate_gain(MmseLsaDenoiser* self,
 #ifdef USE_SHARED_XI_RATIO
         if (v_in != NULL) {
             v        = v_in[k];
+#ifdef USE_FAST_RECIPROCAL
+            xi_ratio = v * fast_recip(gamma_k + 1e-10f);
+#else
             xi_ratio = v / (gamma_k + 1e-10f);
+#endif
         } else {
             xi_ratio = xi_k / (1.0f + xi_k);
             v        = xi_ratio * gamma_k;
@@ -185,6 +189,16 @@ static void calculate_gain(MmseLsaDenoiser* self,
         gain_out[k] = gain;
         self->log_gain_prev[k] = fast_log(gain + 1e-10f);
 #endif
+
+        /* DD-state fold: gain_prev/enhanced_psd_prev feed next frame's
+         * spp_estimate_ex DD term. Folded in from the separate post-loop
+         * pass that used to run in mmse_lsa_process/mmse_lsa_process_gain —
+         * self->power[k] is already final here (fft_power ran before this
+         * call and is untouched since) and `gain` above is the exact value
+         * just written to gain_out[k], so this is bit-identical, just fused
+         * into this loop instead of a second one over the same range. */
+        self->gain_prev[k]         = gain;
+        self->enhanced_psd_prev[k] = gain * gain * self->power[k];
     }
 
     self->gain_initialized = true;
@@ -371,9 +385,15 @@ int mmse_lsa_process(MmseLsaDenoiser* self,
             self->is_initialized = true;
         }
 
-        /* Pass through during init */
-        for (int k = 0; k < nf; k++)
-            self->gain[k] = 1.0f;
+        /* Pass through during init. DD state folded in here (g=1.0, so
+         * gain_prev=1.0 and enhanced_psd_prev=1*1*power=power exactly —
+         * same values the old post-loop pass wrote for this branch, just
+         * fused into this loop instead of a second one over the same range). */
+        for (int k = 0; k < nf; k++) {
+            self->gain[k]              = 1.0f;
+            self->gain_prev[k]         = 1.0f;
+            self->enhanced_psd_prev[k] = self->power[k];
+        }
     } else {
         const float* noise_psd = mcra_get_noise_psd(self->noise_est);
 
@@ -390,23 +410,27 @@ int mmse_lsa_process(MmseLsaDenoiser* self,
         calculate_gain(self, self->spp, self->xi, self->gamma,
                        NULL, self->gain);
 #endif
+        /* calculate_gain() folds the DD-state update (gain_prev /
+         * enhanced_psd_prev) into its own k-loop — see calculate_gain(). */
 
         mcra_update(self->noise_est, self->power, self->spp);
     }
 
-    /* 3. Update DD state */
-    for (int k = 0; k < nf; k++) {
-        float g = self->gain[k];
-        self->gain_prev[k]         = g;
-        self->enhanced_psd_prev[k] = g * g * self->power[k];
+    /* 4+5. Copy-with-gain-applied (out-of-place) or apply gain in-place.
+     * Fused: avoids writing spectrum_out twice (memcpy then *=). Same
+     * per-bin arithmetic as fft_apply_gain (audio_common/src/fft_wrapper.c:
+     * spectrum[k].{r,i} *= gain[k]) — out[k] = in[k]*gain[k] is bit-identical
+     * to memcpy(out,in) followed by fft_apply_gain(out,gain) since the
+     * multiply operands and rounding are the same either way. */
+    if (spectrum_out != spectrum_in) {
+        for (int k = 0; k < nf; k++) {
+            float g = self->gain[k];
+            spectrum_out[k].r = spectrum_in[k].r * g;
+            spectrum_out[k].i = spectrum_in[k].i * g;
+        }
+    } else {
+        fft_apply_gain(spectrum_out, self->gain, nf);
     }
-
-    /* 4. Copy to output (supports in-place) */
-    if (spectrum_out != spectrum_in)
-        memcpy(spectrum_out, spectrum_in, nf * sizeof(Complex));
-
-    /* 5. Apply NR gain */
-    fft_apply_gain(spectrum_out, self->gain, nf);
 
     return 0;
 }
@@ -438,8 +462,12 @@ int mmse_lsa_process_gain(MmseLsaDenoiser* self,
             self->is_initialized = true;
         }
 
-        for (int k = 0; k < nf; k++)
-            self->gain[k] = 1.0f;
+        /* Pass through during init; DD state folded in (see mmse_lsa_process). */
+        for (int k = 0; k < nf; k++) {
+            self->gain[k]              = 1.0f;
+            self->gain_prev[k]         = 1.0f;
+            self->enhanced_psd_prev[k] = self->power[k];
+        }
     } else {
         const float* noise_psd = mcra_get_noise_psd(self->noise_est);
 
@@ -467,19 +495,14 @@ int mmse_lsa_process_gain(MmseLsaDenoiser* self,
         calculate_gain(self, self->spp, self->xi, self->gamma,
                        NULL, self->gain);
 #endif
+        /* calculate_gain() folds the DD-state update (gain_prev /
+         * enhanced_psd_prev) into its own k-loop — see calculate_gain(). */
 
         /* MCRA updates from the clean power + SPP only (R² excluded). */
         mcra_update(self->noise_est, self->power, self->spp);
     }
 
-    /* 3. Update DD state (same recursion as the apply path). */
-    for (int k = 0; k < nf; k++) {
-        float g = self->gain[k];
-        self->gain_prev[k]         = g;
-        self->enhanced_psd_prev[k] = g * g * self->power[k];
-    }
-
-    /* 4. Return the gain WITHOUT applying it (caller combines with res_gain). */
+    /* Return the gain WITHOUT applying it (caller combines with res_gain). */
     memcpy(gain_out, self->gain, nf * sizeof(float));
 
     return 0;

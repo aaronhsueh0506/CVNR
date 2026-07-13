@@ -514,7 +514,11 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
     // SPP-gated update).
     for (int k = 0; k < n_freqs; k++) {
         // Speech indicator: I(k,l) = 1 if S(k,l)/(S_min(k,l)·δ) > 1
+#ifdef USE_FAST_RECIPROCAL
+        float ratio = self->S[k] * fast_recip(self->S_min[k] * delta + 1e-10f);
+#else
         float ratio = self->S[k] / (self->S_min[k] * delta + 1e-10f);
+#endif
         float indicator = (ratio > 1.0f) ? 1.0f : 0.0f;
 
         // SPP smoothing: p(k,l) = α_p·p(k,l-1) + (1-α_p)·I(k,l)

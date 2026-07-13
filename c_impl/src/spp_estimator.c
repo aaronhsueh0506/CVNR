@@ -149,7 +149,11 @@ void spp_estimate(
     for (int k = 0; k < n_freqs; k++) {
         // 1. Calculate a posteriori SNR
         // γ = |Y|² / λ_n
+#ifdef USE_FAST_RECIPROCAL
+        float gamma = Y_psd[k] * fast_recip(noise_psd[k] + 1e-10f);
+#else
         float gamma = Y_psd[k] / (noise_psd[k] + 1e-10f);
+#endif
         gamma_out[k] = gamma;
 
         // 2. Estimate a priori SNR using Decision Directed method
@@ -162,7 +166,11 @@ void spp_estimate(
             float xi_dd_term1;
             if (enhanced_psd_prev != NULL) {
                 // Use provided enhanced PSD (recommended)
+#ifdef USE_FAST_RECIPROCAL
+                xi_dd_term1 = enhanced_psd_prev[k] * fast_recip(noise_for_dd[k] + 1e-10f);
+#else
                 xi_dd_term1 = enhanced_psd_prev[k] / (noise_for_dd[k] + 1e-10f);
+#endif
             } else {
                 // Fallback: use gain²·γ_prev approximation
                 float g2 = gain_prev[k] * gain_prev[k];
@@ -180,9 +188,15 @@ void spp_estimate(
         // 3. Calculate log-likelihood ratio: v = ξ/(1+ξ)·γ
         // 4. SPP = 1 / (1 + prior_ratio × (1+ξ) × exp(-v))
         float term_xi = 1.0f + xi;
+#ifdef USE_FAST_RECIPROCAL
+        float v = xi * fast_recip(term_xi) * gamma;
+        float exp_neg_v = fast_exp_neg(v);
+        spp_out[k] = fast_recip(1.0f + prior_ratio * term_xi * exp_neg_v);
+#else
         float v = xi / term_xi * gamma;
         float exp_neg_v = fast_exp_neg(v);
         spp_out[k] = 1.0f / (1.0f + prior_ratio * term_xi * exp_neg_v);
+#endif
 
         // Save for next frame
         self->xi_prev[k] = xi;
@@ -235,7 +249,11 @@ void spp_estimate_ex(
 
     for (int k = 0; k < n_freqs; k++) {
         // 1. Calculate a posteriori SNR
+#ifdef USE_FAST_RECIPROCAL
+        float gamma = Y_psd[k] * fast_recip(noise_psd[k] + 1e-10f);
+#else
         float gamma = Y_psd[k] / (noise_psd[k] + 1e-10f);
+#endif
         gamma_out[k] = gamma;
 
         // 2. Estimate a priori SNR using Decision Directed method
@@ -245,7 +263,11 @@ void spp_estimate_ex(
         } else {
             float xi_dd_term1;
             if (enhanced_psd_prev != NULL) {
+#ifdef USE_FAST_RECIPROCAL
+                xi_dd_term1 = enhanced_psd_prev[k] * fast_recip(noise_for_dd[k] + 1e-10f);
+#else
                 xi_dd_term1 = enhanced_psd_prev[k] / (noise_for_dd[k] + 1e-10f);
+#endif
             } else {
                 float g2 = gain_prev[k] * gain_prev[k];
                 xi_dd_term1 = g2 * self->gamma_prev[k];
@@ -259,7 +281,11 @@ void spp_estimate_ex(
 
         // 3. Calculate v = ξ/(1+ξ)·γ (compute term_xi once)
         float term_xi = 1.0f + xi;
+#ifdef USE_FAST_RECIPROCAL
+        float v = (xi * fast_recip(term_xi)) * gamma;
+#else
         float v = (xi / term_xi) * gamma;
+#endif
 
         // Output v for gain calculator to reuse
         if (v_out) {
@@ -268,7 +294,11 @@ void spp_estimate_ex(
 
         // 4. Calculate SPP
         float exp_neg_v = fast_exp_neg(v);
+#ifdef USE_FAST_RECIPROCAL
+        spp_out[k] = fast_recip(1.0f + prior_ratio * term_xi * exp_neg_v);
+#else
         spp_out[k] = 1.0f / (1.0f + prior_ratio * term_xi * exp_neg_v);
+#endif
 
         // Save for next frame
         self->xi_prev[k] = xi;

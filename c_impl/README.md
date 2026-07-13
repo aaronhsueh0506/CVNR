@@ -1,6 +1,6 @@
 # OMLSA Speech Denoiser — C Implementation (V3-2 主線)
 
-> **Release**: v1.12.0（c_impl）· 靜態記憶體 API 改名為 AEC 慣例（`_get_mem_size`/`_init`）+ runtime `is_static`；FFT/fast_math 改吃共用 `audio_common`
+> **Release**: v1.12.1（c_impl）· `USE_FAST_RECIPROCAL`（預設關）+ 兩個 bit-exact 迴圈合併（預設開，memcpy+apply_gain 融合、DD-state 摺入 calculate_gain）
 > **對應 Python**: `denoisers/v3_2_mmse_lsa.py`
 
 基於 Ephraim-Malah 1985 的 MMSE-LSA (Minimum Mean Square Error Log-Spectral Amplitude) 語音降噪演算法 C 實現，搭配 Cohen & Berdugo (2002) MCRA 噪聲估計與 Cohen & Berdugo (2001) Bayesian SPP 軟判決。整體通稱 **OMLSA**。
@@ -171,6 +171,7 @@ mem==malloc byte-for-byte（NE10 輸出本身跟 KISS 不同屬預期，兩個 b
 | 開關 | 說明 | 效果 | 相關度 |
 |------|------|------|--------|
 | `USE_FAST_PERCENTILE` | 使用 mean×0.17 近似 20th percentile | 省 ~20KB 記憶體 | ~99.5% |
+| `USE_FAST_RECIPROCAL` | SPP/Gain/MCRA 熱路徑除法改用 `fast_recip()`（IEEE bit-trick + 2 次 NR 迭代，見 `audio_common/fast_math.h`） | 省除法 cycles（目標嵌入式 FDIV 慢的核心；本機 arm64 實測反而慢 ~5%，硬體除法已經很快） | ~1e-6 相對誤差/次除法（非 bit-exact） |
 
 ### 調試用
 

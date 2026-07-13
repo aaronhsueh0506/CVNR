@@ -2,6 +2,73 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [v1.12.1] - 2026-07-13 · `USE_FAST_RECIPROCAL`（預設關）+ 兩個 bit-exact 迴圈合併（預設開）
+
+> 承 v1.12.0。`feature/static-memory` 分支。效能 review 的兩個已核准項目。
+
+### 變更
+
+- **`audio_common/include/fast_math.h` 新增 `fast_recip(x)` / `fast_div(a,b)`**：
+  跟既有 `fast_sqrt` 同款式——IEEE 754 bit-trick 種子（magic constant
+  `0x7EF477D5`）+ 2 次 Newton-Raphson（`y = y*(2 - x*y)`）。`USE_STANDARD_MATH`
+  分支下對應為 `1.0f/x` / `a/b`（除錯用，精確）。實測相對誤差：典型
+  ~4e-6（如 x=1.0 時 4.05e-6），對 1e-12~1e12 的寬動態範圍掃描最壞 case
+  ~1.2e-5（該範圍已涵蓋本模組實際會用到的 PSD / SNR-ratio 量級）。純標頭新增，
+  無任何既有函式簽名變動。
+- **NR `USE_FAST_RECIPROCAL`（新編譯開關，預設關）**：把 SPP/Gain/MCRA 熱路徑上
+  幾個逐頻點 IEEE 除法換成 `fast_recip`：
+  - `spp_estimator.c`：`spp_estimate`/`spp_estimate_ex` 的 `gamma = Y_psd/(noise+eps)`、
+    `xi_dd_term1 = enhanced/(noise_dd+eps)`、`v = xi/(1+xi)*gamma`（對 `1+xi` 取一次
+    recip）、`spp = 1/(1+prior*...)`（取一次 recip）。
+  - `mmse_lsa_denoiser.c` `calculate_gain`：`USE_SHARED_XI_RATIO` 的 `v_in` 重建
+    `xi_ratio = v/(gamma+eps)`。
+  - `mcra_noise_estimator.c` `mcra_update` Loop C1：`ratio = S/(S_min*delta+eps)`。
+  - 所有 epsilon guard（`+1e-10f` 等）在 recip 形式下維持不變（`fast_recip(x+eps)`，
+    不是 `fast_recip(x)+eps`）。關閉時（預設）程式碼路徑逐字不變，僅新增
+    `#else` 分支，不影響任何既有輸出。
+  - **驗證**：關閉旗標（預設）→ `bin/denoise_wav` + `bin/denoise_mem`，4 個
+    preset + stationary，跟本次改動前建置的參考輸出 **byte-for-byte 相同**。
+    開啟旗標（`EXTRA_CFLAGS="-DUSE_FAST_RECIPROCAL"`）→ 可正常編譯執行，
+    16-bit PCM 樣本最大絕對差：mild 17、moderate 12、balanced 24、
+    aggressive 33、stationary 12（滿幅 32768 的 ~0.1%，聽感無感知差異預期）。
+  - **本機 arm64 (Apple Silicon) 計時**（200× 串接的 test_wav，balanced
+    preset，user time 均值）：關閉旗標 ~2.43s、開啟旗標 ~2.55s——在這顆桌機上
+    **變慢 ~5%**（硬體 FDIV 在 Apple Silicon 上已經很快且是流水線化的，
+    Newton-Raphson 近似的總指令數反而更多）。這與設計預期一致——本旗標的
+    真正效益在 FDIV 慢/沒有硬體除法器的嵌入式核心上，不是本開發機；此處計時
+    僅供參考存證，不代表目標硬體上的行為。
+- **兩個 bit-exact 迴圈合併（無旗標，永遠開啟，byte-for-byte 相同）**：
+  1. `mmse_lsa_process`：原本「`memcpy(spectrum_out, spectrum_in)` 再
+     `fft_apply_gain(spectrum_out, gain)`」兩步，改成 out-of-place 時直接
+     `out[k] = in[k] * gain[k]`（in-place 時——`spectrum_out == spectrum_in`
+     ——仍呼叫原本的 `fft_apply_gain`，行為不變）。少寫一次 `spectrum_out`。
+  2. DD-state 更新（`gain_prev[k]=g; enhanced_psd_prev[k]=g*g*power[k]`）原本
+     是 `mmse_lsa_process`/`mmse_lsa_process_gain` 各自一個獨立的 post-loop
+     k-迴圈；現在摺進 `calculate_gain` 自己的 k-迴圈尾端（該迴圈計算完
+     `gain_out[k]` 之後，`power[k]` 全程未變，讀後寫沒有 hazard），以及兩個
+     函式各自的 init pass-through 迴圈（`gain[k]=1.0f` 時，`gain_prev[k]=1.0f`、
+     `enhanced_psd_prev[k]=power[k]`，浮點上跟 `1*1*power` 逐位元相同）。
+     原本獨立的 step-3 迴圈整個刪除。
+  - **驗證**：兩個合併**個別**驗證 byte-for-byte 相同（先驗第 1 個，通過後再
+    加第 2 個，兩者疊加後再驗一次全部通過）——`bin/denoise_wav` +
+    `bin/denoise_mem`，4 個 preset + stationary，皆跟本次改動前的參考輸出一致。
+
+### 品質抽樣（開旗標的把關數據，12-file guard: babble/car/street × 0/5/10/15 dB, PESQ-wb/STOI vs clean）
+
+- `USE_FAST_RECIPROCAL` ON vs OFF（C binary, balanced）：**mean ΔPESQ −0.0005，worst −0.0033
+  （car_15dB），ΔSTOI ≤ 5e-5** — 感知上等同零損失，嵌入式目標上可直接啟用。
+
+### 驗證總結
+
+- 預設建置（無 `EXTRA_CFLAGS`）：`bin/denoise_wav` + `bin/denoise_mem`（BACKEND=kiss），
+  4 個 preset（mild/moderate/balanced/aggressive）+ balanced+stationary，
+  **byte-for-byte 相同**於本次改動前建置的參考輸出（sha256 逐一核對）。
+- `make debug`、`make parity`（fast-math 與 `-DUSE_STANDARD_MATH` 兩種）、
+  `EXTRA_CFLAGS="-DUSE_FAST_PERCENTILE"`、`-DUSE_FAST_PERCENTILE -DUSE_FAST_RECIPROCAL`
+  組合皆編譯乾淨（`-Wall -Wextra`，零警告）。
+- 對本次改動的四個檔案（`Makefile`、`spp_estimator.c`、`mmse_lsa_denoiser.c`、
+  `mcra_noise_estimator.c`）grep 掃描：不含任何平台廠商名稱，皆為空。
+
 ## [v1.12.0] - 2026-07-13 · 靜態記憶體 API 改名（AEC 慣例）+ 改吃共用 `audio_common`
 
 > 承 v1.11.1。`feature/static-memory` 分支。純改名/重接線，演算法邏輯不變——KISS backend
