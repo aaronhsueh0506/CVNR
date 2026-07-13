@@ -2,6 +2,81 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [v1.12.0] - 2026-07-13 · 靜態記憶體 API 改名（AEC 慣例）+ 改吃共用 `audio_common`
+
+> 承 v1.11.1。`feature/static-memory` 分支。純改名/重接線，演算法邏輯不變——KISS backend
+> 逐位元對照重構前輸出（4 preset + stationary）**byte-for-byte 相同**；static==malloc 在
+> KISS 與 NE10 兩個 backend 上分別驗證 byte-for-byte 相同（backend 之間本來就不逐位元相同，
+> 屬預期，不互相比較）。
+
+### 變更
+
+- **靜態記憶體 API 改名，對齊 `SE/AEC` 的 `aec_get_mem_size`/`aec_init` 慣例**：
+  - `mmse_lsa_query_memsize(cfg)` → `mmse_lsa_get_mem_size(cfg)`；
+    `mmse_lsa_create(cfg, mem, size)` → `mmse_lsa_init(mem, size, cfg)`
+    （**參數順序改變**：`mem, size` 放前面，設定值放後面，跟 `aec_init(void*, size_t, const AecConfig*)`
+    一致）。
+  - `mcra_query_memsize(n_freqs, cfg)` → `mcra_get_mem_size(n_freqs, cfg)`；
+    `mcra_create(n_freqs, cfg, mem, size)` → `mcra_init(mem, size, n_freqs, cfg)`。
+  - `spp_query_memsize(n_freqs)` → `spp_get_mem_size(n_freqs)`；
+    `spp_create(n_freqs, cfg, mem, size)` → `spp_init(mem, size, n_freqs, cfg)`。
+  - `fft_query_memsize`/`fft_create(size, mem, size)` → `fft_get_mem_size`/`fft_init(mem, size, size)`
+    （現由 `audio_common` 提供，見下）。
+- **拿掉 `#ifdef USE_EXT_MEM` 編譯期二選一**：malloc 路徑（`_create`）與靜態記憶體路徑
+  （`_get_mem_size`/`_init`）現在**永遠都編譯進同一份 object**，用哪條純粹是 runtime 選擇。
+  每個 handle（`MmseLsaDenoiser`/`McraNoiseEstimator`/`SppEstimator`）內部加一個 runtime
+  `is_static` bool：`_create()` 設 0（heap，擁有自己配的每一塊 buffer）、`_init()` 設 1（靜態，
+  buffer 全部活在呼叫端的 pool 裡）。`_destroy()` 開頭 `if (!self) return;`，接著
+  `if (self->is_static) return;`（靜態 instance 不釋放任何東西——denoiser 本身沒有內部持有
+  FFT handle 之類「該 library 自己該釋放」的資源，已用 grep 覆核），否則走原本的 heap free 序列。
+  `_get_mem_size()`/`_init()` 的 bump-allocate 佈局、對齊、每個 `create(...)` 開頭的
+  `memset(mem, 0, get_mem_size(...))` 全部維持不變（純改名，非重新設計）。
+- **對齊 helper 改用 `audio_common` 的 `ALIGN16(x)`**：刪除 `include/nr_ext_mem.h`
+  （`nr_aligned_size()`），所有呼叫點改用 `fft_wrapper.h`（現由 audio_common 提供）的
+  `ALIGN16` 巨集——同樣 16-byte 語意，byte-for-byte 相容。
+- **改吃共用的 `../audio_common` 層**：刪除本 repo 自帶的 `src/fft_wrapper.c`、
+  `src/fft_wrapper_ne10.c`、`include/fft_wrapper.h`、`include/fast_math.h`、`lib/kiss_fft/`。
+  `Makefile` 新增 `AC_DIR`（自動找 `../../audio_common` 或
+  `../../../../audio_common`，涵蓋被當 git submodule 多一層目錄消費的情況）、
+  `BACKEND ?= kiss`（`make BACKEND=ne10` 才是這條分支真正要交付的嵌入式 backend；KISS
+  留做預設是因為它是 bit-reproducible 的參考建置 + Python↔C parity backend，讓既有的
+  parity/bit-exact gate 不需要額外傳參數就維持決定性）、一個 order-only 的 `ac_lib` 目標
+  （每次連結前先跑 `$(MAKE) -C $(AC_DIR) BACKEND=$(BACKEND) lib`，由 audio_common 自己的
+  Makefile 決定要不要重建）。`make mem` 拿掉 `-DUSE_EXT_MEM`（已不存在），改成跟 `denoise_wav`
+  共用同一份 object 檔（single-compile 仍保留，只是不再需要靠它避免旗標混用）。
+- **`example/main_mem.c`**：呼叫點改用新 API；修掉一個潛在的 OLA 緩衝溢位——`g_out_ola` 原本
+  宣告 `[MAX_SAMPLES]`，但 OLA 寫入可以到 `out_len - 1`（`out_len` 是「最後一幀的 hop 邊界」，可比
+  `n_samples` 多到 `HOP - 1` 個樣本），舊碼只是因為 `MAX_SAMPLES` 剛好整除 `HOP` 才沒露餡；改成
+  `[MAX_SAMPLES + FRAME_SIZE]` + runtime `out_len <= 陣列容量` 檢查。Pool 大小從「隨便給的
+  512 KB / 64 KB」改成「量出來的需求 + 適度餘裕」並在註解寫明實測數字：denoiser+MCRA+SPP 實測
+  72,736 bytes（fft=512，4 個 preset + stationary 都一樣）→ pool 給 96 KB；FFT 實測 16,976 bytes
+  (KISS) / 4,160 bytes (NE10) → pool 給 24 KB。Runtime `need > sizeof(pool)` 的 guard 全部保留
+  （它們才是真正的安全網）。
+- **`c_impl/README.md`**：同步改名；修正一個舊的錯誤說法——舊文件宣稱 `mmse_lsa_process()`
+  每次呼叫吃/吐 hop_size 個時域樣本、內部有 50% overlap OLA 緩衝，這是錯的：lib 核心是**頻域
+  API**（`Complex[n_freqs]` in/out，相位不變），沒有內部時域緩衝，窗/rFFT/iFFT/OLA 全部由
+  caller 負責。另一個修正：`nm` 檢查 `-DUSE_EXT_MEM` object「完全無 malloc 符號」的舊說法已經
+  不成立（見上「拿掉 USE_EXT_MEM」——malloc 路徑永遠編譯進去，符號一定在），改寫成「靜態路徑在
+  runtime 上不呼叫任何配置器」。
+- **`Makefile`：`CFLAGS` 的 `-std=c99` 改成 `-std=gnu99`**（跟 audio_common 自己的 Makefile
+  一致）。原因：audio_common 的 NE10 標頭用了 GNU 的 `asm("label")` extension，在嚴格 `-std=c99`
+  下編譯期直接報錯（"expected function body after function declarator"）；`gnu99` = C99 +
+  GNU extension，語意上是 c99 的超集，對本 repo 自己的程式碼沒有語意差異——KISS backend 已重新
+  驗證：全部 preset + stationary 仍然 byte-for-byte 相同（含跟重構前 `-std=c99` 參考輸出比對），
+  純粹是前端語言模式旗標，不影響任何輸出數值。
+
+### 驗證
+
+- KISS backend：重構前後輸出 **byte-for-byte 相同**（`bin/denoise_wav` 4 個 preset + stationary，
+  用重構前先建好的參考輸出比對）。
+- `bin/denoise_mem` == `bin/denoise_wav`（同一 backend 內）**byte-for-byte 相同**：KISS 與 NE10
+  分別對 4 個 preset + stationary 驗證（NE10 首次在本 repo 內原生 arm64 編譯 + 執行 + 驗證；
+  NE10 輸出跟 KISS 不同屬預期，未互相比較）。
+- `make parity BACKEND=kiss EXTRA_CFLAGS="-DUSE_STANDARD_MATH"` 編譯成功。
+- 對 `c_impl/{src,include,example,Makefile}` 的 grep 掃描：不含任何平台廠商名稱或其記憶體
+  型別字串（本檔案較早的歷史條目除外，不追溯修改），也不含舊的 `USE_EXT_MEM`/
+  `nr_ext_mem`/`query_memsize` 字串（同樣排除本 CHANGELOG 的歷史條目）——皆為空。
+
 ## [v1.11.1] - 2026-07-10 · 補：exact-percentile 初始化路徑消除 malloc
 
 > 承 v1.11.0。`feature/static-memory` 分支。預設（malloc）build 逐位元不受影響（已驗）。

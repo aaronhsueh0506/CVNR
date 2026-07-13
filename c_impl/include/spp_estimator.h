@@ -18,21 +18,6 @@ extern "C" {
 // Opaque structure
 typedef struct SppEstimator SppEstimator;
 
-#ifdef USE_EXT_MEM
-/**
- * Query the memory size needed for an SPP estimator (for external allocation).
- */
-size_t spp_query_memsize(int n_freqs);
-
-/**
- * Create SPP estimator in caller-provided memory (no internal malloc).
- *
- * @param mem      Pre-allocated buffer (NR_MEM_ALIGN-aligned)
- * @param mem_size Size of buffer (>= spp_query_memsize(n_freqs))
- */
-SppEstimator* spp_create(int n_freqs, const MmseLsaConfig* config,
-                         void* mem, size_t mem_size);
-#else
 /**
  * Create SPP estimator (malloc version)
  *
@@ -41,10 +26,24 @@ SppEstimator* spp_create(int n_freqs, const MmseLsaConfig* config,
  * @return Estimator instance, or NULL on error
  */
 SppEstimator* spp_create(int n_freqs, const MmseLsaConfig* config);
-#endif
 
 /**
- * Destroy SPP estimator. Under USE_EXT_MEM this is a no-op (caller owns memory).
+ * Static-memory companions to spp_create (no internal malloc).
+ *
+ *     size_t bytes = spp_get_mem_size(n_freqs);
+ *     void*  buf   = ... a caller-provided memory block (>= bytes) ...
+ *     SppEstimator* e = spp_init(buf, bytes, n_freqs, config);
+ *
+ * @param mem      Caller-provided buffer, 16-byte aligned
+ * @param mem_size Size of buffer (>= spp_get_mem_size(n_freqs))
+ */
+size_t spp_get_mem_size(int n_freqs);
+SppEstimator* spp_init(void* mem, size_t mem_size,
+                       int n_freqs, const MmseLsaConfig* config);
+
+/**
+ * Destroy SPP estimator. No-op for an instance created via spp_init()
+ * (static memory) — the caller owns and releases the block.
  */
 void spp_destroy(SppEstimator* self);
 

@@ -1,21 +1,25 @@
 /**
- * main_mem.c - MMSE-LSA Denoiser runner, STATIC-MEMORY build (USE_EXT_MEM)
+ * main_mem.c - MMSE-LSA Denoiser runner, STATIC-MEMORY build
  *
  * Same freq-domain NR core and framing as main.c, but demonstrates the
  * embedded "no malloc" contract: the NR engine, its MCRA/SPP sub-modules, the
  * FFT, and every per-frame scratch buffer live in STATIC memory that is sized
  * ONCE up front. After start-up there is not a single malloc/free on the audio
- * path — exactly what the Novatek platform needs (the static pools below would
- * instead be hd_common_mem blocks on the device).
+ * path — exactly what an embedded target needs (the static pools below would
+ * instead be a caller-provided platform memory block on the device, e.g. a
+ * DMA-capable region handed down from the platform's memory manager).
  *
  * The pattern is:
- *     size_t need = mmse_lsa_query_memsize(&config);   // how much do I need?
+ *     size_t need = mmse_lsa_get_mem_size(&config);   // how much do I need?
  *     ... ensure a pre-allocated block is >= need ...
- *     MmseLsaDenoiser* d = mmse_lsa_create(&config, pool, sizeof pool); // no malloc
- *     ... process ...                                                    // no malloc
- *     mmse_lsa_destroy(d);   // no-op under USE_EXT_MEM (caller owns pool)
+ *     MmseLsaDenoiser* d = mmse_lsa_init(pool, sizeof pool, &config); // no malloc
+ *     ... process ...                                                  // no malloc
+ *     mmse_lsa_destroy(d);   // no-op for a static-memory instance (caller owns pool)
  *
- * Build:  make mem            (adds -DUSE_EXT_MEM, links this file)
+ * Build:  make mem            (links this file against the same objects as
+ *                              denoise_wav — the malloc and static-memory paths
+ *                              are both always compiled now, see
+ *                              mmse_lsa_get_mem_size()/mmse_lsa_init())
  * Framing is identical to main.c / the Python V3-2 reference, so the output is
  * byte-for-byte identical to `denoise_wav` — that IS the correctness check:
  * static-memory allocation changes nothing numerically.
@@ -45,11 +49,19 @@
 #define N_FREQS    (FFT_SIZE / 2 + 1)
 
 /* ---- Static memory pools — sized ONCE, never malloc'd -------------------- *
- * On the Novatek target these are hd_common_mem blocks; here they are plain
- * static arrays. Sized to a safe upper bound for the fixed framing above and
- * checked at run-time against the exact query_memsize() figure. */
-#define DENOISER_POOL_BYTES (512 * 1024)   /* NR engine + MCRA + SPP           */
-#define FFT_POOL_BYTES      ( 64 * 1024)   /* KISS configs + work buffers      */
+ * On an embedded target these would be caller-provided platform memory blocks;
+ * here they are plain static arrays. Sized to a measured figure + modest
+ * headroom for the fixed framing above and checked at run-time against the
+ * exact get_mem_size() figure:
+ *   - denoiser+MCRA+SPP measured 72,736 bytes (fft_size=512, all 4 nr-mode
+ *     presets + stationary — identical struct layout, only scalars differ)
+ *     -> 96 KB pool.
+ *   - FFT measured 16,976 bytes (KISS backend) / ~4.2 KB (NE10 backend)
+ *     -> 24 KB pool (covers either backend with headroom).
+ * The runtime `need > sizeof(pool)` guards below are the real safety net if
+ * a config change ever grows past these figures. */
+#define DENOISER_POOL_BYTES ( 96 * 1024)   /* NR engine + MCRA + SPP           */
+#define FFT_POOL_BYTES      ( 24 * 1024)   /* FFT backend configs + work bufs  */
 
 static uint8_t g_denoiser_pool[DENOISER_POOL_BYTES] __attribute__((aligned(16)));
 static uint8_t g_fft_pool[FFT_POOL_BYTES]           __attribute__((aligned(16)));
@@ -66,10 +78,13 @@ static Complex g_spec_out[N_FREQS];
 #define MAX_SECONDS 60
 #define MAX_SAMPLES (48000 * MAX_SECONDS)
 static float   g_signal[MAX_SAMPLES];
-static float   g_out_ola[MAX_SAMPLES];
+/* OLA output can overshoot n_samples by up to HOP-1 samples (out_len is rounded
+ * up to a whole number of hops past the last frame) — pad past MAX_SAMPLES so
+ * the write loop below never overruns even when n_samples == MAX_SAMPLES. */
+static float   g_out_ola[MAX_SAMPLES + FRAME_SIZE];
 
 void print_usage(const char* prog) {
-    printf("MMSE-LSA Speech Denoiser (V3-2 C, STATIC-MEMORY / USE_EXT_MEM build)\n\n");
+    printf("MMSE-LSA Speech Denoiser (V3-2 C, STATIC-MEMORY build)\n\n");
     printf("Usage: %s <input.wav> <output.wav> [options]\n\n", prog);
     printf("Options:\n");
     printf("  --bypass       Bypass mode (copy input to output)\n");
@@ -175,8 +190,8 @@ int main(int argc, char* argv[]) {
     config.fft_size   = FFT_SIZE;
 
     /* 4. Size the static pools against the exact requirement (the no-malloc step). */
-    size_t need_denoiser = mmse_lsa_query_memsize(&config);
-    size_t need_fft      = fft_query_memsize(FFT_SIZE);
+    size_t need_denoiser = mmse_lsa_get_mem_size(&config);
+    size_t need_fft      = fft_get_mem_size(FFT_SIZE);
     printf("\nStatic memory footprint:\n");
     printf("  Denoiser+MCRA+SPP: %zu bytes  (pool %d)\n", need_denoiser, DENOISER_POOL_BYTES);
     printf("  FFT             : %zu bytes  (pool %d)\n", need_fft, FFT_POOL_BYTES);
@@ -194,8 +209,8 @@ int main(int argc, char* argv[]) {
     }
 
     /* 5. Create the engine IN the static pools — zero malloc. */
-    MmseLsaDenoiser* denoiser = mmse_lsa_create(&config, g_denoiser_pool, sizeof(g_denoiser_pool));
-    FftHandle*       fft      = fft_create(FFT_SIZE, g_fft_pool, sizeof(g_fft_pool));
+    MmseLsaDenoiser* denoiser = mmse_lsa_init(g_denoiser_pool, sizeof(g_denoiser_pool), &config);
+    FftHandle*       fft      = fft_init(g_fft_pool, sizeof(g_fft_pool), FFT_SIZE);
     if (!denoiser || !fft) {
         fprintf(stderr, "Error: Failed to create denoiser/FFT in static memory\n");
         wav_close_write(wav_out);
@@ -211,6 +226,16 @@ int main(int argc, char* argv[]) {
                  ? 1
                  : (n_samples - FRAME_SIZE + HOP - 1) / HOP + 1;
     int out_len = (n_frames - 1) * HOP + FRAME_SIZE;
+
+    /* out_len can exceed n_samples by up to HOP-1 samples (last-frame rounding),
+     * so g_out_ola is sized MAX_SAMPLES + FRAME_SIZE, not just MAX_SAMPLES — but
+     * check at runtime too rather than trust the static headroom silently. */
+    if (out_len > (int)(sizeof(g_out_ola) / sizeof(float))) {
+        fprintf(stderr, "Error: out_len %d > g_out_ola capacity %zu. Raise MAX_SECONDS.\n",
+                out_len, sizeof(g_out_ola) / sizeof(float));
+        wav_close_write(wav_out);
+        return 1;
+    }
 
     memset(g_out_ola, 0, (size_t)out_len * sizeof(float));
     build_sqrt_hann(g_win, FRAME_SIZE);
@@ -247,7 +272,7 @@ int main(int argc, char* argv[]) {
     printf("Done! %d in / %d out / %d frames\n", n_samples, write_len, n_frames);
     printf("Output: %s\n", output_path);
 
-    /* 8. Cleanup — no-op under USE_EXT_MEM (caller owns the static pools). */
+    /* 8. Cleanup — no-op for static-memory instances (caller owns the pools). */
     mmse_lsa_destroy(denoiser);
     fft_destroy(fft);
     wav_close_write(wav_out);

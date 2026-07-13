@@ -14,7 +14,7 @@
 
 #include "mcra_noise_estimator.h"
 #include "fast_math.h"
-#include "nr_ext_mem.h"
+#include "fft_wrapper.h"   /* ALIGN16 */
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -66,9 +66,13 @@ struct McraNoiseEstimator {
     float* init_power_buffer;
     int num_init_frames;    // Max number of init frames (from config)
     // Per-bin gather + quickselect scratch [num_init_frames] — pre-allocated so
-    // the exact-percentile init path never calls malloc (matters for USE_EXT_MEM).
+    // the exact-percentile init path never calls malloc (matters on the static
+    // memory path).
     float* percentile_scratch;
 #endif
+
+    bool is_static;      // 1 == placed via mcra_init() (caller-owned memory);
+                         // 0 == heap instance from mcra_create() (owns its mallocs)
 };
 
 /* Geometric-mean / arithmetic-mean spectral flatness of power[start:end] (∈ (0,1]).
@@ -139,60 +143,54 @@ static void mcra_init_scalars(McraNoiseEstimator* self, int n_freqs,
 #endif
 }
 
-#ifdef USE_EXT_MEM
-/* ---- External-memory (no malloc) variant --------------------------------- */
+/* ---- Static-memory (no malloc) variant ------------------------------------ */
 
-size_t mcra_query_memsize(int n_freqs, const MmseLsaConfig* config) {
+size_t mcra_get_mem_size(int n_freqs, const MmseLsaConfig* config) {
     if (n_freqs <= 0 || !config) return 0;
 
-    size_t total = nr_aligned_size(sizeof(McraNoiseEstimator));
-    total += nr_aligned_size((size_t)n_freqs * sizeof(float));                 /* noise_psd  */
-    total += nr_aligned_size((size_t)n_freqs * sizeof(float));                 /* S          */
-    total += nr_aligned_size((size_t)n_freqs * sizeof(float));                 /* S_min      */
-    total += nr_aligned_size((size_t)n_freqs * sizeof(float));                 /* spp        */
-    total += nr_aligned_size((size_t)config->L * n_freqs * sizeof(float));     /* min_buffer */
+    size_t total = ALIGN16(sizeof(McraNoiseEstimator));
+    total += ALIGN16((size_t)n_freqs * sizeof(float));                 /* noise_psd  */
+    total += ALIGN16((size_t)n_freqs * sizeof(float));                 /* S          */
+    total += ALIGN16((size_t)n_freqs * sizeof(float));                 /* S_min      */
+    total += ALIGN16((size_t)n_freqs * sizeof(float));                 /* spp        */
+    total += ALIGN16((size_t)config->L * n_freqs * sizeof(float));     /* min_buffer */
 #ifndef USE_FAST_PERCENTILE
-    total += nr_aligned_size((size_t)config->num_init_frames * n_freqs * sizeof(float)); /* init_power_buffer  */
-    total += nr_aligned_size((size_t)config->num_init_frames * sizeof(float));           /* percentile_scratch */
+    total += ALIGN16((size_t)config->num_init_frames * n_freqs * sizeof(float)); /* init_power_buffer  */
+    total += ALIGN16((size_t)config->num_init_frames * sizeof(float));           /* percentile_scratch */
 #endif
     return total;
 }
 
-McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config,
-                                void* mem, size_t mem_size) {
+McraNoiseEstimator* mcra_init(void* mem, size_t mem_size,
+                              int n_freqs, const MmseLsaConfig* config) {
     if (n_freqs <= 0 || !config || !mem) return NULL;
-    if (mem_size < mcra_query_memsize(n_freqs, config)) return NULL;
+    if (mem_size < mcra_get_mem_size(n_freqs, config)) return NULL;
 
-    memset(mem, 0, mcra_query_memsize(n_freqs, config));   /* calloc-equivalent */
+    memset(mem, 0, mcra_get_mem_size(n_freqs, config));   /* calloc-equivalent */
     uint8_t* cursor = (uint8_t*)mem;
 
     McraNoiseEstimator* self = (McraNoiseEstimator*)cursor;
-    cursor += nr_aligned_size(sizeof(McraNoiseEstimator));
+    cursor += ALIGN16(sizeof(McraNoiseEstimator));
 
     mcra_init_scalars(self, n_freqs, config);
+    self->is_static = true;
 
-    self->noise_psd  = (float*)cursor; cursor += nr_aligned_size((size_t)n_freqs * sizeof(float));
-    self->S          = (float*)cursor; cursor += nr_aligned_size((size_t)n_freqs * sizeof(float));
-    self->S_min      = (float*)cursor; cursor += nr_aligned_size((size_t)n_freqs * sizeof(float));
-    self->spp        = (float*)cursor; cursor += nr_aligned_size((size_t)n_freqs * sizeof(float));
-    self->min_buffer = (float*)cursor; cursor += nr_aligned_size((size_t)self->L * n_freqs * sizeof(float));
+    self->noise_psd  = (float*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(float));
+    self->S          = (float*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(float));
+    self->S_min      = (float*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(float));
+    self->spp        = (float*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(float));
+    self->min_buffer = (float*)cursor; cursor += ALIGN16((size_t)self->L * n_freqs * sizeof(float));
 #ifndef USE_FAST_PERCENTILE
     self->init_power_buffer = (float*)cursor;
-    cursor += nr_aligned_size((size_t)self->num_init_frames * n_freqs * sizeof(float));
+    cursor += ALIGN16((size_t)self->num_init_frames * n_freqs * sizeof(float));
     self->percentile_scratch = (float*)cursor;
-    cursor += nr_aligned_size((size_t)self->num_init_frames * sizeof(float));
+    cursor += ALIGN16((size_t)self->num_init_frames * sizeof(float));
 #endif
 
     return self;
 }
 
-void mcra_destroy(McraNoiseEstimator* self) {
-    /* External memory: caller owns and releases the block; free nothing. */
-    (void)self;
-}
-
-#else /* !USE_EXT_MEM */
-/* ---- Heap (malloc) variant ----------------------------------------------- */
+/* ---- Heap (malloc) variant ------------------------------------------------ */
 
 McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config) {
     if (n_freqs <= 0 || !config) return NULL;
@@ -201,6 +199,7 @@ McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config) {
     if (!self) return NULL;
 
     mcra_init_scalars(self, n_freqs, config);
+    self->is_static = false;
 
     // Allocate state arrays
     self->noise_psd = (float*)calloc(n_freqs, sizeof(float));
@@ -232,6 +231,7 @@ McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config) {
 
 void mcra_destroy(McraNoiseEstimator* self) {
     if (!self) return;
+    if (self->is_static) return;  /* caller owns the block; nothing to free */
 
     if (self->noise_psd) free(self->noise_psd);
     if (self->S) free(self->S);
@@ -245,8 +245,6 @@ void mcra_destroy(McraNoiseEstimator* self) {
 
     free(self);
 }
-
-#endif /* USE_EXT_MEM */
 
 #ifndef USE_FAST_PERCENTILE
 /**

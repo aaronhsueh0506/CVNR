@@ -10,7 +10,7 @@
 
 #include "spp_estimator.h"
 #include "fast_math.h"
-#include "nr_ext_mem.h"
+#include "fft_wrapper.h"   /* ALIGN16 */
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -32,6 +32,9 @@ struct SppEstimator {
 
     bool is_initialized;
     int frame_count;
+
+    bool is_static;      // 1 == placed via spp_init() (caller-owned memory);
+                         // 0 == heap instance from spp_create() (owns its mallocs)
 };
 
 /* Shared scalar/config initialisation — identical for both malloc and ext-mem
@@ -54,45 +57,39 @@ static void spp_init_scalars(SppEstimator* self, int n_freqs,
     self->frame_count = 0;
 }
 
-#ifdef USE_EXT_MEM
-/* ---- External-memory (no malloc) variant --------------------------------- */
+/* ---- Static-memory (no malloc) variant ------------------------------------ */
 
-size_t spp_query_memsize(int n_freqs) {
+size_t spp_get_mem_size(int n_freqs) {
     if (n_freqs <= 0) return 0;
-    size_t total = nr_aligned_size(sizeof(SppEstimator));
-    total += nr_aligned_size((size_t)n_freqs * sizeof(float));  /* xi_prev        */
-    total += nr_aligned_size((size_t)n_freqs * sizeof(float));  /* gamma_prev     */
-    total += nr_aligned_size((size_t)n_freqs * sizeof(float));  /* noise_psd_prev */
+    size_t total = ALIGN16(sizeof(SppEstimator));
+    total += ALIGN16((size_t)n_freqs * sizeof(float));  /* xi_prev        */
+    total += ALIGN16((size_t)n_freqs * sizeof(float));  /* gamma_prev     */
+    total += ALIGN16((size_t)n_freqs * sizeof(float));  /* noise_psd_prev */
     return total;
 }
 
-SppEstimator* spp_create(int n_freqs, const MmseLsaConfig* config,
-                         void* mem, size_t mem_size) {
+SppEstimator* spp_init(void* mem, size_t mem_size,
+                       int n_freqs, const MmseLsaConfig* config) {
     if (n_freqs <= 0 || !config || !mem) return NULL;
-    if (mem_size < spp_query_memsize(n_freqs)) return NULL;
+    if (mem_size < spp_get_mem_size(n_freqs)) return NULL;
 
-    memset(mem, 0, spp_query_memsize(n_freqs));   /* calloc-equivalent */
+    memset(mem, 0, spp_get_mem_size(n_freqs));   /* calloc-equivalent */
     uint8_t* cursor = (uint8_t*)mem;
 
     SppEstimator* self = (SppEstimator*)cursor;
-    cursor += nr_aligned_size(sizeof(SppEstimator));
+    cursor += ALIGN16(sizeof(SppEstimator));
 
     spp_init_scalars(self, n_freqs, config);
+    self->is_static = true;
 
-    self->xi_prev        = (float*)cursor; cursor += nr_aligned_size((size_t)n_freqs * sizeof(float));
-    self->gamma_prev     = (float*)cursor; cursor += nr_aligned_size((size_t)n_freqs * sizeof(float));
-    self->noise_psd_prev = (float*)cursor; cursor += nr_aligned_size((size_t)n_freqs * sizeof(float));
+    self->xi_prev        = (float*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(float));
+    self->gamma_prev     = (float*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(float));
+    self->noise_psd_prev = (float*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(float));
 
     return self;
 }
 
-void spp_destroy(SppEstimator* self) {
-    /* External memory: caller owns and releases the block; free nothing. */
-    (void)self;
-}
-
-#else /* !USE_EXT_MEM */
-/* ---- Heap (malloc) variant ----------------------------------------------- */
+/* ---- Heap (malloc) variant ------------------------------------------------ */
 
 SppEstimator* spp_create(int n_freqs, const MmseLsaConfig* config) {
     if (n_freqs <= 0 || !config) return NULL;
@@ -101,6 +98,7 @@ SppEstimator* spp_create(int n_freqs, const MmseLsaConfig* config) {
     if (!self) return NULL;
 
     spp_init_scalars(self, n_freqs, config);
+    self->is_static = false;
 
     // Allocate state arrays
     self->xi_prev = (float*)calloc(n_freqs, sizeof(float));
@@ -117,6 +115,7 @@ SppEstimator* spp_create(int n_freqs, const MmseLsaConfig* config) {
 
 void spp_destroy(SppEstimator* self) {
     if (!self) return;
+    if (self->is_static) return;  /* caller owns the block; nothing to free */
 
     if (self->xi_prev) free(self->xi_prev);
     if (self->gamma_prev) free(self->gamma_prev);
@@ -124,8 +123,6 @@ void spp_destroy(SppEstimator* self) {
 
     free(self);
 }
-
-#endif /* USE_EXT_MEM */
 
 void spp_estimate(
     SppEstimator* self,

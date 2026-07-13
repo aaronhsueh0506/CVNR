@@ -18,21 +18,6 @@ extern "C" {
 // Opaque structure
 typedef struct McraNoiseEstimator McraNoiseEstimator;
 
-#ifdef USE_EXT_MEM
-/**
- * Query the memory size needed for an MCRA estimator (for external allocation).
- */
-size_t mcra_query_memsize(int n_freqs, const MmseLsaConfig* config);
-
-/**
- * Create MCRA noise estimator in caller-provided memory (no internal malloc).
- *
- * @param mem      Pre-allocated buffer (NR_MEM_ALIGN-aligned)
- * @param mem_size Size of buffer (>= mcra_query_memsize(...))
- */
-McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config,
-                                void* mem, size_t mem_size);
-#else
 /**
  * Create MCRA noise estimator (malloc version)
  *
@@ -41,10 +26,24 @@ McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config,
  * @return Estimator instance, or NULL on error
  */
 McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config);
-#endif
 
 /**
- * Destroy MCRA estimator. Under USE_EXT_MEM this is a no-op (caller owns memory).
+ * Static-memory companions to mcra_create (no internal malloc).
+ *
+ *     size_t bytes = mcra_get_mem_size(n_freqs, config);
+ *     void*  buf   = ... a caller-provided memory block (>= bytes) ...
+ *     McraNoiseEstimator* e = mcra_init(buf, bytes, n_freqs, config);
+ *
+ * @param mem      Caller-provided buffer, 16-byte aligned
+ * @param mem_size Size of buffer (>= mcra_get_mem_size(n_freqs, config))
+ */
+size_t mcra_get_mem_size(int n_freqs, const MmseLsaConfig* config);
+McraNoiseEstimator* mcra_init(void* mem, size_t mem_size,
+                              int n_freqs, const MmseLsaConfig* config);
+
+/**
+ * Destroy MCRA estimator. No-op for an instance created via mcra_init()
+ * (static memory) — the caller owns and releases the block.
  */
 void mcra_destroy(McraNoiseEstimator* self);
 

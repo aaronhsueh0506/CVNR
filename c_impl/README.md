@@ -1,6 +1,6 @@
 # OMLSA Speech Denoiser — C Implementation (V3-2 主線)
 
-> **Release**: v4.2.0 · Part A Review 修復已同步
+> **Release**: v1.12.0（c_impl）· 靜態記憶體 API 改名為 AEC 慣例（`_get_mem_size`/`_init`）+ runtime `is_static`；FFT/fast_math 改吃共用 `audio_common`
 > **對應 Python**: `denoisers/v3_2_mmse_lsa.py`
 
 基於 Ephraim-Malah 1985 的 MMSE-LSA (Minimum Mean Square Error Log-Spectral Amplitude) 語音降噪演算法 C 實現，搭配 Cohen & Berdugo (2002) MCRA 噪聲估計與 Cohen & Berdugo (2001) Bayesian SPP 軟判決。整體通稱 **OMLSA**。
@@ -109,37 +109,47 @@ make debug
 make EXTRA_CFLAGS="-DUSE_FAST_PERCENTILE"
 ```
 
-### 靜態記憶體版本（嵌入式，零 malloc / `USE_EXT_MEM`）
+### 靜態記憶體版本（嵌入式，零 malloc）
 
 ```bash
-make mem            # → bin/denoise_mem（範例 example/main_mem.c）
+make mem              # → bin/denoise_mem（範例 example/main_mem.c），預設 BACKEND=kiss
+make mem BACKEND=ne10 # 嵌入式目標的實際 deliverable（ARM NEON）
 ```
 
-`-DUSE_EXT_MEM` 下，denoiser、MCRA、SPP、FFT 的**所有內部狀態都從呼叫端提供的一塊記憶體切出**，
-音訊路徑上**完全不呼叫 malloc/free**。用法：先用 `query_memsize()` 問要多少，配一塊
-（static 陣列，或 Novatek `hd_common_mem` block），交給 `create(..., mem, size)`：
+denoiser、MCRA、SPP、FFT 現在**同時**提供 malloc 路徑（`_create`）與靜態記憶體路徑
+（`_get_mem_size` + `_init`，跟 AEC 那邊的 `aec_get_mem_size`/`aec_init` 命名慣例一致）——
+不再有編譯期 `#ifdef` 二選一，兩條路徑永遠都編進同一份 object，用哪條純粹是「呼叫哪個函式」的
+runtime 選擇（每個 handle 內部有一個 `is_static` flag：`_create()` 設 0，`_init()` 設 1，
+`_destroy()` 靠它決定要不要真的 free）。用法：先用 `_get_mem_size()` 問要多少，配一塊
+（static 陣列，或呼叫端自己的 platform 記憶體 block），交給 `_init(mem, size, ...)`：
 
 ```c
-static uint8_t pool[/* >= mmse_lsa_query_memsize(&cfg) */] __attribute__((aligned(16)));
-size_t need = mmse_lsa_query_memsize(&cfg);          // 先問大小
-MmseLsaDenoiser* d = mmse_lsa_create(&cfg, pool, sizeof pool);  // 零 malloc
+static uint8_t pool[/* >= mmse_lsa_get_mem_size(&cfg) */] __attribute__((aligned(16)));
+size_t need = mmse_lsa_get_mem_size(&cfg);              // 先問大小
+MmseLsaDenoiser* d = mmse_lsa_init(pool, sizeof pool, &cfg);  // 零 malloc
 /* ... 每幀 mmse_lsa_process()，音訊路徑無任何配置 ... */
-mmse_lsa_destroy(d);                                 // no-op（記憶體由呼叫端持有）
+mmse_lsa_destroy(d);                                     // no-op（記憶體由呼叫端持有）
 ```
 
 演算法與 malloc 版**逐位元相同**（只差配置方式）：`bin/denoise_mem` 輸出與 `bin/denoise_wav`
-byte-for-byte 一致，已對 4 個 preset + stationary 驗證。同一機制也覆蓋子模組
-`fft_query_memsize`/`mcra_query_memsize`/`spp_query_memsize` + 各自的 `create(..., mem, size)`。
+byte-for-byte 一致，已對 4 個 preset + stationary、KISS 與 NE10 兩個 backend 分別驗證
+（backend 之間本來就不逐位元相同，只比較同一 backend 內 mem vs malloc）。同一機制也覆蓋子模組
+`fft_get_mem_size`/`fft_init`、`mcra_get_mem_size`/`mcra_init`、`spp_get_mem_size`/`spp_init`。
 
-**零 malloc 保證（KISS）**：連預設的 exact-percentile 初始化路徑也不配置——MCRA 的
-percentile gather/quickselect 用預先配好的 `percentile_scratch`（in-place quickselect，免複製）。
-以 `nm` 檢查 `-DUSE_EXT_MEM` 編出的 denoiser/MCRA/SPP/FFT object，**完全無 malloc/calloc/realloc/free
-符號引用**；`example/main_mem.c` 本身也 0 malloc。（`USE_FAST_PERCENTILE` 開或關都零 malloc，差別只在是否
-需要那塊 init 緩衝。）
+**零 malloc 保證，說法更新**：因為 malloc 路徑永遠都編譯進同一份 object（不再靠 `#ifdef` 拿掉），
+用 `nm` 檢查 object 檔**一定會看到** `malloc`/`calloc`/`free` 符號——這些符號來自 `_create()`，
+只是靜態路徑（`_init()`）在 runtime 上完全不會走到那幾行。保證因此改寫成：**靜態路徑在執行期不
+呼叫任何配置器**（`_init()` 本身只做指標運算 + `memset`；`calloc`/`malloc` 只有透過 `_create()` 才
+會被觸發到，`_init()` 的呼叫路徑完全不會經過它們）。連預設的 exact-percentile 初始化也不例外——
+MCRA 的 percentile gather/quickselect 用預先配好的 `percentile_scratch`（in-place quickselect，
+免複製）。`example/main_mem.c` 本身呼叫 `_init()` 系列，執行期同樣 0 malloc。
 
-**FFT backend 差異**：KISS 是 **100% 零 malloc**;NE10（`make mem NE10_DIR=...`）是 **partial**——
-handle 與 work buffer 從 pool 切出,但 NE10 的 twiddle cfg 仍走它自己的一次性內部 malloc(標準 NE10
-無外部記憶體 API),**每幀音訊路徑仍零 malloc**。NE10 版須在 ARM target 上實測(此 repo 無法在 x86 編 NE10)。
+**FFT + fast_math 現在來自共用的 `../audio_common`**（`make BACKEND=kiss|ne10` 產出
+`libaudio_common.a`，`c_impl/Makefile` 直接連結，不再自帶一份 kiss_fft/NE10 原始碼副本）。
+backend 差異：KISS 是 **100% 零 malloc**；NE10 是 **partial**——handle 與 work buffer 從 pool
+切出，但 NE10 的 twiddle cfg 仍走它自己的一次性內部 malloc（標準 NE10 無外部記憶體 API），
+**每幀音訊路徑仍零 malloc**。此分支已在 arm64（Apple Silicon）上原生編譯 + 驗證 NE10 版
+mem==malloc byte-for-byte（NE10 輸出本身跟 KISS 不同屬預期，兩個 backend 不互相比較）。
 
 > **Note:** v1.3.0 起 `make` 預設啟用 6 個數學等價優化（100% 相關度），不需要手動指定。
 
@@ -175,7 +185,7 @@ handle 與 work buffer 從 pool 切出,但 NE10 的 twiddle cfg 仍走它自己�
 | 調試/驗證 | `make debug` |
 | 標準使用 | `make` |
 | 嵌入式/最小記憶體 | `make EXTRA_CFLAGS="-DUSE_FAST_PERCENTILE"` |
-| 嵌入式/零 malloc（呼叫端提供記憶體） | `make mem`（`-DUSE_EXT_MEM`） |
+| 嵌入式/零 malloc（呼叫端提供記憶體） | `make mem`（`_get_mem_size`/`_init`，見上「靜態記憶體版本」） |
 
 ## 嵌入式優化詳解（v1.3.0）
 
@@ -301,7 +311,7 @@ make parity && ./bin/parity_runner /tmp/parity_in.bin /tmp/g_fast.bin
 python3 ../tools/parity_nr.py compare --ref /tmp/parity_in.bin --c-gains /tmp/g_fast.bin
 
 # 2b. C 端 standard-math（與 make debug 同旗標）→ 近 bit-exact
-make clean && make parity CFLAGS="-Wall -Wextra -O2 -std=c99 -I./include -I./example -I./lib/kiss_fft -DUSE_STANDARD_MATH"
+make clean && make parity BACKEND=kiss EXTRA_CFLAGS="-DUSE_STANDARD_MATH"
 ./bin/parity_runner /tmp/parity_in.bin /tmp/g_debug.bin
 python3 ../tools/parity_nr.py compare --ref /tmp/parity_in.bin --c-gains /tmp/g_debug.bin
 ```
@@ -320,8 +330,11 @@ Taylor 近似（小引數 worst ~0.11），會經遞迴平滑放大；屬 fast-m
 
 - **輸入格式**：單聲道（多聲道自動取第一聲道）、8 / 16 / 48 kHz PCM16 或 32-bit float
 - **首 200 ms 需為純噪聲（或無語音）**：用於初始化 MCRA 噪聲底噪，前 `num_init_frames * hop_size` 樣本為 passthrough
-- **Frame / hop 編譯時固定**：不可在執行時切換 `frame_size` 或 `hop_size`
-- **Streaming 語義**：每次呼叫 `mmse_lsa_process()` 輸入 hop_size 樣本，輸出 hop_size 樣本；內部有 50% overlap OLA 緩衝
+- **Frame / hop 於建立後固定**：`frame_size`、`hop_size` 與 `fft_size` 由 `mmse_lsa_default_config(sample_rate)` 等函式在 runtime 依 `sample_rate` 計算，並非編譯時常數；但一旦 `mmse_lsa_create()` 建立 instance 後即固定，不可在串流中途切換。standalone example CLI runner（`example/main.c`、`example/main_mem.c`）另外把 512/256/512 硬編在程式碼中，僅為範例限制
+- **Streaming 語義**：`mmse_lsa_process()` 是**頻域 API**——每次呼叫吃 `Complex[n_freqs]` 複數頻譜、
+  吐 `Complex[n_freqs]`（套用 per-bin gain、相位不變），lib 核心本身**沒有**內部時域緩衝或 OLA；
+  窗函數、rFFT、iFFT、50% overlap-add 全部由 caller 負責（見 `example/main.c` 的完整 freq-domain
+  runner，或本文件「程式碼整合」一節）
 
 ### 不適用情境（C 端與 Python 完全一致）
 - 迴響 / 回聲 → 另配 AEC（`SE/AEC/`）或 dereverb 模組
@@ -400,25 +413,28 @@ Taylor 近似（小引數 worst ~0.11），會經遞迴平滑放大；屬 fast-m
 ```
 c_impl/
 ├── include/
-│   ├── mmse_lsa_denoiser.h    # 主要 API
+│   ├── mmse_lsa_denoiser.h    # 主要 API（malloc + 靜態記憶體 create/get_mem_size/init）
 │   ├── mmse_lsa_types.h       # 配置結構和預設值
 │   ├── mcra_noise_estimator.h # MCRA 噪聲估計
-│   ├── spp_estimator.h        # SPP 估計
-│   ├── fft_wrapper.h          # FFT 接口
-│   └── fast_math.h            # 快速數學函數 (LUT+Taylor)
+│   └── spp_estimator.h        # SPP 估計
 ├── src/
 │   ├── mmse_lsa_denoiser.c    # 主模組（含 MMSE-LSA 增益計算）
 │   ├── mcra_noise_estimator.c
-│   ├── spp_estimator.c
-│   └── fft_wrapper.c
-├── lib/
-│   └── kiss_fft/              # KISS FFT 庫
+│   └── spp_estimator.c
 ├── example/
-│   ├── main.c                 # 命令列工具
-│   └── wav_io.h               # WAV 讀寫
+│   ├── main.c                 # 命令列工具（malloc / heap 路徑）
+│   ├── main_mem.c              # 命令列工具（靜態記憶體路徑，見上一節）
+│   ├── parity_runner.c         # Python↔C parity harness 的 C 端
+│   └── wav_io.h                # WAV 讀寫
 ├── Makefile
 ├── README.md                  # 本文件
 └── CHANGELOG.md               # 改動記錄
+
+../audio_common/                # 共用層（本 repo 之外，siblings 目錄）：
+├── include/fft_wrapper.h        #   Complex 型別、FFT heap+靜態記憶體 API、ALIGN16
+├── include/fast_math.h          #   快速數學函數 (LUT+Taylor)
+└── lib/{kiss_fft,ne10}/         #   兩個 FFT backend 的原始碼；`make BACKEND=kiss|ne10 lib`
+                                  #   產出 bin/<backend>/libaudio_common.a，c_impl 連結它
 ```
 
 ## 記憶體使用
