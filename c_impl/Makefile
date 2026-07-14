@@ -111,11 +111,50 @@ CFLAGS += -DUSE_INCREMENTAL_MIN
 
 LDFLAGS = -lm $(LDFLAGS_EXTRA)
 
+# -Werror opt-in for this repo's OWN sources (default off; CI can flip it on
+# with `make WERROR=1`). Like AEC, NR compiles no vendored TUs itself (FFT +
+# fast_math are vendored inside audio_common), so every object built by this
+# Makefile is "our code" -- no separate warning isolation is needed here.
+WERROR ?= 0
+ifeq ($(WERROR),1)
+  CFLAGS += -Werror
+endif
+
 # Directories
 SRC_DIR = src
 EXAMPLE_DIR = example
 OBJ_DIR = obj
 BIN_DIR = bin
+
+# --- Build-configuration stamp (F12 build hygiene) --------------------------
+# obj/ here is a single flat directory (not split per BACKEND, unlike
+# audio_common's), and until now neither a BACKEND nor an EXTRA_CFLAGS change
+# invalidated the .o files already sitting in it -- the long-standing trap
+# documented at the ac_lib rule below ("Always `make clean` when changing
+# BACKEND"). CFG_SIG hashes the exact compiler invocation that produces every
+# object in this build.
+#
+# This check runs at PARSE time (via $(shell ...), not as a build-rule
+# recipe): an order-only-prerequisite version (a stamp FILE that a rule
+# creates, referenced via `obj/%.o: %.c | $(CFG_STAMP)`) is racy -- verified
+# empirically. When several objects share one order-only prerequisite whose
+# recipe wipes the directory they all live in, GNU Make can finalize "is
+# this object out of date?" for one of them using the prerequisite tree it
+# already resolved, before the shared prerequisite's wipe recipe actually
+# runs -- so that object silently keeps its (about to be deleted) stale .o
+# and is never recompiled. Doing the compare-and-wipe unconditionally while
+# the Makefile is being read sidesteps the race entirely: by the time
+# `make` starts asking "is any target out of date", obj/ has already been
+# wiped (if needed) or left alone (if not).
+CFG_SIG        := $(shell printf '%s' "$(CC) $(CFLAGS) $(EXTRA_CFLAGS) BACKEND=$(BACKEND) WERROR=$(WERROR)" | shasum -a 256 | cut -c1-12)
+CFG_STAMP_FILE := $(OBJ_DIR)/.cfg_stamp
+CFG_LAST_SIG   := $(shell test -f $(CFG_STAMP_FILE) && cat $(CFG_STAMP_FILE))
+ifneq ($(CFG_SIG),$(CFG_LAST_SIG))
+$(info NR c_impl: build config changed -- wiping $(OBJ_DIR) for a full rebuild)
+$(shell rm -rf $(OBJ_DIR))
+$(shell mkdir -p $(OBJ_DIR))
+$(shell echo $(CFG_SIG) > $(CFG_STAMP_FILE))
+endif
 
 # Source files (gain calculation merged into mmse_lsa_denoiser.c). FFT + fast_math
 # come from audio_common (linked via $(AC_LIB)); this repo only supplies the
@@ -146,9 +185,12 @@ dirs:
 # decides whether anything is actually stale. Being order-only means it does NOT
 # force OUR .o files to recompile, and it does NOT feed into whether $(TARGET)
 # itself is considered stale — this repo's obj/bin dirs are NOT split per
-# BACKEND (unlike audio_common's), so switching BACKEND on an already-built tree
-# without `make clean` will NOT relink automatically. Always `make clean` when
-# changing BACKEND.
+# BACKEND (unlike audio_common's). F12 fix: this used to mean switching
+# BACKEND (or EXTRA_CFLAGS) on an already-built tree needed `make clean` by
+# hand or it would silently relink stale .o's; the CFG_STAMP mechanism above
+# now busts obj/ automatically on any such change (both are folded into
+# CFG_SIG), so `make clean` is no longer required here -- still harmless to
+# do it anyway.
 .PHONY: ac_lib
 ac_lib:
 	$(MAKE) -C $(AC_DIR) BACKEND=$(BACKEND) lib
@@ -283,6 +325,7 @@ help:
 	@echo "  make BACKEND=ne10                             - NE10 R2C/C2R build (ARM NEON, embedded deliverable)"
 	@echo "  make EXTRA_CFLAGS=\"-DUSE_STANDARD_MATH\"      - Debug build (matches Python output)"
 	@echo "  make EXTRA_CFLAGS=\"-DUSE_FAST_PERCENTILE\"    - Optimized build (all approximations)"
+	@echo "  make WERROR=1                                  - Opt-in: -Werror for this repo's own sources"
 	@echo ""
 	@echo "Flags:"
 	@echo "  USE_STANDARD_MATH   - Use standard math functions (expf, logf, etc.)"
