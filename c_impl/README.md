@@ -131,6 +131,16 @@ MmseLsaDenoiser* d = mmse_lsa_init(pool, sizeof pool, &cfg);  // 零 malloc
 mmse_lsa_destroy(d);                                     // no-op（記憶體由呼叫端持有）
 ```
 
+`mmse_lsa_destroy()` 在這裡是**真正**的 no-op：`MmseLsaDenoiser` 本身不持有 FFT 或任何
+backend heap 資源（頻域 I/O 由呼叫端自己的 `FftHandle` 負責，見下方完整範例），所以
+static instance 的 destroy 沒有東西要釋放。但呼叫端另外持有的 `FftHandle`（`fft_init`）
+就不一定是 no-op——KISS backend 下確實也是零 malloc/no-op，NE10 backend 下
+`fft_init` 會觸發一次 backend-internal 的 twiddle 設定 malloc，該記憶體活在
+fft 自己的 pool 之外，必須靠 `fft_destroy()` 釋放；在 fft pool 被釋放/重用前，
+`fft_destroy()` 必須恰好呼叫一次（漏呼叫會洩漏，呼叫兩次會 double-free）——細節見下方
+backend 差異段落，以及 [`../docs/c_user_manual_zh_TW.md`](../docs/c_user_manual_zh_TW.md)
+第 5 節的 `create_static_nr`/`destroy_static_nr` 完整範例。
+
 演算法與 malloc 版**逐位元相同**（只差配置方式）：`bin/denoise_mem` 輸出與 `bin/denoise_wav`
 byte-for-byte 一致，已對 4 個 preset + stationary、KISS 與 NE10 兩個 backend 分別驗證
 （backend 之間本來就不逐位元相同，只比較同一 backend 內 mem vs malloc）。同一機制也覆蓋子模組
