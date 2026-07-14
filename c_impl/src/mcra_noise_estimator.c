@@ -146,27 +146,46 @@ static void mcra_init_scalars(McraNoiseEstimator* self, int n_freqs,
 /* ---- Static-memory (no malloc) variant ------------------------------------ */
 
 size_t mcra_get_mem_size(int n_freqs, const MmseLsaConfig* config) {
+    /* F05: explicit sign/bound guards — n_freqs/L/num_init_frames are plain
+     * `int`s from the caller; a negative value cast to size_t below would
+     * become a huge allocation request instead of an error, and an extreme
+     * positive value could overflow the size_t multiplication silently. The
+     * ck_* helpers additionally saturate any overflow that slips past these
+     * guards (e.g. n_freqs itself still huge-but-positive) to SIZE_MAX, which
+     * MEM_SIZE_INVALID() below turns into a `return 0` failure. */
     if (n_freqs <= 0 || !config) return 0;
+    if (config->L <= 0) return 0;
+#ifndef USE_FAST_PERCENTILE
+    if (config->num_init_frames <= 0) return 0;
+#endif
 
     size_t total = ALIGN16(sizeof(McraNoiseEstimator));
-    total += ALIGN16((size_t)n_freqs * sizeof(float));                 /* noise_psd  */
-    total += ALIGN16((size_t)n_freqs * sizeof(float));                 /* S          */
-    total += ALIGN16((size_t)n_freqs * sizeof(float));                 /* S_min      */
-    total += ALIGN16((size_t)n_freqs * sizeof(float));                 /* spp        */
-    total += ALIGN16((size_t)config->L * n_freqs * sizeof(float));     /* min_buffer */
+    total = ck_field_size(total, (size_t)n_freqs, sizeof(float));   /* noise_psd  */
+    total = ck_field_size(total, (size_t)n_freqs, sizeof(float));   /* S          */
+    total = ck_field_size(total, (size_t)n_freqs, sizeof(float));   /* S_min      */
+    total = ck_field_size(total, (size_t)n_freqs, sizeof(float));   /* spp        */
+    total = ck_field_size(total, ck_mul_size((size_t)config->L, (size_t)n_freqs),
+                          sizeof(float));                            /* min_buffer */
 #ifndef USE_FAST_PERCENTILE
-    total += ALIGN16((size_t)config->num_init_frames * n_freqs * sizeof(float)); /* init_power_buffer  */
-    total += ALIGN16((size_t)config->num_init_frames * sizeof(float));           /* percentile_scratch */
+    total = ck_field_size(total, ck_mul_size((size_t)config->num_init_frames, (size_t)n_freqs),
+                          sizeof(float));                            /* init_power_buffer  */
+    total = ck_field_size(total, (size_t)config->num_init_frames, sizeof(float)); /* percentile_scratch */
 #endif
-    return total;
+    return MEM_SIZE_INVALID(total) ? 0 : total;
 }
 
 McraNoiseEstimator* mcra_init(void* mem, size_t mem_size,
                               int n_freqs, const MmseLsaConfig* config) {
     if (n_freqs <= 0 || !config || !mem) return NULL;
-    if (mem_size < mcra_get_mem_size(n_freqs, config)) return NULL;
+    /* F07: reject a misaligned pool base before any write into it. mcra_init
+     * is a public entry point (declared in mcra_noise_estimator.h) — it is
+     * normally only reached via mmse_lsa_init()'s own aligned sub-carve, but
+     * guard it directly too in case it is ever called standalone. */
+    if (!MEM_IS_ALIGNED16(mem)) return NULL;
+    size_t need = mcra_get_mem_size(n_freqs, config);
+    if (need == 0 || mem_size < need) return NULL;
 
-    memset(mem, 0, mcra_get_mem_size(n_freqs, config));   /* calloc-equivalent */
+    memset(mem, 0, need);   /* calloc-equivalent */
     uint8_t* cursor = (uint8_t*)mem;
 
     McraNoiseEstimator* self = (McraNoiseEstimator*)cursor;

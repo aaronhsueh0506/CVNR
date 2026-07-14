@@ -10,6 +10,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <limits.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -80,10 +81,30 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
     config.sample_rate = sample_rate;
 
     // 20ms frame, 10ms hop — unified with AEC pipeline
-    int frame_size = sample_rate * 20 / 1000;  // 320 @ 16kHz
-    int fft_size = 256;
-    while (fft_size < frame_size) {
-        fft_size *= 2;
+    //
+    // F05 guard: don't multiply an unchecked sample_rate. A negative or
+    // absurdly large sample_rate (adversarial input, or simply a caller bug)
+    // must not be fed into `sample_rate * 20`, which is signed-int
+    // multiplication — overflow there is undefined behaviour, not just a
+    // wrong answer. `sample_rate > INT_MAX / 20` is exactly the guard that
+    // makes the multiply safe (INT_MAX/20 truncates down, so anything <= it
+    // times 20 fits in int). An invalid sample_rate instead leaves
+    // frame_size/hop_size/fft_size at 0 — mmse_lsa_validate_config() rejects
+    // that (in addition to rejecting sample_rate itself against the
+    // {8000,16000,48000} whitelist), so no downstream consumer ever acts on
+    // these degenerate fields.
+    int frame_size;
+    if (sample_rate > 0 && sample_rate <= INT_MAX / 20) {
+        frame_size = sample_rate * 20 / 1000;  // 320 @ 16kHz
+    } else {
+        frame_size = 0;
+    }
+    int fft_size = 0;
+    if (frame_size > 0) {
+        fft_size = 256;
+        while (fft_size < frame_size) {
+            fft_size *= 2;
+        }
     }
     config.frame_size = frame_size;       // 320 @ 16kHz (20ms)
     config.hop_size = frame_size / 2;     // 160 @ 16kHz (10ms)
@@ -211,6 +232,77 @@ static inline void mmse_lsa_apply_stationary(MmseLsaConfig* config) {
     config->scene_change_flatness_threshold = 0.6f;
     config->scene_change_tonal_veto        = true;
     config->scene_change_lo_flatness_max   = 0.4f;
+}
+
+/**
+ * Validate a config before it is used to size or construct a denoiser
+ * instance. This is the single gate mmse_lsa_get_mem_size() / mmse_lsa_create()
+ * / mmse_lsa_init() all consult before touching any config field, so an
+ * out-of-range or adversarial config — e.g. a huge/negative fft_size, L, or
+ * num_init_frames that would otherwise drive the get_mem_size size-arithmetic
+ * into overflow (F05), or a sample_rate this port's framing has never been
+ * verified against — is rejected up front instead of silently producing a
+ * wrapped/undersized byte count or being carved into by mmse_lsa_init (F07).
+ *
+ * Bounds are deliberately generous — wide enough to cover every shipped
+ * preset (mild/moderate/balanced/aggressive x stationary, all three sample
+ * rates, and the CLI's fixed 512/256/512 framing override) with headroom for
+ * legitimate re-tuning, not tight enough to constrain it. A config built by
+ * mmse_lsa_default_config() / mmse_lsa_config_for_mode() / the CLI's framing
+ * override, for any of the three supported sample rates, always passes.
+ *
+ * @return true iff config is safe to pass to mmse_lsa_get_mem_size(),
+ *         mmse_lsa_create(), or mmse_lsa_init().
+ */
+static inline bool mmse_lsa_validate_config(const MmseLsaConfig* config) {
+    if (!config) return false;
+
+    // Sample rate: only the rates this port's framing/coefficients have
+    // actually been verified against.
+    if (config->sample_rate != 8000 &&
+        config->sample_rate != 16000 &&
+        config->sample_rate != 48000) {
+        return false;
+    }
+
+    // All int fields non-negative — a negative dimension cast to size_t in
+    // the get_mem_size size-arithmetic becomes a huge (wrapped) allocation
+    // request instead of an error.
+    if (config->frame_size < 0 || config->hop_size < 0 || config->fft_size < 0 ||
+        config->L < 0 || config->num_init_frames < 0 ||
+        config->scene_change_min_frames < 0) {
+        return false;
+    }
+
+    // fft_size: positive power of two, bounded. 8192 is 8x the largest
+    // shipped fft_size (1024 @ 48kHz) — enough headroom for real tuning
+    // while still bounding the per-bin array walk in get_mem_size().
+    if (config->fft_size <= 0 || config->fft_size > 8192 ||
+        (config->fft_size & (config->fft_size - 1)) != 0) {
+        return false;
+    }
+
+    // frame_size / hop_size: positive, consistent with fft_size (the frame
+    // is zero-padded up to fft_size; hop must not exceed the frame it hops
+    // through).
+    if (config->frame_size <= 0 || config->frame_size > config->fft_size) {
+        return false;
+    }
+    if (config->hop_size <= 0 || config->hop_size > config->frame_size) {
+        return false;
+    }
+
+    // L (MCRA minima-tracking window) and num_init_frames: generous but
+    // finite bounds — 10x the shipped default (32 / 20) catches an
+    // accidental huge or negative value without constraining real tuning.
+    if (config->L <= 0 || config->L > 320) {
+        return false;
+    }
+    if (config->num_init_frames <= 0 || config->num_init_frames > 200) {
+        return false;
+    }
+
+    return true;
 }
 
 #ifdef __cplusplus

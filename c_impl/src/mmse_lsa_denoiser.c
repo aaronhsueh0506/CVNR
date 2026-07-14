@@ -221,36 +221,56 @@ static void _setup(MmseLsaDenoiser* self, const MmseLsaConfig* config) {
  * sub-modules — is bump-allocated from a single caller-provided block. */
 
 size_t mmse_lsa_get_mem_size(const MmseLsaConfig* config) {
-    if (!config) return 0;
+    /* F05: reject an invalid/adversarial config up front (bad sample_rate,
+     * negative or huge fft_size/L/num_init_frames, inconsistent framing)
+     * before any size arithmetic runs on its fields. */
+    if (!mmse_lsa_validate_config(config)) return 0;
     int nf = config->fft_size / 2 + 1;
-    size_t arr = ALIGN16((size_t)nf * sizeof(float));
 
     size_t total = ALIGN16(sizeof(MmseLsaDenoiser));
-    total += arr;   /* power             */
-    total += arr;   /* noise_aug         */
-    total += arr;   /* spp               */
-    total += arr;   /* xi                */
-    total += arr;   /* gamma             */
-    total += arr;   /* gain              */
+    /* Checked arithmetic (F05): ck_field_size saturates to SIZE_MAX on
+     * overflow instead of silently wrapping; MEM_SIZE_INVALID() below turns
+     * that into a `return 0` failure rather than a small wrapped byte count
+     * that mmse_lsa_init() would then carve past. Numerically identical to
+     * the old `total += ALIGN16(nf*sizeof(float))` chain for any config that
+     * passes validate_config() above. */
+    total = ck_field_size(total, (size_t)nf, sizeof(float));   /* power             */
+    total = ck_field_size(total, (size_t)nf, sizeof(float));   /* noise_aug         */
+    total = ck_field_size(total, (size_t)nf, sizeof(float));   /* spp               */
+    total = ck_field_size(total, (size_t)nf, sizeof(float));   /* xi                */
+    total = ck_field_size(total, (size_t)nf, sizeof(float));   /* gamma             */
+    total = ck_field_size(total, (size_t)nf, sizeof(float));   /* gain              */
 #ifdef USE_SHARED_XI_RATIO
-    total += arr;   /* v                 */
+    total = ck_field_size(total, (size_t)nf, sizeof(float));   /* v                 */
 #endif
-    total += arr;   /* gain_prev         */
-    total += arr;   /* enhanced_psd_prev */
-    total += arr;   /* init_power_sum    */
-    total += arr;   /* log_gain_prev     */
-    total += mcra_get_mem_size(nf, config);
-    total += spp_get_mem_size(nf);
-    return total;
+    total = ck_field_size(total, (size_t)nf, sizeof(float));   /* gain_prev         */
+    total = ck_field_size(total, (size_t)nf, sizeof(float));   /* enhanced_psd_prev */
+    total = ck_field_size(total, (size_t)nf, sizeof(float));   /* init_power_sum    */
+    total = ck_field_size(total, (size_t)nf, sizeof(float));   /* log_gain_prev     */
+
+    size_t mcra_sz = mcra_get_mem_size(nf, config);
+    size_t spp_sz  = spp_get_mem_size(nf);
+    if (mcra_sz == 0 || spp_sz == 0) return 0;   /* sub-module rejected the config */
+
+    total = ck_add_size(total, mcra_sz);
+    total = ck_add_size(total, spp_sz);
+
+    return MEM_SIZE_INVALID(total) ? 0 : total;
 }
 
 MmseLsaDenoiser* mmse_lsa_init(void* mem, size_t mem_size,
                                 const MmseLsaConfig* config) {
     if (!config || !mem) return NULL;
-    if (mem_size < mmse_lsa_get_mem_size(config)) return NULL;
+    /* F07: reject a misaligned pool base before any write into it. */
+    if (!MEM_IS_ALIGNED16(mem)) return NULL;
+    /* F05: reject an invalid config (see mmse_lsa_get_mem_size) before
+     * deriving nf from it. */
+    if (!mmse_lsa_validate_config(config)) return NULL;
+    size_t need = mmse_lsa_get_mem_size(config);
+    if (need == 0 || mem_size < need) return NULL;
     int nf = config->fft_size / 2 + 1;
 
-    memset(mem, 0, mmse_lsa_get_mem_size(config));   /* calloc-equivalent */
+    memset(mem, 0, need);   /* calloc-equivalent */
     uint8_t* cursor = (uint8_t*)mem;
     size_t arr = ALIGN16((size_t)nf * sizeof(float));
 
@@ -290,7 +310,9 @@ MmseLsaDenoiser* mmse_lsa_init(void* mem, size_t mem_size,
 /* ---- Heap (malloc) version ----------------------------------------------- */
 
 MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config) {
-    if (!config) return NULL;
+    /* F05: reject an invalid/adversarial config before deriving nf from it
+     * (see mmse_lsa_get_mem_size for the full rationale). */
+    if (!mmse_lsa_validate_config(config)) return NULL;
     int nf = config->fft_size / 2 + 1;
 
     MmseLsaDenoiser* self =

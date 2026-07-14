@@ -193,6 +193,18 @@ int main(int argc, char* argv[]) {
     config.hop_size   = HOP;
     config.fft_size   = FFT_SIZE;
 
+    /* F05: reject a sample rate / framing this port has never been verified
+     * against, with a clear message (same whitelist as main.c / see there for
+     * rationale — mmse_lsa_get_mem_size/init would also reject it internally,
+     * but with a generic pool-size error rather than naming the problem). */
+    if (!mmse_lsa_validate_config(&config)) {
+        fprintf(stderr,
+                "Error: unsupported sample rate %d Hz for NR processing "
+                "(supported: 8000, 16000, 48000 Hz)\n", sample_rate);
+        wav_close_write(wav_out);
+        return 1;
+    }
+
     /* 4. Size the static pools against the exact requirement (the no-malloc step). */
     size_t need_denoiser = mmse_lsa_get_mem_size(&config);
     size_t need_fft      = fft_get_mem_size(FFT_SIZE);

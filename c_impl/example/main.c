@@ -174,6 +174,23 @@ int main(int argc, char* argv[]) {
     config.hop_size   = 256;
     config.fft_size   = 512;
 
+    /* F05: reject a sample rate / framing this port has never been verified
+     * against, with a clear message, before ever touching the denoiser API
+     * (mmse_lsa_create/get_mem_size would also reject it internally, but with
+     * a generic "Failed to create denoiser" error rather than naming the
+     * actual problem). The whitelist matches mmse_lsa_validate_config():
+     * 8000/16000/48000 Hz are the rates this CLI's fixed 512/256/512 framing
+     * has actually been exercised against (see e.g. the 48kHz clips under
+     * test_wav/wav, which run through exactly this fixed framing). */
+    if (!mmse_lsa_validate_config(&config)) {
+        fprintf(stderr,
+                "Error: unsupported sample rate %d Hz for NR processing "
+                "(supported: 8000, 16000, 48000 Hz)\n", sample_rate);
+        wav_close_write(wav_out);
+        free(signal);
+        return 1;
+    }
+
     const int frame_size = config.frame_size;
     const int hop        = config.hop_size;
     const int fft_size   = config.fft_size;

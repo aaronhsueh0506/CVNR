@@ -243,6 +243,25 @@ mem: dirs $(OBJS) $(OBJ_DIR)/main_mem.o | ac_lib
 $(OBJ_DIR)/main_mem.o: $(EXAMPLE_DIR)/main_mem.c
 	$(CC) $(CFLAGS) -c -o $@ $<
 
+# =============================================================================
+# Config-validation / alignment-guard regression tests (F05/F07 remediation:
+# overflow-checked get_mem_size size arithmetic + sample_rate/framing/L/
+# num_init_frames bounds + misaligned-pool-base rejection). Standalone runner,
+# no external test framework — see test/test_config_validation.c. Builds
+# against the same objects as denoise_wav and runs itself; a non-zero exit
+# (any failed check) fails the `make test-config` recipe.
+# =============================================================================
+TEST_DIR    = test
+TEST_TARGET = $(BIN_DIR)/test_config_validation
+
+test-config: dirs $(OBJS) $(OBJ_DIR)/test_config_validation.o | ac_lib
+	$(LINK) $(CFLAGS) -o $(TEST_TARGET) $(OBJS) $(OBJ_DIR)/test_config_validation.o $(AC_LIB) $(LDFLAGS)
+	@echo "Build complete: $(TEST_TARGET)"
+	./$(TEST_TARGET)
+
+$(OBJ_DIR)/test_config_validation.o: $(TEST_DIR)/test_config_validation.c
+	$(CC) $(CFLAGS) -c -o $@ $<
+
 # Help
 help:
 	@echo "MMSE-LSA Denoiser Build System"
@@ -251,6 +270,7 @@ help:
 	@echo "  all      - Build the denoiser executable (default)"
 	@echo "  mem      - Build the static-memory example (bin/denoise_mem)"
 	@echo "  parity   - Build the Python<->C parity runner (bin/parity_runner)"
+	@echo "  test-config - Build + run config-validation/alignment-guard tests"
 	@echo "  lib      - Build static library"
 	@echo "  clean    - Remove build artifacts"
 	@echo "  install  - Install to /usr/local/bin"
@@ -275,4 +295,4 @@ help:
 	@echo "After building:"
 	@echo "  ./bin/denoise_wav input.wav output.wav"
 
-.PHONY: all dirs clean install uninstall test lib help debug parity mem ac_lib
+.PHONY: all dirs clean install uninstall test lib help debug parity mem ac_lib test-config

@@ -60,20 +60,29 @@ static void spp_init_scalars(SppEstimator* self, int n_freqs,
 /* ---- Static-memory (no malloc) variant ------------------------------------ */
 
 size_t spp_get_mem_size(int n_freqs) {
+    /* F05: explicit sign guard (see mcra_get_mem_size for the rationale) plus
+     * checked arithmetic — MEM_SIZE_INVALID() below turns any overflow into
+     * a `return 0` failure instead of a wrapped byte count. */
     if (n_freqs <= 0) return 0;
     size_t total = ALIGN16(sizeof(SppEstimator));
-    total += ALIGN16((size_t)n_freqs * sizeof(float));  /* xi_prev        */
-    total += ALIGN16((size_t)n_freqs * sizeof(float));  /* gamma_prev     */
-    total += ALIGN16((size_t)n_freqs * sizeof(float));  /* noise_psd_prev */
-    return total;
+    total = ck_field_size(total, (size_t)n_freqs, sizeof(float));  /* xi_prev        */
+    total = ck_field_size(total, (size_t)n_freqs, sizeof(float));  /* gamma_prev     */
+    total = ck_field_size(total, (size_t)n_freqs, sizeof(float));  /* noise_psd_prev */
+    return MEM_SIZE_INVALID(total) ? 0 : total;
 }
 
 SppEstimator* spp_init(void* mem, size_t mem_size,
                        int n_freqs, const MmseLsaConfig* config) {
     if (n_freqs <= 0 || !config || !mem) return NULL;
-    if (mem_size < spp_get_mem_size(n_freqs)) return NULL;
+    /* F07: reject a misaligned pool base before any write into it. spp_init
+     * is a public entry point (declared in spp_estimator.h) — normally only
+     * reached via mmse_lsa_init()'s own aligned sub-carve, but guard it
+     * directly too in case it is ever called standalone. */
+    if (!MEM_IS_ALIGNED16(mem)) return NULL;
+    size_t need = spp_get_mem_size(n_freqs);
+    if (need == 0 || mem_size < need) return NULL;
 
-    memset(mem, 0, spp_get_mem_size(n_freqs));   /* calloc-equivalent */
+    memset(mem, 0, need);   /* calloc-equivalent */
     uint8_t* cursor = (uint8_t*)mem;
 
     SppEstimator* self = (SppEstimator*)cursor;
