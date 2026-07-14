@@ -586,14 +586,14 @@ void mmse_lsa_debug_status(const MmseLsaDenoiser* self, MmseLsaDebugStatus* out)
     const float* noise_psd = self->noise_est ? mcra_get_noise_psd(self->noise_est) : NULL;
     if (n <= 0 || !gain) return;
 
-    double gain_sum = 0.0, spp_sum = 0.0, noise_sum = 0.0;
-    float  gain_min = gain[0];
+    float gain_sum = 0.0f, spp_sum = 0.0f, noise_sum = 0.0f;
+    float gain_min = gain[0];
     for (int k = 0; k < n; ++k) {
         float g = gain[k];
-        gain_sum += (double)g;
+        gain_sum += (float)g;
         if (g < gain_min) gain_min = g;
-        if (spp)       spp_sum   += (double)spp[k];
-        if (noise_psd) noise_sum += (double)noise_psd[k];
+        if (spp)       spp_sum   += (float)spp[k];
+        if (noise_psd) noise_sum += (float)noise_psd[k];
     }
 
     float mean_gain = (float)(gain_sum / n);
