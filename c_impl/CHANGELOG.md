@@ -204,7 +204,7 @@
 ### 新增功能
 
 - **`-DUSE_EXT_MEM` 靜態記憶體模式**：denoiser 及其 MCRA / SPP / FFT 子模組的所有內部狀態改由
-  呼叫端提供的**單一記憶體區塊** bump-allocate，音訊路徑上**零 malloc/free**（Novatek 嵌入式契約）。
+  呼叫端提供的**單一記憶體區塊** bump-allocate，音訊路徑上**零 malloc/free**（目標平台嵌入式契約）。
   - **`include/nr_ext_mem.h`**（新）：共用 16-byte 對齊 bump helper `nr_aligned_size()`。
   - **`mmse_lsa_denoiser.h/.c`**：`mmse_lsa_query_memsize(cfg)` +
     `mmse_lsa_create(cfg, void* mem, size_t)`（含 MCRA/SPP 子區塊）；`mmse_lsa_destroy` 於 ext-mem 下為 no-op。
