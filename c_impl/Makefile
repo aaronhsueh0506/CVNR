@@ -381,8 +381,19 @@ endif
 #   ac=$$(make -s -C ../../audio_common BACKEND=$$B print-lib-path)
 #   make -s BACKEND=$$B print-bin-dir AC_LIB="$$ac"
 .PHONY: print-bin-dir print-obj-dir print-lib-path
+# print-bin-dir dispatches through the same phase-1 producer resolution as
+# the build goals, so a bare `make -s print-bin-dir` prints the exact
+# directory the binaries are delivered into (NR's binaries only exist in the
+# resolved-producer directory). Passing AC_LIB= explicitly skips the query.
+ifeq ($(AC_LIB),)
+print-bin-dir:
+	+@ac="$$($(MAKE) -s --no-print-directory -C $(AC_DIR) $(AC_FWD) print-lib-path)"; \
+	 test -n "$$ac" || { echo "FATAL: could not resolve audio_common archive path (AC_DIR=$(AC_DIR))" >&2; exit 1; }; \
+	 $(MAKE) -s --no-print-directory print-bin-dir AC_LIB="$$ac"
+else
 print-bin-dir:
 	@echo $(abspath $(BIN_DIR))
+endif
 print-obj-dir:
 	@echo $(abspath $(OBJ_DIR))
 print-lib-path:
