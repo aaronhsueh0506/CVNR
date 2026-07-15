@@ -112,9 +112,13 @@ make EXTRA_CFLAGS="-DUSE_FAST_PERCENTILE"
 ### 靜態記憶體版本（嵌入式，零 malloc）
 
 ```bash
-make mem              # → bin/denoise_mem（範例 example/main_mem.c），預設 BACKEND=kiss
+make mem              # → bin/<backend>-<config-hash>/denoise_mem（範例 example/main_mem.c），預設 BACKEND=kiss
 make mem BACKEND=ne10 # 嵌入式目標的實際 deliverable（ARM NEON）
 ```
+
+輸出檔案位於依 backend + 編譯參數雜湊命名的 `bin/<backend>-<config-hash>/` 目錄（round-3
+review B01）；用 `make print-bin-dir`（帶上與建置相同的參數）取得確切路徑，或
+`make publish` 產出穩定的 `dist/<backend>/current/` 交付路徑。
 
 denoiser、MCRA、SPP、FFT 現在**同時**提供 malloc 路徑（`_create`）與靜態記憶體路徑
 （`_get_mem_size` + `_init`，跟 AEC 那邊的 `aec_get_mem_size`/`aec_init` 命名慣例一致）——
@@ -447,7 +451,8 @@ c_impl/
 ├── include/fft_wrapper.h        #   Complex 型別、FFT heap+靜態記憶體 API、ALIGN16
 ├── include/fast_math.h          #   快速數學函數 (LUT+Taylor)
 └── lib/{kiss_fft,ne10}/         #   兩個 FFT backend 的原始碼；`make BACKEND=kiss|ne10 lib`
-                                  #   產出 bin/<backend>/libaudio_common.a，c_impl 連結它
+                                  #   產出 bin/<backend>-<config-hash>/libaudio_common.a
+                                  #   （`make print-lib-path` 取得確切路徑），c_impl 連結它
 ```
 
 ## 記憶體使用

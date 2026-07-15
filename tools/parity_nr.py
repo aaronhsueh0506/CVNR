@@ -39,7 +39,10 @@ Usage:
         --out /tmp/parity_in.bin
 
   # 2. (build + run C side -- see c_impl/example/parity_runner.c)
-  c_impl/bin/parity_runner /tmp/parity_in.bin /tmp/parity_c_gains.bin
+  #    bin/ is now keyed bin/<backend>-<config-hash>/ (round-3 review B01);
+  #    resolve the exact path with `make -C c_impl print-bin-dir` (same
+  #    BACKEND/EXTRA_CFLAGS as the `make parity` build below):
+  "$(make -s -C c_impl print-bin-dir)"/parity_runner /tmp/parity_in.bin /tmp/parity_c_gains.bin
 
   # 3. compare
   python3 tools/parity_nr.py compare --ref /tmp/parity_in.bin \

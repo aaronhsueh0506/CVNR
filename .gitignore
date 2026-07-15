@@ -55,6 +55,7 @@ test_output*/
 # C 編譯產物
 c_impl/bin/
 c_impl/obj/
+c_impl/dist/
 
 # 測試結果
 benchmark_results/

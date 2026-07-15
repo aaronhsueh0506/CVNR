@@ -29,11 +29,16 @@ PCM hop -> rolling frame -> sqrt-Hann -> rFFT
 ```bash
 cd c_impl
 
-make            # bin/denoise_wav：KISS FFT + fast math
-make lib        # bin/libmmse_lsa.a
-make debug      # standard math，較適合與 Python 對照
-make mem        # bin/denoise_mem：靜態記憶體示範 runner（_get_mem_size/_init）
+make            # bin/<backend>-<config-hash>/denoise_wav：KISS FFT + fast math
+make lib        # bin/<backend>-<config-hash>/libmmse_lsa.a
+make debug      # standard math，較適合與 Python 對照（DEBUG=1，見下方鍵值目錄說明）
+make mem        # bin/<backend>-<config-hash>/denoise_mem：靜態記憶體示範 runner（_get_mem_size/_init）
 ```
+
+輸出檔案位於依 backend + 編譯參數雜湊命名的 `bin/<backend>-<config-hash>/` 目錄
+（round-3 review B01）；用 `make print-bin-dir`（帶上與建置相同的參數）取得確切
+路徑，或 `make publish` 產出穩定的 `dist/<backend>/current/` 交付路徑。以下範例
+指令為簡潔起見省略此前綴。
 
 FFT 與 fast_math 來自共用的 `../audio_common` layer（`c_impl/Makefile` 會自動先建它的
 `libaudio_common.a` 再連結）。backend 以 `BACKEND` 變數選擇——預設 `kiss`（可攜、bit-reproducible、
@@ -44,9 +49,10 @@ make BACKEND=ne10                 # ARM NEON NE10 backend
 make mem BACKEND=ne10             # 靜態記憶體 runner + NE10（此分支實際交付組合）
 ```
 
-切換 `BACKEND`（或 `EXTRA_CFLAGS`／`WERROR`）不需要手動 `make clean`——`obj/`
-現在依 `<backend>-<config-hash>` 分子目錄存放，每種組合各自獨立，切換後會自動
-編到新的目錄，不會誤用舊組合殘留的 `.o`；不同組合甚至可以在同一份 checkout
+切換 `BACKEND`（或 `EXTRA_CFLAGS`／`WERROR`／`DEBUG`）不需要手動 `make clean`——
+`obj/`與`bin/`（round-3 review B01 起兩者皆是）現在依 `<backend>-<config-hash>`
+分子目錄存放，每種組合各自獨立，切換後會自動編到新的目錄，不會誤用舊組合殘留
+的 `.o` 或誤連結到另一組態的執行檔／archive；不同組合甚至可以在同一份 checkout
 裡同時平行建置。
 
 常用 build 選項：
@@ -63,11 +69,12 @@ make EXTRA_CFLAGS="-DUSE_FAST_PERCENTILE"
 
 ```bash
 cc -std=gnu99 app.c -Ic_impl/include -I../audio_common/include \
-   c_impl/bin/libmmse_lsa.a ../audio_common/bin/kiss/libaudio_common.a -lm -o app
+   $(make -s -C c_impl print-lib-path) \
+   $(make -s -C ../audio_common BACKEND=kiss print-lib-path) -lm -o app
 ```
 
-若改用 NE10 backend，改連 `../audio_common/bin/ne10/libaudio_common.a`，並用 C++ driver
-連結（archive 內含一個 C++ TU）或補 `-lc++`。
+若改用 NE10 backend，兩個 `print-lib-path` 呼叫都加上 `BACKEND=ne10`，並用 C++
+driver 連結（audio_common 的 NE10 archive 內含一個 C++ TU）或補 `-lc++`。
 
 ## 3. 命令列工具
 
