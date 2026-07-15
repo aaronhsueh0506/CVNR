@@ -123,38 +123,53 @@ endif
 # Directories
 SRC_DIR = src
 EXAMPLE_DIR = example
-OBJ_DIR = obj
+# Hash-keyed object dir: obj/<backend>-<cfg-sig>/ (not a single flat
+# directory shared across every BACKEND/EXTRA_CFLAGS combination, unlike the
+# old scheme -- that used to mean neither a BACKEND nor an EXTRA_CFLAGS
+# change invalidated the .o files already sitting in obj/, the long-standing
+# trap this section used to document at the ac_lib rule below, "Always
+# `make clean` when changing BACKEND"). CFG_SIG (below) hashes the exact
+# compiler invocation that produces every object in this build, and OBJ_DIR
+# embeds it directly: every distinct (BACKEND, CFLAGS, EXTRA_CFLAGS, WERROR)
+# combination gets its own directory, automatically -- no manual clean ever
+# required, and two differently-configured builds can run concurrently in
+# this same tree without stomping each other's objects. OBJ_ROOT is the
+# whole obj/ tree (every config) -- used by `clean` to nuke everything, not
+# just the current config's subdirectory. BIN_DIR stays flat (not
+# per-backend/config): the final binaries are last-write-wins wholes, same
+# as before.
+OBJ_ROOT = obj
+OBJ_DIR = $(OBJ_ROOT)/$(BACKEND)-$(CFG_SIG)
 BIN_DIR = bin
 
-# --- Build-configuration stamp (F12 build hygiene) --------------------------
-# obj/ here is a single flat directory (not split per BACKEND, unlike
-# audio_common's), and until now neither a BACKEND nor an EXTRA_CFLAGS change
-# invalidated the .o files already sitting in it -- the long-standing trap
-# documented at the ac_lib rule below ("Always `make clean` when changing
-# BACKEND"). CFG_SIG hashes the exact compiler invocation that produces every
-# object in this build.
+# --- Hash-keyed object directory (build hygiene) ----------------------------
+# This MUST be defined here, before any rule below mentions $(OBJ_DIR) (or
+# anything derived from it, e.g. $(OBJS)/$(EXAMPLE_OBJS) used in a
+# prerequisite list): GNU Make expands a rule's target/prerequisite list
+# IMMEDIATELY when that line is parsed, not deferred like a recipe body, so
+# a forward reference would silently resolve using CFG_SIG's value at THAT
+# point in the file (empty, if this line hadn't run yet) -- verified
+# empirically with a minimal reproduction.
 #
-# This check runs at PARSE time (via $(shell ...), not as a build-rule
-# recipe): an order-only-prerequisite version (a stamp FILE that a rule
-# creates, referenced via `obj/%.o: %.c | $(CFG_STAMP)`) is racy -- verified
-# empirically. When several objects share one order-only prerequisite whose
-# recipe wipes the directory they all live in, GNU Make can finalize "is
-# this object out of date?" for one of them using the prerequisite tree it
-# already resolved, before the shared prerequisite's wipe recipe actually
-# runs -- so that object silently keeps its (about to be deleted) stale .o
-# and is never recompiled. Doing the compare-and-wipe unconditionally while
-# the Makefile is being read sidesteps the race entirely: by the time
-# `make` starts asking "is any target out of date", obj/ has already been
-# wiped (if needed) or left alone (if not).
-CFG_SIG        := $(shell printf '%s' "$(CC) $(CFLAGS) $(EXTRA_CFLAGS) BACKEND=$(BACKEND) WERROR=$(WERROR)" | shasum -a 256 | cut -c1-12)
-CFG_STAMP_FILE := $(OBJ_DIR)/.cfg_stamp
-CFG_LAST_SIG   := $(shell test -f $(CFG_STAMP_FILE) && cat $(CFG_STAMP_FILE))
-ifneq ($(CFG_SIG),$(CFG_LAST_SIG))
-$(info NR c_impl: build config changed -- wiping $(OBJ_DIR) for a full rebuild)
-$(shell rm -rf $(OBJ_DIR))
-$(shell mkdir -p $(OBJ_DIR))
-$(shell echo $(CFG_SIG) > $(CFG_STAMP_FILE))
-endif
+# There is no parse-time comparison and nothing is ever deleted to "detect"
+# a config change (the previous scheme did a $(shell rm -rf ...)/$(shell
+# mkdir ...)/$(shell echo ...) unconditionally while the Makefile was being
+# read, which mutated the filesystem even under `make -n` and raced two
+# concurrent builds with different flags against each other's shared obj/
+# directory). Under this scheme `make -n` touches nothing on disk (CFG_SIG
+# is a pure string hash) and two differently-configured builds (e.g.
+# `make BACKEND=kiss -j4 & make BACKEND=ne10 -j4 & wait`) can run
+# concurrently in this same tree: each lands in its own obj/<backend>-<sig>/
+# directory and never touches the other's objects. OBJ_DIR's own creation
+# happens lazily via the order-only prerequisite on the pattern rules below
+# ($(OBJ_DIR)/%.o: ... | $(OBJ_DIR)), not at Makefile-parse time.
+#
+# cksum (POSIX -- present on macOS/BSD/GNU/busybox, unlike shasum which is a
+# GNU coreutils extension and may be absent from slim embedded build images)
+# computes the hash. On stdin it prints "<checksum> <byte-count>" with no
+# filename field (verified on macOS's BSD cksum), so `cut -d' ' -f1` isolates
+# just the checksum.
+CFG_SIG := $(shell printf '%s' "$(CC) $(CFLAGS) $(EXTRA_CFLAGS) BACKEND=$(BACKEND) WERROR=$(WERROR)" | cksum | cut -d' ' -f1)
 
 # Source files (gain calculation merged into mmse_lsa_denoiser.c). FFT + fast_math
 # come from audio_common (linked via $(AC_LIB)); this repo only supplies the
@@ -173,50 +188,54 @@ EXAMPLE_OBJS = $(patsubst $(EXAMPLE_DIR)/%.c,$(OBJ_DIR)/%.o,$(EXAMPLE_SRCS))
 TARGET = $(BIN_DIR)/denoise_wav
 
 # Default target
-all: dirs $(TARGET)
+all: $(TARGET)
 
-# Create directories
-dirs:
-	@mkdir -p $(OBJ_DIR) $(BIN_DIR)
+# $(OBJ_DIR)/$(BIN_DIR) creation is an order-only prerequisite on the actual
+# compile/link rules below (not a $(shell mkdir) at parse time, and not a
+# plain prerequisite that could race a parallel compile under `make -j`) --
+# every rule that writes into one of these directories depends on it
+# existing first, and mkdir -p is idempotent if two rules' order-only
+# prereqs resolve concurrently. `dirs` is kept as a convenience alias for
+# any caller used to invoking it directly.
+$(OBJ_DIR) $(BIN_DIR):
+	@mkdir -p $@
+
+dirs: $(OBJ_DIR) $(BIN_DIR)
 
 # Build audio_common's archive for the selected BACKEND. Order-only prerequisite
 # on the link steps below: `ac_lib` is phony, so it (and the recursive make it
 # runs) always executes before the link recipe — audio_common's own Makefile
 # decides whether anything is actually stale. Being order-only means it does NOT
 # force OUR .o files to recompile, and it does NOT feed into whether $(TARGET)
-# itself is considered stale — this repo's obj/bin dirs are NOT split per
-# BACKEND (unlike audio_common's). F12 fix: this used to mean switching
-# BACKEND (or EXTRA_CFLAGS) on an already-built tree needed `make clean` by
-# hand or it would silently relink stale .o's; the CFG_STAMP mechanism above
-# now busts obj/ automatically on any such change (both are folded into
-# CFG_SIG), so `make clean` is no longer required here -- still harmless to
-# do it anyway.
+# itself is considered stale. No manual `make clean` is ever required when
+# switching BACKEND/EXTRA_CFLAGS/WERROR -- CFG_SIG (above) gives each config
+# its own $(OBJ_DIR), so there's nothing stale to relink.
 .PHONY: ac_lib
 ac_lib:
 	$(MAKE) -C $(AC_DIR) BACKEND=$(BACKEND) lib
 
 # Link
-$(TARGET): $(OBJS) $(EXAMPLE_OBJS) | ac_lib
+$(TARGET): $(OBJS) $(EXAMPLE_OBJS) | ac_lib $(BIN_DIR)
 	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(EXAMPLE_OBJS) $(AC_LIB) $(LDFLAGS)
 	@echo "Build complete: $@"
 
 # Compile source files
-$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
+$(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # Compile example files
-$(OBJ_DIR)/%.o: $(EXAMPLE_DIR)/%.c
+$(OBJ_DIR)/%.o: $(EXAMPLE_DIR)/%.c | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # Debug build (disable all optimizations, use standard math)
 debug: CFLAGS += -DUSE_STANDARD_MATH
 debug: CFLAGS := $(filter-out -DUSE_FAST_GAIN_SMOOTHING -DUSE_SHARED_XI_RATIO -DUSE_OPTIMIZED_MIN_BUFFER -DUSE_OPTIMIZED_E1 -DUSE_SINGLE_CLAMP -DUSE_INCREMENTAL_MIN,$(CFLAGS))
-debug: dirs $(TARGET)
+debug: $(TARGET)
 	@echo "Debug build complete (standard math, no optimizations): $(TARGET)"
 
 # Clean
 clean:
-	rm -rf $(OBJ_DIR) $(BIN_DIR)
+	rm -rf $(OBJ_ROOT) $(BIN_DIR)
 	@echo "Clean complete"
 
 # Install (copy to /usr/local/bin)
@@ -242,7 +261,7 @@ test: $(TARGET)
 # for the FFT backend, same as the binaries above).
 LIB_TARGET = $(BIN_DIR)/libmmse_lsa.a
 
-lib: dirs $(OBJS)
+lib: $(OBJS) | $(BIN_DIR)
 	ar rcs $(LIB_TARGET) $(OBJS)
 	@echo "Static library built: $(LIB_TARGET)"
 
@@ -255,11 +274,11 @@ lib: dirs $(OBJS)
 # =============================================================================
 PARITY_TARGET = $(BIN_DIR)/parity_runner
 
-parity: dirs $(OBJS) $(OBJ_DIR)/parity_runner.o | ac_lib
+parity: $(OBJS) $(OBJ_DIR)/parity_runner.o | ac_lib $(BIN_DIR)
 	$(LINK) $(CFLAGS) -o $(PARITY_TARGET) $(OBJS) $(OBJ_DIR)/parity_runner.o $(AC_LIB) $(LDFLAGS)
 	@echo "Build complete: $(PARITY_TARGET)"
 
-$(OBJ_DIR)/parity_runner.o: $(EXAMPLE_DIR)/parity_runner.c
+$(OBJ_DIR)/parity_runner.o: $(EXAMPLE_DIR)/parity_runner.c | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # =============================================================================
@@ -278,11 +297,11 @@ $(OBJ_DIR)/parity_runner.o: $(EXAMPLE_DIR)/parity_runner.c
 # =============================================================================
 MEM_TARGET = $(BIN_DIR)/denoise_mem
 
-mem: dirs $(OBJS) $(OBJ_DIR)/main_mem.o | ac_lib
+mem: $(OBJS) $(OBJ_DIR)/main_mem.o | ac_lib $(BIN_DIR)
 	$(LINK) $(CFLAGS) -o $(MEM_TARGET) $(OBJS) $(OBJ_DIR)/main_mem.o $(AC_LIB) $(LDFLAGS)
 	@echo "Static-memory build complete: $(MEM_TARGET)"
 
-$(OBJ_DIR)/main_mem.o: $(EXAMPLE_DIR)/main_mem.c
+$(OBJ_DIR)/main_mem.o: $(EXAMPLE_DIR)/main_mem.c | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # =============================================================================
@@ -296,12 +315,12 @@ $(OBJ_DIR)/main_mem.o: $(EXAMPLE_DIR)/main_mem.c
 TEST_DIR    = test
 TEST_TARGET = $(BIN_DIR)/test_config_validation
 
-test-config: dirs $(OBJS) $(OBJ_DIR)/test_config_validation.o | ac_lib
+test-config: $(OBJS) $(OBJ_DIR)/test_config_validation.o | ac_lib $(BIN_DIR)
 	$(LINK) $(CFLAGS) -o $(TEST_TARGET) $(OBJS) $(OBJ_DIR)/test_config_validation.o $(AC_LIB) $(LDFLAGS)
 	@echo "Build complete: $(TEST_TARGET)"
 	./$(TEST_TARGET)
 
-$(OBJ_DIR)/test_config_validation.o: $(TEST_DIR)/test_config_validation.c
+$(OBJ_DIR)/test_config_validation.o: $(TEST_DIR)/test_config_validation.c | $(OBJ_DIR)
 	$(CC) $(CFLAGS) -c -o $@ $<
 
 # Help
@@ -326,6 +345,11 @@ help:
 	@echo "  make EXTRA_CFLAGS=\"-DUSE_STANDARD_MATH\"      - Debug build (matches Python output)"
 	@echo "  make EXTRA_CFLAGS=\"-DUSE_FAST_PERCENTILE\"    - Optimized build (all approximations)"
 	@echo "  make WERROR=1                                  - Opt-in: -Werror for this repo's own sources"
+	@echo ""
+	@echo "Objects live in obj/<backend>-<config-hash>/ -- switching BACKEND,"
+	@echo "EXTRA_CFLAGS, or WERROR always lands in a fresh directory automatically;"
+	@echo "no manual clean needed, and two differently-configured builds can run"
+	@echo "concurrently in this same tree."
 	@echo ""
 	@echo "Flags:"
 	@echo "  USE_STANDARD_MATH   - Use standard math functions (expf, logf, etc.)"

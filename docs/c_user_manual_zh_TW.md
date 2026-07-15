@@ -44,7 +44,10 @@ make BACKEND=ne10                 # ARM NEON NE10 backend
 make mem BACKEND=ne10             # 靜態記憶體 runner + NE10（此分支實際交付組合）
 ```
 
-切換 `BACKEND` 前務必 `make clean`（本 repo 的 obj/ 沒有分 backend 目錄）。
+切換 `BACKEND`（或 `EXTRA_CFLAGS`／`WERROR`）不需要手動 `make clean`——`obj/`
+現在依 `<backend>-<config-hash>` 分子目錄存放，每種組合各自獨立，切換後會自動
+編到新的目錄，不會誤用舊組合殘留的 `.o`；不同組合甚至可以在同一份 checkout
+裡同時平行建置。
 
 常用 build 選項：
 
