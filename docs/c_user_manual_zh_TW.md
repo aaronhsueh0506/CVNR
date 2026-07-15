@@ -286,10 +286,10 @@ int create_static_nr(MmseLsaConfig *cfg,
 
 /* cleanup：兩者都不會釋放 caller pool（nr_pool/fft_pool 生命週期由 caller 管理）。
  * mmse_lsa_destroy(nr) 對靜態 instance 是真正的 no-op（denoiser 不持有額外 heap 資源）。
- * fft_destroy(fft) 在 KISS backend 下同樣是 no-op；在 NE10 backend 下它會釋放
- * fft_init() 當初觸發的 backend-internal twiddle 設定（活在 fft_pool 之外，未算進
- * fft_get_mem_size()）——這個呼叫必須恰好執行一次、且要在 fft_pool 被釋放或重用
- * （例如再次呼叫 create_static_nr 之前）之前完成；漏呼叫會洩漏，呼叫兩次會 double-free。 */
+ * fft_destroy(fft) 在 KISS 與 NE10 兩個 backend 下同樣是真正的 no-op：自 P0001
+ * （+P0003 硬化）起，NE10 的 R2C/C2R twiddle cfg 也是由 fft_init() 從 fft_pool 切出
+ * （已計入 fft_get_mem_size()），沒有任何 backend-internal malloc；fft_destroy() 對
+ * pool-owned handle 一律直接 return，呼叫幾次都安全（idempotent）。 */
 void destroy_static_nr(MmseLsaDenoiser *nr, FftHandle *fft)
 {
     mmse_lsa_destroy(nr);
@@ -301,8 +301,10 @@ void destroy_static_nr(MmseLsaDenoiser *nr, FftHandle *fft)
 
 - pool 起始位址必須 16-byte 對齊（`ALIGN16`，定義於 audio_common 的 `mem_align.h`）。
 - `_get_mem_size()` 的結果與 config 有關，config 變更後要重新 query。
-- KISS FFT 版本可做到所有 NR／MCRA／SPP／FFT state 都使用 caller memory。
-- NE10 沒有完整的 external-twiddle API；建立時仍會由 NE10 內部配置一次記憶體（`fft_destroy()` 會正確釋放它），但 per-hop audio path 不配置。`fft_destroy()` 在 fft pool 被釋放/重用前必須恰好呼叫一次——漏呼叫會洩漏該記憶體，對同一個 `FftHandle` 呼叫兩次則是 double-free（目前沒有 destroyed-guard）。
+- KISS 與 NE10 兩個 FFT backend 都能做到所有 NR／MCRA／SPP／FFT state 使用 caller memory。
+- 自 P0001（+P0003 硬化）起，`audio_common` 用 vendored 的 `ne10_fft_init_r2c_float32_ext`
+  讓 NE10 的 R2C/C2R twiddle cfg 也從 `fft_pool` 切出（已計入 `fft_get_mem_size()`），
+  `fft_init()` 到 `fft_destroy()` 全程零 heap；per-hop audio path 本來就不配置。
 - window、OLA、PCM ring 與 application scratch 仍由 application 自行配置；它們不包含在 `mmse_lsa_get_mem_size()` 中。
 
 ## 6. Lifecycle、回傳值與 query API

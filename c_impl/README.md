@@ -133,12 +133,13 @@ mmse_lsa_destroy(d);                                     // no-op（記憶體由
 
 `mmse_lsa_destroy()` 在這裡是**真正**的 no-op：`MmseLsaDenoiser` 本身不持有 FFT 或任何
 backend heap 資源（頻域 I/O 由呼叫端自己的 `FftHandle` 負責，見下方完整範例），所以
-static instance 的 destroy 沒有東西要釋放。但呼叫端另外持有的 `FftHandle`（`fft_init`）
-就不一定是 no-op——KISS backend 下確實也是零 malloc/no-op，NE10 backend 下
-`fft_init` 會觸發一次 backend-internal 的 twiddle 設定 malloc，該記憶體活在
-fft 自己的 pool 之外，必須靠 `fft_destroy()` 釋放；在 fft pool 被釋放/重用前，
-`fft_destroy()` 必須恰好呼叫一次（漏呼叫會洩漏，呼叫兩次會 double-free）——細節見下方
-backend 差異段落，以及 [`../docs/c_user_manual_zh_TW.md`](../docs/c_user_manual_zh_TW.md)
+static instance 的 destroy 沒有東西要釋放。呼叫端另外持有的 `FftHandle`（`fft_init`）
+現在也是**真正**的 no-op：KISS backend 本來就是零 malloc/no-op，NE10 backend 自
+`audio_common` 的 vendored patch P0001（+P0003 硬化）起，R2C/C2R 的 twiddle cfg
+同樣改由呼叫端 pool 切出（`ne10_fft_init_r2c_float32_ext`），不再有任何 backend-internal
+malloc——`fft_destroy()` 對 pool-owned handle 一律直接 return，呼叫幾次都安全
+（idempotent）。細節見下方 backend 差異段落，以及
+[`../docs/c_user_manual_zh_TW.md`](../docs/c_user_manual_zh_TW.md)
 第 5 節的 `create_static_nr`/`destroy_static_nr` 完整範例。
 
 演算法與 malloc 版**逐位元相同**（只差配置方式）：`bin/denoise_mem` 輸出與 `bin/denoise_wav`
@@ -156,10 +157,12 @@ MCRA 的 percentile gather/quickselect 用預先配好的 `percentile_scratch`�
 
 **FFT + fast_math 現在來自共用的 `../audio_common`**（`make BACKEND=kiss|ne10` 產出
 `libaudio_common.a`，`c_impl/Makefile` 直接連結，不再自帶一份 kiss_fft/NE10 原始碼副本）。
-backend 差異：KISS 是 **100% 零 malloc**；NE10 是 **partial**——handle 與 work buffer 從 pool
-切出，但 NE10 的 twiddle cfg 仍走它自己的一次性內部 malloc（標準 NE10 無外部記憶體 API），
-**每幀音訊路徑仍零 malloc**。此分支已在 arm64（Apple Silicon）上原生編譯 + 驗證 NE10 版
-mem==malloc byte-for-byte（NE10 輸出本身跟 KISS 不同屬預期，兩個 backend 不互相比較）。
+backend 差異：KISS 與 NE10 都是 **100% 零 malloc**——`audio_common` 的 vendored patch
+P0001（+P0003 硬化）讓 NE10 的 R2C/C2R twiddle cfg 也能從呼叫端 pool 切出
+（`ne10_fft_init_r2c_float32_ext`），handle、work buffer、twiddle cfg 三者都在 pool 內，
+`fft_init()` 到 `fft_destroy()` 全程零 heap；**每幀音訊路徑本來就零 malloc**。此分支已在
+arm64（Apple Silicon）上原生編譯 + 驗證 NE10 版 mem==malloc byte-for-byte（NE10 輸出本身
+跟 KISS 不同屬預期，兩個 backend 不互相比較）。
 
 > **Note:** v1.3.0 起 `make` 預設啟用 6 個數學等價優化（100% 相關度），不需要手動指定。
 

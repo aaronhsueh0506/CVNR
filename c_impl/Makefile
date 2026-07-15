@@ -289,11 +289,12 @@ $(OBJ_DIR)/parity_runner.o: $(EXAMPLE_DIR)/parity_runner.c | $(OBJ_DIR)
 # now — see mmse_lsa_get_mem_size()/mmse_lsa_init() — so there is no separate
 # object set to keep from mixing, unlike the old compile-time-gated build).
 # Honors EXTRA_CFLAGS, e.g.:  make mem EXTRA_CFLAGS="-DUSE_STANDARD_MATH"
-# FFT backends: KISS is 100% no-malloc on the static path. NE10 (make mem
-#       BACKEND=ne10) is PARTIAL — handle + work buffers come from the pool, but
-#       NE10's twiddle cfg keeps its one-time internal malloc at fft_create()
-#       (standard NE10 has no ext-mem API for it); the per-frame audio path is
-#       still malloc-free either way.
+# FFT backends: both KISS and NE10 are 100% no-malloc on the static path
+#       (make mem BACKEND=ne10) since audio_common's vendored NE10 patch P0001
+#       (+P0003 hardening) — handle, work buffers, AND the R2C/C2R twiddle
+#       cfg are all carved from the caller pool via ne10_fft_init_r2c_float32_ext,
+#       so fft_init() is heap-free end to end; the per-frame audio path was
+#       always malloc-free either way.
 # =============================================================================
 MEM_TARGET = $(BIN_DIR)/denoise_mem
 
