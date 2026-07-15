@@ -170,6 +170,29 @@ arm64（Apple Silicon）上原生編譯 + 驗證 NE10 版 mem==malloc byte-for-b
 
 > **Note:** v1.3.0 起 `make` 預設啟用 6 個數學等價優化（100% 相關度），不需要手動指定。
 
+### FP-contraction 統一政策（round-3 review B04）
+
+`-ffp-contract=off` 現在是**橫跨四個 repo 的統一政策**（`audio_common`、
+`NR/c_impl`、`AEC/c_impl`、`Audio_ALG/pipelines`）：每個 Makefile 編譯的每一個
+TU——自己的原始碼**與**vendored 的 KISS/NE10 C/C++ 一律套用此 flag。本 repo
+無自己的 C++ TU（`CXXFLAGS` 只是 CFG_SIG payload-coverage 佔位，見 Makefile
+註解），所以只有 `CFLAGS` 需要這個 flag。它被附加在 `CFLAGS` 組裝的**最後一步**
+（`EXTRA_CFLAGS`、DEBUG-vs-預設優化區塊、`WERROR` 全部疊加完之後），確保呼叫端傳
+的任何 flag 都不能蓋過它；同時在 parse time 直接擋掉 `EXTRA_CFLAGS`（或
+`CFLAGS=` override）內含 `-Ofast`/`-ffast-math`/`-ffp-contract=<任意值>`：
+
+```
+$ make EXTRA_CFLAGS=-ffast-math
+Makefile:179: *** FP policy conflict: CFLAGS/EXTRA_CFLAGS contains -ffast-math; this repo pins -ffp-contract=off; remove -ffast-math from EXTRA_CFLAGS.  Stop.
+```
+
+`../audio_common/scripts/audit_fp_contract.sh` 是 disassembly 等級的驗證：反組譯
+本 repo 的 `mmse_lsa_denoiser.o`/`mcra_noise_estimator.o`/`spp_estimator.o`（皆只
+`#include fast_math.h`/`fft_wrapper.h`，沒有 NEON intrinsics，也沒有顯式
+`fmaf()`/`fma()` 呼叫，屬於 genuinely scalar），若出現任何
+fmadd/fmsub/fnmadd/fnmsub/fmla/fmls 指令即判定失敗——那正是編譯器「自行」融合
+`a*b+c` 的訊號，也正是這個 flag 存在的目的。詳見該腳本 header 的完整 scoping 說明。
+
 ## 編譯開關說明
 
 ### 預設啟用（v1.3.0 起，數學等價，`make` 即啟用）

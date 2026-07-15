@@ -150,6 +150,41 @@ ifeq ($(WERROR),1)
   CFLAGS += -Werror
 endif
 
+# --- FP-contraction policy: unified across all four repos (round-3 review
+# B04). This repo has no C++ TUs of its own (CXXFLAGS is a CFG_SIG
+# payload-coverage placeholder only, per the comment near the top of this
+# file -- nothing here ever compiles a .cpp), so only CFLAGS needs the
+# policy flag. Appended here, AFTER every prior CFLAGS append in this file
+# (base flags, -I paths, EXTRA_CFLAGS, the DEBUG-vs-default-optimizations
+# block, and WERROR just above), and BEFORE CFG_SIG_PAYLOAD is computed
+# below -- so it automatically participates in CFG_SIG (no separate payload
+# entry needed) and nothing after this line can re-append and override it.
+# See audio_common's Makefile for the full cross-repo design writeup (this
+# repo's three own TUs -- mmse_lsa_denoiser.c/mcra_noise_estimator.c/
+# spp_estimator.c -- include only fast_math.h/fft_wrapper.h, no NEON
+# intrinsics, so they are genuinely scalar and expected to disassemble
+# fmadd/fmla-free under this flag; see scripts/audit_fp_contract.sh in
+# audio_common for the disassembly-level verification).
+#
+# Conflict detection (round-3 review B04): reject outright rather than let
+# a caller's EXTRA_CFLAGS=-Ofast/-ffast-math/-ffp-contract=<anything>
+# silently re-enable contraction. Checked against the fully-assembled
+# $(CFLAGS) (already includes EXTRA_CFLAGS and any CFLAGS= command-line
+# override) BEFORE FP_POLICY is appended below and BEFORE CFG_SIG is
+# computed, so a rejected build never creates an obj/bin directory.
+ifneq ($(findstring -Ofast,$(CFLAGS)),)
+$(error FP policy conflict: CFLAGS/EXTRA_CFLAGS contains -Ofast; this repo pins -ffp-contract=off; remove -Ofast from EXTRA_CFLAGS)
+endif
+ifneq ($(findstring -ffast-math,$(CFLAGS)),)
+$(error FP policy conflict: CFLAGS/EXTRA_CFLAGS contains -ffast-math; this repo pins -ffp-contract=off; remove -ffast-math from EXTRA_CFLAGS)
+endif
+ifneq ($(findstring -ffp-contract=,$(CFLAGS)),)
+$(error FP policy conflict: CFLAGS/EXTRA_CFLAGS contains -ffp-contract=; this repo pins -ffp-contract=off; remove -ffp-contract= from EXTRA_CFLAGS)
+endif
+
+FP_POLICY := -ffp-contract=off
+CFLAGS    += $(FP_POLICY)
+
 .DEFAULT_GOAL := all
 
 # =============================================================================
