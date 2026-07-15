@@ -52,8 +52,28 @@ TOOLCHAIN_CHECK ?= 1
 # symlink-swap helper (never $(CC): that may be a cross compiler). Neither
 # is in CFG_SIG -- neither affects what is built. See audio_common's
 # Makefile for the full writeups.
+#
+# ALLOW_DIRTY_PUBLISH (round-6 review P2): `make publish` REFUSES by default
+# when this checkout has uncommitted tracked changes or is not a git
+# checkout at all (commit unknown) -- a release whose ATTEST provenance
+# cannot name the exact source state is not a board deliverable.
+# ALLOW_DIRTY_PUBLISH=1 is the explicit escape hatch for dev publishes; it
+# is recorded in the attestation together with a sha256 of
+# `git diff --binary HEAD` so the deviation itself is traceable. Not in
+# CFG_SIG: it never changes what is built, only whether publish proceeds.
+#
+# ATTEST_STAMP (round-6 review P2, TEST-ONLY): overrides the UTC timestamp
+# embedded in the attestation FILENAME so the isolation tests can
+# deterministically force same-second publish collisions and prove the
+# no-clobber retry path. Never use it on a real publish -- though note a
+# forged stamp is within the already-accepted threat model: attestations
+# are unsigned and provide traceability, NOT authenticity against an
+# attacker with filesystem access. Not in CFG_SIG or MANIFEST. See
+# audio_common's Makefile for the full writeups on both of the above.
 DIST_ROOT ?= dist
 HOSTCC    ?= cc
+ALLOW_DIRTY_PUBLISH ?= 0
+ATTEST_STAMP ?=
 
 # Locate audio_common: normal checkout has it as a sibling of this repo
 # (../../audio_common from c_impl/). The second candidate covers this repo being
@@ -262,9 +282,18 @@ endif
 SRC_DIR = src
 EXAMPLE_DIR = example
 TEST_DIR = test
-OBJ_ROOT = obj
+# OBJ_ROOT / BIN_ROOT (round-6 review P1): where the keyed obj/bin trees
+# live (defaults: obj/ and bin/ in this directory -- the default expansion
+# is byte-identical to the previous hardcoded paths). Same rationale as
+# DIST_ROOT above: a placement knob, never a build-content knob, so
+# deliberately NOT in CFG_SIG. The isolation tests use these to run
+# tamper/injection scenarios against a scratch-directory build of the real
+# worktree, so the REAL obj/ and bin/ artifacts are never modified -- not
+# even transiently. See audio_common's Makefile for the full writeup.
+OBJ_ROOT ?= obj
+BIN_ROOT ?= bin
 OBJ_DIR = $(OBJ_ROOT)/$(BACKEND)-$(CFG_SIG)
-BIN_DIR = bin/$(BACKEND)-$(CFG_SIG)
+BIN_DIR = $(BIN_ROOT)/$(BACKEND)-$(CFG_SIG)
 
 # Source files (gain calculation merged into mmse_lsa_denoiser.c). FFT + fast_math
 # come from audio_common (linked via $(AC_LIB)); this repo only supplies the
@@ -490,8 +519,8 @@ print-lib-path:
 
 # =============================================================================
 # publish v4: immutable, content-addressed release under $(DIST_ROOT)
-# (round-3 B01 -> round-4 P2-2 -> round-5 P2) -- same design as
-# audio_common's publish; see that Makefile for the full layout/semantics
+# (round-3 B01 -> round-4 P2-2 -> round-5 P2 -> round-6 P1/P2) -- same design
+# as audio_common's publish; see that Makefile for the full layout/semantics
 # writeup (deterministic MANIFEST + append-only ATTEST/ provenance,
 # byte-verified idempotent republish incl. MANIFEST tamper detection,
 # rename(2)-atomic `current` swap via the swapln helper built with
@@ -499,17 +528,62 @@ print-lib-path:
 # can't race the prerequisite build). `publish` is the locked driver;
 # _publish_impl is INTERNAL (direct invocation skips the lock) and goes
 # through the same two-phase AC_LIB dispatch as `all`/`mem`.
+#
+# Round-6 (see audio_common's Makefile for the full writeup on all of this):
+#   - `make -n`/`-q`/`-t` no longer touch $(DIST_ROOT) or the publish lock --
+#     the `publish` driver word-scans MAKEFLAGS and short-circuits before any
+#     filesystem side effect.
+#   - git_commit is the FULL 40-hex OID (was --short), with dirty computed
+#     from `git status --porcelain` and, when dirty, dirty_diff_sha256 =
+#     sha256 of `git diff --binary HEAD`.
+#   - ATTEST/ install is one-event-one-file via the swapln helper's
+#     `--excl-install` mode (write-temp + link(2), atomic no-clobber): an
+#     EEXIST collision (same second, same commit) bumps the attestation's
+#     <seq> and retries (capped at 999) -- an existing attestation is NEVER
+#     overwritten (round-5 used cp+mv -f, which silently clobbered a
+#     same-second republish's prior record). Attestations remain UNSIGNED:
+#     traceability, not authenticity.
+#   - Dirty policy now covers BOTH checkouts that produced this artifact:
+#     publish FATALs when either nr itself OR the producer audio_common
+#     checkout (resolved via AC_DIR) is dirty or has no git identity, unless
+#     ALLOW_DIRTY_PUBLISH=1. The attestation records both checkouts'
+#     provenance -- git_commit/git_dirty/dirty_diff_sha256 for nr, and the
+#     same three fields audio_common_-prefixed for the producer -- plus
+#     allow_dirty_publish so an accepted dirty publish is itself traceable.
 # =============================================================================
 PUBLISH_ARTIFACTS = $(LIB_TARGET) $(TARGET)
 DIST_BACKEND_DIR  = $(DIST_ROOT)/$(BACKEND)
 DIST_LOCK         = $(DIST_ROOT)/.lock.$(BACKEND)
 
-.PHONY: publish
-# (Recipe mentions $(MAKE), so it executes under -n too: the lock dir is
-# transiently created/removed while the child make inherits -n and only
-# prints -- no build/dist side effects.)
+.PHONY: publish _publish_impl
+# Dry-run guard (round-6 review P2-3): this recipe mentions $(MAKE), so GNU
+# make executes it for real under -n/-q/-t (all three share that rule) --
+# which used to mkdir $(DIST_ROOT) persistently and take/release the real
+# publish lock on every dry run. The word-scan below detects those flags in
+# MAKEFLAGS and branches: -n/-t exec a recursion-only path (the child make
+# inherits the flag and merely prints / applies standard -t touch semantics
+# to the impl chain); -q exits 1 directly (question mode's documented
+# "needs updating" answer -- publish is phony, so it always would run --
+# with no output). Either way: no DIST_ROOT, no lock, no stage/helper/
+# MANIFEST/ATTEST writes. MAKEFLAGS parsing (verified against GNU make
+# 3.81: 17 flag combinations incl. long forms): bundled no-dash short flags
+# may appear as the first word ("n", "sn") OR as separate dashed words
+# ("-n" after a long option); long options start with "--"; a literal "--"
+# separates flags from command-line variable overrides (which can
+# themselves contain n/q/t -- BACKEND=ne10 -- hence the explicit skips).
+# Normal invocations keep the round-5 lock-FIRST discipline unchanged. See
+# audio_common's Makefile for the full writeup.
 publish:
-	+@mkdir -p $(DIST_ROOT); \
+	+@has_n=0; has_q=0; has_t=0; \
+	for w in $(MAKEFLAGS); do \
+	  case "$$w" in --) break ;; --*|*=*) continue ;; -n|-q|-t) ;; -*) continue ;; esac; \
+	  case "$$w" in *n*) has_n=1 ;; esac; \
+	  case "$$w" in *q*) has_q=1 ;; esac; \
+	  case "$$w" in *t*) has_t=1 ;; esac; \
+	done; \
+	if [ "$$has_n" = 1 ] || [ "$$has_t" = 1 ]; then exec $(MAKE) --no-print-directory _publish_impl; fi; \
+	if [ "$$has_q" = 1 ]; then exit 1; fi; \
+	mkdir -p $(DIST_ROOT); \
 	if ! mkdir "$(DIST_LOCK)" 2>/dev/null; then \
 	  echo "FATAL: publish lock $(DIST_LOCK) already held (concurrent 'make publish BACKEND=$(BACKEND)'?)" >&2; \
 	  exit 1; \
@@ -530,10 +604,39 @@ _publish_impl: $(PUBLISH_ARTIFACTS)
 	work="$$(mktemp -d)"; \
 	tmp="$(DIST_BACKEND_DIR)/.stage.$$$$"; \
 	trap 'rm -rf "$$tmp" "$$work"' EXIT INT TERM; \
-	commit="$$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"; \
-	dirty=0; [ -n "$$(git status --porcelain 2>/dev/null)" ] && dirty=1; \
+	commit="$$(git rev-parse HEAD 2>/dev/null || echo unknown)"; \
+	if [ "$$commit" = "unknown" ]; then dirty=unknown; else \
+	  dirty=0; [ -n "$$(git status --porcelain 2>/dev/null)" ] && dirty=1; \
+	fi; \
+	ddiff=""; [ "$$dirty" = "1" ] && ddiff="$$(git diff --binary HEAD 2>/dev/null | shasum -a 256 | cut -d' ' -f1)"; \
+	if [ -n "$(AC_DIR)" ] && [ -d "$(AC_DIR)" ]; then \
+	  ac_commit="$$(git -C $(AC_DIR) rev-parse HEAD 2>/dev/null || echo unknown)"; \
+	else \
+	  ac_commit=unknown; \
+	fi; \
+	if [ "$$ac_commit" = "unknown" ]; then ac_dirty=unknown; else \
+	  ac_dirty=0; [ -n "$$(git -C $(AC_DIR) status --porcelain 2>/dev/null)" ] && ac_dirty=1; \
+	fi; \
+	ac_ddiff=""; [ "$$ac_dirty" = "1" ] && ac_ddiff="$$(git -C $(AC_DIR) diff --binary HEAD 2>/dev/null | shasum -a 256 | cut -d' ' -f1)"; \
+	adp=0; [ "$(ALLOW_DIRTY_PUBLISH)" = "1" ] && adp=1; \
+	if [ "$$adp" != "1" ] && ( [ "$$dirty" != "0" ] || [ "$$ac_dirty" != "0" ] ); then \
+	  echo "FATAL: publish refused --" >&2; \
+	  if [ "$$dirty" = "unknown" ]; then \
+	    echo "  nr has no git identity here (not a git checkout), so the attestation cannot name the source state." >&2; \
+	  elif [ "$$dirty" = "1" ]; then \
+	    echo "  nr working tree is dirty (uncommitted changes)." >&2; \
+	  fi; \
+	  if [ "$$ac_dirty" = "unknown" ]; then \
+	    echo "  audio_common (AC_DIR=$(AC_DIR)) has no git identity here (not a git checkout), so the attestation cannot name the source state." >&2; \
+	  elif [ "$$ac_dirty" = "1" ]; then \
+	    echo "  audio_common (AC_DIR=$(AC_DIR)) working tree is dirty (uncommitted changes)." >&2; \
+	  fi; \
+	  echo "  Commit (or clone a clean checkout) for a board deliverable, or pass ALLOW_DIRTY_PUBLISH=1" >&2; \
+	  echo "  for a dev publish -- the escape hatch is recorded in the attestation." >&2; \
+	  exit 1; \
+	fi; \
 	dateutc="$$(date -u +%Y-%m-%dT%H:%M:%SZ)"; \
-	stamp="$$(date -u +%Y%m%dT%H%M%SZ)"; \
+	stamp='$(ATTEST_STAMP)'; [ -n "$$stamp" ] || stamp="$$(date -u +%Y%m%dT%H%M%SZ)"; \
 	$(HOSTCC) -O2 -o "$$work/swapln" $(AC_DIR)/tools/atomic_symlink_swap.c || { echo "FATAL: could not build the atomic symlink-swap helper with HOSTCC=$(HOSTCC) (pass HOSTCC=<host compiler>)" >&2; exit 1; }; \
 	mkdir -p "$(DIST_BACKEND_DIR)"; \
 	rm -rf "$$tmp"; mkdir -p "$$tmp"; \
@@ -554,12 +657,6 @@ _publish_impl: $(PUBLISH_ARTIFACTS)
 	  echo "$$shas"; \
 	} > "$$tmp/MANIFEST.txt"; \
 	suffix=""; [ "$$dirty" = "1" ] && suffix="-dirty"; \
-	attest_name="attest-$$stamp-$$commit$$suffix.txt"; \
-	{ echo "release_id=$$rel_id"; \
-	  echo "cfg_sig=$(CFG_SIG)"; \
-	  echo "backend=$(BACKEND)"; \
-	  echo "git_commit=$$commit"; echo "git_dirty=$$dirty"; echo "date_utc=$$dateutc"; \
-	} > "$$work/attest.txt"; \
 	if [ -d "$$rel_dir" ]; then \
 	  for f in "$$tmp"/*; do \
 	    bn="$$(basename "$$f")"; \
@@ -572,8 +669,27 @@ _publish_impl: $(PUBLISH_ARTIFACTS)
 	  mv "$$tmp" "$$rel_dir"; \
 	fi; \
 	mkdir -p "$$rel_dir/ATTEST"; \
-	cp "$$work/attest.txt" "$$rel_dir/ATTEST/.$$attest_name.tmp"; \
-	mv -f "$$rel_dir/ATTEST/.$$attest_name.tmp" "$$rel_dir/ATTEST/$$attest_name"; \
+	n=1; \
+	while :; do \
+	  attest_name="attest-$$stamp-$$commit$$suffix-$$(printf '%03d' "$$n").txt"; \
+	  { echo "event_id=$${attest_name%.txt}"; \
+	    echo "repo=nr"; \
+	    echo "release_id=$$rel_id"; \
+	    echo "cfg_sig=$(CFG_SIG)"; \
+	    echo "backend=$(BACKEND)"; \
+	    echo "git_commit=$$commit"; echo "git_dirty=$$dirty"; \
+	    [ -n "$$ddiff" ] && echo "dirty_diff_sha256=$$ddiff"; \
+	    echo "audio_common_git_commit=$$ac_commit"; echo "audio_common_git_dirty=$$ac_dirty"; \
+	    [ -n "$$ac_ddiff" ] && echo "audio_common_dirty_diff_sha256=$$ac_ddiff"; \
+	    echo "date_utc=$$dateutc"; \
+	    echo "allow_dirty_publish=$$adp"; \
+	  } > "$$work/attest.txt"; \
+	  rc=0; "$$work/swapln" --excl-install "$$work/attest.txt" "$$rel_dir/ATTEST/$$attest_name" || rc=$$?; \
+	  [ "$$rc" -eq 0 ] && break; \
+	  [ "$$rc" -eq 2 ] || { echo "FATAL: could not install attestation $$attest_name" >&2; exit 1; }; \
+	  n=$$((n+1)); \
+	  [ "$$n" -le 999 ] || { echo "FATAL: 999 attestation name collisions for $$stamp-$$commit (runaway?)" >&2; exit 1; }; \
+	done; \
 	"$$work/swapln" "$$rel_id" "$(DIST_BACKEND_DIR)/current"; \
 	echo "nr: published $(BACKEND)/$$rel_id -> $(DIST_BACKEND_DIR)/current (attested: $$attest_name)"
 endif
@@ -587,7 +703,7 @@ debug:
 
 # Clean
 clean:
-	rm -rf $(OBJ_ROOT) bin
+	rm -rf $(OBJ_ROOT) $(BIN_ROOT)
 	@echo "Clean complete"
 
 # Install (copy to /usr/local/bin) -- resolves this invocation's own denoise_wav
@@ -646,7 +762,7 @@ help:
 	@echo "  make EXTRA_CFLAGS=\"-DUSE_FAST_PERCENTILE\"    - Optimized build (all approximations)"
 	@echo "  make WERROR=1                                  - Opt-in: -Werror for this repo's own sources"
 	@echo ""
-	@echo "Objects/binaries live in obj|bin/<backend>-<config-hash>/ -- switching"
+	@echo "Objects/binaries live in <OBJ_ROOT>|<BIN_ROOT>/<backend>-<config-hash>/ (default obj/bin) -- switching"
 	@echo "BACKEND, EXTRA_CFLAGS, WERROR, or DEBUG always lands in a fresh directory"
 	@echo "automatically; no manual clean needed, and two differently-configured"
 	@echo "builds can run concurrently in this same tree. Run \`make print-bin-dir\`"
@@ -662,7 +778,7 @@ help:
 	@echo "  With USE_FAST_PERCENTILE: No extra memory"
 	@echo ""
 	@echo "After building:"
-	@echo "  ./bin/<backend>-<config-hash>/denoise_wav input.wav output.wav"
+	@echo "  ./<BIN_ROOT>/<backend>-<config-hash>/denoise_wav input.wav output.wav (default bin/)"
 
 .PHONY: dirs clean install uninstall test help
 dirs: _cfg_guard
