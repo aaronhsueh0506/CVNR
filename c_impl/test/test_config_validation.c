@@ -1,5 +1,5 @@
 /**
- * test_config_validation.c - Negative + positive tests for the F05/F07
+ * test_config_validation.c - Negative + positive tests for the F05/F07/R08
  * config-validation and static-memory alignment-guard remediation.
  *
  * F05: mmse_lsa_get_mem_size()/create()/init() (and the MCRA/SPP sub-module
@@ -9,6 +9,11 @@
  *      size-arithmetic into a wrapped/undersized byte count.
  * F07: mmse_lsa_init() (and mcra_init/spp_init) must reject a mis-aligned
  *      pool base BEFORE writing a single byte into it.
+ * R08 (external re-review, NR side): mmse_lsa_validate_config() checked
+ *      sample_rate + int dims only -- none of the 18 float tunables (SPP/
+ *      MCRA/scene-change/gain/stationary-overlay knobs) were validated at
+ *      all, so a NaN/Inf/sign-flipped/absurd-magnitude float could still
+ *      reach the denoiser's arithmetic. See section 3 below.
  *
  * Standalone runner (no external test framework): each check is a plain
  * assertion; a failure prints to stderr and bumps a counter. main() returns
@@ -138,7 +143,121 @@ int main(void) {
     }
     printf("\n");
 
-    /* ---- 3. Alignment guard: misaligned base rejected, zero writes ---- */
+    /* ---- 3. Float tunable validation (R08, external re-review, NR side) --
+     * mmse_lsa_validate_config() used to check sample_rate + int dims only;
+     * none of the 18 float tunables (SPP/MCRA/scene-change/gain/stationary-
+     * overlay knobs) were validated at all. This section checks: (a) NaN/Inf
+     * in a representative spread of fields (one per struct section) are all
+     * rejected; (b) a few concrete garbage values called out in the
+     * remediation ask (degenerate q, out-of-range alpha_xi, absurd g_min_db,
+     * non-positive/zero stationary-floor beta/exponent) are rejected; and
+     * (c) every shipped config -- all four strength presets, each with the
+     * stationary content-preservation overlay layered on top, the bare
+     * default, and the AEC-chain caller's (Audio_ALG audio_pipeline.c
+     * derive_dims_and_configs()) L/alpha_d/alpha_attack/alpha_decay overlay
+     * -- across every supported sample rate, still validates. Rejecting
+     * garbage must never reject anything shipped (byte-neutral). --------- */
+    printf("-- float tunable validation (R08) --\n");
+    {
+        MmseLsaConfig cfg;
+
+        /* (a) NaN / Inf, one representative field per struct section. */
+        cfg = mmse_lsa_default_config(16000); cfg.alpha_xi = NAN;
+        expect_config_rejected(&cfg, "alpha_xi = NaN", big_buf, BIG_BUF);
+
+        cfg = mmse_lsa_default_config(16000); cfg.q = INFINITY;
+        expect_config_rejected(&cfg, "q = +Inf", big_buf, BIG_BUF);
+
+        cfg = mmse_lsa_default_config(16000); cfg.xi_min_db = -INFINITY;
+        expect_config_rejected(&cfg, "xi_min_db = -Inf", big_buf, BIG_BUF);
+
+        cfg = mmse_lsa_default_config(16000); cfg.alpha_d = NAN;
+        expect_config_rejected(&cfg, "alpha_d (MCRA) = NaN", big_buf, BIG_BUF);
+
+        cfg = mmse_lsa_default_config(16000); cfg.scene_change_blend = INFINITY;
+        expect_config_rejected(&cfg, "scene_change_blend = +Inf", big_buf, BIG_BUF);
+
+        cfg = mmse_lsa_default_config(16000); cfg.g_min_db = NAN;
+        expect_config_rejected(&cfg, "g_min_db (gain) = NaN", big_buf, BIG_BUF);
+
+        cfg = mmse_lsa_default_config(16000); cfg.alpha_g = INFINITY;
+        expect_config_rejected(&cfg, "alpha_g = +Inf", big_buf, BIG_BUF);
+
+        cfg = mmse_lsa_default_config(16000); cfg.stationary_floor_exponent = NAN;
+        expect_config_rejected(&cfg, "stationary_floor_exponent = NaN", big_buf, BIG_BUF);
+
+        cfg = mmse_lsa_default_config(16000); cfg.stationary_floor_beta = INFINITY;
+        expect_config_rejected(&cfg, "stationary_floor_beta = +Inf", big_buf, BIG_BUF);
+
+        /* (b) Concrete garbage values from the remediation ask. */
+        cfg = mmse_lsa_default_config(16000); cfg.q = 0.0f;
+        expect_config_rejected(&cfg, "q = 0 (degenerate probability)", big_buf, BIG_BUF);
+
+        cfg = mmse_lsa_default_config(16000); cfg.q = 1.5f;
+        expect_config_rejected(&cfg, "q = 1.5 (> 1)", big_buf, BIG_BUF);
+
+        cfg = mmse_lsa_default_config(16000); cfg.alpha_xi = -0.1f;
+        expect_config_rejected(&cfg, "alpha_xi = -0.1 (negative)", big_buf, BIG_BUF);
+
+        cfg = mmse_lsa_default_config(16000); cfg.alpha_xi = 1.5f;
+        expect_config_rejected(&cfg, "alpha_xi = 1.5 (> 1)", big_buf, BIG_BUF);
+
+        cfg = mmse_lsa_default_config(16000); cfg.g_min_db = -200.0f;
+        expect_config_rejected(&cfg, "g_min_db = -200 (out of range)", big_buf, BIG_BUF);
+
+        cfg = mmse_lsa_default_config(16000); cfg.stationary_floor_beta = 0.0f;
+        expect_config_rejected(&cfg, "stationary_floor_beta = 0 (non-positive)", big_buf, BIG_BUF);
+
+        cfg = mmse_lsa_default_config(16000); cfg.stationary_floor_exponent = 0.0f;
+        expect_config_rejected(&cfg, "stationary_floor_exponent = 0 (below 0.5 floor)", big_buf, BIG_BUF);
+
+        /* (c) Every shipped config must still validate, across every
+         * supported sample rate: all four strength presets, each with the
+         * stationary overlay on top, and the bare default. */
+        MmseLsaNrMode modes[] = { MMSE_LSA_NR_MILD, MMSE_LSA_NR_MODERATE,
+                                   MMSE_LSA_NR_BALANCED, MMSE_LSA_NR_AGGRESSIVE };
+        const char* mode_names[] = { "mild", "moderate", "balanced", "aggressive" };
+        int sample_rates[] = { 8000, 16000, 48000 };
+
+        for (size_t r = 0; r < sizeof(sample_rates) / sizeof(sample_rates[0]); r++) {
+            for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
+                char msg[96];
+                MmseLsaConfig preset = mmse_lsa_config_for_mode(sample_rates[r], modes[i]);
+                snprintf(msg, sizeof msg, "preset %s @ %dHz: validate_config() accepts",
+                         mode_names[i], sample_rates[r]);
+                CHECK(mmse_lsa_validate_config(&preset), msg);
+
+                MmseLsaConfig preset_st = preset;
+                mmse_lsa_apply_stationary(&preset_st);
+                snprintf(msg, sizeof msg, "preset %s+stationary @ %dHz: validate_config() accepts",
+                         mode_names[i], sample_rates[r]);
+                CHECK(mmse_lsa_validate_config(&preset_st), msg);
+            }
+
+            MmseLsaConfig def = mmse_lsa_default_config(sample_rates[r]);
+            char msg[64];
+            snprintf(msg, sizeof msg, "default @ %dHz: validate_config() accepts", sample_rates[r]);
+            CHECK(mmse_lsa_validate_config(&def), msg);
+        }
+
+        /* AEC-chain caller overlay (Audio_ALG pipelines' audio_pipeline.c
+         * derive_dims_and_configs(): L=150, alpha_d=0.95, alpha_attack=0.3,
+         * alpha_decay=alpha_g) must also validate for every strength preset. */
+        for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
+            MmseLsaConfig aec_chain = mmse_lsa_config_for_mode(16000, modes[i]);
+            aec_chain.L            = 150;
+            aec_chain.alpha_d      = 0.95f;
+            aec_chain.alpha_attack = 0.3f;
+            aec_chain.alpha_decay  = aec_chain.alpha_g;
+            char msg[96];
+            snprintf(msg, sizeof msg, "AEC-chain overlay (%s): validate_config() accepts",
+                     mode_names[i]);
+            CHECK(mmse_lsa_validate_config(&aec_chain), msg);
+        }
+    }
+    printf("\n");
+
+    /* ---- 4. Alignment guard: misaligned base rejected, zero writes ---- */
     printf("-- alignment guard (mmse_lsa_init) --\n");
     {
         MmseLsaConfig cfg = mmse_lsa_default_config(16000);
@@ -181,7 +300,7 @@ int main(void) {
     }
     printf("\n");
 
-    /* ---- 4. Valid 16k config end-to-end: denoise 1s of synthetic noise - */
+    /* ---- 5. Valid 16k config end-to-end: denoise 1s of synthetic noise - */
     printf("-- end-to-end denoise (valid 16kHz config) --\n");
     {
         MmseLsaConfig cfg = mmse_lsa_default_config(16000);

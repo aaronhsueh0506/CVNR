@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include <limits.h>
+#include <math.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -251,6 +252,17 @@ static inline void mmse_lsa_apply_stationary(MmseLsaConfig* config) {
  * mmse_lsa_default_config() / mmse_lsa_config_for_mode() / the CLI's framing
  * override, for any of the three supported sample rates, always passes.
  *
+ * Float tunables (R08, external re-review, NR side): the int/dimension
+ * checks above were the whole gate — none of the 18 float fields (SPP/MCRA/
+ * scene-change/gain/stationary-overlay knobs) were checked at all, so a NaN/
+ * Inf/sign-flipped/absurd-magnitude value in any of them (adversarial input,
+ * or a caller bug building the config by hand) would sail straight through
+ * into mmse_lsa_create()/mmse_lsa_init() and the denoiser's own arithmetic.
+ * Beyond the integer/dimension checks above, every float tunable is now also
+ * checked here: NaN/Inf are rejected outright, and each field is bounded to a
+ * wide sanity range (same "reject garbage, not policy" design as the int
+ * bounds) — see the per-field comments below for the exact domain and why.
+ *
  * @return true iff config is safe to pass to mmse_lsa_get_mem_size(),
  *         mmse_lsa_create(), or mmse_lsa_init().
  */
@@ -299,6 +311,111 @@ static inline bool mmse_lsa_validate_config(const MmseLsaConfig* config) {
         return false;
     }
     if (config->num_init_frames <= 0 || config->num_init_frames > 200) {
+        return false;
+    }
+
+    // ---- Float tunables --------------------------------------------------
+    // Every float knob below must be finite (no NaN/Inf), and land inside a
+    // wide sanity range. Same design rule as the int bounds above: these
+    // exist to reject garbage — NaN/Inf, a flipped sign, a stray extra zero
+    // — not to constrain legitimate re-tuning. Every value
+    // mmse_lsa_default_config() / mmse_lsa_config_for_mode() (all four
+    // strength presets) / mmse_lsa_apply_stationary() ever sets, and every
+    // value the Audio_ALG pipeline's derive_dims_and_configs() overlays on
+    // top (L/alpha_d/alpha_attack/alpha_decay), falls comfortably inside its
+    // range.
+
+    // SPP parameters: alpha_xi is a [0,1] smoothing coefficient. q is a
+    // speech-prior PROBABILITY, so it must be a proper open (0,1) value —
+    // 0 or 1 would degenerate the SPP recursion into a permanent
+    // silence/speech lock. xi_min_db is an a priori SNR floor in dB.
+    if (!isfinite(config->alpha_xi) || config->alpha_xi < 0.0f || config->alpha_xi > 1.0f) {
+        return false;
+    }
+    if (!isfinite(config->q) || config->q <= 0.0f || config->q >= 1.0f) {
+        return false;
+    }
+    if (!isfinite(config->xi_min_db) ||
+        config->xi_min_db < -80.0f || config->xi_min_db > 80.0f) {
+        return false;
+    }
+
+    // MCRA parameters: alpha_s/alpha_d/alpha_p are [0,1] smoothing
+    // coefficients; delta_db is a bias-compensation term in dB.
+    if (!isfinite(config->alpha_s) || config->alpha_s < 0.0f || config->alpha_s > 1.0f) {
+        return false;
+    }
+    if (!isfinite(config->alpha_d) || config->alpha_d < 0.0f || config->alpha_d > 1.0f) {
+        return false;
+    }
+    if (!isfinite(config->alpha_p) || config->alpha_p < 0.0f || config->alpha_p > 1.0f) {
+        return false;
+    }
+    if (!isfinite(config->delta_db) ||
+        config->delta_db < -80.0f || config->delta_db > 80.0f) {
+        return false;
+    }
+
+    // MCRA scene-change detection: threshold is in dB; blend/flatness/
+    // broadband are all [0,1] proportions (broadband_threshold's "<1.0
+    // enables, 1.0 disables" semantics documented in
+    // mmse_lsa_default_config() still fits inside [0,1]).
+    if (!isfinite(config->scene_change_threshold_db) ||
+        config->scene_change_threshold_db < -80.0f ||
+        config->scene_change_threshold_db > 80.0f) {
+        return false;
+    }
+    if (!isfinite(config->scene_change_blend) ||
+        config->scene_change_blend < 0.0f || config->scene_change_blend > 1.0f) {
+        return false;
+    }
+    if (!isfinite(config->scene_change_flatness_threshold) ||
+        config->scene_change_flatness_threshold < 0.0f ||
+        config->scene_change_flatness_threshold > 1.0f) {
+        return false;
+    }
+    if (!isfinite(config->broadband_threshold) ||
+        config->broadband_threshold < 0.0f || config->broadband_threshold > 1.0f) {
+        return false;
+    }
+
+    // Gain parameters: g_min_db is an amplitude-dB (/20 convention) floor;
+    // alpha_g/alpha_attack/alpha_decay are [0,1] smoothing coefficients.
+    if (!isfinite(config->g_min_db) ||
+        config->g_min_db < -80.0f || config->g_min_db > 80.0f) {
+        return false;
+    }
+    if (!isfinite(config->alpha_g) || config->alpha_g < 0.0f || config->alpha_g > 1.0f) {
+        return false;
+    }
+    if (!isfinite(config->alpha_attack) ||
+        config->alpha_attack < 0.0f || config->alpha_attack > 1.0f) {
+        return false;
+    }
+    if (!isfinite(config->alpha_decay) ||
+        config->alpha_decay < 0.0f || config->alpha_decay > 1.0f) {
+        return false;
+    }
+
+    // Content-preservation (stationary) overlay: exponent p and beta shape
+    // the Wiener gain lower bound (xi/(beta+xi))^p — p ranges 1.0 (base/
+    // full) to 2.0 (stationary preset); beta must stay strictly positive (it
+    // is a denominator term, see mmse_lsa_apply_stationary()).
+    // scene_change_lo_flatness_max is a [0,1] flatness threshold, same
+    // domain as scene_change_flatness_threshold above.
+    if (!isfinite(config->stationary_floor_exponent) ||
+        config->stationary_floor_exponent < 0.5f ||
+        config->stationary_floor_exponent > 8.0f) {
+        return false;
+    }
+    if (!isfinite(config->stationary_floor_beta) ||
+        config->stationary_floor_beta <= 0.0f ||
+        config->stationary_floor_beta > 16.0f) {
+        return false;
+    }
+    if (!isfinite(config->scene_change_lo_flatness_max) ||
+        config->scene_change_lo_flatness_max < 0.0f ||
+        config->scene_change_lo_flatness_max > 1.0f) {
         return false;
     }
 
