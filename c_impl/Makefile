@@ -53,14 +53,51 @@ TOOLCHAIN_CHECK ?= 1
 # is in CFG_SIG -- neither affects what is built. See audio_common's
 # Makefile for the full writeups.
 #
-# ALLOW_DIRTY_PUBLISH (round-6 review P2): `make publish` REFUSES by default
-# when this checkout has uncommitted tracked changes or is not a git
-# checkout at all (commit unknown) -- a release whose ATTEST provenance
-# cannot name the exact source state is not a board deliverable.
-# ALLOW_DIRTY_PUBLISH=1 is the explicit escape hatch for dev publishes; it
-# is recorded in the attestation together with a sha256 of
-# `git diff --binary HEAD` so the deviation itself is traceable. Not in
-# CFG_SIG: it never changes what is built, only whether publish proceeds.
+# ALLOW_DIRTY_PUBLISH (round-6 review P2, scope narrowed in round-7): `make
+# publish` REFUSES by default when EITHER this checkout (nr) OR the producer
+# audio_common checkout (resolved via AC_DIR) has uncommitted TRACKED
+# changes (`git status --porcelain -uno` non-empty) -- a release whose
+# ATTEST provenance cannot name the exact source state of BOTH repos that
+# produced it is not a board deliverable. ALLOW_DIRTY_PUBLISH=1 is the
+# explicit escape hatch for dev publishes; it is recorded in the attestation
+# together with a sha256 of `git diff --binary HEAD` for whichever
+# checkout(s) are dirty, so the deviation itself is traceable. It covers
+# TRACKED changes only -- untracked files have their own dimension below
+# (round-7 review: the tracked diff hash says nothing about untracked
+# bytes, so lumping the two under one flag let two different untracked
+# source states publish with identical provenance). A checkout with NO git
+# identity at all (nr itself, or the checkout resolved via AC_DIR --
+# including AC_DIR unset, missing, or not a directory) is refused
+# UNCONDITIONALLY, in BOTH repos -- neither this knob nor
+# ALLOW_UNTRACKED_PUBLISH admits it, because without an identity neither the
+# commit nor the untracked enumeration can be named for that checkout
+# (provenance is impossible; round-7 Stage 2c: ALLOW_DIRTY_PUBLISH used to
+# admit this case, since "unknown" only tripped the dirty `!= 0` check,
+# which ALLOW_DIRTY_PUBLISH=1 short-circuited entirely).
+#
+# ALLOW_UNTRACKED_PUBLISH (round-7 review): publish also REFUSES by default
+# when EITHER checkout (nr or the producer audio_common) contains ANY
+# untracked, non-ignored file (`git ls-files --others --exclude-standard`
+# non-empty; gitignored build output is excluded by design and never part
+# of this provenance) -- an untracked source a (possibly dirty) Makefile
+# references can change the artifact without leaving a trace in the tracked
+# diff. ALLOW_UNTRACKED_PUBLISH=1 is the separate, orthogonal escape hatch;
+# it records untracked_tree_sha256 (nr) and/or
+# audio_common_untracked_tree_sha256 (producer) in the attestation: sha256
+# over sorted FIXED-FIELD per-file records, computed per repo by the shared
+# `hash_untracked()` shell function (see the `_publish_impl` recipe body) --
+# "L <sha256(path)> <sha256(readlink output)>" for symlinks, "F <mode>
+# <sha256(path)> <sha256(content)>" for regular files -- every
+# variable-length value is itself hashed, so records concatenate
+# unambiguously (raw space-joined path/target strings were collision-prone:
+# "a b"->"c" vs "a"->"b c" encoded identically) and any stat/readlink/shasum
+# failure downgrades the entry to an X record => FATAL, never an empty hash
+# (fail-closed). A path in either checkout that is neither a regular file
+# nor a symlink (an embedded git checkout, a fifo) is always refused, named,
+# with a diagnostic naming which repo it came from. Neither knob is in
+# CFG_SIG: they never change what is built, only whether publish proceeds.
+# See audio_common's Makefile for the full single-repo writeup this extends
+# to the two-repo (nr + producer) case.
 #
 # ATTEST_STAMP (round-6 review P2, TEST-ONLY): overrides the UTC timestamp
 # embedded in the attestation FILENAME so the isolation tests can
@@ -73,6 +110,7 @@ TOOLCHAIN_CHECK ?= 1
 DIST_ROOT ?= dist
 HOSTCC    ?= cc
 ALLOW_DIRTY_PUBLISH ?= 0
+ALLOW_UNTRACKED_PUBLISH ?= 0
 ATTEST_STAMP ?=
 
 # Locate audio_common: normal checkout has it as a sibling of this repo
@@ -545,34 +583,84 @@ print-lib-path:
 #     traceability, not authenticity.
 #   - Dirty policy now covers BOTH checkouts that produced this artifact:
 #     publish FATALs when either nr itself OR the producer audio_common
-#     checkout (resolved via AC_DIR) is dirty or has no git identity, unless
-#     ALLOW_DIRTY_PUBLISH=1. The attestation records both checkouts'
-#     provenance -- git_commit/git_dirty/dirty_diff_sha256 for nr, and the
-#     same three fields audio_common_-prefixed for the producer -- plus
+#     checkout (resolved via AC_DIR) is dirty, unless ALLOW_DIRTY_PUBLISH=1
+#     (round-7 Stage 2c: a checkout with no git identity at all is its own
+#     UNCONDITIONAL case -- see below -- no longer folded into this dirty
+#     bullet). The attestation records both checkouts' provenance --
+#     git_commit/git_dirty/dirty_diff_sha256 for nr, and the same three
+#     fields audio_common_-prefixed for the producer -- plus
 #     allow_dirty_publish so an accepted dirty publish is itself traceable.
+#
+# Round-7 (dirty/untracked policy split into two dimensions, extended here to
+# BOTH checkouts that produce this artifact -- see audio_common's Makefile
+# for the single-repo writeup this extends): publish FATALs by default when
+# EITHER nr itself OR the producer audio_common checkout (resolved via
+# AC_DIR) (a) has uncommitted TRACKED changes (`git status --porcelain
+# -uno` non-empty), or (b) contains ANY untracked, non-ignored file (`git
+# ls-files --others --exclude-standard` non-empty; gitignored build output
+# is excluded by design). The two escape hatches are separate and
+# orthogonal, and each applies across BOTH checkouts: ALLOW_DIRTY_PUBLISH=1
+# admits tracked changes in either/both repo and records dirty_diff_sha256 /
+# audio_common_dirty_diff_sha256 (sha256 of `git diff --binary HEAD` in nr /
+# in $(AC_DIR)); ALLOW_UNTRACKED_PUBLISH=1 admits untracked files in
+# either/both repo and records untracked_tree_sha256 /
+# audio_common_untracked_tree_sha256 -- sha256 over sorted FIXED-FIELD
+# per-file records, computed by the shared `hash_untracked()` shell function
+# (see the recipe body below), one call per repo ("./" for nr, "$(AC_DIR)/"
+# for the producer): "L <sha256(path)> <sha256(readlink output)>" for
+# symlinks, "F <mode> <sha256(path)> <sha256(content)>" for regular files --
+# every variable-length value is itself hashed so records concatenate
+# unambiguously (raw space-joined path/target strings were collision-prone:
+# "a b"->"c" vs "a"->"b c" encoded identically), and any stat/readlink/
+# shasum failure downgrades the entry to an X record => FATAL ("... cannot
+# be hashed deterministically ... cannot enter the provenance record"),
+# never an empty hash (fail-closed). `git_untracked`/`untracked_tree_sha256`
+# are recorded right after the corresponding dirty group in the attestation
+# (self, then producer), and `allow_untracked_publish` right after
+# `allow_dirty_publish`.
+#
+# Round-7 Stage 2c (this revision): a checkout with NO git identity at all --
+# nr itself, or the checkout resolved via AC_DIR (including AC_DIR unset,
+# missing, or not a directory) -- is refused UNCONDITIONALLY, in BOTH
+# repos, checked BEFORE that repo's dirty/untracked flags are even computed.
+# Neither ALLOW_DIRTY_PUBLISH nor ALLOW_UNTRACKED_PUBLISH admits it (see the
+# ALLOW_DIRTY_PUBLISH knob comment near the top of this file for why the
+# prior scheme could admit it). Once past that gate, dirty/untracked flags
+# for both repos are plain 0/1 -- the "unknown" tri-state is gone from this
+# logic entirely.
 # =============================================================================
 PUBLISH_ARTIFACTS = $(LIB_TARGET) $(TARGET)
 DIST_BACKEND_DIR  = $(DIST_ROOT)/$(BACKEND)
 DIST_LOCK         = $(DIST_ROOT)/.lock.$(BACKEND)
 
 .PHONY: publish _publish_impl
-# Dry-run guard (round-6 review P2-3): this recipe mentions $(MAKE), so GNU
-# make executes it for real under -n/-q/-t (all three share that rule) --
-# which used to mkdir $(DIST_ROOT) persistently and take/release the real
-# publish lock on every dry run. The word-scan below detects those flags in
-# MAKEFLAGS and branches: -n/-t exec a recursion-only path (the child make
-# inherits the flag and merely prints / applies standard -t touch semantics
-# to the impl chain); -q exits 1 directly (question mode's documented
-# "needs updating" answer -- publish is phony, so it always would run --
-# with no output). Either way: no DIST_ROOT, no lock, no stage/helper/
-# MANIFEST/ATTEST writes. MAKEFLAGS parsing (verified against GNU make
-# 3.81: 17 flag combinations incl. long forms): bundled no-dash short flags
-# may appear as the first word ("n", "sn") OR as separate dashed words
-# ("-n" after a long option); long options start with "--"; a literal "--"
-# separates flags from command-line variable overrides (which can
-# themselves contain n/q/t -- BACKEND=ne10 -- hence the explicit skips).
-# Normal invocations keep the round-5 lock-FIRST discipline unchanged. See
-# audio_common's Makefile for the full writeup.
+# Dry-run guard (round-6 review P2-3, -t tightened by round-7): this recipe
+# mentions $(MAKE), so GNU make executes it for real under -n/-q/-t (all
+# three share that rule) -- which used to mkdir $(DIST_ROOT) persistently
+# and take/release the real publish lock on every dry run. The word-scan
+# below detects those flags in MAKEFLAGS and branches:
+#   -t  prints a one-line note and exits 0 WITHOUT recursing (round-7:
+#       recursing let standard touch semantics bump the mtimes of this
+#       repo's objects and the delivered archive/binary -- real writes.
+#       publish is a phony ACTION, not a build product; touching its
+#       artifact prerequisites without attesting would fabricate state, so
+#       touch mode is an explicit no-op here). Checked FIRST: in a COMBINED
+#       invocation like `make -nt publish`, recursing for -n would hand the
+#       child make both flags and GNU make then really applies touch
+#       semantics (reproduced) -- so any t wins over n, conservatively;
+#   -q  exits 1 directly (question mode's documented "needs updating"
+#       answer -- publish is phony, so it always would run -- no output);
+#   -n  exec a recursion-only path (the child make inherits -n and merely
+#       PRINTS _publish_impl's commands).
+# All three are now ZERO-WRITE: no DIST_ROOT, no lock, no stage/helper/
+# MANIFEST/ATTEST writes, and no artifact mtime changes. MAKEFLAGS parsing
+# (verified against GNU make 3.81: 17 flag combinations incl. long forms):
+# bundled no-dash short flags may appear as the first word ("n", "sn") OR
+# as separate dashed words ("-n" after a long option); long options start
+# with "--"; a literal "--" separates flags from command-line variable
+# overrides (which can themselves contain n/q/t -- BACKEND=ne10 -- hence
+# the explicit skips). Normal invocations keep the round-5 lock-FIRST
+# discipline unchanged. See audio_common's Makefile for the full writeup.
 publish:
 	+@has_n=0; has_q=0; has_t=0; \
 	for w in $(MAKEFLAGS); do \
@@ -581,8 +669,9 @@ publish:
 	  case "$$w" in *q*) has_q=1 ;; esac; \
 	  case "$$w" in *t*) has_t=1 ;; esac; \
 	done; \
-	if [ "$$has_n" = 1 ] || [ "$$has_t" = 1 ]; then exec $(MAKE) --no-print-directory _publish_impl; fi; \
+	if [ "$$has_t" = 1 ]; then echo "publish: -t (touch) is a no-op here -- publish is an action, not a build product; nothing was touched"; exit 0; fi; \
 	if [ "$$has_q" = 1 ]; then exit 1; fi; \
+	if [ "$$has_n" = 1 ]; then exec $(MAKE) --no-print-directory _publish_impl; fi; \
 	mkdir -p $(DIST_ROOT); \
 	if ! mkdir "$(DIST_LOCK)" 2>/dev/null; then \
 	  echo "FATAL: publish lock $(DIST_LOCK) already held (concurrent 'make publish BACKEND=$(BACKEND)'?)" >&2; \
@@ -604,36 +693,95 @@ _publish_impl: $(PUBLISH_ARTIFACTS)
 	work="$$(mktemp -d)"; \
 	tmp="$(DIST_BACKEND_DIR)/.stage.$$$$"; \
 	trap 'rm -rf "$$tmp" "$$work"' EXIT INT TERM; \
+	hash_untracked() { \
+	  LC_ALL=C sort | while IFS= read -r p; do \
+	    fp="$$1$$p"; \
+	    ph="$$(printf '%s' "$$p" | shasum -a 256 | cut -d' ' -f1)"; \
+	    [ "$${#ph}" -eq 64 ] || { printf 'X %s\n' "$$p"; continue; }; \
+	    if [ -L "$$fp" ]; then \
+	      tgt="$$(readlink "$$fp")" || { printf 'X %s\n' "$$p"; continue; }; \
+	      th="$$(printf '%s' "$$tgt" | shasum -a 256 | cut -d' ' -f1)"; \
+	      [ "$${#th}" -eq 64 ] || { printf 'X %s\n' "$$p"; continue; }; \
+	      printf 'L %s %s\n' "$$ph" "$$th"; \
+	    elif [ -f "$$fp" ]; then \
+	      m="$$(stat -f '%Lp' "$$fp" 2>/dev/null || stat -c '%a' "$$fp" 2>/dev/null)"; \
+	      ch="$$(shasum -a 256 "$$fp" 2>/dev/null | cut -d' ' -f1)"; \
+	      { [ -n "$$m" ] && [ "$${#ch}" -eq 64 ]; } || { printf 'X %s\n' "$$p"; continue; }; \
+	      printf 'F %s %s %s\n' "$$m" "$$ph" "$$ch"; \
+	    else printf 'X %s\n' "$$p"; fi; \
+	  done; \
+	}; \
 	commit="$$(git rev-parse HEAD 2>/dev/null || echo unknown)"; \
-	if [ "$$commit" = "unknown" ]; then dirty=unknown; else \
-	  dirty=0; [ -n "$$(git status --porcelain 2>/dev/null)" ] && dirty=1; \
+	if [ "$$commit" = "unknown" ]; then \
+	  echo "FATAL: publish refused -- nr has no git identity here (not a git checkout)." >&2; \
+	  echo "  Without an identity the attestation cannot name the source state OR enumerate untracked" >&2; \
+	  echo "  content, so NO escape hatch admits this (round-7 Stage 2c: ALLOW_DIRTY_PUBLISH used to)." >&2; \
+	  echo "  Publish from a real checkout or a scratch clone with a disposable commit instead." >&2; \
+	  exit 1; \
 	fi; \
-	ddiff=""; [ "$$dirty" = "1" ] && ddiff="$$(git diff --binary HEAD 2>/dev/null | shasum -a 256 | cut -d' ' -f1)"; \
+	dirty=0; [ -n "$$(git status --porcelain -uno 2>/dev/null)" ] && dirty=1; \
+	unt_list="$$(git ls-files --others --exclude-standard 2>/dev/null)"; \
+	untracked=0; [ -n "$$unt_list" ] && untracked=1; \
 	if [ -n "$(AC_DIR)" ] && [ -d "$(AC_DIR)" ]; then \
 	  ac_commit="$$(git -C $(AC_DIR) rev-parse HEAD 2>/dev/null || echo unknown)"; \
 	else \
 	  ac_commit=unknown; \
 	fi; \
-	if [ "$$ac_commit" = "unknown" ]; then ac_dirty=unknown; else \
-	  ac_dirty=0; [ -n "$$(git -C $(AC_DIR) status --porcelain 2>/dev/null)" ] && ac_dirty=1; \
+	if [ "$$ac_commit" = "unknown" ]; then \
+	  echo "FATAL: publish refused -- audio_common (AC_DIR=$(AC_DIR)) has no git identity here (missing, not a directory, or not a git checkout)." >&2; \
+	  echo "  Without an identity the attestation cannot name the source state OR enumerate untracked" >&2; \
+	  echo "  content, so NO escape hatch admits this (round-7 Stage 2c: ALLOW_DIRTY_PUBLISH used to)." >&2; \
+	  echo "  Point AC_DIR at a real audio_common checkout (or a scratch clone with a disposable commit)." >&2; \
+	  exit 1; \
 	fi; \
-	ac_ddiff=""; [ "$$ac_dirty" = "1" ] && ac_ddiff="$$(git -C $(AC_DIR) diff --binary HEAD 2>/dev/null | shasum -a 256 | cut -d' ' -f1)"; \
+	ac_dirty=0; [ -n "$$(git -C $(AC_DIR) status --porcelain -uno 2>/dev/null)" ] && ac_dirty=1; \
+	ac_unt_list="$$(git -C $(AC_DIR) ls-files --others --exclude-standard 2>/dev/null)"; \
+	ac_untracked=0; [ -n "$$ac_unt_list" ] && ac_untracked=1; \
 	adp=0; [ "$(ALLOW_DIRTY_PUBLISH)" = "1" ] && adp=1; \
-	if [ "$$adp" != "1" ] && ( [ "$$dirty" != "0" ] || [ "$$ac_dirty" != "0" ] ); then \
+	aup=0; [ "$(ALLOW_UNTRACKED_PUBLISH)" = "1" ] && aup=1; \
+	if [ "$$adp" != "1" ] && ( [ "$$dirty" = "1" ] || [ "$$ac_dirty" = "1" ] ); then \
 	  echo "FATAL: publish refused --" >&2; \
-	  if [ "$$dirty" = "unknown" ]; then \
-	    echo "  nr has no git identity here (not a git checkout), so the attestation cannot name the source state." >&2; \
-	  elif [ "$$dirty" = "1" ]; then \
-	    echo "  nr working tree is dirty (uncommitted changes)." >&2; \
-	  fi; \
-	  if [ "$$ac_dirty" = "unknown" ]; then \
-	    echo "  audio_common (AC_DIR=$(AC_DIR)) has no git identity here (not a git checkout), so the attestation cannot name the source state." >&2; \
-	  elif [ "$$ac_dirty" = "1" ]; then \
-	    echo "  audio_common (AC_DIR=$(AC_DIR)) working tree is dirty (uncommitted changes)." >&2; \
-	  fi; \
+	  [ "$$dirty" = "1" ] && echo "  nr working tree is dirty (uncommitted TRACKED changes)." >&2; \
+	  [ "$$ac_dirty" = "1" ] && echo "  audio_common (AC_DIR=$(AC_DIR)) working tree is dirty (uncommitted TRACKED changes)." >&2; \
 	  echo "  Commit (or clone a clean checkout) for a board deliverable, or pass ALLOW_DIRTY_PUBLISH=1" >&2; \
 	  echo "  for a dev publish -- the escape hatch is recorded in the attestation." >&2; \
 	  exit 1; \
+	fi; \
+	if [ "$$aup" != "1" ] && ( [ "$$untracked" = "1" ] || [ "$$ac_untracked" = "1" ] ); then \
+	  echo "FATAL: publish refused -- untracked (non-ignored) files present (they can change the artifact without a trace in the tracked diff):" >&2; \
+	  if [ "$$untracked" = "1" ]; then \
+	    echo "  nr:" >&2; \
+	    printf '%s\n' "$$unt_list" | head -5 | sed 's/^/    /' >&2; \
+	  fi; \
+	  if [ "$$ac_untracked" = "1" ]; then \
+	    echo "  audio_common (AC_DIR=$(AC_DIR)):" >&2; \
+	    printf '%s\n' "$$ac_unt_list" | head -5 | sed 's/^/    /' >&2; \
+	  fi; \
+	  echo "  Track/remove them for a board deliverable, or pass ALLOW_UNTRACKED_PUBLISH=1 -- the escape" >&2; \
+	  echo "  hatch is recorded in the attestation with (audio_common_)untracked_tree_sha256 over their exact contents." >&2; \
+	  exit 1; \
+	fi; \
+	ddiff=""; [ "$$dirty" = "1" ] && ddiff="$$(git diff --binary HEAD 2>/dev/null | shasum -a 256 | cut -d' ' -f1)"; \
+	ac_ddiff=""; [ "$$ac_dirty" = "1" ] && ac_ddiff="$$(git -C $(AC_DIR) diff --binary HEAD 2>/dev/null | shasum -a 256 | cut -d' ' -f1)"; \
+	uhash=""; \
+	if [ "$$untracked" = "1" ]; then \
+	  printf '%s\n' "$$unt_list" | hash_untracked "./" > "$$work/untracked.records"; \
+	  if grep -q '^X ' "$$work/untracked.records"; then \
+	    echo "FATAL: publish refused -- an untracked path in nr cannot be hashed deterministically (embedded git checkout / special file / I/O failure) and so cannot enter the provenance record:" >&2; \
+	    grep '^X ' "$$work/untracked.records" | sed 's/^X /    /' >&2; \
+	    exit 1; \
+	  fi; \
+	  uhash="$$(shasum -a 256 < "$$work/untracked.records" | cut -d' ' -f1)"; \
+	fi; \
+	ac_uhash=""; \
+	if [ "$$ac_untracked" = "1" ]; then \
+	  printf '%s\n' "$$ac_unt_list" | hash_untracked "$(AC_DIR)/" > "$$work/ac_untracked.records"; \
+	  if grep -q '^X ' "$$work/ac_untracked.records"; then \
+	    echo "FATAL: publish refused -- an untracked path in audio_common (AC_DIR=$(AC_DIR)) cannot be hashed deterministically (embedded git checkout / special file / I/O failure) and so cannot enter the provenance record:" >&2; \
+	    grep '^X ' "$$work/ac_untracked.records" | sed 's/^X /    /' >&2; \
+	    exit 1; \
+	  fi; \
+	  ac_uhash="$$(shasum -a 256 < "$$work/ac_untracked.records" | cut -d' ' -f1)"; \
 	fi; \
 	dateutc="$$(date -u +%Y-%m-%dT%H:%M:%SZ)"; \
 	stamp='$(ATTEST_STAMP)'; [ -n "$$stamp" ] || stamp="$$(date -u +%Y%m%dT%H%M%SZ)"; \
@@ -679,10 +827,15 @@ _publish_impl: $(PUBLISH_ARTIFACTS)
 	    echo "backend=$(BACKEND)"; \
 	    echo "git_commit=$$commit"; echo "git_dirty=$$dirty"; \
 	    [ -n "$$ddiff" ] && echo "dirty_diff_sha256=$$ddiff"; \
+	    echo "git_untracked=$$untracked"; \
+	    [ -n "$$uhash" ] && echo "untracked_tree_sha256=$$uhash"; \
 	    echo "audio_common_git_commit=$$ac_commit"; echo "audio_common_git_dirty=$$ac_dirty"; \
 	    [ -n "$$ac_ddiff" ] && echo "audio_common_dirty_diff_sha256=$$ac_ddiff"; \
+	    echo "audio_common_git_untracked=$$ac_untracked"; \
+	    [ -n "$$ac_uhash" ] && echo "audio_common_untracked_tree_sha256=$$ac_uhash"; \
 	    echo "date_utc=$$dateutc"; \
 	    echo "allow_dirty_publish=$$adp"; \
+	    echo "allow_untracked_publish=$$aup"; \
 	  } > "$$work/attest.txt"; \
 	  rc=0; "$$work/swapln" --excl-install "$$work/attest.txt" "$$rel_dir/ATTEST/$$attest_name" || rc=$$?; \
 	  [ "$$rc" -eq 0 ] && break; \
