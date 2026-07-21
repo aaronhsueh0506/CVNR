@@ -15,6 +15,13 @@
 #include "spp_estimator.h"
 #include "fft_wrapper.h"   /* Complex, fft_power, fft_apply_gain, ALIGN16 */
 #include "fast_math.h"
+#include "simd_kernels.h"  /* sk_exp1_approx_f32 (kernel 27), sk_fast_exp_f32
+                             * (kernel 23), sk_fast_log_f32 (kernel 25) --
+                             * provably scalar-reference-bit-exact by
+                             * construction (verbatim op-sequence match --
+                             * see that header's top-of-file contract), gated
+                             * by this TU's mandatory -ffp-contract=off same
+                             * as every other caller. */
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -44,6 +51,34 @@ struct MmseLsaDenoiser {
 #ifdef USE_SHARED_XI_RATIO
     float* v;
 #endif
+
+    /* calculate_gain() per-call scratch [n_freqs] -- transient (fully
+     * overwritten every call, nothing persisted across hops), pre-allocated
+     * here so the exp1_approx/fast_exp/fast_log calls can batch over the
+     * whole bin range via sk_exp1_approx_f32/sk_fast_exp_f32/sk_fast_log_f32
+     * instead of per-bin scalar calls, with zero malloc on the hot path
+     * either way. Distinct from `v` above (that one is SPP's shared
+     * v=ξ/(1+ξ)·γ output, reused here as an INPUT when USE_SHARED_XI_RATIO
+     * is on; gain_v_scratch is calculate_gain()'s own post-clamp copy).
+     *
+     * gain_v_scratch does QUADRUPLE duty across passes 2-6 (review-round
+     * buffer-reuse hardening): once pass 2's sk_exp1_approx_f32 consumes the
+     * clamped v[k] this array holds, nothing later in the function ever
+     * reads that ORIGINAL value again (confirmed by inspection of the whole
+     * function below), so exp1_approx's own output, pass 4's fast_exp
+     * output, and pass 6's fast_log output are all written back into this
+     * SAME buffer in place (sk_<name>(gain_v_scratch, gain_v_scratch,
+     * n_freqs)) instead of three separate [n_freqs] scratch arrays -- safe
+     * because sk_exp1_approx_f32/sk_fast_exp_f32/sk_fast_log_f32 each fully
+     * load a 4-lane block into registers before storing that same block
+     * back (no cross-lane/cross-block dependency), a contract now recorded
+     * next to each kernel in simd_kernels.h (mirrors sk_capply_gain_f32's
+     * pre-existing out==z contract) and exercised by simd_selftest.c's
+     * test_exp_log_family_inplace(). gain_xi_ratio_scratch MUST stay a
+     * separate buffer: it is written at pass 1 and read again at pass 5,
+     * with passes 2-4 overwriting gain_v_scratch in between. */
+    float* gain_v_scratch;         /* v[k] -> exp1_approx(v[k]) -> 0.5x -> fast_exp(...) -> (+1e-10f) -> fast_log(...), all in place */
+    float* gain_xi_ratio_scratch;  /* xi_ratio[k], needed again at pass 5 (kept separate: see above) */
 
     float* gain_prev;
     float* enhanced_psd_prev;
@@ -114,10 +149,18 @@ static void calculate_gain(MmseLsaDenoiser* self,
     float stat_beta    = self->stationary_floor_beta;
     bool  stat_p2      = (stat_p == 2.0f);  /* preset p; skip powf on the common path */
 
+    float* v_scratch        = self->gain_v_scratch;
+    float* xi_ratio_scratch = self->gain_xi_ratio_scratch;
+
+    /* Pass 1 (scalar): per-bin v/xi_ratio -- the USE_SHARED_XI_RATIO block
+     * below (and its #else fallback) is byte-for-byte untouched from the
+     * pre-split code: xi_ratio/v are treated as opaque, already-correct
+     * scalar inputs produced by logic this split must not alter. The domain
+     * clamp that follows it is likewise unmodified, just scratched afterward
+     * instead of feeding straight into a per-bin exp1_approx() call. */
     for (int k = 0; k < n_freqs; k++) {
         float xi_k    = xi[k];
         float gamma_k = gamma[k];
-        float spp_k   = spp[k];
 
         float v, xi_ratio;
 #ifdef USE_SHARED_XI_RATIO
@@ -137,13 +180,63 @@ static void calculate_gain(MmseLsaDenoiser* self,
         if (v < 1e-10f) v = 1e-10f;
         if (v > 700.0f) v = 700.0f;
 
-        float exp1_v    = exp1_approx(v);
-        float gain_mmse = xi_ratio * fast_exp(0.5f * exp1_v);
+        v_scratch[k]        = v;
+        xi_ratio_scratch[k] = xi_ratio;
+    }
 
+    /* Pass 2 (vectorized, in place): exp1_v[k] = exp1_approx(v[k]) via
+     * sk_exp1_approx_f32 (simd_kernels.h kernel 27) -- bit-exact by
+     * construction (see that header's contract). Written back into
+     * gain_v_scratch itself: nothing downstream reads the original clamped
+     * v[k] again (see the struct field comment above), and
+     * sk_exp1_approx_f32 documents out==x as safe (per-4-lane-block
+     * load-then-store, no cross-block state). */
+    sk_exp1_approx_f32(v_scratch, v_scratch, n_freqs);
+
+    /* Pass 3 (scalar, branch-free): scale in place to 0.5f*exp1_v[k], the
+     * exact argument the original `fast_exp(0.5f * exp1_v)` call took. */
+    for (int k = 0; k < n_freqs; k++) {
+        v_scratch[k] = 0.5f * v_scratch[k];
+    }
+
+    /* Pass 4 (vectorized, in place): fast_exp(0.5f*exp1_v[k]) via
+     * sk_fast_exp_f32 (simd_kernels.h kernel 23) -- bit-exact by
+     * construction, out==x safe per that kernel's documented contract.
+     * gain_v_scratch now holds fast_exp's result. */
+    sk_fast_exp_f32(v_scratch, v_scratch, n_freqs);
+
+    /* Pass 5 (scalar, branch-free): gain_mmse[k] = xi_ratio*fast_exp(...),
+     * clamped to [g_min,1.0] -- unmodified formula/clamp, written in place
+     * (+1e-10f folded in here too: the exact argument fast_log() takes
+     * next). This is gain_xi_ratio_scratch's LAST read (see the struct
+     * field comment above). */
+    for (int k = 0; k < n_freqs; k++) {
+        float gain_mmse = xi_ratio_scratch[k] * v_scratch[k];
         if (gain_mmse < g_min) gain_mmse = g_min;
         if (gain_mmse > 1.0f)  gain_mmse = 1.0f;
+        v_scratch[k] = gain_mmse + 1e-10f;
+    }
 
-        float log_gain_mmse = fast_log(gain_mmse + 1e-10f);
+    /* Pass 6 (vectorized, in place): log_gain_mmse[k] =
+     * fast_log(gain_mmse[k]+1e-10f) via sk_fast_log_f32 (simd_kernels.h
+     * kernel 25) -- bit-exact by construction, out==x safe per that
+     * kernel's documented contract. gain_v_scratch now holds
+     * log_gain_mmse. */
+    sk_fast_log_f32(v_scratch, v_scratch, n_freqs);
+
+    /* Pass 7 (scalar): attack/decay smoothing (reads self->log_gain_prev[k],
+     * PREVIOUS hop's state for this same bin k -- not a same-call cross-bin
+     * dependency, since this same loop only WRITES log_gain_prev[k] for bin
+     * k after this read, same as before the split), the
+     * USE_FAST_GAIN_SMOOTHING/USE_SINGLE_CLAMP clamp variants, the
+     * stationary-floor branch, and the DD-state fold -- all unmodified from
+     * the pre-split code, just reading log_gain_mmse from the vectorized
+     * scratch instead of a same-iteration local. */
+    for (int k = 0; k < n_freqs; k++) {
+        float xi_k    = xi[k];
+        float spp_k   = spp[k];
+
+        float log_gain_mmse = v_scratch[k];
         float log_gain      = spp_k * log_gain_mmse +
                               (1.0f - spp_k) * log_g_min;
 
@@ -241,8 +334,10 @@ size_t mmse_lsa_get_mem_size(const MmseLsaConfig* config) {
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* gamma             */
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* gain              */
 #ifdef USE_SHARED_XI_RATIO
-    total = ck_field_size(total, (size_t)nf, sizeof(float));   /* v                 */
+    total = ck_field_size(total, (size_t)nf, sizeof(float));   /* v                     */
 #endif
+    total = ck_field_size(total, (size_t)nf, sizeof(float));   /* gain_v_scratch        */
+    total = ck_field_size(total, (size_t)nf, sizeof(float));   /* gain_xi_ratio_scratch */
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* gain_prev         */
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* enhanced_psd_prev */
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* init_power_sum    */
@@ -286,6 +381,8 @@ MmseLsaDenoiser* mmse_lsa_init(void* mem, size_t mem_size,
 #ifdef USE_SHARED_XI_RATIO
     self->v                 = (float*)cursor; cursor += arr;
 #endif
+    self->gain_v_scratch        = (float*)cursor; cursor += arr;
+    self->gain_xi_ratio_scratch = (float*)cursor; cursor += arr;
     self->gain_prev         = (float*)cursor; cursor += arr;
     self->enhanced_psd_prev = (float*)cursor; cursor += arr;
     self->init_power_sum    = (float*)cursor; cursor += arr;
@@ -330,6 +427,8 @@ MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config) {
 #ifdef USE_SHARED_XI_RATIO
     self->v                 = (float*)calloc(nf, sizeof(float));
 #endif
+    self->gain_v_scratch        = (float*)calloc(nf, sizeof(float));
+    self->gain_xi_ratio_scratch = (float*)calloc(nf, sizeof(float));
     self->gain_prev         = (float*)calloc(nf, sizeof(float));
     self->enhanced_psd_prev = (float*)calloc(nf, sizeof(float));
     self->init_power_sum    = (float*)calloc(nf, sizeof(float));
@@ -337,6 +436,7 @@ MmseLsaDenoiser* mmse_lsa_create(const MmseLsaConfig* config) {
 
     if (!self->power || !self->noise_aug || !self->noise_est || !self->spp_est ||
         !self->spp || !self->xi || !self->gamma || !self->gain ||
+        !self->gain_v_scratch || !self->gain_xi_ratio_scratch ||
         !self->gain_prev || !self->enhanced_psd_prev ||
         !self->init_power_sum || !self->log_gain_prev
 #ifdef USE_SHARED_XI_RATIO
@@ -367,6 +467,8 @@ void mmse_lsa_destroy(MmseLsaDenoiser* self) {
 #ifdef USE_SHARED_XI_RATIO
     free(self->v);
 #endif
+    free(self->gain_v_scratch);
+    free(self->gain_xi_ratio_scratch);
     free(self->gain_prev);
     free(self->enhanced_psd_prev);
     free(self->init_power_sum);

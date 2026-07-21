@@ -15,6 +15,11 @@
 #include "mcra_noise_estimator.h"
 #include "fast_math.h"
 #include "fft_wrapper.h"   /* ALIGN16 */
+#include "simd_kernels.h"  /* sk_ema_f32 (kernel 4), sk_mcra_noise_update_f32 (kernel 28) --
+                             * both are provably scalar-reference-bit-exact by construction
+                             * (non-fused, verbatim op-sequence match -- see that header's
+                             * top-of-file contract), gated by this TU's mandatory
+                             * -ffp-contract=off same as every other caller. */
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -48,7 +53,6 @@ struct McraNoiseEstimator {
     int ring_idx;       // Current write position in ring buffer
 
     bool is_initialized;
-    int frame_count;
 
     // Scene change detection (hi-freq gamma + spectral flatness)
     float scene_change_threshold;           // Linear threshold for hi-freq gamma
@@ -126,7 +130,6 @@ static void mcra_init_scalars(McraNoiseEstimator* self, int n_freqs,
 
     self->ring_idx = 0;
     self->is_initialized = false;
-    self->frame_count = 0;
 
     // Scene change detection
     self->scene_change_threshold = powf(10.0f, config->scene_change_threshold_db / 10.0f);
@@ -445,7 +448,6 @@ void mcra_init_noise(McraNoiseEstimator* self, const float* power_sum, int n_fra
 
     self->ring_idx = 0;
     self->is_initialized = true;
-    self->frame_count = n_frames;
 }
 
 void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_ext) {
@@ -458,13 +460,20 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
     float alpha_p = self->alpha_p;
     float delta = self->delta;
 
-    // Loop A+B: Time smoothing + min buffer write + incremental min tracking
+    // Loop A0: S(k,l) = α_s·S(k,l-1) + (1-α_s)·|Y(k,l)|² -- hoisted into its
+    // own pass via sk_ema_f32 (simd_kernels.h kernel 4), a verbatim
+    // non-fused match for this exact expression shape (bit-identical by
+    // construction: same op sequence/order as the plain scalar loop it
+    // replaces, see that kernel's header comment). Loop B below reads back
+    // self->S[k] (already updated here) wherever it used to read the local
+    // `new_S`.
+    sk_ema_f32(self->S, power, alpha_s, 1.0f - alpha_s, n_freqs);
+
+    // Loop B: min buffer write + incremental min tracking
     // v4.1: Eta energy accumulation removed
     int ring_pos = self->ring_idx;
     for (int k = 0; k < n_freqs; k++) {
-        // S(k,l) = α_s·S(k,l-1) + (1-α_s)·|Y(k,l)|²
-        float new_S = alpha_s * self->S[k] + (1.0f - alpha_s) * power[k];
-        self->S[k] = new_S;
+        float new_S = self->S[k];
 
         // Read old value before overwriting, then write new value
 #ifdef USE_OPTIMIZED_MIN_BUFFER
@@ -566,7 +575,29 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
 
         if (hi_gamma > self->scene_change_threshold &&
             hi_flatness > self->scene_change_flatness_threshold) {
-            self->scene_change_count++;
+            // Ceilinged at scene_change_min_frames (round-6 mechanical-sweep
+            // hardening; UBSan-probed). scene_change_min_frames is
+            // user-configurable with NO upper bound in validate_config
+            // (unlike num_init_frames's <=200 cap), so a caller can legally
+            // set it arbitrarily high. The ONLY consumer of this field is
+            // the `>= scene_change_min_frames` check immediately below,
+            // which -- on every reachable call sequence -- resets the
+            // counter back to 0 in the SAME call that first satisfies it,
+            // so on paper the bare `++` never actually walks past
+            // scene_change_min_frames <= INT_MAX (an ad hoc UBSan probe
+            // confirms: seeding the field one step from the boundary at a
+            // reachable state produces a clean same-call reset, no trap --
+            // this repo's `delay_aec3.c consistent_estimate_counter` has the
+            // identical increment-then-immediate-check-and-reset shape and
+            // was correspondingly left unguarded). This guard hardens the
+            // bare statement itself against that invariant ever being
+            // broken by a future edit to the reset logic below (the same
+            // probe shows the UNGUARDED `++` alone traps immediately if the
+            // field is ever left sitting at INT_MAX by such a future bug) --
+            // observationally identical for every state real execution can
+            // reach, so behaviour-preserving.
+            if (self->scene_change_count < self->scene_change_min_frames)
+                self->scene_change_count++;
             if (self->scene_change_count >= self->scene_change_min_frames) {
                 // Music-safe tonal veto (stationary mode): if the LOW band is tonal
                 // (peaky, low flatness) treat it as music and skip the noise-floor reset;
@@ -604,14 +635,11 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
 
     // Noise update with SPP gating (Python step 8b), AFTER the scene resets:
     // α̃_d = α_d + (1-α_d)·(spp·bb_scale);  N = α̃_d·N + (1-α̃_d)·|Y|²
-    for (int k = 0; k < n_freqs; k++) {
-        float su = spp_for_update[k] * bb_scale;
-        float tilde_alpha_d = alpha_d + (1.0f - alpha_d) * su;
-        self->noise_psd[k] = tilde_alpha_d * self->noise_psd[k] +
-                            (1.0f - tilde_alpha_d) * power[k];
-    }
-
-    self->frame_count++;
+    // sk_mcra_noise_update_f32 (simd_kernels.h kernel 28) is a verbatim,
+    // non-fused match for this exact loop shape -- bit-identical by
+    // construction (see that kernel's header comment).
+    sk_mcra_noise_update_f32(self->noise_psd, spp_for_update, power,
+                              alpha_d, bb_scale, n_freqs);
 }
 
 const float* mcra_get_noise_psd(const McraNoiseEstimator* self) {
@@ -639,6 +667,5 @@ void mcra_reset(McraNoiseEstimator* self) {
 
     self->ring_idx = 0;
     self->is_initialized = false;
-    self->frame_count = 0;
     self->scene_change_count = 0;
 }
