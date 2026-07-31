@@ -162,6 +162,19 @@ ALLOW_DIRTY_PUBLISH ?= 0
 ALLOW_UNTRACKED_PUBLISH ?= 0
 ATTEST_STAMP ?=
 
+SIMD ?= 1
+ifneq ($(words $(SIMD)),1)
+$(error SIMD must be exactly 0 or 1, got '$(SIMD)')
+endif
+ifneq ($(filter-out 0 1,$(SIMD)),)
+$(error SIMD must be exactly 0 or 1, got '$(SIMD)')
+endif
+ifeq ($(SIMD),0)
+SIMD_CFLAGS := -DSIMD_KERNELS_FORCE_SCALAR
+else
+SIMD_CFLAGS :=
+endif
+
 # Locate audio_common: normal checkout has it as a sibling of this repo
 # (../../audio_common from c_impl/). The second candidate covers this repo being
 # consumed as a git submodule two levels deeper (e.g. Audio_ALG/lib/nr/c_impl/ ->
@@ -171,6 +184,7 @@ AC_DIR ?= $(firstword $(wildcard ../../audio_common ../../../../audio_common))
 CFLAGS = -Wall -Wextra -O2 -std=gnu99
 CFLAGS += -I./include -I./example -I$(AC_DIR)/include
 CFLAGS += $(EXTRA_CFLAGS)
+CFLAGS += $(SIMD_CFLAGS)
 
 # The NE10 archive contains one C++ translation unit (NE10's generic-radix FFT
 # kernel), so linking a binary against it uses the C++ DRIVER when
@@ -690,7 +704,7 @@ CFLAGS    += $(FP_POLICY)
 # mentions $(MAKE)) yet still create zero files (verified empirically): -n
 # propagates to every child `make` via MAKEFLAGS regardless of how it was
 # invoked, so each child's own recipes are themselves just printed.
-AC_FWD = BACKEND=$(BACKEND) WERROR=$(WERROR) CC='$(CC)' CXX='$(CXX)' EXTRA_CFLAGS='$(EXTRA_CFLAGS)' NO_STDIO=$(NO_STDIO) TOOLCHAIN_CHECK=$(TOOLCHAIN_CHECK)
+AC_FWD = BACKEND=$(BACKEND) SIMD=$(SIMD) WERROR=$(WERROR) CC='$(CC)' CXX='$(CXX)' EXTRA_CFLAGS='$(EXTRA_CFLAGS)' NO_STDIO=$(NO_STDIO) TOOLCHAIN_CHECK=$(TOOLCHAIN_CHECK)
 
 ifeq ($(AC_LIB),)
 .PHONY: all mem parity test-config
@@ -760,7 +774,7 @@ SRCS = $(SRC_DIR)/mmse_lsa_denoiser.c \
 # Round-4 review payload additions: LINK (P2-1), TOOLCHAIN_CHECK (the
 # guard-skip knob must not alias a guarded build), SRCS (P1-4: sorted source
 # list, so source add/remove keys to a fresh directory).
-CFG_SIG_PAYLOAD := CC=$(CC) CXX=$(CXX) AR=$(AR) RANLIB=$(RANLIB) LINK=$(LINK) CFLAGS=$(CFLAGS) CXXFLAGS=$(CXXFLAGS) CPPFLAGS=$(CPPFLAGS) LDFLAGS=$(LDFLAGS) EXTRA_CFLAGS=$(EXTRA_CFLAGS) EXTRA_LDFLAGS=$(EXTRA_LDFLAGS) BACKEND=$(BACKEND) WERROR=$(WERROR) NO_STDIO=$(NO_STDIO) DEBUG=$(DEBUG) TOOLCHAIN_CHECK=$(TOOLCHAIN_CHECK) AC_PRODUCER_SIG=$(AC_PRODUCER_SIG) SRCS=$(sort $(SRCS))
+CFG_SIG_PAYLOAD := CC=$(CC) CXX=$(CXX) AR=$(AR) RANLIB=$(RANLIB) LINK=$(LINK) CFLAGS=$(CFLAGS) CXXFLAGS=$(CXXFLAGS) CPPFLAGS=$(CPPFLAGS) LDFLAGS=$(LDFLAGS) EXTRA_CFLAGS=$(EXTRA_CFLAGS) EXTRA_LDFLAGS=$(EXTRA_LDFLAGS) BACKEND=$(BACKEND) SIMD=$(SIMD) WERROR=$(WERROR) NO_STDIO=$(NO_STDIO) DEBUG=$(DEBUG) TOOLCHAIN_CHECK=$(TOOLCHAIN_CHECK) AC_PRODUCER_SIG=$(AC_PRODUCER_SIG) SRCS=$(sort $(SRCS))
 CFG_SIG := $(shell printf '%s' "$(CFG_SIG_PAYLOAD)" | cksum | cut -d' ' -f1)
 
 EXAMPLE_SRCS = $(EXAMPLE_DIR)/main.c
@@ -851,7 +865,7 @@ FORCE:
 
 $(AC_LIB): FORCE
 	+$(MAKE) -C $(AC_DIR) $(AC_FWD) lib
-	@test -f '$@' || { echo "ERROR: audio_common did not produce $@ (query/build divergence -- only BACKEND/WERROR/CC/CXX/EXTRA_CFLAGS/NO_STDIO overrides are supported)"; exit 1; }
+	@test -f '$@' || { echo "ERROR: audio_common did not produce $@ (query/build divergence -- supported forwarded controls are BACKEND/SIMD/WERROR/CC/CXX/EXTRA_CFLAGS/NO_STDIO/TOOLCHAIN_CHECK)"; exit 1; }
 
 $(TARGET): $(OBJS) $(EXAMPLE_OBJS) $(AC_LIB) | _cfg_guard
 	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(EXAMPLE_OBJS) $(AC_LIB) $(LDFLAGS)

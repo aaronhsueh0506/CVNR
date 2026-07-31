@@ -25,7 +25,7 @@ the gain/SPP/MCRA computation — exactly what we want to certify. Run the C sid
 once with `make` (fast-math) and once with `make debug` (-DUSE_STANDARD_MATH).
 
 Binary file layout (little-endian float32, header is int32):
-  [magic=0x4e525031 'NRP1'][n_frames][n_freqs]
+  [magic=0x4e525032 'NRP2'][n_frames][n_freqs][sample_rate]
   then per frame f:  X_re[n_freqs], X_im[n_freqs]
   then per frame f:  G_py[n_freqs]
   (C runner appends nothing; it writes a separate gains-only file.)
@@ -61,7 +61,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core import FrameProcessor                       # noqa: E402
 from utils.audio_io import read_audio                 # noqa: E402
 
-MAGIC = 0x4E525031  # 'NRP1'
+MAGIC_V1 = 0x4E525031  # 'NRP1': legacy header without sample rate
+MAGIC = 0x4E525032     # 'NRP2': grid-aware header with sample rate
 
 
 def _build_reference_denoiser(sample_rate, config_dir, mode='full', strength='balanced'):
@@ -110,7 +111,7 @@ def cmd_dump(args):
     G_py = gain_hist.astype(np.float32)
 
     with open(args.out, 'wb') as fh:
-        fh.write(struct.pack('<iii', MAGIC, n_frames, n_freqs))
+        fh.write(struct.pack('<iiii', MAGIC, n_frames, n_freqs, sr))
         for f in range(n_frames):
             fh.write(X_re[f].tobytes())
             fh.write(X_im[f].tobytes())
@@ -126,7 +127,10 @@ def cmd_dump(args):
 def _read_ref(path):
     with open(path, 'rb') as fh:
         magic, n_frames, n_freqs = struct.unpack('<iii', fh.read(12))
-        assert magic == MAGIC, f"bad magic {magic:#x}"
+        assert magic in (MAGIC_V1, MAGIC), f"bad magic {magic:#x}"
+        if magic == MAGIC:
+            sample_rate, = struct.unpack('<i', fh.read(4))
+            assert sample_rate > 0, f"bad sample rate {sample_rate}"
         spec = np.frombuffer(
             fh.read(n_frames * n_freqs * 2 * 4), dtype='<f4'
         ).reshape(n_frames, 2, n_freqs)

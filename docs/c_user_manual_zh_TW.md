@@ -104,10 +104,10 @@ driver 連結（audio_common 的 NE10 archive 內含一個 C++ TU）或補 `-lc+
 - 輸入支援 PCM16、PCM32 與 IEEE float32 WAV。
 - 多聲道輸入只處理第一聲道。
 - `denoise_wav` 輸出單聲道 PCM16 WAV。
-- `denoise_wav` 為了和 Python parity runner 比較，會覆寫 config 為固定 `frame_size=512`、`hop_size=256`、`fft_size=512`；16 kHz 時分別是 32 ms／16 ms。
-- 因此 CLI 的 `num_init_frames=20` 在 16 kHz 約為 320 ms；library 的預設 config 是 20 ms frame／10 ms hop，初始化才是約 200 ms。最好讓開頭包含背景噪聲且沒有目標語音。
+- `denoise_wav` 與 library 使用相同的無補零 grid：8 kHz=256/128、16 kHz=512/256、48 kHz=1024/512；16 kHz 另可明確選 256/128。
+- `num_init_frames=20` 是舊 10 ms hop 的參考值；建構時會依實際 hop retime，使初始化至少約 200 ms。最好讓開頭包含背景噪聲且沒有目標語音。
 
-若產品要求固定 20 ms／10 ms 的即時 contract，請使用第 4 節的 library wrapper，不要直接把 standalone CLI 的 512/256 framing 搬進 audio callback。
+產品 callback 必須查詢 config/getter 的實際 `hop_size`，不可假設固定 10 ms。
 
 ## 4. Heap C API：完整 streaming wrapper
 
@@ -260,7 +260,7 @@ nr_stream_destroy(&stream);
 backend heap 資源，caller 另外自備的 `FftHandle` 才是需要注意 NE10 例外的地方，見下方
 重要規則）。命名與參數順序跟 AEC 的 `aec_get_mem_size()`/`aec_init(mem, size, cfg)` 一致。
 
-隨附的 `bin/denoise_mem` 是示範 runner：它固定使用 512/256/512 framing，並以 `MAX_SECONDS=60` 限制 whole-file static I/O buffer。這些是 example 的限制，不是 `mmse_lsa_get_mem_size()`／靜態記憶體 core API 的限制；產品應使用自己的固定大小 PCM ring 與 scratch buffer。
+隨附的 `bin/denoise_mem` 是示範 runner：它依輸入 sample rate 使用相同的無補零 grid，並以 `MAX_SECONDS=60` 限制 whole-file static I/O buffer。後者是 example 限制，不是 `mmse_lsa_get_mem_size()`／靜態記憶體 core API 的限制；產品應使用自己的固定大小 PCM ring 與 scratch buffer。
 
 ```c
 #include <stdint.h>
@@ -348,14 +348,14 @@ MmseLsaConfig cfg = mmse_lsa_config_for_mode(
 
 | 欄位 | 預設 | 說明 |
 |---|---:|---|
-| `frame_size` | sample rate × 20 ms | analysis frame |
-| `hop_size` | frame / 2 | 10 ms、50% overlap |
-| `fft_size` | 不小於 frame 的 2 次方 | 8/16/48 kHz 為 256/512/1024 |
-| `num_init_frames` | 20 | 噪聲模型初始化幀數 |
+| `frame_size` | 等於 FFT size | 無補零 analysis frame：8k=256、16k=512（可選256）、48k=1024 |
+| `hop_size` | frame / 2 | 50% overlap；不保證固定 10 ms |
+| `fft_size` | 等於 frame size | 只接受白名單中的 2 次方 grid |
+| `num_init_frames` | 20（10 ms 參考值） | 建構時依 hop retime，至少約 200 ms |
 | `g_min_db` | -30 | 振幅 gain floor，使用 `/20` dB 換算 |
 | `alpha_g` | 0.88 | gain 平滑；較大通常較少 musical noise |
 | `scene_change_threshold_db` | 10 | 場景切換敏感度 |
-| `L` | 32 | MCRA minimum tracking window |
+| `L` | 32（10 ms 參考值） | 建構時依 hop retime，約 320 ms |
 
 不要在 create 後直接改保存於 caller 的 `MmseLsaConfig`，因為 instance 已經複製／衍生內部尺寸與狀態。要換 sample rate、frame、FFT 或 tracking buffer 大小時，destroy 後重新 create。
 

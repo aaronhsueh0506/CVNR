@@ -95,6 +95,7 @@
 
 ```bash
 make
+make SIMD=0  # 強制 NR 與 audio_common 的所有可選 SIMD 路徑走 scalar
 ```
 
 ### 調試版本（關閉所有優化，使用標準數學函數，與 Python 輸出最接近）
@@ -346,21 +347,26 @@ fft_destroy(fft);
 # 1. Python 端 dump 參考頻譜 + gain
 python3 ../tools/parity_nr.py dump --wav ../test_wav/wav/babble_10dB.wav --out /tmp/parity_in.bin
 
-# 2a. C 端 fast-math
-make parity && ./bin/parity_runner /tmp/parity_in.bin /tmp/g_fast.bin
+# 2a. C 端 fast-math（bin 目錄依 build flags 雜湊）
+make DEBUG=0 parity
+bin_dir=$(make -s DEBUG=0 print-bin-dir)
+"$bin_dir/parity_runner" /tmp/parity_in.bin /tmp/g_fast.bin
 python3 ../tools/parity_nr.py compare --ref /tmp/parity_in.bin --c-gains /tmp/g_fast.bin
 
-# 2b. C 端 standard-math（與 make debug 同旗標）→ 近 bit-exact
-make clean && make parity BACKEND=kiss EXTRA_CFLAGS="-DUSE_STANDARD_MATH"
-./bin/parity_runner /tmp/parity_in.bin /tmp/g_debug.bin
+# 2b. C 端 standard-math → 近 bit-exact
+make DEBUG=0 BACKEND=kiss EXTRA_CFLAGS="-DUSE_STANDARD_MATH" parity
+bin_dir=$(make -s DEBUG=0 BACKEND=kiss EXTRA_CFLAGS="-DUSE_STANDARD_MATH" print-bin-dir)
+"$bin_dir/parity_runner" /tmp/parity_in.bin /tmp/g_debug.bin
 python3 ../tools/parity_nr.py compare --ref /tmp/parity_in.bin --c-gains /tmp/g_debug.bin
 ```
 
-實測（babble_10dB.wav，6961 幀 × 257 bin）：
+NRP2 dump header 會攜帶 `sample_rate`；C 端據此建立完全相同的 signal grid
+與 wall-clock-retimed EMA/count。仍可讀舊 NRP1（視為 16 kHz）。實測
+（48 kHz babble_10dB.wav，3480 幀 × 513 bin）：
 
 | build | worst &#124;Δgain&#124; | median &#124;Δgain&#124; |
 |-------|--------------|---------------|
-| standard-math (`-DUSE_STANDARD_MATH`) | 2.9e-5 | 1.5e-8 |
+| standard-math (`-DUSE_STANDARD_MATH`) | 1.675e-5 | 2.235e-8 |
 | fast-math (預設) | 3.7e-1 | 1.9e-3 |
 
 standard-math 近 bit-exact ⇒ 埠邏輯正確。fast-math 尾端較大來自 `fast_log`
@@ -370,7 +376,7 @@ Taylor 近似（小引數 worst ~0.11），會經遞迴平滑放大；屬 fast-m
 
 - **輸入格式**：單聲道（多聲道自動取第一聲道）、8 / 16 / 48 kHz PCM16 或 32-bit float
 - **首 200 ms 需為純噪聲（或無語音）**：用於初始化 MCRA 噪聲底噪，前 `num_init_frames * hop_size` 樣本為 passthrough
-- **Frame / hop 於建立後固定**：`frame_size`、`hop_size` 與 `fft_size` 由 `mmse_lsa_default_config(sample_rate)` 等函式在 runtime 依 `sample_rate` 計算，並非編譯時常數；但一旦 `mmse_lsa_create()` 建立 instance 後即固定，不可在串流中途切換。standalone example CLI runner（`example/main.c`、`example/main_mem.c`）另外把 512/256/512 硬編在程式碼中，僅為範例限制
+- **Frame / hop 於建立後固定**：`frame_size == fft_size`、`hop_size == frame_size/2`，因此不做 zero-padding。`mmse_lsa_default_config(sample_rate)` 選 8k:256/128、16k:512/256、48k:1024/512；16 kHz 可用 `mmse_lsa_default_config_for_grid(16000, 256)` 選低算量 256/128。example runners 也直接使用輸入 rate 對應的 grid；instance 建立後不可中途切換。
 - **Streaming 語義**：`mmse_lsa_process()` 是**頻域 API**——每次呼叫吃 `Complex[n_freqs]` 複數頻譜、
   吐 `Complex[n_freqs]`（套用 per-bin gain、相位不變），lib 核心本身**沒有**內部時域緩衝或 OLA；
   窗函數、rFFT、iFFT、50% overlap-add 全部由 caller 負責（見 `example/main.c` 的完整 freq-domain
@@ -415,16 +421,16 @@ Taylor 近似（小引數 worst ~0.11），會經遞迴平滑放大；屬 fast-m
 
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
-| `frame_size` | `sample_rate × 20 / 1000` | 幀長 (20 ms)，例如 16 kHz → 320 samples |
-| `hop_size` | `frame_size / 2` | 幀移 (10 ms)，50% overlap；例如 16 kHz → 160 samples |
-| `fft_size` | 自動計算 | 次方 2 且 ≥ frame_size。8 kHz → 256；16 kHz → 512；48 kHz → 1024 |
+| `frame_size` | 等於 `fft_size` | 不補零的 2 次方分析窗；8k→256、16k→512（可選 256）、48k→1024 |
+| `hop_size` | `frame_size / 2` | 固定 50% overlap；各 grid 為 128 / 256 / 512 samples |
+| `fft_size` | 依 rate/grid 選擇 | 嚴格等於 frame，不再採「20 ms frame 補到下一個 2 次方」 |
 | `alpha_xi` | 0.92 | 先驗 SNR (ξ) DD 平滑；2026-07 musical-noise fix（was 0.88），全預設共用 |
 | `q` | 0.5 | 語音先驗機率 |
 | `xi_min_db` | -20 | 先驗 SNR 下限 (dB) |
 | `alpha_s` | 0.95 | MCRA 時間平滑 |
 | `alpha_d` | 0.7 | MCRA 噪聲更新率 |
-| `L` | 32 | MCRA 最小值窗口（320ms 場景追蹤）|
-| `num_init_frames` | 20 | 噪聲初始化幀數 |
+| `L` | 32（10 ms 參考值） | 建構時依 hop retime，使 MCRA window 維持約 320 ms |
+| `num_init_frames` | 20（10 ms 參考值） | 建構時依 hop retime，使初始化至少涵蓋 200 ms |
 | `scene_change_threshold_db` | 10.0 | 場景轉換高頻 gamma 閾值 (dB) |
 | `scene_change_min_frames` | 5 | 場景轉換需連續幀數 |
 | `scene_change_blend` | 0.5 | 場景轉換噪聲重置混合比 |
@@ -438,15 +444,16 @@ Taylor 近似（小引數 worst ~0.11），會經遞迴平滑放大；屬 fast-m
 
 ## 延遲
 
-算法延遲 ≈ `frame_size`（以 samples 計；取 1 幀 + OLA 緩衝）。`frame_size` 固定為 20 ms。
+算法 framing 延遲約為一個 `frame_size`；實際值依 signal grid 而非固定 20 ms。
 
 | 採樣率 | frame_size | hop_size | fft_size | 延遲 |
 |--------|-----------|----------|----------|------|
-| 8 kHz  | 160 samples | 80 samples  | 256  | 20 ms |
-| 16 kHz | 320 samples | 160 samples | 512  | 20 ms |
-| 48 kHz | 960 samples | 480 samples | 1024 | 20 ms |
+| 8 kHz  | 256 samples | 128 samples | 256  | 32 ms |
+| 16 kHz（低算量） | 256 samples | 128 samples | 256 | 16 ms |
+| 16 kHz（預設） | 512 samples | 256 samples | 512 | 32 ms |
+| 48 kHz | 1024 samples | 512 samples | 1024 | 21.333 ms |
 
-> **注意**: 初始化期間（前 20 幀 = 200 ms）音頻 lightweight passthrough（gain=1），MCRA 累積噪聲統計；之後開始正常降噪處理。
+> **注意**: 初始化幀數會依 hop retime，保證至少約 200 ms；期間音頻 passthrough（gain=1），MCRA 累積噪聲統計。
 
 ## 檔案結構
 

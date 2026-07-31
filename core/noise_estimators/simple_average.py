@@ -28,7 +28,7 @@ class SimpleAverageNoiseEstimator:
         # v1.3.0: 快速重估狀態
         self.is_reestimating = False
         self.noise_buffer = []
-        self.reestimate_frames = 20  # 重估需要的幀數
+        self.reestimate_frames = num_init_frames  # 與初始估計保持同一實時間
 
     def estimate(self, magnitude_spectrum: np.ndarray) -> np.ndarray:
         """

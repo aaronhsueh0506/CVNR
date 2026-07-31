@@ -11,7 +11,13 @@ from core import FrameProcessor, Reconstructor
 from core.noise_estimators import SimpleAverageNoiseEstimator
 from core.gain_calculators import SpectralSubtractionGainCalculator
 from .base_denoiser import BaseDenoiser
-from typing import Tuple
+from typing import Optional, Tuple
+from core.signal_grid import (
+    resolve_signal_grid,
+    retime_ema_alpha,
+    retime_frame_count,
+    validate_signal_grid,
+)
 
 
 class SpectralSubtractionDenoiser(BaseDenoiser):
@@ -41,15 +47,27 @@ class SpectralSubtractionDenoiser(BaseDenoiser):
     def __init__(
         self,
         sample_rate: int = 16000,
-        frame_size: int = 512,
-        frame_shift: int = 256,
-        fft_size: int = 512,
+        frame_size: Optional[int] = None,
+        frame_shift: Optional[int] = None,
+        fft_size: Optional[int] = None,
         alpha: float = 2.0,
         beta: float = 0.01,
         alpha_smooth: float = 0.8,
         num_init_frames: int = 20
     ):
-        super().__init__(sample_rate)
+        if frame_size is None and frame_shift is None:
+            frame_size, frame_shift, fft_size = resolve_signal_grid(sample_rate, fft_size)
+        elif None in (frame_size, frame_shift, fft_size):
+            raise ValueError("frame_size, frame_shift, and fft_size must be set together")
+        else:
+            validate_signal_grid(sample_rate, frame_size, frame_shift, fft_size)
+        super().__init__(sample_rate, n_fft=fft_size)
+        num_init_frames = retime_frame_count(
+            num_init_frames, sample_rate, frame_shift
+        )
+        alpha_smooth = retime_ema_alpha(
+            alpha_smooth, sample_rate, frame_shift
+        )
 
         # 創建處理器
         self.processor = FrameProcessor(

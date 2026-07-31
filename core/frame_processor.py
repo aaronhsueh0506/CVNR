@@ -6,6 +6,8 @@ import math
 import numpy as np
 from typing import Tuple, Optional
 
+from .signal_grid import validate_signal_grid
+
 
 class FrameProcessor:
     """
@@ -33,6 +35,8 @@ class FrameProcessor:
         # 幀長和幀移（已是樣本數）
         self.frame_size = frame_size
         self.frame_shift = frame_shift
+
+        validate_signal_grid(sample_rate, frame_size, frame_shift, fft_size)
 
         # 創建窗函數
         self.window = self._create_window(window_type, self.frame_size)
@@ -88,10 +92,6 @@ class FrameProcessor:
         """
         # 加窗
         windowed = frame * self.window
-
-        # 零填充到 FFT 大小
-        if len(windowed) < self.fft_size:
-            windowed = np.pad(windowed, (0, self.fft_size - len(windowed)))
 
         # FFT
         spectrum = np.fft.rfft(windowed, n=self.fft_size)

@@ -1388,15 +1388,15 @@ MIT License
 | 取樣率 | 8000 / 16000 / 48000 Hz | 自動配置 FFT size 與 frame size |
 | 聲道數 | 單聲道 (Mono) | C 實現自動取第一聲道 |
 | 位元深度 | 16-bit PCM / 32-bit float | |
-| 幀長度 | 20 ms（320 samples @ 16kHz） | 自動依取樣率計算 |
-| Hop size | 10 ms（160 samples @ 16kHz） | 50% overlap |
-| FFT size | 256 / 512 / 1024 | 自動取 ≥ frame_size 的最小 2 的冪次 |
+| 幀長度 | 256 / 512 / 1024 samples | `frame_size == fft_size`，不補零 |
+| Hop size | frame / 2 | 50% overlap；依 grid 為 8–16 ms 左右，不固定 10 ms |
+| FFT size | 8k:256、16k:512（可選256）、48k:1024 | 白名單 2 次方 grid |
 
 ### 處理性能
 
 | 指標 | 數值 |
 |------|------|
-| 演算法延遲 | 32 ms（20ms frame + 10ms hop + 2ms 處理） |
+| Framing 延遲 | 約一個 frame：8k/16k預設 32 ms、16k低算量16 ms、48k約21.333 ms |
 | 即時率 (RTF) | < 0.01（遠低於即時要求） |
 | 初始化靜默期 | 200 ms（前 20 幀用於噪聲底噪估計） |
 | 每幀處理時間 | < 0.1 ms |
@@ -1526,10 +1526,10 @@ MIT License
 - **單聲道**（若多聲道輸入則取第一聲道）
 - **取樣率 8 / 16 / 48 kHz**；其他取樣率需先重採樣
 - **PCM 16-bit 或 32-bit float**
-- **前 200 ms 應為純噪聲**（無語音）— 用於初始化底噪估計。若錄音一開始即為語音，會造成初期過度抑制
+- **前約 200 ms 應為純噪聲**（無語音）— 初始化幀數會依 hop retime；若錄音一開始即為語音，會造成初期過度抑制
 
 ### 呼叫模式
-- **Streaming（C 實現, `c_impl/`）**：每次餵 1 hop (10 ms)，適合即時處理。首 200 ms 仍會輸出，但為 passthrough / 初始化階段
+- **Streaming（C 實現, `c_impl/`）**：每次餵實際 grid 的 1 hop，適合即時處理。首約 200 ms 仍會輸出，但為 passthrough / 初始化階段
 - **Batch（Python `MmseLsaDenoiser.denoise_spectrum()`）**：一次給完整頻譜；自動 reset，適合離線或 regression 測試
 
 ### 不適用情境（必看）

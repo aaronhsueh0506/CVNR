@@ -14,7 +14,13 @@ from core import FrameProcessor, Reconstructor, SppEstimator
 from core.noise_estimators import RecursiveAverageNoiseEstimator, McraNoiseEstimator
 from core.gain_calculators import SppMmseGainCalculator
 from .base_denoiser import BaseDenoiser
-from typing import Tuple
+from typing import Optional, Tuple
+from core.signal_grid import (
+    resolve_signal_grid,
+    retime_ema_alpha,
+    retime_frame_count,
+    validate_signal_grid,
+)
 
 
 class SppMmseDenoiser(BaseDenoiser):
@@ -59,9 +65,9 @@ class SppMmseDenoiser(BaseDenoiser):
     def __init__(
         self,
         sample_rate: int = 16000,
-        frame_size: int = 512,
-        frame_shift: int = 256,
-        fft_size: int = 512,
+        frame_size: Optional[int] = None,
+        frame_shift: Optional[int] = None,
+        fft_size: Optional[int] = None,
         alpha_noise: float = 0.95,
         alpha_xi: float = 0.98,
         q: float = 0.5,
@@ -85,8 +91,26 @@ class SppMmseDenoiser(BaseDenoiser):
         # to prevent residual-echo from freezing noise tracking).
         mcra_accept_external_spp: bool = True,
     ):
+        if frame_size is None and frame_shift is None:
+            frame_size, frame_shift, fft_size = resolve_signal_grid(sample_rate, fft_size)
+        elif None in (frame_size, frame_shift, fft_size):
+            raise ValueError("frame_size, frame_shift, and fft_size must be set together")
+        else:
+            validate_signal_grid(sample_rate, frame_size, frame_shift, fft_size)
         super().__init__(sample_rate, n_fft=fft_size)
         self.noise_method = noise_method
+        alpha_noise = retime_ema_alpha(alpha_noise, sample_rate, frame_shift)
+        alpha_xi = retime_ema_alpha(alpha_xi, sample_rate, frame_shift)
+        alpha_g = retime_ema_alpha(alpha_g, sample_rate, frame_shift)
+        alpha_s = retime_ema_alpha(alpha_s, sample_rate, frame_shift)
+        alpha_p = retime_ema_alpha(alpha_p, sample_rate, frame_shift)
+        L = retime_frame_count(L, sample_rate, frame_shift)
+        num_init_frames = retime_frame_count(
+            num_init_frames, sample_rate, frame_shift
+        )
+        scene_change_min_frames = retime_frame_count(
+            scene_change_min_frames, sample_rate, frame_shift
+        )
 
         # 創建處理器
         self.processor = FrameProcessor(

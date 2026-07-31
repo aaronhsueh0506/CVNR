@@ -8,11 +8,11 @@
  * the ported gain / SPP / MCRA arithmetic — FFT differences are excluded.
  *
  * The denoiser is created with the Python V3-2 standalone config (mmse_lsa
- * default/balanced) and its framing forced to fft_size derived from n_freqs
- * (n_freqs = fft_size/2 + 1), matching tools/parity_nr.py (512/256/512).
+ * default/balanced) on the sample-rate/grid carried by the NRP2 dump; fft_size
+ * is derived from n_freqs (n_freqs = fft_size/2 + 1).
  *
  * Input file layout (little-endian, from parity_nr.py 'dump'):
- *   [magic=0x4e525031][n_frames][n_freqs]                (3 x int32)
+ *   [magic=0x4e525032][n_frames][n_freqs][sample_rate]   (4 x int32)
  *   per frame f:  X_re[n_freqs] (float32), X_im[n_freqs] (float32)
  *   per frame f:  G_py[n_freqs] (float32)                (ignored here)
  *
@@ -34,7 +34,8 @@
 #include "mmse_lsa_types.h"
 #include "fft_wrapper.h"
 
-#define PARITY_MAGIC 0x4E525031  /* 'NRP1' */
+#define PARITY_MAGIC_V1 0x4E525031  /* 'NRP1': legacy, implicit 16 kHz */
+#define PARITY_MAGIC    0x4E525032  /* 'NRP2': carries the signal grid rate */
 
 int main(int argc, char* argv[]) {
     if (argc < 3) {
@@ -63,16 +64,25 @@ int main(int argc, char* argv[]) {
         fclose(fin);
         return 1;
     }
-    if (header[0] != PARITY_MAGIC) {
-        fprintf(stderr, "Error: bad magic 0x%08x (expected 0x%08x)\n",
-                (unsigned)header[0], (unsigned)PARITY_MAGIC);
+    if (header[0] != PARITY_MAGIC && header[0] != PARITY_MAGIC_V1) {
+        fprintf(stderr, "Error: bad magic 0x%08x (expected 0x%08x or 0x%08x)\n",
+                (unsigned)header[0], (unsigned)PARITY_MAGIC,
+                (unsigned)PARITY_MAGIC_V1);
         fclose(fin);
         return 1;
     }
     int n_frames = header[1];
     int n_freqs  = header[2];
-    if (n_frames <= 0 || n_freqs <= 1) {
-        fprintf(stderr, "Error: bad dims frames=%d freqs=%d\n", n_frames, n_freqs);
+    int sample_rate = 16000;
+    if (header[0] == PARITY_MAGIC &&
+        fread(&sample_rate, sizeof(int32_t), 1, fin) != 1) {
+        fprintf(stderr, "Error: short NRP2 header\n");
+        fclose(fin);
+        return 1;
+    }
+    if (n_frames <= 0 || n_freqs <= 1 || sample_rate <= 0) {
+        fprintf(stderr, "Error: bad header frames=%d freqs=%d sr=%d\n",
+                n_frames, n_freqs, sample_rate);
         fclose(fin);
         return 1;
     }
@@ -80,15 +90,12 @@ int main(int argc, char* argv[]) {
     /* n_freqs = fft_size/2 + 1  ->  fft_size = (n_freqs - 1) * 2 */
     int fft_size = (n_freqs - 1) * 2;
 
-    /* Build the production V3-2 config, framing forced to match Python
-     * (512/256/512 for n_freqs=257). Sample rate is irrelevant to the gain math
-     * here (spectra are supplied directly); pass 16000 for the default knobs.
-     * strength = depth preset; stationary → overlay the content preset on top. */
-    MmseLsaConfig config = mmse_lsa_config_for_mode(16000, nr_mode);
+    /* Build the production V3-2 config on the exact Python signal grid.  Sample
+     * rate controls retimed EMA/count parameters even though spectra are supplied
+     * directly, so it is part of the parity contract. */
+    MmseLsaConfig config = mmse_lsa_config_for_mode_grid(
+        sample_rate, fft_size, nr_mode);
     if (stationary) mmse_lsa_apply_stationary(&config);
-    config.fft_size   = fft_size;
-    config.frame_size = fft_size;   /* 512 */
-    config.hop_size   = fft_size / 2;
 
     MmseLsaDenoiser* denoiser = mmse_lsa_create(&config);
     if (!denoiser) {
@@ -150,8 +157,8 @@ int main(int argc, char* argv[]) {
     fwrite(all_gains, sizeof(float), (size_t)n_frames * n_freqs, fout);
     fclose(fout);
 
-    printf("[parity_runner] frames=%d n_freqs=%d fft_size=%d -> %s\n",
-           n_frames, n_freqs, fft_size, argv[2]);
+    printf("[parity_runner] frames=%d n_freqs=%d sr=%d fft_size=%d -> %s\n",
+           n_frames, n_freqs, sample_rate, fft_size, argv[2]);
 
     free(spec_in); free(re); free(im); free(gain); free(all_gains);
     mmse_lsa_destroy(denoiser);

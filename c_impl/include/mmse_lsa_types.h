@@ -32,9 +32,9 @@ typedef enum {
  */
 typedef struct {
     int sample_rate;        // Sample rate (8000, 16000, 48000)
-    int frame_size;         // Frame length in samples (320 @ 16kHz, 20ms)
-    int hop_size;           // Hop size in samples (160 @ 16kHz, 10ms)
-    int fft_size;           // FFT size (next pow2 >= frame_size, 512 @ 16kHz)
+    int frame_size;         // Frame length in samples; equal to fft_size
+    int hop_size;           // 50% overlap; equal to frame_size / 2
+    int fft_size;           // Whitelisted power-of-two transform size
 
     // SPP parameters
     float alpha_xi;         // A priori SNR smoothing (0.88)
@@ -45,13 +45,13 @@ typedef struct {
     float alpha_s;          // Time smoothing (0.95)
     float alpha_d;          // Noise update (0.7)
     float alpha_p;          // SPP smoothing (0.2)
-    int L;                  // Minimum tracking window (32 frames = 320ms)
+    int L;                  // Minimum tracking window (~320 ms, grid-retimed)
     float delta_db;         // Bias compensation in dB (10.0)
-    int num_init_frames;    // Noise init frames (20)
+    int num_init_frames;    // Noise initialization (~200 ms, grid-retimed)
 
     // MCRA scene change detection
     float scene_change_threshold_db;     // Hi-freq gamma threshold in dB (10.0)
-    int scene_change_min_frames;         // Consecutive frames required (5)
+    int scene_change_min_frames;         // Consecutive duration (~50 ms by default)
     float scene_change_blend;            // Noise reset blend factor (0.5)
     float scene_change_flatness_threshold; // Hi-freq spectral flatness threshold (0.4)
     float broadband_threshold;           // Broadband scene-reset gate (0.8; <1.0 enables)
@@ -73,46 +73,54 @@ typedef struct {
 } MmseLsaConfig;
 
 /**
- * Create default configuration for given sample rate
- * FFT size is automatically calculated to be >= frame_size (next power of 2)
+ * Create default configuration for a supported sample rate and its default
+ * no-padding power-of-two FFT grid.
  */
-static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
+static inline int mmse_lsa_default_fft_size(int sample_rate) {
+    return (sample_rate == 48000) ? 1024
+         : (sample_rate == 16000) ? 512
+         : (sample_rate == 8000) ? 256 : 0;
+}
+
+/** Convert a coefficient tuned at 10-ms updates to this grid's hop. */
+static inline float mmse_lsa_retime_alpha(float alpha_10ms,
+                                           int sample_rate, int hop_size) {
+    if (!(alpha_10ms >= 0.0f && alpha_10ms <= 1.0f) ||
+        sample_rate <= 0 || hop_size <= 0) {
+        return alpha_10ms;
+    }
+    return powf(alpha_10ms,
+                (100.0f * (float)hop_size) / (float)sample_rate);
+}
+
+/** Convert a legacy 10-ms frame count without shortening real duration. */
+static inline int mmse_lsa_retime_frames(int frames_10ms,
+                                         int sample_rate, int hop_size) {
+    if (frames_10ms <= 0 || sample_rate <= 0 || hop_size <= 0) return 0;
+    int64_t numerator = (int64_t)frames_10ms * (int64_t)sample_rate;
+    int64_t denominator = (int64_t)100 * (int64_t)hop_size;
+    int64_t frames = (numerator + denominator - 1) / denominator;
+    return frames > INT_MAX ? 0 : (int)frames;
+}
+
+/** Build the default preset directly on one whitelisted no-padding grid. */
+static inline MmseLsaConfig mmse_lsa_default_config_for_grid(
+        int sample_rate, int fft_size) {
     MmseLsaConfig config;
 
     config.sample_rate = sample_rate;
 
-    // 20ms frame, 10ms hop — unified with AEC pipeline
+    // Power-of-two frame/FFT, 50% overlap, no transform zero-padding.
     //
-    // F05 guard: don't multiply an unchecked sample_rate. A negative or
-    // absurdly large sample_rate (adversarial input, or simply a caller bug)
-    // must not be fed into `sample_rate * 20`, which is signed-int
-    // multiplication — overflow there is undefined behaviour, not just a
-    // wrong answer. `sample_rate > INT_MAX / 20` is exactly the guard that
-    // makes the multiply safe (INT_MAX/20 truncates down, so anything <= it
-    // times 20 fits in int). An invalid sample_rate instead leaves
-    // frame_size/hop_size/fft_size at 0 — mmse_lsa_validate_config() rejects
-    // that (in addition to rejecting sample_rate itself against the
-    // {8000,16000,48000} whitelist), so no downstream consumer ever acts on
-    // these degenerate fields.
-    int frame_size;
-    if (sample_rate > 0 && sample_rate <= INT_MAX / 20) {
-        frame_size = sample_rate * 20 / 1000;  // 320 @ 16kHz
-    } else {
-        frame_size = 0;
-    }
-    int fft_size = 0;
-    if (frame_size > 0) {
-        fft_size = 256;
-        while (fft_size < frame_size) {
-            fft_size *= 2;
-        }
-    }
-    config.frame_size = frame_size;       // 320 @ 16kHz (20ms)
-    config.hop_size = frame_size / 2;     // 160 @ 16kHz (10ms)
-    config.fft_size = fft_size;           // 512 @ 16kHz (next pow2 >= frame_size)
+    // Invalid rate/grid pairs are left structurally visible here and rejected
+    // by mmse_lsa_validate_config() before sizing or construction.
+    config.frame_size = fft_size;
+    config.hop_size = fft_size / 2;
+    config.fft_size = fft_size;
 
     // SPP parameters (sync with Python v3_2_config.yaml)
-    config.alpha_xi = 0.92f;    // 2026-07 musical-noise fix (was 0.88): DD ξ-smoothing lever.
+    config.alpha_xi = mmse_lsa_retime_alpha(0.92f, sample_rate, config.hop_size);
+                                 // 2026-07 musical-noise fix (was 0.88): DD ξ-smoothing lever.
                                  // Shared across all strength presets; damps ξ→SPP jitter (the
                                  // isolated gain peaks = musical noise). ~free on speech (guard
                                  // PESQ −0.001). Stationary already used 0.92 → undisturbed.
@@ -120,30 +128,30 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
     config.xi_min_db = -20.0f;
 
     // MCRA parameters (sync with Python v3_2_config.yaml)
-    config.alpha_s = 0.95f;
-    config.alpha_d = 0.7f;
-    config.alpha_p = 0.2f;
-    config.L = 32;               // 32 × 10ms = 320ms (sync with Python v3_2)
+    config.alpha_s = mmse_lsa_retime_alpha(0.95f, sample_rate, config.hop_size);
+    config.alpha_d = mmse_lsa_retime_alpha(0.7f, sample_rate, config.hop_size);
+    config.alpha_p = mmse_lsa_retime_alpha(0.2f, sample_rate, config.hop_size);
+    config.L = mmse_lsa_retime_frames(32, sample_rate, config.hop_size);
     config.delta_db = 10.0f;
-    config.num_init_frames = 20;
+    config.num_init_frames = mmse_lsa_retime_frames(20, sample_rate, config.hop_size);
 
     // MCRA scene change detection
     config.scene_change_threshold_db = 10.0f;
-    config.scene_change_min_frames = 5;
+    config.scene_change_min_frames = mmse_lsa_retime_frames(5, sample_rate, config.hop_size);
     config.scene_change_blend = 0.5f;
     config.scene_change_flatness_threshold = 0.4f;
     config.broadband_threshold = 0.8f;   // <1.0 enables broadband scene reset.
                                           // NOTE: 0.8 matches the Audio_ALG pipeline path, NOT the
                                           // standalone Python YAML — config/v3_2_config.yaml uses
-                                          // broadband_threshold: 1.0 (disabled; L=32 tracks fast enough).
+                                          // broadband_threshold: 1.0 (disabled; 320-ms L tracks fast enough).
 
     // Gain parameters (sync with Python v3_2_config.yaml)
     config.g_min_db = -30.0f;   /* amplitude dB (/20); = old -15 @ /10 → same 0.0316 floor */
-    config.alpha_g = 0.88f;
-    config.alpha_attack = 0.3f;
-    config.alpha_decay = 0.88f;     // Match Python (= alpha_g)
+    config.alpha_g = mmse_lsa_retime_alpha(0.88f, sample_rate, config.hop_size);
+    config.alpha_attack = mmse_lsa_retime_alpha(0.3f, sample_rate, config.hop_size);
+    config.alpha_decay = mmse_lsa_retime_alpha(0.88f, sample_rate, config.hop_size);
 
-    // Content-preservation mode: default = full (all levers off → byte-identical V3-2).
+    // Content-preservation mode: default = full (all overlay levers off).
     config.stationary_floor            = false;
     config.stationary_floor_exponent   = 1.0f;
     config.stationary_floor_beta       = 1.0f;
@@ -151,6 +159,11 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
     config.scene_change_lo_flatness_max = 0.4f;
 
     return config;
+}
+
+static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
+    return mmse_lsa_default_config_for_grid(
+        sample_rate, mmse_lsa_default_fft_size(sample_rate));
 }
 
 /**
@@ -162,38 +175,39 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
  * BALANCED:   g_min=-30dB, default (same as mmse_lsa_default_config)
  * AGGRESSIVE: g_min=-40dB, deepest suppression, faster noise tracking, extra gain smoothing
  */
-static inline MmseLsaConfig mmse_lsa_config_for_mode(int sample_rate, MmseLsaNrMode mode) {
-    MmseLsaConfig config = mmse_lsa_default_config(sample_rate);
+static inline MmseLsaConfig mmse_lsa_config_for_mode_grid(
+        int sample_rate, int fft_size, MmseLsaNrMode mode) {
+    MmseLsaConfig config = mmse_lsa_default_config_for_grid(sample_rate, fft_size);
 
     switch (mode) {
     case MMSE_LSA_NR_MILD:
         config.g_min_db      = -20.0f;   /* amplitude dB (/20) → 0.10 floor */
         config.q             = 0.6f;
         config.xi_min_db     = -15.0f;
-        config.alpha_d       = 0.85f;
-        config.alpha_g       = 0.92f;
-        config.alpha_attack  = 0.4f;
-        config.alpha_decay   = 0.92f;
+        config.alpha_d       = mmse_lsa_retime_alpha(0.85f, sample_rate, config.hop_size);
+        config.alpha_g       = mmse_lsa_retime_alpha(0.92f, sample_rate, config.hop_size);
+        config.alpha_attack  = mmse_lsa_retime_alpha(0.4f, sample_rate, config.hop_size);
+        config.alpha_decay   = mmse_lsa_retime_alpha(0.92f, sample_rate, config.hop_size);
         break;
 
     case MMSE_LSA_NR_MODERATE:
         config.g_min_db      = -25.0f;   /* amplitude dB (/20) → 0.056 floor (mild ↔ balanced) */
         config.q             = 0.55f;
         config.xi_min_db     = -18.0f;
-        config.alpha_d       = 0.85f;
-        config.alpha_g       = 0.92f;
-        config.alpha_attack  = 0.4f;
-        config.alpha_decay   = 0.92f;
+        config.alpha_d       = mmse_lsa_retime_alpha(0.85f, sample_rate, config.hop_size);
+        config.alpha_g       = mmse_lsa_retime_alpha(0.92f, sample_rate, config.hop_size);
+        config.alpha_attack  = mmse_lsa_retime_alpha(0.4f, sample_rate, config.hop_size);
+        config.alpha_decay   = mmse_lsa_retime_alpha(0.92f, sample_rate, config.hop_size);
         break;
 
     case MMSE_LSA_NR_AGGRESSIVE:
         config.g_min_db      = -40.0f;   /* amplitude dB (/20) → 0.01 floor */
         config.q             = 0.35f;
         config.xi_min_db     = -25.0f;
-        config.alpha_d       = 0.5f;
-        config.alpha_g       = 0.85f;    /* more downstream smoothing than old 0.75 (musical noise) */
-        config.alpha_attack  = 0.15f;
-        config.alpha_decay   = 0.88f;    /* was 0.85 */
+        config.alpha_d       = mmse_lsa_retime_alpha(0.5f, sample_rate, config.hop_size);
+        config.alpha_g       = mmse_lsa_retime_alpha(0.85f, sample_rate, config.hop_size);
+        config.alpha_attack  = mmse_lsa_retime_alpha(0.15f, sample_rate, config.hop_size);
+        config.alpha_decay   = mmse_lsa_retime_alpha(0.88f, sample_rate, config.hop_size);
         break;
 
     case MMSE_LSA_NR_BALANCED:
@@ -202,6 +216,12 @@ static inline MmseLsaConfig mmse_lsa_config_for_mode(int sample_rate, MmseLsaNrM
     }
 
     return config;
+}
+
+static inline MmseLsaConfig mmse_lsa_config_for_mode(
+        int sample_rate, MmseLsaNrMode mode) {
+    return mmse_lsa_config_for_mode_grid(
+        sample_rate, mmse_lsa_default_fft_size(sample_rate), mode);
 }
 
 /**
@@ -214,7 +234,7 @@ static inline MmseLsaConfig mmse_lsa_config_for_mode(int sample_rate, MmseLsaNrM
  * This is the C mirror of Python core/nr_modes.py apply_mode(params, 'stationary'):
  * content mode is an ORTHOGONAL overlay on any strength base (mild/balanced/aggressive),
  * not a separate config — `full` overlays nothing. On the balanced default it yields a
- * config byte-identical to the shipped standalone V3-2 stationary path.
+ * config with the same real-time constants as the 10-ms tuned path.
  */
 static inline void mmse_lsa_apply_stationary(MmseLsaConfig* config) {
     // the mechanism: Wiener gain lower-bound (ξ/(β+ξ))^p
@@ -223,13 +243,16 @@ static inline void mmse_lsa_apply_stationary(MmseLsaConfig* config) {
     config->stationary_floor_beta     = 1.0f;   // remove exactly N
     // residual-noise depth is set by xi_min (NOT g_min); leave natural comfort noise
     config->xi_min_db                 = -22.0f;
-    config->alpha_xi                  = 0.92f;   // steadier ξ → steadier bound
+    config->alpha_xi = mmse_lsa_retime_alpha(
+        0.92f, config->sample_rate, config->hop_size);
     config->g_min_db                  = -30.0f;  // amplitude dB (/20); mostly inert under the bound
     // keep N an honest STATIONARY floor: slow the posterior-gated recursive average so
     // music phrases aren't absorbed (which would collapse ξ and defeat the bound)
-    config->alpha_d                   = 0.95f;
+    config->alpha_d = mmse_lsa_retime_alpha(
+        0.95f, config->sample_rate, config->hop_size);
     // music-aware scene-change: percussion can't confirm; tonal (music) low band is vetoed
-    config->scene_change_min_frames        = 30;
+    config->scene_change_min_frames = mmse_lsa_retime_frames(
+        30, config->sample_rate, config->hop_size);
     config->scene_change_flatness_threshold = 0.6f;
     config->scene_change_tonal_veto        = true;
     config->scene_change_lo_flatness_max   = 0.4f;
@@ -247,10 +270,10 @@ static inline void mmse_lsa_apply_stationary(MmseLsaConfig* config) {
  *
  * Bounds are deliberately generous — wide enough to cover every shipped
  * preset (mild/moderate/balanced/aggressive x stationary, all three sample
- * rates, and the CLI's fixed 512/256/512 framing override) with headroom for
+ * rates, and all four whitelisted signal grids) with headroom for
  * legitimate re-tuning, not tight enough to constrain it. A config built by
- * mmse_lsa_default_config() / mmse_lsa_config_for_mode() / the CLI's framing
- * override, for any of the three supported sample rates, always passes.
+ * mmse_lsa_default_config_for_grid() / mmse_lsa_config_for_mode_grid(), for
+ * any supported rate/grid pair, always passes.
  *
  * Float tunables (R08, external re-review, NR side): the int/dimension
  * checks above were the whole gate — none of the 18 float fields (SPP/MCRA/
@@ -294,13 +317,18 @@ static inline bool mmse_lsa_validate_config(const MmseLsaConfig* config) {
         return false;
     }
 
-    // frame_size / hop_size: positive, consistent with fft_size (the frame
-    // is zero-padded up to fft_size; hop must not exceed the frame it hops
-    // through).
-    if (config->frame_size <= 0 || config->frame_size > config->fft_size) {
+    // No-padding project grids: frame == FFT and hop == frame/2. 16 kHz
+    // supports both the low-compute 256 grid and the default 512 grid.
+    if (config->frame_size <= 0 || config->frame_size != config->fft_size) {
         return false;
     }
-    if (config->hop_size <= 0 || config->hop_size > config->frame_size) {
+    if (config->hop_size <= 0 || config->frame_size != 2 * config->hop_size) {
+        return false;
+    }
+    if (!((config->sample_rate == 8000 && config->fft_size == 256) ||
+          (config->sample_rate == 16000 &&
+           (config->fft_size == 256 || config->fft_size == 512)) ||
+          (config->sample_rate == 48000 && config->fft_size == 1024))) {
         return false;
     }
 

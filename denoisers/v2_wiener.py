@@ -13,7 +13,13 @@ from core import FrameProcessor, Reconstructor
 from core.noise_estimators import RecursiveAverageNoiseEstimator, McraNoiseEstimator
 from core.gain_calculators import WienerGainCalculator
 from .base_denoiser import BaseDenoiser
-from typing import Tuple
+from typing import Optional, Tuple
+from core.signal_grid import (
+    resolve_signal_grid,
+    retime_ema_alpha,
+    retime_frame_count,
+    validate_signal_grid,
+)
 
 
 class WienerDenoiser(BaseDenoiser):
@@ -30,9 +36,9 @@ class WienerDenoiser(BaseDenoiser):
     def __init__(
         self,
         sample_rate: int = 16000,
-        frame_size: int = 512,
-        frame_shift: int = 256,
-        fft_size: int = 512,
+        frame_size: Optional[int] = None,
+        frame_shift: Optional[int] = None,
+        fft_size: Optional[int] = None,
         noise_method: str = 'recursive_average',
         alpha: float = 0.95,
         min_gain: float = 0.01,
@@ -51,8 +57,27 @@ class WienerDenoiser(BaseDenoiser):
         # 兼容性參數 (保留接口但不使用)
         enable_noise_tracking: bool = False,
     ):
+        if frame_size is None and frame_shift is None:
+            frame_size, frame_shift, fft_size = resolve_signal_grid(sample_rate, fft_size)
+        elif None in (frame_size, frame_shift, fft_size):
+            raise ValueError("frame_size, frame_shift, and fft_size must be set together")
+        else:
+            validate_signal_grid(sample_rate, frame_size, frame_shift, fft_size)
         super().__init__(sample_rate, n_fft=fft_size)
         self.noise_method = noise_method
+        alpha = retime_ema_alpha(alpha, sample_rate, frame_shift)
+        alpha_smooth = retime_ema_alpha(alpha_smooth, sample_rate, frame_shift)
+        alpha_dd = retime_ema_alpha(alpha_dd, sample_rate, frame_shift)
+        alpha_s = retime_ema_alpha(alpha_s, sample_rate, frame_shift)
+        alpha_d = retime_ema_alpha(alpha_d, sample_rate, frame_shift)
+        alpha_p = retime_ema_alpha(alpha_p, sample_rate, frame_shift)
+        L = retime_frame_count(L, sample_rate, frame_shift)
+        num_init_frames = retime_frame_count(
+            num_init_frames, sample_rate, frame_shift
+        )
+        scene_change_min_frames = retime_frame_count(
+            5, sample_rate, frame_shift
+        )
 
         # 1. 處理器
         self.processor = FrameProcessor(
@@ -78,6 +103,7 @@ class WienerDenoiser(BaseDenoiser):
                 L=L,
                 delta_db=delta_db,
                 num_init_frames=num_init_frames,
+                scene_change_min_frames=scene_change_min_frames,
                 accept_external_spp=False,  # Wiener has no OM-LSA posterior to supply
             )
         else:

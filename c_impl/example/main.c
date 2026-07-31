@@ -52,9 +52,9 @@ void print_usage(const char* prog) {
     printf("  --stationary   Content-preservation mode: remove only the stationary noise\n");
     printf("                 floor, preserve speech/music/transients (layered on --nr-mode)\n");
     printf("  --debug        Print one mmse_lsa_debug_status() line per second of audio\n");
+    printf("  --fft-size <n> Select project grid (256/512 @16k; 1024 @48k)\n");
     printf("\n");
-    printf("Framing is fixed to the Python V3-2 reference (512/256/512, sqrt-Hann)\n");
-    printf("so output is parity-comparable; see tools/parity_nr.py.\n");
+    printf("Frame equals FFT size; hop is frame/2; transform input is never zero-padded.\n");
     printf("\n");
     printf("Supported input formats:\n");
     printf("  - 16-bit PCM WAV\n");
@@ -105,6 +105,7 @@ int main(int argc, char* argv[]) {
     int bypass = 0;
     int stationary = 0;
     int debug = 0;
+    int fft_size_override = 0;
     MmseLsaNrMode nr_mode = MMSE_LSA_NR_BALANCED;
 
     for (int i = 3; i < argc; i++) {
@@ -114,6 +115,8 @@ int main(int argc, char* argv[]) {
             stationary = 1;
         } else if (strcmp(argv[i], "--debug") == 0) {
             debug = 1;
+        } else if (strcmp(argv[i], "--fft-size") == 0 && i + 1 < argc) {
+            fft_size_override = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--nr-mode") == 0 && i + 1 < argc) {
             const char *m = argv[++i];
             if (strcmp(m, "mild") == 0)             nr_mode = MMSE_LSA_NR_MILD;
@@ -165,23 +168,20 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    /* 4. Build config — framing forced to the Python V3-2 reference (512/256/512)
-     *    so this runner is parity-comparable. NR-strength knobs come from nr_mode;
-     *    the stationary content preset (if requested) overlays on top of that base. */
-    MmseLsaConfig config = mmse_lsa_config_for_mode(sample_rate, nr_mode);
+    /* 4. Build config on the no-padding project grid. */
+    int selected_fft = fft_size_override > 0
+                     ? fft_size_override : mmse_lsa_default_fft_size(sample_rate);
+    MmseLsaConfig config = mmse_lsa_config_for_mode_grid(
+        sample_rate, selected_fft, nr_mode);
     if (stationary) mmse_lsa_apply_stationary(&config);
-    config.frame_size = 512;
-    config.hop_size   = 256;
-    config.fft_size   = 512;
 
     /* F05: reject a sample rate / framing this port has never been verified
      * against, with a clear message, before ever touching the denoiser API
      * (mmse_lsa_create/get_mem_size would also reject it internally, but with
      * a generic "Failed to create denoiser" error rather than naming the
      * actual problem). The whitelist matches mmse_lsa_validate_config():
-     * 8000/16000/48000 Hz are the rates this CLI's fixed 512/256/512 framing
-     * has actually been exercised against (see e.g. the 48kHz clips under
-     * test_wav/wav, which run through exactly this fixed framing). */
+     * 8000/16000/48000 Hz and the selected FFT must form one of the explicit
+     * no-padding grids accepted by mmse_lsa_validate_config(). */
     if (!mmse_lsa_validate_config(&config)) {
         fprintf(stderr,
                 "Error: unsupported sample rate %d Hz for NR processing "

@@ -240,14 +240,56 @@ int main(void) {
             CHECK(mmse_lsa_validate_config(&def), msg);
         }
 
+        /* The alternate 16-kHz/256 grid must preserve preset wall-clock
+         * constants too; mutating only fft/frame/hop after construction is
+         * intentionally no longer the supported construction path. */
+        {
+            const int grid_sr[] = {8000, 16000, 16000, 48000};
+            const int grid_fft[] = {256, 256, 512, 1024};
+            for (size_t g = 0; g < sizeof(grid_sr) / sizeof(grid_sr[0]); ++g) {
+                MmseLsaConfig cfg = mmse_lsa_config_for_mode_grid(
+                    grid_sr[g], grid_fft[g], MMSE_LSA_NR_BALANCED);
+                char msg[128];
+                snprintf(msg, sizeof msg, "grid %d/%d: retimed config validates",
+                         grid_sr[g], grid_fft[g]);
+                CHECK(mmse_lsa_validate_config(&cfg), msg);
+
+                double hop_sec = (double)cfg.hop_size / (double)cfg.sample_rate;
+                double min_window_sec = (double)cfg.L * hop_sec;
+                double init_sec = (double)cfg.num_init_frames * hop_sec;
+                double scene_sec = (double)cfg.scene_change_min_frames * hop_sec;
+                snprintf(msg, sizeof msg, "grid %d/%d: L preserves >=320ms",
+                         grid_sr[g], grid_fft[g]);
+                CHECK(min_window_sec >= 0.320 - 1e-9 &&
+                      min_window_sec < 0.320 + hop_sec + 1e-9, msg);
+                snprintf(msg, sizeof msg, "grid %d/%d: init preserves >=200ms",
+                         grid_sr[g], grid_fft[g]);
+                CHECK(init_sec >= 0.200 - 1e-9 &&
+                      init_sec < 0.200 + hop_sec + 1e-9, msg);
+                snprintf(msg, sizeof msg, "grid %d/%d: scene gate preserves >=50ms",
+                         grid_sr[g], grid_fft[g]);
+                CHECK(scene_sec >= 0.050 - 1e-9 &&
+                      scene_sec < 0.050 + hop_sec + 1e-9, msg);
+
+                double decay_1s = pow((double)cfg.alpha_s,
+                                      1.0 / hop_sec);
+                snprintf(msg, sizeof msg, "grid %d/%d: alpha_s keeps 1s decay",
+                         grid_sr[g], grid_fft[g]);
+                CHECK(fabs(decay_1s - pow(0.95, 100.0)) < 2e-6, msg);
+            }
+        }
+
         /* AEC-chain caller overlay (Audio_ALG pipelines' audio_pipeline.c
          * derive_dims_and_configs(): L=150, alpha_d=0.95, alpha_attack=0.3,
          * alpha_decay=alpha_g) must also validate for every strength preset. */
         for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
             MmseLsaConfig aec_chain = mmse_lsa_config_for_mode(16000, modes[i]);
-            aec_chain.L            = 150;
-            aec_chain.alpha_d      = 0.95f;
-            aec_chain.alpha_attack = 0.3f;
+            aec_chain.L = mmse_lsa_retime_frames(
+                150, aec_chain.sample_rate, aec_chain.hop_size);
+            aec_chain.alpha_d = mmse_lsa_retime_alpha(
+                0.95f, aec_chain.sample_rate, aec_chain.hop_size);
+            aec_chain.alpha_attack = mmse_lsa_retime_alpha(
+                0.3f, aec_chain.sample_rate, aec_chain.hop_size);
             aec_chain.alpha_decay  = aec_chain.alpha_g;
             char msg[96];
             snprintf(msg, sizeof msg, "AEC-chain overlay (%s): validate_config() accepts",

@@ -69,6 +69,7 @@ from denoisers import (
 )
 from core.nr_modes import apply_mode
 from core.nr_strength import apply_strength
+from core.signal_grid import resolve_signal_grid
 
 
 def load_config(config_file: str) -> dict:
@@ -149,7 +150,8 @@ def create_denoiser_from_config(
     config_dir: str,
     sample_rate: int,
     mode: str = None,
-    strength: str = None
+    strength: str = None,
+    fft_size: int = None,
 ):
     """
     根據配置文件創建降噪器
@@ -173,25 +175,9 @@ def create_denoiser_from_config(
     config_file = os.path.join(config_dir, config_filename)
     config = load_config(config_file)
 
-    # 獲取音頻參數（如果配置文件中有的話）
-    if 'audio' in config:
-        frame_size = config['audio'].get('frame_size', 512)
-        frame_shift = config['audio'].get('hop_size', 256)
-        config_fft_size = config['audio'].get('fft_size', None)
-    else:
-        # 默認參數
-        frame_size = 512
-        frame_shift = 256
-        config_fft_size = None
-
-    # 自動計算 FFT 大小（next power of 2 >= frame_size）
-    fft_size = 2 ** int(np.ceil(np.log2(frame_size)))
-
-    # 如果配置指定了 FFT 大小且合理，使用配置值
-    if config_fft_size is not None and config_fft_size >= frame_size:
-        fft_size = config_fft_size
-    elif config_fft_size is not None:
-        print(f"  ⚠️  警告: {version} 配置的 FFT={config_fft_size} 太小（需要>={frame_size}），自動調整為 {fft_size}")
+    # Runtime sample rate owns the grid. YAML carries algorithm tunables, but
+    # must not re-introduce the former 20/10 ms padded framing at another rate.
+    frame_size, frame_shift, fft_size = resolve_signal_grid(sample_rate, fft_size)
 
     # 根據版本創建降噪器
     if version == 'V1':
@@ -434,7 +420,8 @@ def process_audio_file(
     versions: list,
     config_dir: str,
     mode: str = None,
-    strength: str = None
+    strength: str = None,
+    fft_size: int = None,
 ):
     """
     處理音頻文件
@@ -491,7 +478,8 @@ def process_audio_file(
     for version in versions:
         try:
             denoiser = create_denoiser_from_config(
-                version, config_dir, sample_rate, mode=mode, strength=strength)
+                version, config_dir, sample_rate, mode=mode, strength=strength,
+                fft_size=fft_size)
             denoisers[version] = denoiser
             params = denoiser.get_params()
             print(f"  ✓ {version}: {params['name']}")
@@ -545,7 +533,8 @@ def process_audio_file(
                 'enhanced': enhanced,
                 'processing_time': processing_time,
                 'rtf': rtf,
-                'spp_matrix': spp_matrix  # None for non-V3 denoisers
+                'spp_matrix': spp_matrix,  # None for non-V3 denoisers
+                'hop_length': denoiser.processor.frame_shift,
             }
 
             print(f"✓ ({processing_time*1000:.1f} ms, RTF: {rtf:.3f})")
@@ -589,7 +578,7 @@ def process_audio_file(
             try:
                 spp_output_path = os.path.join(output_dir, f"{basename}_{version.lower()}_spp.png")
                 # Use the actual frame_shift, not a hardcoded 10ms default.
-                hop_length = frame_shift
+                hop_length = result['hop_length']
                 plot_spp_spectrogram(
                     result['spp_matrix'],
                     spp_output_path,
@@ -679,6 +668,13 @@ def main():
         help='V3-2 內容保留模式（內容軸）：full|stationary（默認: full）。stationary 只移除穩態底噪，保留音樂/瞬態'
     )
 
+    parser.add_argument(
+        '--fft-size',
+        type=int,
+        default=None,
+        help='No-padding grid override (256/512 @16kHz; 1024 @48kHz)',
+    )
+
     args = parser.parse_args()
 
     # 如果沒有指定 config_dir，使用相對於腳本的路徑
@@ -693,7 +689,8 @@ def main():
         args.versions,
         args.config_dir,
         mode=args.mode,
-        strength=args.nr_mode
+        strength=args.nr_mode,
+        fft_size=args.fft_size,
     )
 
     # 返回退出碼

@@ -42,11 +42,9 @@
 #define M_PI 3.14159265358979323846
 #endif
 
-/* ---- Fixed framing (matches Python config/v3_2_config.yaml exactly) ------- */
-#define FRAME_SIZE 512
-#define HOP        256
-#define FFT_SIZE   512
-#define N_FREQS    (FFT_SIZE / 2 + 1)
+/* ---- Maximum supported no-padding grid (48 kHz / FFT 1024) -------------- */
+#define MAX_FRAME_SIZE 1024
+#define MAX_N_FREQS    (MAX_FRAME_SIZE / 2 + 1)
 
 /* ---- Static memory pools — sized ONCE, never malloc'd -------------------- *
  * On an embedded target these would be caller-provided platform memory blocks;
@@ -60,18 +58,18 @@
  *     -> 24 KB pool (covers either backend with headroom).
  * The runtime `need > sizeof(pool)` guards below are the real safety net if
  * a config change ever grows past these figures. */
-#define DENOISER_POOL_BYTES ( 96 * 1024)   /* NR engine + MCRA + SPP           */
-#define FFT_POOL_BYTES      ( 24 * 1024)   /* FFT backend configs + work bufs  */
+#define DENOISER_POOL_BYTES (256 * 1024)   /* covers 513-bin 48 kHz config      */
+#define FFT_POOL_BYTES      ( 48 * 1024)   /* covers 1024-point KISS / NE10     */
 
 static uint8_t g_denoiser_pool[DENOISER_POOL_BYTES] __attribute__((aligned(16)));
 static uint8_t g_fft_pool[FFT_POOL_BYTES]           __attribute__((aligned(16)));
 
 /* Per-frame scratch (fixed framing) — also static, no malloc. */
-static float   g_win[FRAME_SIZE];
-static float   g_frame_buf[FFT_SIZE];
-static float   g_time_out[FFT_SIZE];
-static Complex g_spec_in[N_FREQS];
-static Complex g_spec_out[N_FREQS];
+static float   g_win[MAX_FRAME_SIZE];
+static float   g_frame_buf[MAX_FRAME_SIZE];
+static float   g_time_out[MAX_FRAME_SIZE];
+static Complex g_spec_in[MAX_N_FREQS];
+static Complex g_spec_out[MAX_N_FREQS];
 
 /* Whole-file I/O buffers. These scale with the clip length, so they are capped
  * static arrays here (a real device streams PCM in fixed chunks instead). */
@@ -81,7 +79,7 @@ static float   g_signal[MAX_SAMPLES];
 /* OLA output can overshoot n_samples by up to HOP-1 samples (out_len is rounded
  * up to a whole number of hops past the last frame) — pad past MAX_SAMPLES so
  * the write loop below never overruns even when n_samples == MAX_SAMPLES. */
-static float   g_out_ola[MAX_SAMPLES + FRAME_SIZE];
+static float   g_out_ola[MAX_SAMPLES + MAX_FRAME_SIZE];
 
 void print_usage(const char* prog) {
     printf("MMSE-LSA Speech Denoiser (V3-2 C, STATIC-MEMORY build)\n\n");
@@ -91,6 +89,7 @@ void print_usage(const char* prog) {
     printf("  --nr-mode <m>  NR strength: mild|moderate|balanced|aggressive (default: balanced)\n");
     printf("  --stationary   Content-preservation mode (layered on --nr-mode)\n");
     printf("  --debug        Print one mmse_lsa_debug_status() line per second of audio\n\n");
+    printf("  --fft-size <n> Select project grid (256/512 @16k; 1024 @48k)\n\n");
     printf("All state is pre-allocated in static memory; no malloc on the audio path.\n");
     printf("Output is byte-identical to denoise_wav (framing 512/256/512, sqrt-Hann).\n");
 }
@@ -114,6 +113,7 @@ int main(int argc, char* argv[]) {
     int bypass = 0;
     int stationary = 0;
     int debug = 0;
+    int fft_size_override = 0;
     MmseLsaNrMode nr_mode = MMSE_LSA_NR_BALANCED;
 
     for (int i = 3; i < argc; i++) {
@@ -123,6 +123,8 @@ int main(int argc, char* argv[]) {
             stationary = 1;
         } else if (strcmp(argv[i], "--debug") == 0) {
             debug = 1;
+        } else if (strcmp(argv[i], "--fft-size") == 0 && i + 1 < argc) {
+            fft_size_override = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--nr-mode") == 0 && i + 1 < argc) {
             const char* m = argv[++i];
             if (strcmp(m, "mild") == 0)             nr_mode = MMSE_LSA_NR_MILD;
@@ -186,12 +188,12 @@ int main(int argc, char* argv[]) {
         return 0;
     }
 
-    /* 3. Config — framing forced to the reference so output is parity-comparable. */
-    MmseLsaConfig config = mmse_lsa_config_for_mode(sample_rate, nr_mode);
+    /* 3. Config — no-padding project grid. */
+    int selected_fft = fft_size_override > 0
+                     ? fft_size_override : mmse_lsa_default_fft_size(sample_rate);
+    MmseLsaConfig config = mmse_lsa_config_for_mode_grid(
+        sample_rate, selected_fft, nr_mode);
     if (stationary) mmse_lsa_apply_stationary(&config);
-    config.frame_size = FRAME_SIZE;
-    config.hop_size   = HOP;
-    config.fft_size   = FFT_SIZE;
 
     /* F05: reject a sample rate / framing this port has never been verified
      * against, with a clear message (same whitelist as main.c / see there for
@@ -207,7 +209,10 @@ int main(int argc, char* argv[]) {
 
     /* 4. Size the static pools against the exact requirement (the no-malloc step). */
     size_t need_denoiser = mmse_lsa_get_mem_size(&config);
-    size_t need_fft      = fft_get_mem_size(FFT_SIZE);
+    const int frame_size = config.frame_size;
+    const int hop = config.hop_size;
+    const int fft_size = config.fft_size;
+    size_t need_fft      = fft_get_mem_size(fft_size);
     printf("\nStatic memory footprint:\n");
     printf("  Denoiser+MCRA+SPP: %zu bytes  (pool %d)\n", need_denoiser, DENOISER_POOL_BYTES);
     printf("  FFT             : %zu bytes  (pool %d)\n", need_fft, FFT_POOL_BYTES);
@@ -226,7 +231,7 @@ int main(int argc, char* argv[]) {
 
     /* 5. Create the engine IN the static pools — zero malloc. */
     MmseLsaDenoiser* denoiser = mmse_lsa_init(g_denoiser_pool, sizeof(g_denoiser_pool), &config);
-    FftHandle*       fft      = fft_init(g_fft_pool, sizeof(g_fft_pool), FFT_SIZE);
+    FftHandle*       fft      = fft_init(g_fft_pool, sizeof(g_fft_pool), fft_size);
     if (!denoiser || !fft) {
         fprintf(stderr, "Error: Failed to create denoiser/FFT in static memory\n");
         wav_close_write(wav_out);
@@ -238,10 +243,10 @@ int main(int argc, char* argv[]) {
                                           : mode_names[nr_mode]);
 
     /* 6. Framing (identical rule to main.c / Python FrameProcessor). */
-    int n_frames = (n_samples <= FRAME_SIZE)
+    int n_frames = (n_samples <= frame_size)
                  ? 1
-                 : (n_samples - FRAME_SIZE + HOP - 1) / HOP + 1;
-    int out_len = (n_frames - 1) * HOP + FRAME_SIZE;
+                 : (n_samples - frame_size + hop - 1) / hop + 1;
+    int out_len = (n_frames - 1) * hop + frame_size;
 
     /* out_len can exceed n_samples by up to HOP-1 samples (last-frame rounding),
      * so g_out_ola is sized MAX_SAMPLES + FRAME_SIZE, not just MAX_SAMPLES — but
@@ -254,19 +259,19 @@ int main(int argc, char* argv[]) {
     }
 
     memset(g_out_ola, 0, (size_t)out_len * sizeof(float));
-    build_sqrt_hann(g_win, FRAME_SIZE);
+    build_sqrt_hann(g_win, frame_size);
 
     printf("\nProcessing %d frames (static memory, no malloc on audio path)...\n", n_frames);
     int debug_last_sec = -1;
     for (int f = 0; f < n_frames; f++) {
-        int start = f * HOP;
+        int start = f * hop;
 
-        for (int n = 0; n < FRAME_SIZE; n++) {
+        for (int n = 0; n < frame_size; n++) {
             int idx = start + n;
             float s = (idx < n_samples) ? g_signal[idx] : 0.0f;
             g_frame_buf[n] = s * g_win[n];
         }
-        for (int n = FRAME_SIZE; n < FFT_SIZE; n++) g_frame_buf[n] = 0.0f;
+        for (int n = frame_size; n < fft_size; n++) g_frame_buf[n] = 0.0f;
 
         fft_forward(fft, g_frame_buf, g_spec_in);
 
@@ -277,7 +282,7 @@ int main(int argc, char* argv[]) {
 
         fft_inverse(fft, g_spec_out, g_time_out);
 
-        for (int n = 0; n < FRAME_SIZE; n++) {
+        for (int n = 0; n < frame_size; n++) {
             g_out_ola[start + n] += g_time_out[n] * g_win[n];
         }
 
