@@ -52,6 +52,13 @@ struct McraNoiseEstimator {
     float* min_buffer;
     int ring_idx;       // Current write position in ring buffer
 
+    // Scratch [n_freqs] for the vectorized log pass in spectral_flatness()
+    // and the hi-freq scene-change flatness computation -- both are
+    // log-sum-exp geometric means over disjoint sub-ranges of `power`
+    // within one mcra_update() call, never used concurrently, so one
+    // n_freqs-sized buffer (the largest either call needs) covers both.
+    float* flatness_scratch;
+
     bool is_initialized;
 
     // Scene change detection (hi-freq gamma + spectral flatness)
@@ -81,15 +88,31 @@ struct McraNoiseEstimator {
 
 /* Geometric-mean / arithmetic-mean spectral flatness of power[start:end] (∈ (0,1]).
  * ~0.1-0.2 for tonal/voiced content, ~0.5-0.7 for white noise. Mirrors Python
- * core/noise_estimators/mcra.py _spectral_flatness (same +1e-20 eps). */
-static float spectral_flatness(const float* power, int start, int end) {
-    float log_sum = 0.0f, arith_sum = 0.0f;
-    for (int k = start; k < end; k++) {
-        float p = power[k] + 1e-20f;
-        log_sum   += fast_log(p);
+ * core/noise_estimators/mcra.py _spectral_flatness (same +1e-20 eps).
+ *
+ * `scratch` must hold >= (end-start) floats (the caller's flatness_scratch,
+ * sized n_freqs -- always enough). Split into three passes so the expensive
+ * fast_log() call is a single vectorized sk_fast_log_f32() over the whole
+ * range instead of one scalar call per bin (kernel 25, the same kernel
+ * calculate_gain() already uses -- see mmse_lsa_denoiser.c): (1) scalar
+ * arith_sum accumulation while staging power+eps into scratch, in the
+ * ORIGINAL k=start..end-1 order; (2) one vectorized log over scratch,
+ * in-place (sk_fast_log_f32 is documented out==x safe and bit-exact to the
+ * scalar fast_log() per-element); (3) scalar log_sum reduction over scratch
+ * in the same 0..n-1 order. Every individual addend is bit-identical to the
+ * original single-pass loop, so log_sum/arith_sum are bit-identical too. */
+static float spectral_flatness(const float* power, int start, int end, float* scratch) {
+    int n = end - start;
+    float arith_sum = 0.0f;
+    for (int k = 0; k < n; k++) {
+        float p = power[start + k] + 1e-20f;
+        scratch[k] = p;
         arith_sum += p;
     }
-    float inv_n = 1.0f / (float)(end - start);
+    sk_fast_log_f32(scratch, scratch, n);
+    float log_sum = 0.0f;
+    for (int k = 0; k < n; k++) log_sum += scratch[k];
+    float inv_n = 1.0f / (float)n;
     return fast_exp(log_sum * inv_n) / (arith_sum * inv_n);
 }
 
@@ -169,6 +192,7 @@ size_t mcra_get_mem_size(int n_freqs, const MmseLsaConfig* config) {
     total = ck_field_size(total, (size_t)n_freqs, sizeof(float));   /* spp        */
     total = ck_field_size(total, ck_mul_size((size_t)config->L, (size_t)n_freqs),
                           sizeof(float));                            /* min_buffer */
+    total = ck_field_size(total, (size_t)n_freqs, sizeof(float));   /* flatness_scratch */
 #ifndef USE_FAST_PERCENTILE
     total = ck_field_size(total, ck_mul_size((size_t)config->num_init_frames, (size_t)n_freqs),
                           sizeof(float));                            /* init_power_buffer  */
@@ -202,6 +226,7 @@ McraNoiseEstimator* mcra_init(void* mem, size_t mem_size,
     self->S_min      = (float*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(float));
     self->spp        = (float*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(float));
     self->min_buffer = (float*)cursor; cursor += ALIGN16((size_t)self->L * n_freqs * sizeof(float));
+    self->flatness_scratch = (float*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(float));
 #ifndef USE_FAST_PERCENTILE
     self->init_power_buffer = (float*)cursor;
     cursor += ALIGN16((size_t)self->num_init_frames * n_freqs * sizeof(float));
@@ -231,9 +256,10 @@ McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config) {
 
     // Allocate min tracking buffer
     self->min_buffer = (float*)calloc(self->L * n_freqs, sizeof(float));
+    self->flatness_scratch = (float*)calloc(n_freqs, sizeof(float));
 
     if (!self->noise_psd || !self->S || !self->S_min ||
-        !self->spp || !self->min_buffer) {
+        !self->spp || !self->min_buffer || !self->flatness_scratch) {
         mcra_destroy(self);
         return NULL;
     }
@@ -260,6 +286,7 @@ void mcra_destroy(McraNoiseEstimator* self) {
     if (self->S_min) free(self->S_min);
     if (self->spp) free(self->spp);
     if (self->min_buffer) free(self->min_buffer);
+    if (self->flatness_scratch) free(self->flatness_scratch);
 #ifndef USE_FAST_PERCENTILE
     if (self->init_power_buffer) free(self->init_power_buffer);
     if (self->percentile_scratch) free(self->percentile_scratch);
@@ -555,18 +582,24 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
         int hi_start = n_freqs / 2;  // Upper half (~4kHz for 16kHz/512FFT)
         int hi_count = n_freqs - hi_start;
 
-        // Merged hi-freq loop: power sum + noise sum + log/arith for flatness
+        // Merged hi-freq loop: power sum + noise sum + arith-sum-for-flatness,
+        // staging power+eps into flatness_scratch; the log itself is a single
+        // vectorized sk_fast_log_f32() call below (kernel 25) instead of one
+        // scalar fast_log() per bin -- see spectral_flatness()'s comment for
+        // why this three-pass split is bit-identical to the original.
         float hi_power_sum = 0.0f;
         float hi_noise_sum = 0.0f;
-        float log_sum = 0.0f;
         float arith_sum = 0.0f;
         for (int k = hi_start; k < n_freqs; k++) {
             hi_power_sum += power[k];
             hi_noise_sum += self->noise_psd[k];
             float p = power[k] + 1e-20f;
-            log_sum += fast_log(p);
+            self->flatness_scratch[k - hi_start] = p;
             arith_sum += p;
         }
+        sk_fast_log_f32(self->flatness_scratch, self->flatness_scratch, hi_count);
+        float log_sum = 0.0f;
+        for (int k = 0; k < hi_count; k++) log_sum += self->flatness_scratch[k];
         float hi_gamma = hi_power_sum / (hi_noise_sum + 1e-10f);
         float inv_hi_count = 1.0f / (float)hi_count;
         float geo_mean = fast_exp(log_sum * inv_hi_count);
@@ -604,7 +637,8 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
                 // only a genuine noise-scene change (flat low band) is let through.
                 // Matches Python mcra.py:230-236 (lo_flatness via _spectral_flatness).
                 bool blocked = self->scene_change_tonal_veto &&
-                               spectral_flatness(power, 0, hi_start) <
+                               spectral_flatness(power, 0, hi_start,
+                                                  self->flatness_scratch) <
                                    self->scene_change_lo_flatness_max;
                 if (!blocked) mcra_reset_noise_floor(self, power);
                 self->scene_change_count = 0;
