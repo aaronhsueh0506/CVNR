@@ -26,6 +26,14 @@ AR      ?= ar
 RANLIB  ?= ranlib
 BACKEND ?= kiss
 
+# Announce the resolved backend on every build (same MAKECMDGOALS guard as
+# audio_common's own banner: print-bin-dir/print-obj-dir/print-lib-path are
+# consumed via `$$(make -s ... print-lib-path)` command substitution
+# elsewhere, and this must not add stray stdout to that captured value).
+ifeq ($(filter print-%,$(MAKECMDGOALS)),)
+$(info NR: FFT backend = $(BACKEND) -- switch with `make BACKEND=kiss` or `make BACKEND=ne10`)
+endif
+
 # CFG_SIG payload-coverage placeholders (round-3 review B01): CXXFLAGS/
 # CPPFLAGS/EXTRA_LDFLAGS/NO_STDIO are not consumed by this Makefile today
 # (this repo has no C++ TUs of its own, and no NO_STDIO-gated code path),
