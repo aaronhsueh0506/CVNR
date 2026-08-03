@@ -70,8 +70,9 @@ VALID_STRENGTHS = ("mild", "moderate", "balanced", "aggressive")
 DEFAULT_CLEAN_SUBDIR = "clean_testset_wav"
 DEFAULT_NOISY_SUBDIR = "noisy_testset_wav"
 
-GATE_PESQ_MIN_DELTA = -0.005
-GATE_STOI_MIN_DELTA = -0.002
+# Regression gates live in compare_vctk_benchmark.py's GATES dict (the only
+# place that actually enforces them) -- not duplicated here to avoid the two
+# copies drifting apart.
 
 
 # --------------------------------------------------------------------------
