@@ -41,7 +41,7 @@ struct SppEstimator {
     // fast_exp_neg() call, with zero malloc on the hot path either way.
     // Shared by both functions (only one of the two runs per hop).
     //
-    // v_scratch does DOUBLE duty (review-round buffer-reuse hardening):
+    // v_scratch does double duty:
     // nothing downstream reads the original v[k] this array holds once
     // pass 2 (sk_fast_exp_neg_f32) consumes it (confirmed by inspection of
     // both spp_estimate() and spp_estimate_ex() below -- pass 3 only reads

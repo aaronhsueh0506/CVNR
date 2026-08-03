@@ -61,8 +61,8 @@ struct MmseLsaDenoiser {
      * v=ξ/(1+ξ)·γ output, reused here as an INPUT when USE_SHARED_XI_RATIO
      * is on; gain_v_scratch is calculate_gain()'s own post-clamp copy).
      *
-     * gain_v_scratch does QUADRUPLE duty across passes 2-6 (review-round
-     * buffer-reuse hardening): once pass 2's sk_exp1_approx_f32 consumes the
+     * gain_v_scratch does quadruple duty across passes 2-6: once pass 2's
+     * sk_exp1_approx_f32 consumes the
      * clamped v[k] this array holds, nothing later in the function ever
      * reads that ORIGINAL value again (confirmed by inspection of the whole
      * function below), so exp1_approx's own output, pass 4's fast_exp

@@ -192,8 +192,7 @@ class MmseLsaDenoiser(BaseDenoiser):
         # 2026-03-09) by five weeks, so even the 'balanced' (non-overlaid)
         # case is 16ms-authored, not 10ms. The strength-preset overlay values
         # (0.4/0.4/0.15, commit 6822129, 2026-07-10) are likewise post-16ms.
-        # Confirmed independently by a Codex review (2026-08-03) that flagged
-        # the previous strength-conditional treatment of this field as wrong.
+        # The previous strength-conditional treatment of this field was wrong.
         alpha_attack = retime_ema_alpha(
             alpha_attack, sample_rate, frame_shift,
             authored_hop_seconds=_SIXTEEN_MS_HOP_SECONDS,

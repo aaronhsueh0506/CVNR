@@ -117,8 +117,8 @@ make mem              # → bin/<backend>-<config-hash>/denoise_mem（範例 exa
 make mem BACKEND=ne10 # 嵌入式目標的實際 deliverable（ARM NEON）
 ```
 
-輸出檔案位於依 backend + 編譯參數雜湊命名的 `bin/<backend>-<config-hash>/` 目錄（round-3
-review B01）；用 `make print-bin-dir`（帶上與建置相同的參數）取得確切路徑，或
+輸出檔案位於依 backend + 編譯參數雜湊命名的 `bin/<backend>-<config-hash>/` 目錄；
+用 `make print-bin-dir`（帶上與建置相同的參數）取得確切路徑，或
 `make publish` 產出穩定的 `dist/<backend>/current/` 交付路徑。
 
 denoiser、MCRA、SPP、FFT 現在**同時**提供 malloc 路徑（`_create`）與靜態記憶體路徑
@@ -171,7 +171,7 @@ arm64（Apple Silicon）上原生編譯 + 驗證 NE10 版 mem==malloc byte-for-b
 
 > **Note:** v1.3.0 起 `make` 預設啟用 6 個數學等價優化（100% 相關度），不需要手動指定。
 
-### FP-contraction 統一政策（round-3 review B04）
+### FP-contraction 統一政策
 
 `-ffp-contract=off` 現在是**橫跨四個 repo 的統一政策**（`audio_common`、
 `NR/c_impl`、`AEC/c_impl`、`Audio_ALG/pipelines`）：每個 Makefile 編譯的每一個

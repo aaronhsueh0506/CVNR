@@ -352,8 +352,8 @@ static inline void mmse_lsa_apply_stationary(MmseLsaConfig* config) {
  * mmse_lsa_default_config_for_grid() / mmse_lsa_config_for_mode_grid(), for
  * any supported rate/grid pair, always passes.
  *
- * Float tunables (R08, external re-review, NR side): the int/dimension
- * checks above were the whole gate — none of the 18 float fields (SPP/MCRA/
+ * Float tunables: the int/dimension checks above were previously the whole
+ * gate — none of the 18 float fields (SPP/MCRA/
  * scene-change/gain/stationary-overlay knobs) were checked at all, so a NaN/
  * Inf/sign-flipped/absurd-magnitude value in any of them (adversarial input,
  * or a caller bug building the config by hand) would sail straight through

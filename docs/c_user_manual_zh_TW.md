@@ -35,8 +35,8 @@ make debug      # standard math，較適合與 Python 對照（DEBUG=1，見下�
 make mem        # bin/<backend>-<config-hash>/denoise_mem：靜態記憶體示範 runner（_get_mem_size/_init）
 ```
 
-輸出檔案位於依 backend + 編譯參數雜湊命名的 `bin/<backend>-<config-hash>/` 目錄
-（round-3 review B01）；用 `make print-bin-dir`（帶上與建置相同的參數）取得確切
+輸出檔案位於依 backend + 編譯參數雜湊命名的 `bin/<backend>-<config-hash>/` 目錄；
+用 `make print-bin-dir`（帶上與建置相同的參數）取得確切
 路徑，或 `make publish` 產出穩定的 `dist/<backend>/current/` 交付路徑。以下範例
 指令為簡潔起見省略此前綴。
 
@@ -50,7 +50,7 @@ make mem BACKEND=ne10             # 靜態記憶體 runner + NE10（此分支實
 ```
 
 切換 `BACKEND`（或 `EXTRA_CFLAGS`／`WERROR`／`DEBUG`）不需要手動 `make clean`——
-`obj/`與`bin/`（round-3 review B01 起兩者皆是）現在依 `<backend>-<config-hash>`
+`obj/`與`bin/`現在依 `<backend>-<config-hash>`
 分子目錄存放，每種組合各自獨立，切換後會自動編到新的目錄，不會誤用舊組合殘留
 的 `.o` 或誤連結到另一組態的執行檔／archive；不同組合甚至可以在同一份 checkout
 裡同時平行建置。

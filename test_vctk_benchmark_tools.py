@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Focused fail-closed tests for run_vctk_benchmark.py / compare_vctk_benchmark.py.
 
-These guard the specific silent-PASS failure modes a Codex review found in the
-original tools (see compare_vctk_benchmark.py's module docstring for the full
+These guard the specific silent-PASS failure modes found in the original
+tools (see compare_vctk_benchmark.py's module docstring for the full
 rationale):
 
   1. comparing runs with different grid settings (mode/strength/sample_rate/
