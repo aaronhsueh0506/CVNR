@@ -53,9 +53,14 @@ def _close(a, b):
 
 def _dump_c_config():
     c_impl_dir = os.path.join(_ROOT, "c_impl")
+    # Pin DEBUG=0 explicitly rather than inheriting the caller's shell
+    # environment -- the Makefile hard-rejects any DEBUG value other than
+    # "0"/"1" (including a stray exported DEBUG from an unrelated tool), and
+    # this test has no reason to depend on ambient environment cleanliness.
+    env = dict(os.environ, DEBUG="0")
     result = subprocess.run(
         ["make", "test-config-parity"],
-        cwd=c_impl_dir, capture_output=True, text=True, timeout=120,
+        cwd=c_impl_dir, capture_output=True, text=True, timeout=120, env=env,
     )
     if result.returncode != 0:
         raise RuntimeError(
