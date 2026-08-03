@@ -34,7 +34,7 @@ ifeq ($(filter print-%,$(MAKECMDGOALS)),)
 $(info NR: FFT backend = $(BACKEND) -- switch with `make BACKEND=kiss` or `make BACKEND=ne10`)
 endif
 
-# CFG_SIG payload-coverage placeholders (round-3 review B01): CXXFLAGS/
+# CFG_SIG payload-coverage placeholders: CXXFLAGS/
 # CPPFLAGS/EXTRA_LDFLAGS/NO_STDIO are not consumed by this Makefile today
 # (this repo has no C++ TUs of its own, and no NO_STDIO-gated code path),
 # but the CFG_SIG payload below unconditionally includes them so the
@@ -46,10 +46,9 @@ endif
 #
 # CXXFLAGS and CPPFLAGS are also two of the five names the "Command-line
 # override rejection" foreach further below rejects a command-line/`-e`
-# override of (a Codex review finding -- the same class of bug
-# audio_common's CPPFLAGS had two rounds ago and AEC's CXXFLAGS/CPPFLAGS
-# had, both fixed the same way). `?=` only ever assigns when the variable's
-# origin is still "undefined" -- if either already has a value from the
+# override of -- the same class of bug audio_common's CPPFLAGS and AEC's
+# CXXFLAGS/CPPFLAGS had, both fixed the same way. `?=` only ever assigns when
+# the variable's origin is still "undefined" -- if either already has a value from the
 # environment, `?=` is a complete no-op (GNU Make never attempts the
 # assignment at all), so the origin never flips to "environment override"
 # under `make -e` no matter how early this line sits. `+=` fixes this while
@@ -76,7 +75,7 @@ DEBUG         ?= 0
 # bare `make`. Reject anything that isn't literally 0 or 1 outright, loudly,
 # before that ifeq (and before CFG_SIG, further below) ever sees it.
 #
-# round-4 review (Codex): the previous `$(filter $(DEBUG),0 1)` form was
+# The previous `$(filter $(DEBUG),0 1)` form was
 # itself bypassable -- $(filter PATTERN...,TEXT) treats its FIRST argument as
 # a (possibly multi-word) pattern LIST matched against the second, so a
 # two-word DEBUG value (e.g. `make DEBUG='0 1' ...`) became
@@ -99,18 +98,18 @@ endif
 endif
 
 # TOOLCHAIN_CHECK=0 skips the CC/CXX -dumpmachine target-coherence guard in
-# _cfg_guard below (round-4 review P1-2). Participates in CFG_SIG, so a
+# _cfg_guard below. Participates in CFG_SIG, so a
 # guard-skipped build can never alias a guarded one.
 TOOLCHAIN_CHECK ?= 1
 
-# DIST_ROOT / HOSTCC (round-5 review): where `make publish` writes releases
+# DIST_ROOT / HOSTCC: where `make publish` writes releases
 # (test scripts point this at a throwaway mktemp dir so they never touch the
 # real dist/), and the HOST compiler for the publish-time atomic
 # symlink-swap helper (never $(CC): that may be a cross compiler). Neither
 # is in CFG_SIG -- neither affects what is built. See audio_common's
 # Makefile for the full writeups.
 #
-# ALLOW_DIRTY_PUBLISH (round-6 review P2, scope narrowed in round-7): `make
+# ALLOW_DIRTY_PUBLISH: `make
 # publish` REFUSES by default when EITHER this checkout (nr) OR the producer
 # audio_common checkout (resolved via AC_DIR) has uncommitted TRACKED
 # changes (`git status --porcelain -uno` non-empty) -- a release whose
@@ -120,7 +119,7 @@ TOOLCHAIN_CHECK ?= 1
 # together with a sha256 of `git diff --binary HEAD` for whichever
 # checkout(s) are dirty, so the deviation itself is traceable. It covers
 # TRACKED changes only -- untracked files have their own dimension below
-# (round-7 review: the tracked diff hash says nothing about untracked
+# (the tracked diff hash says nothing about untracked
 # bytes, so lumping the two under one flag let two different untracked
 # source states publish with identical provenance). A checkout with NO git
 # identity at all (nr itself, or the checkout resolved via AC_DIR --
@@ -128,11 +127,11 @@ TOOLCHAIN_CHECK ?= 1
 # UNCONDITIONALLY, in BOTH repos -- neither this knob nor
 # ALLOW_UNTRACKED_PUBLISH admits it, because without an identity neither the
 # commit nor the untracked enumeration can be named for that checkout
-# (provenance is impossible; round-7 Stage 2c: ALLOW_DIRTY_PUBLISH used to
+# (provenance is impossible: ALLOW_DIRTY_PUBLISH used to
 # admit this case, since "unknown" only tripped the dirty `!= 0` check,
 # which ALLOW_DIRTY_PUBLISH=1 short-circuited entirely).
 #
-# ALLOW_UNTRACKED_PUBLISH (round-7 review): publish also REFUSES by default
+# ALLOW_UNTRACKED_PUBLISH: publish also REFUSES by default
 # when EITHER checkout (nr or the producer audio_common) contains ANY
 # untracked, non-ignored file (`git ls-files --others --exclude-standard`
 # non-empty; gitignored build output is excluded by design and never part
@@ -156,7 +155,7 @@ TOOLCHAIN_CHECK ?= 1
 # See audio_common's Makefile for the full single-repo writeup this extends
 # to the two-repo (nr + producer) case.
 #
-# ATTEST_STAMP (round-6 review P2, TEST-ONLY): overrides the UTC timestamp
+# ATTEST_STAMP (TEST-ONLY): overrides the UTC timestamp
 # embedded in the attestation FILENAME so the isolation tests can
 # deterministically force same-second publish collisions and prove the
 # no-clobber retry path. Never use it on a real publish -- though note a
@@ -200,7 +199,7 @@ CFLAGS += $(SIMD_CFLAGS)
 # LINK driver changes). The driver supplies the correct C++ runtime itself
 # (libc++ on macOS/clang, libstdc++ on GNU/Linux gcc); the old hardcoded
 # `-lc++` alongside it was a macOS-ism (duplicate there, a link error on
-# GNU/Linux) and is gone (round-4 review P1-2). LINK participates in CFG_SIG
+# GNU/Linux) and is gone. LINK participates in CFG_SIG
 # below (P2-1).
 LINK = $(CC)
 ifeq ($(BACKEND),ne10)
@@ -209,7 +208,7 @@ endif
 
 # =============================================================================
 # Default optimizations (mathematically equivalent, 100% bit-exact) vs DEBUG
-# (round-3 review B01: DEBUG resolved BEFORE CFG_SIG, replacing the old
+# (DEBUG resolved BEFORE CFG_SIG, replacing the old
 # `debug: CFLAGS += -DUSE_STANDARD_MATH; debug: CFLAGS := $(filter-out ...)`
 # target-specific-variable pair. That old scheme mutated CFLAGS only in the
 # recipe's own target-specific scope, AFTER CFG_SIG had already hashed the
@@ -295,8 +294,8 @@ ifeq ($(WERROR),1)
   CFLAGS += -Werror
 endif
 
-# --- FP-contraction policy: unified across all four repos (round-3 review
-# B04). This repo has no C++ TUs of its own (CXXFLAGS is a CFG_SIG
+# --- FP-contraction policy: unified across all four repos. This repo
+# has no C++ TUs of its own (CXXFLAGS is a CFG_SIG
 # payload-coverage placeholder only, per the comment near the top of this
 # file -- nothing here ever compiles a .cpp), so only CFLAGS needs the
 # policy flag. Appended here, AFTER every prior CFLAGS append in this file
@@ -311,7 +310,7 @@ endif
 # fmadd/fmla-free under this flag; see scripts/audit_fp_contract.sh in
 # audio_common for the disassembly-level verification).
 #
-# --- Bare-literal policy flag, defined early (Codex review: `make -e`
+# --- Bare-literal policy flag, defined early (`make -e`
 # environment-override gap) --------------------------------------------------
 # FP_POLICY is a plain, dependency-free `:=` literal (no reference to CFLAGS
 # or anything else computed above) that used to be defined much further down
@@ -347,7 +346,7 @@ FP_POLICY := -ffp-contract=off
 # it is actually used (the FP-policy allow-list block, further below).
 FP_ALLOWED_CHARS_RE := ^[A-Za-z0-9_./=,+ -]*$$
 #
-# --- Command-line override rejection (round-4 review P1-1) ------------------
+# --- Command-line override rejection -----------------------------------------
 # See audio_common's Makefile for the full writeup: a command-line
 # CFLAGS=/CXXFLAGS=/CPPFLAGS=/LDFLAGS=/FP_POLICY=/FP_ALLOWED_CHARS_RE= silently
 # disables every one of this file's own assignments/appends to that variable
@@ -361,8 +360,8 @@ $(foreach v,CFLAGS CXXFLAGS CPPFLAGS LDFLAGS FP_POLICY FP_ALLOWED_CHARS_RE,\
   $(if $(findstring command,$(origin $(v)))$(findstring override,$(origin $(v))),\
     $(error $(v) cannot be overridden (origin: $(origin $(v))) -- it would silently drop this Makefile's own flag appends (FP policy, USE_* defines, include paths); use EXTRA_CFLAGS / EXTRA_LDFLAGS instead)))
 
-# Conflict detection (round-3 review B04; widened to CXXFLAGS/CPPFLAGS by a
-# later Codex review, mirroring audio_common's and AEC's identical fix):
+# Conflict detection (widened to CXXFLAGS/CPPFLAGS,
+# mirroring audio_common's and AEC's identical fix):
 # reject outright rather than let a caller silently re-enable contraction.
 # Checked against the fully-assembled $(CFLAGS) $(CXXFLAGS) $(CPPFLAGS) (each
 # already includes EXTRA_CFLAGS folded in above, AND any
@@ -374,7 +373,7 @@ $(foreach v,CFLAGS CXXFLAGS CPPFLAGS LDFLAGS FP_POLICY FP_ALLOWED_CHARS_RE,\
 # CORRECTED UNDERSTANDING (this used to check $(CFLAGS) alone, reasoning that
 # this repo has no C++ TUs of its own so CXXFLAGS/CPPFLAGS "didn't matter" --
 # the exact same reasoning audio_common's and AEC's Makefiles both had to
-# correct via their own Codex reviews. CXXFLAGS/CPPFLAGS are still two of the
+# correct. CXXFLAGS/CPPFLAGS are still two of the
 # five names the "Command-line override rejection" foreach above rejects a
 # command-line/`-e` override of, and both already participate in
 # CFG_SIG_PAYLOAD below -- a PLAIN ENVIRONMENT CXXFLAGS or CPPFLAGS is
@@ -396,8 +395,7 @@ $(foreach v,CFLAGS CXXFLAGS CPPFLAGS LDFLAGS FP_POLICY FP_ALLOWED_CHARS_RE,\
 # this file (each is a single bare `+=` at the top of this file -- see that
 # line's own comment), both fully resolved well before this point.
 #
-# (round-9-class fix, ported here from audio_common's/AEC's Makefile rather
-# than discovered independently) $(findstring ...) does a plain SUBSTRING
+# (ported here from audio_common's/AEC's Makefile) $(findstring ...) does a plain SUBSTRING
 # search over the whole concatenated text, so it false-positives on any token
 # that merely CONTAINS one of these patterns as part of a larger identifier
 # -- e.g. a harmless `-DROUND9_NOTE=-Ofastness` macro definition is not the
@@ -409,7 +407,7 @@ $(foreach v,CFLAGS CXXFLAGS CPPFLAGS LDFLAGS FP_POLICY FP_ALLOWED_CHARS_RE,\
 # inside an unrelated token.
 FP_INPUT_FLAGS := $(CFLAGS) $(CXXFLAGS) $(CPPFLAGS)
 
-# --- link-flags character-safety coverage (Codex review, ported from
+# --- link-flags character-safety coverage (ported from
 # audio_common's identical fix): the allow-list redesign below originally
 # validated FP_INPUT_FLAGS only -- CFLAGS/CXXFLAGS/CPPFLAGS -- leaving LDFLAGS
 # (built from a plain `-lm` literal plus whatever EXTRA_LDFLAGS folds in, see
@@ -439,7 +437,7 @@ FP_INPUT_FLAGS := $(CFLAGS) $(CXXFLAGS) $(CPPFLAGS)
 # here).
 SHELL_SAFE_INPUT_FLAGS := $(FP_INPUT_FLAGS) $(LDFLAGS)
 
-# (Codex review, ported from audio_common's/AEC's Makefile -- the confirmed-
+# (ported from audio_common's/AEC's Makefile -- the confirmed-
 # live bug this closes) $(filter) directly above does whole-WORD matching
 # against GNU Make's OWN text representation of CFLAGS/CXXFLAGS/CPPFLAGS --
 # but Make has zero concept of shell quoting. A value like
@@ -639,9 +637,9 @@ endif
 # Command-line/`-e` override rejection for the FP-policy/shell-safety
 # checks' remaining FOUR internal variables (replicated from audio_common's/
 # AEC's identical fix, found live while audio_common implemented the
-# allow-list above; SHELL_SAFE_INPUT_FLAGS/SHELL_SAFE_ALLOWLIST_RC added,
-# same treatment, by the later Codex review that widened the
-# character-safety check to LDFLAGS -- see the "link-flags character-safety
+# allow-list above; SHELL_SAFE_INPUT_FLAGS/SHELL_SAFE_ALLOWLIST_RC added the
+# same treatment when the character-safety check was widened to LDFLAGS --
+# see the "link-flags character-safety
 # coverage" comment above): FP_INPUT_FLAGS/SHELL_SAFE_INPUT_FLAGS/
 # SHELL_SAFE_ALLOWLIST_RC/FP_CONFLICT_FLAGS are each computed from the
 # fully-assembled CFLAGS/CXXFLAGS/CPPFLAGS (SHELL_SAFE_INPUT_FLAGS/
@@ -677,7 +675,7 @@ $(foreach v,FP_INPUT_FLAGS SHELL_SAFE_INPUT_FLAGS SHELL_SAFE_ALLOWLIST_RC FP_CON
   $(if $(findstring command,$(origin $(v)))$(findstring override,$(origin $(v))),\
     $(error $(v) cannot be overridden (origin: $(origin $(v))) -- it would silently defeat the FP-policy/shell-safety allow-list/conflict checks above, leaving the real CFLAGS/CXXFLAGS/CPPFLAGS/LDFLAGS content unvalidated; this variable is internal to those checks and has no supported external use)))
 
-# (Codex review / `make -e` gap fix: FP_POLICY's own bare `:=` literal now
+# (`make -e` gap fix: FP_POLICY's own bare `:=` literal now
 # lives earlier in this file, directly above the "Command-line override
 # rejection" foreach -- see that foreach's "Bare-literal policy flag"
 # comment for why. Only FP_POLICY's OTHER job -- appending it to CFLAGS,
@@ -689,7 +687,7 @@ CFLAGS    += $(FP_POLICY)
 .DEFAULT_GOAL := all
 
 # =============================================================================
-# Consumer two-phase audio_common resolution (round-3 review B01)
+# Consumer two-phase audio_common resolution
 # =============================================================================
 # Same design as AEC's Makefile (see that file for the full writeup this
 # comment summarises): the old `ac_lib: $(MAKE) -C $(AC_DIR) BACKEND=$(BACKEND)
@@ -728,14 +726,14 @@ AC_PRODUCER_SIG := $(notdir $(patsubst %/,%,$(dir $(AC_LIB))))
 endif
 
 # Directories (declared before CFG_SIG_PAYLOAD below because SRCS -- which
-# now participates in the payload, round-4 review P1-4 -- references
+# participates in the payload -- references
 # $(SRC_DIR); OBJ_DIR/BIN_DIR are plain recursive assignments referencing
 # CFG_SIG before its own `:=` line, which is fine -- see audio_common's
 # Makefile for why).
 SRC_DIR = src
 EXAMPLE_DIR = example
 TEST_DIR = test
-# OBJ_ROOT / BIN_ROOT (round-6 review P1): where the keyed obj/bin trees
+# OBJ_ROOT / BIN_ROOT: where the keyed obj/bin trees
 # live (defaults: obj/ and bin/ in this directory -- the default expansion
 # is byte-identical to the previous hardcoded paths). Same rationale as
 # DIST_ROOT above: a placement knob, never a build-content knob, so
@@ -750,8 +748,8 @@ BIN_DIR = $(BIN_ROOT)/$(BACKEND)-$(CFG_SIG)
 
 # Source files (gain calculation merged into mmse_lsa_denoiser.c). FFT + fast_math
 # come from audio_common (linked via $(AC_LIB)); this repo only supplies the
-# denoiser/MCRA/SPP core. Participates in CFG_SIG_PAYLOAD below (round-4
-# review P1-4): adding or removing a source file keys to a fresh obj/bin
+# denoiser/MCRA/SPP core. Participates in CFG_SIG_PAYLOAD below:
+# adding or removing a source file keys to a fresh obj/bin
 # directory (see the fresh-archive recipe below for the other half of the
 # stale-member fix).
 SRCS = $(SRC_DIR)/mmse_lsa_denoiser.c \
@@ -759,7 +757,7 @@ SRCS = $(SRC_DIR)/mmse_lsa_denoiser.c \
        $(SRC_DIR)/spp_estimator.c
 
 # --- Hash-keyed object/binary directory + full-coverage CFG_SIG ------------
-# obj/<backend>-<sig>/ AND (round-3 review B01) bin/<backend>-<sig>/ -- see
+# obj/<backend>-<sig>/ AND bin/<backend>-<sig>/ -- see
 # audio_common's Makefile for the full design rationale (identical design,
 # applied here). BIN_DIR used to be flat (`bin`), so an ne10 build after a
 # kiss build -- or two same-backend builds differing only in EXTRA_CFLAGS/
@@ -779,7 +777,7 @@ SRCS = $(SRC_DIR)/mmse_lsa_denoiser.c \
 #
 # Deliberately NOT $(strip)'d (false-miss OK, false-hit never -- see
 # audio_common's Makefile). cksum (POSIX) computes the hash.
-# Round-4 review payload additions: LINK (P2-1), TOOLCHAIN_CHECK (the
+# Payload additions: LINK (P2-1), TOOLCHAIN_CHECK (the
 # guard-skip knob must not alias a guarded build), SRCS (P1-4: sorted source
 # list, so source add/remove keys to a fresh directory).
 CFG_SIG_PAYLOAD := CC=$(CC) CXX=$(CXX) AR=$(AR) RANLIB=$(RANLIB) LINK=$(LINK) CFLAGS=$(CFLAGS) CXXFLAGS=$(CXXFLAGS) CPPFLAGS=$(CPPFLAGS) LDFLAGS=$(LDFLAGS) EXTRA_CFLAGS=$(EXTRA_CFLAGS) EXTRA_LDFLAGS=$(EXTRA_LDFLAGS) BACKEND=$(BACKEND) SIMD=$(SIMD) WERROR=$(WERROR) NO_STDIO=$(NO_STDIO) DEBUG=$(DEBUG) TOOLCHAIN_CHECK=$(TOOLCHAIN_CHECK) AC_PRODUCER_SIG=$(AC_PRODUCER_SIG) SRCS=$(sort $(SRCS))
@@ -794,7 +792,7 @@ EXAMPLE_OBJS = $(patsubst $(EXAMPLE_DIR)/%.c,$(OBJ_DIR)/%.o,$(EXAMPLE_SRCS))
 # Target binary
 TARGET = $(BIN_DIR)/denoise_wav
 
-# --- CFG_SIG collision guard + directory creation (round-3 review B01) -----
+# --- CFG_SIG collision guard + directory creation ------------------------------
 # See audio_common's Makefile for the full design writeup (identical
 # mechanism, applied here).
 .PHONY: _cfg_guard
@@ -828,7 +826,7 @@ _cfg_guard:
 	  fi; \
 	done
 
-# Compile source files (-MD -MP: round-3 review B01 header dependency
+# Compile source files (-MD -MP: header dependency
 # tracking -- see audio_common's Makefile; included near the bottom of this
 # file via `-include $(wildcard $(OBJ_DIR)/*.d)`).
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | _cfg_guard
@@ -847,11 +845,11 @@ LIB_TARGET = $(BIN_DIR)/libmmse_lsa.a
 .PHONY: lib
 lib: $(LIB_TARGET)
 
-# Fresh-archive discipline (round-4 review P1-4): always built from scratch
+# Fresh-archive discipline: always built from scratch
 # into a temp file and renamed into place -- never `ar rc` onto an existing
 # archive (which only adds/replaces members and would keep a removed source's
 # stale member forever). See audio_common's Makefile for the full writeup.
-# One chained shell line with a PID-suffixed temp (round-5 review P2): two
+# One chained shell line with a PID-suffixed temp: two
 # same-config processes racing this rule each write their OWN temp, final mv
 # is atomic last-writer-wins. See audio_common's Makefile.
 $(LIB_TARGET): $(OBJS) | _cfg_guard
@@ -963,7 +961,7 @@ $(OBJ_DIR)/test_config_parity.o: $(TEST_DIR)/test_config_parity.c | _cfg_guard
 	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
 endif
 
-# --- Query targets (round-3 review B01) -------------------------------------
+# --- Query targets -----------------------------------------------------------
 # Report THIS invocation's own build identity (empty AC_PRODUCER_SIG unless
 # AC_LIB was explicitly passed in). To get the exact path `make all` (or
 # `make mem`/`parity`/`test-config`) would produce, resolve AC_LIB the same
@@ -990,8 +988,8 @@ print-lib-path:
 	@echo $(abspath $(LIB_TARGET))
 
 # =============================================================================
-# publish v4: immutable, content-addressed release under $(DIST_ROOT)
-# (round-3 B01 -> round-4 P2-2 -> round-5 P2 -> round-6 P1/P2) -- same design
+# publish v4: immutable, content-addressed release under $(DIST_ROOT) --
+# same design
 # as audio_common's publish; see that Makefile for the full layout/semantics
 # writeup (deterministic MANIFEST + append-only ATTEST/ provenance,
 # byte-verified idempotent republish incl. MANIFEST tamper detection,
@@ -1001,7 +999,7 @@ print-lib-path:
 # _publish_impl is INTERNAL (direct invocation skips the lock) and goes
 # through the same two-phase AC_LIB dispatch as `all`/`mem`.
 #
-# Round-6 (see audio_common's Makefile for the full writeup on all of this):
+# Additional publish safeguards (see audio_common's Makefile for the full writeup on all of this):
 #   - `make -n`/`-q`/`-t` no longer touch $(DIST_ROOT) or the publish lock --
 #     the `publish` driver word-scans MAKEFLAGS and short-circuits before any
 #     filesystem side effect.
@@ -1012,20 +1010,20 @@ print-lib-path:
 #     `--excl-install` mode (write-temp + link(2), atomic no-clobber): an
 #     EEXIST collision (same second, same commit) bumps the attestation's
 #     <seq> and retries (capped at 999) -- an existing attestation is NEVER
-#     overwritten (round-5 used cp+mv -f, which silently clobbered a
+#     overwritten (a bare cp+mv -f approach would silently clobber a
 #     same-second republish's prior record). Attestations remain UNSIGNED:
 #     traceability, not authenticity.
 #   - Dirty policy now covers BOTH checkouts that produced this artifact:
 #     publish FATALs when either nr itself OR the producer audio_common
 #     checkout (resolved via AC_DIR) is dirty, unless ALLOW_DIRTY_PUBLISH=1
-#     (round-7 Stage 2c: a checkout with no git identity at all is its own
-#     UNCONDITIONAL case -- see below -- no longer folded into this dirty
+#     (a checkout with no git identity at all is its own
+#     UNCONDITIONAL case -- see below -- not folded into this dirty
 #     bullet). The attestation records both checkouts' provenance --
 #     git_commit/git_dirty/dirty_diff_sha256 for nr, and the same three
 #     fields audio_common_-prefixed for the producer -- plus
 #     allow_dirty_publish so an accepted dirty publish is itself traceable.
 #
-# Round-7 (dirty/untracked policy split into two dimensions, extended here to
+# Dirty/untracked policy is split into two dimensions, extended here to
 # BOTH checkouts that produce this artifact -- see audio_common's Makefile
 # for the single-repo writeup this extends): publish FATALs by default when
 # EITHER nr itself OR the producer audio_common checkout (resolved via
@@ -1053,7 +1051,7 @@ print-lib-path:
 # (self, then producer), and `allow_untracked_publish` right after
 # `allow_dirty_publish`.
 #
-# Round-7 Stage 2c (this revision): a checkout with NO git identity at all --
+# A checkout with NO git identity at all --
 # nr itself, or the checkout resolved via AC_DIR (including AC_DIR unset,
 # missing, or not a directory) -- is refused UNCONDITIONALLY, in BOTH
 # repos, checked BEFORE that repo's dirty/untracked flags are even computed.
@@ -1068,13 +1066,13 @@ DIST_BACKEND_DIR  = $(DIST_ROOT)/$(BACKEND)
 DIST_LOCK         = $(DIST_ROOT)/.lock.$(BACKEND)
 
 .PHONY: publish _publish_impl
-# Dry-run guard (round-6 review P2-3, -t tightened by round-7): this recipe
+# Dry-run guard: this recipe
 # mentions $(MAKE), so GNU make executes it for real under -n/-q/-t (all
 # three share that rule) -- which used to mkdir $(DIST_ROOT) persistently
 # and take/release the real publish lock on every dry run. The word-scan
 # below detects those flags in MAKEFLAGS and branches:
-#   -t  prints a one-line note and exits 0 WITHOUT recursing (round-7:
-#       recursing let standard touch semantics bump the mtimes of this
+#   -t  prints a one-line note and exits 0 WITHOUT recursing (recursing
+#       let standard touch semantics bump the mtimes of this
 #       repo's objects and the delivered archive/binary -- real writes.
 #       publish is a phony ACTION, not a build product; touching its
 #       artifact prerequisites without attesting would fabricate state, so
@@ -1093,7 +1091,7 @@ DIST_LOCK         = $(DIST_ROOT)/.lock.$(BACKEND)
 # as separate dashed words ("-n" after a long option); long options start
 # with "--"; a literal "--" separates flags from command-line variable
 # overrides (which can themselves contain n/q/t -- BACKEND=ne10 -- hence
-# the explicit skips). Normal invocations keep the round-5 lock-FIRST
+# the explicit skips). Normal invocations keep the lock-FIRST
 # discipline unchanged. See audio_common's Makefile for the full writeup.
 publish:
 	+@has_n=0; has_q=0; has_t=0; \
@@ -1281,7 +1279,7 @@ _publish_impl: $(PUBLISH_ARTIFACTS)
 	echo "nr: published $(BACKEND)/$$rel_id -> $(DIST_BACKEND_DIR)/current (attested: $$attest_name)"
 endif
 
-# debug delegates to `all` with DEBUG=1 (round-3 review B01 -- see the
+# debug delegates to `all` with DEBUG=1 -- see the
 # "Default optimizations vs DEBUG" section above for why this replaced the
 # old target-specific-variable CFLAGS mutation).
 debug:
@@ -1370,7 +1368,7 @@ help:
 .PHONY: dirs clean install uninstall test help
 dirs: _cfg_guard
 
-# --- Header dependency tracking (round-3 review B01) ------------------------
+# --- Header dependency tracking -----------------------------------------------
 # See audio_common's Makefile for the full rationale. $(wildcard ...) makes
 # this evaluate to nothing (not an error) before any objects exist yet for
 # this CFG_SIG.
