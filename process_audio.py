@@ -59,7 +59,8 @@ except ImportError:
     print("Install with: pip install pyyaml")
 
 from utils.audio_io import read_audio, write_audio
-from utils.visualization import plot_spp_spectrogram
+if MATPLOTLIB_AVAILABLE:
+    from utils.visualization import plot_spp_spectrogram
 from denoisers import (
     SpectralSubtractionDenoiser,
     WienerDenoiser,
@@ -578,26 +579,29 @@ def process_audio_file(
     print("-"*70)
 
     spp_count = 0
-    for version, result in results.items():
-        if result.get('spp_matrix') is not None:
-            try:
-                spp_output_path = os.path.join(output_dir, f"{basename}_{version.lower()}_spp.png")
-                # Use the actual frame_shift, not a hardcoded 10ms default.
-                hop_length = result['hop_length']
-                plot_spp_spectrogram(
-                    result['spp_matrix'],
-                    spp_output_path,
-                    sample_rate=sample_rate,
-                    hop_length=hop_length,
-                    title=f'{version} SPP Time-Frequency Map'
-                )
-                print(f"  ✓ {version} SPP: {spp_output_path}")
-                spp_count += 1
-            except Exception as e:
-                print(f"  ✗ {version} SPP: Failed - {e}")
+    if not MATPLOTLIB_AVAILABLE:
+        print(f"  (matplotlib 未安裝，跳過 SPP 圖生成，見上方安裝提示)")
+    else:
+        for version, result in results.items():
+            if result.get('spp_matrix') is not None:
+                try:
+                    spp_output_path = os.path.join(output_dir, f"{basename}_{version.lower()}_spp.png")
+                    # Use the actual frame_shift, not a hardcoded 10ms default.
+                    hop_length = result['hop_length']
+                    plot_spp_spectrogram(
+                        result['spp_matrix'],
+                        spp_output_path,
+                        sample_rate=sample_rate,
+                        hop_length=hop_length,
+                        title=f'{version} SPP Time-Frequency Map'
+                    )
+                    print(f"  ✓ {version} SPP: {spp_output_path}")
+                    spp_count += 1
+                except Exception as e:
+                    print(f"  ✗ {version} SPP: Failed - {e}")
 
-    if spp_count == 0:
-        print(f"  (沒有 V3 系列降噪器，跳過 SPP 圖生成)")
+        if spp_count == 0:
+            print(f"  (沒有 V3 系列降噪器，跳過 SPP 圖生成)")
 
     # 總結
     print("\n" + "="*70)
