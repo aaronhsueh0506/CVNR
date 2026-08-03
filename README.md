@@ -1390,7 +1390,7 @@ MIT License
 | 位元深度 | 16-bit PCM / 32-bit float | |
 | 幀長度 | 256 / 512 / 1024 samples | `frame_size == fft_size`，不補零 |
 | Hop size | frame / 2 | 50% overlap；依 grid 為 8–16 ms 左右，不固定 10 ms |
-| FFT size | 8k:256、16k:512（可選256）、48k:1024 | 白名單 2 次方 grid |
+| FFT size | 8k:256、16k:256（可選512）、48k:1024 | 白名單 2 次方 grid；16k 預設已於 2026-08-01 由 512 改為 256（8ms hop） |
 
 ### 處理性能
 

@@ -376,7 +376,7 @@ Taylor 近似（小引數 worst ~0.11），會經遞迴平滑放大；屬 fast-m
 
 - **輸入格式**：單聲道（多聲道自動取第一聲道）、8 / 16 / 48 kHz PCM16 或 32-bit float
 - **首 200 ms 需為純噪聲（或無語音）**：用於初始化 MCRA 噪聲底噪，前 `num_init_frames * hop_size` 樣本為 passthrough
-- **Frame / hop 於建立後固定**：`frame_size == fft_size`、`hop_size == frame_size/2`，因此不做 zero-padding。`mmse_lsa_default_config(sample_rate)` 選 8k:256/128、16k:512/256、48k:1024/512；16 kHz 可用 `mmse_lsa_default_config_for_grid(16000, 256)` 選低算量 256/128。example runners 也直接使用輸入 rate 對應的 grid；instance 建立後不可中途切換。
+- **Frame / hop 於建立後固定**：`frame_size == fft_size`、`hop_size == frame_size/2`，因此不做 zero-padding。`mmse_lsa_default_config(sample_rate)` 選 8k:256/128、16k:256/128、48k:1024/512；16 kHz 可用 `mmse_lsa_default_config_for_grid(16000, 512)` 選較高延遲的 512/256。example runners 也直接使用輸入 rate 對應的 grid；instance 建立後不可中途切換。
 - **Streaming 語義**：`mmse_lsa_process()` 是**頻域 API**——每次呼叫吃 `Complex[n_freqs]` 複數頻譜、
   吐 `Complex[n_freqs]`（套用 per-bin gain、相位不變），lib 核心本身**沒有**內部時域緩衝或 OLA；
   窗函數、rFFT、iFFT、50% overlap-add 全部由 caller 負責（見 `example/main.c` 的完整 freq-domain
@@ -421,7 +421,7 @@ Taylor 近似（小引數 worst ~0.11），會經遞迴平滑放大；屬 fast-m
 
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
-| `frame_size` | 等於 `fft_size` | 不補零的 2 次方分析窗；8k→256、16k→512（可選 256）、48k→1024 |
+| `frame_size` | 等於 `fft_size` | 不補零的 2 次方分析窗；8k→256、16k→256（可選 512）、48k→1024 |
 | `hop_size` | `frame_size / 2` | 固定 50% overlap；各 grid 為 128 / 256 / 512 samples |
 | `fft_size` | 依 rate/grid 選擇 | 嚴格等於 frame，不再採「20 ms frame 補到下一個 2 次方」 |
 | `alpha_xi` | 0.92 | 先驗 SNR (ξ) DD 平滑；2026-07 musical-noise fix（was 0.88），全預設共用 |
@@ -449,8 +449,8 @@ Taylor 近似（小引數 worst ~0.11），會經遞迴平滑放大；屬 fast-m
 | 採樣率 | frame_size | hop_size | fft_size | 延遲 |
 |--------|-----------|----------|----------|------|
 | 8 kHz  | 256 samples | 128 samples | 256  | 32 ms |
-| 16 kHz（低算量） | 256 samples | 128 samples | 256 | 16 ms |
-| 16 kHz（預設） | 512 samples | 256 samples | 512 | 32 ms |
+| 16 kHz（預設） | 256 samples | 128 samples | 256 | 16 ms |
+| 16 kHz（可選，較高延遲） | 512 samples | 256 samples | 512 | 32 ms |
 | 48 kHz | 1024 samples | 512 samples | 1024 | 21.333 ms |
 
 > **注意**: 初始化幀數會依 hop retime，保證至少約 200 ms；期間音頻 passthrough（gain=1），MCRA 累積噪聲統計。

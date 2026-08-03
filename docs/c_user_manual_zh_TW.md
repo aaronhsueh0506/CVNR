@@ -104,7 +104,7 @@ driver 連結（audio_common 的 NE10 archive 內含一個 C++ TU）或補 `-lc+
 - 輸入支援 PCM16、PCM32 與 IEEE float32 WAV。
 - 多聲道輸入只處理第一聲道。
 - `denoise_wav` 輸出單聲道 PCM16 WAV。
-- `denoise_wav` 與 library 使用相同的無補零 grid：8 kHz=256/128、16 kHz=512/256、48 kHz=1024/512；16 kHz 另可明確選 256/128。
+- `denoise_wav` 與 library 使用相同的無補零 grid：8 kHz=256/128、16 kHz=256/128（預設）、48 kHz=1024/512；16 kHz 另可明確選 512/256。
 - `num_init_frames=20` 是舊 10 ms hop 的參考值；建構時會依實際 hop retime，使初始化至少約 200 ms。最好讓開頭包含背景噪聲且沒有目標語音。
 
 產品 callback 必須查詢 config/getter 的實際 `hop_size`，不可假設固定 10 ms。
@@ -348,7 +348,7 @@ MmseLsaConfig cfg = mmse_lsa_config_for_mode(
 
 | 欄位 | 預設 | 說明 |
 |---|---:|---|
-| `frame_size` | 等於 FFT size | 無補零 analysis frame：8k=256、16k=512（可選256）、48k=1024 |
+| `frame_size` | 等於 FFT size | 無補零 analysis frame：8k=256、16k=256（可選512）、48k=1024 |
 | `hop_size` | frame / 2 | 50% overlap；不保證固定 10 ms |
 | `fft_size` | 等於 frame size | 只接受白名單中的 2 次方 grid |
 | `num_init_frames` | 20（10 ms 參考值） | 建構時依 hop retime，至少約 200 ms |
