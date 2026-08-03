@@ -1147,7 +1147,7 @@ _publish_impl: $(PUBLISH_ARTIFACTS)
 	if [ "$$commit" = "unknown" ]; then \
 	  echo "FATAL: publish refused -- nr has no git identity here (not a git checkout)." >&2; \
 	  echo "  Without an identity the attestation cannot name the source state OR enumerate untracked" >&2; \
-	  echo "  content, so NO escape hatch admits this (round-7 Stage 2c: ALLOW_DIRTY_PUBLISH used to)." >&2; \
+	  echo "  content, so NO escape hatch admits this (ALLOW_DIRTY_PUBLISH used to)." >&2; \
 	  echo "  Publish from a real checkout or a scratch clone with a disposable commit instead." >&2; \
 	  exit 1; \
 	fi; \
@@ -1162,7 +1162,7 @@ _publish_impl: $(PUBLISH_ARTIFACTS)
 	if [ "$$ac_commit" = "unknown" ]; then \
 	  echo "FATAL: publish refused -- audio_common (AC_DIR=$(AC_DIR)) has no git identity here (missing, not a directory, or not a git checkout)." >&2; \
 	  echo "  Without an identity the attestation cannot name the source state OR enumerate untracked" >&2; \
-	  echo "  content, so NO escape hatch admits this (round-7 Stage 2c: ALLOW_DIRTY_PUBLISH used to)." >&2; \
+	  echo "  content, so NO escape hatch admits this (ALLOW_DIRTY_PUBLISH used to)." >&2; \
 	  echo "  Point AC_DIR at a real audio_common checkout (or a scratch clone with a disposable commit)." >&2; \
 	  exit 1; \
 	fi; \
