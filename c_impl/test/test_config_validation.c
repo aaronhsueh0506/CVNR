@@ -244,8 +244,8 @@ int main(void) {
          * constants too; mutating only fft/frame/hop after construction is
          * intentionally no longer the supported construction path. */
         {
-            const int grid_sr[] = {8000, 16000, 16000, 48000};
-            const int grid_fft[] = {256, 256, 512, 1024};
+            const int grid_sr[] = {8000, 8000, 16000, 16000, 48000};
+            const int grid_fft[] = {128, 256, 256, 512, 1024};
             for (size_t g = 0; g < sizeof(grid_sr) / sizeof(grid_sr[0]); ++g) {
                 MmseLsaConfig cfg = mmse_lsa_config_for_mode_grid(
                     grid_sr[g], grid_fft[g], MMSE_LSA_NR_BALANCED);
@@ -258,10 +258,15 @@ int main(void) {
                 double min_window_sec = (double)cfg.L * hop_sec;
                 double init_sec = (double)cfg.num_init_frames * hop_sec;
                 double scene_sec = (double)cfg.scene_change_min_frames * hop_sec;
-                snprintf(msg, sizeof msg, "grid %d/%d: L preserves >=320ms",
+                /* L=32 is documented in Python's config/v3_2_config.yaml as
+                 * authored directly against a 16ms hop ("32 幀 x 16ms/hop =
+                 * 512ms"), not the 10ms reference -- preserves 512ms, not
+                 * 320ms (2026-08-02 fix, see mmse_lsa_retime_frames_ref
+                 * call in mmse_lsa_default_config_for_grid). */
+                snprintf(msg, sizeof msg, "grid %d/%d: L preserves >=512ms",
                          grid_sr[g], grid_fft[g]);
-                CHECK(min_window_sec >= 0.320 - 1e-9 &&
-                      min_window_sec < 0.320 + hop_sec + 1e-9, msg);
+                CHECK(min_window_sec >= 0.512 - 1e-9 &&
+                      min_window_sec < 0.512 + hop_sec + 1e-9, msg);
                 snprintf(msg, sizeof msg, "grid %d/%d: init preserves >=200ms",
                          grid_sr[g], grid_fft[g]);
                 CHECK(init_sec >= 0.200 - 1e-9 &&

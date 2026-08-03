@@ -7,37 +7,60 @@ from typing import Optional, Tuple
 
 
 _ALLOWED_FFTS = {
-    8000: (256,),
+    8000: (128, 256),
     16000: (256, 512),
     48000: (1024,),
 }
 
 _DEFAULT_FFT = {
-    8000: 256,
-    16000: 512,
+    8000: 128,
+    16000: 256,
     48000: 1024,
 }
 
 _REFERENCE_HOP_SECONDS = 0.010
+
+# The 16ms-hop grid (512 frame @ 16 kHz / 256 frame @ 8 kHz) was the project
+# default from 2026-03-09 (commit 04edc42) through 2026-08-02, when the
+# low-latency 8ms-hop grid (256 frame @ 16 kHz / 128 frame @ 8 kHz) became
+# the default instead (16ms grids remain supported, explicit alternates).
+# This flip does NOT change which grid is the "16ms anchor" for retiming
+# purposes -- that anchor is a real-world duration (16ms), independent of
+# whichever grid `_DEFAULT_FFT` currently points at. Several V3-2 preset
+# values were added or last-tuned against a genuine 16ms hop (e.g. alpha_xi
+# 0.88->0.92, commit 6822129, 2026-07-10, a musical-noise fix validated with
+# a 12-file PESQ guard at the live 16ms grid; L=32, config/v3_2_config.yaml's
+# "32 幀 x 16ms/hop = 512ms" comment) -- retiming those from the 10ms
+# reference instead would silently undo the tuning (e.g. alpha_xi 0.92 ->
+# ~0.875 at a 16ms-hop grid). Callers pass this as `authored_hop_seconds`
+# for any constant proven (by commit date + message, or an explicit YAML
+# comment) to be 16ms-native; the retime functions then treat WHICHEVER
+# grid actually has a 16ms hop as the no-op point for that constant, and
+# rescale every other grid (now including the 8ms-hop default) relative to
+# that 16ms anchor.
+_SIXTEEN_MS_HOP_SECONDS = 0.016
 
 
 def retime_ema_alpha(
     alpha_at_10ms: float,
     sample_rate: int,
     hop_size: int,
+    authored_hop_seconds: float = _REFERENCE_HOP_SECONDS,
 ) -> float:
-    """Preserve an EMA's wall-clock time constant on a non-10-ms grid.
+    """Preserve an EMA's wall-clock time constant on a non-authored-rate grid.
 
-    Existing NR presets were tuned with one update every 10 ms.  With a hop of
-    ``H`` samples, ``alpha_new = alpha_10ms ** (H / sr / 10ms)`` gives the same
-    decay after any fixed amount of real time.
+    Existing NR presets were tuned with one update every ``authored_hop_seconds``
+    (10 ms unless the caller states otherwise -- see ``_SIXTEEN_MS_HOP_SECONDS``
+    for constants proven 16ms-native by git history). With a hop of ``H``
+    samples, ``alpha_new = alpha_ref ** (H / sr / authored_hop_seconds)`` gives
+    the same decay after any fixed amount of real time.
     """
     alpha = float(alpha_at_10ms)
     if not 0.0 <= alpha <= 1.0:
         raise ValueError(f"EMA alpha must be in [0, 1], got {alpha}")
     if sample_rate <= 0 or hop_size <= 0:
         raise ValueError("sample_rate and hop_size must be positive")
-    exponent = (hop_size / sample_rate) / _REFERENCE_HOP_SECONDS
+    exponent = (hop_size / sample_rate) / authored_hop_seconds
     return float(alpha ** exponent)
 
 
@@ -45,13 +68,15 @@ def retime_frame_count(
     frames_at_10ms: int,
     sample_rate: int,
     hop_size: int,
+    authored_hop_seconds: float = _REFERENCE_HOP_SECONDS,
 ) -> int:
-    """Convert a legacy 10-ms frame count to a no-shorter real duration."""
+    """Convert a legacy frame count (authored at ``authored_hop_seconds`` per
+    frame) to a no-shorter real duration at the actual grid."""
     if frames_at_10ms <= 0:
         raise ValueError("reference frame count must be positive")
     if sample_rate <= 0 or hop_size <= 0:
         raise ValueError("sample_rate and hop_size must be positive")
-    seconds = int(frames_at_10ms) * _REFERENCE_HOP_SECONDS
+    seconds = int(frames_at_10ms) * authored_hop_seconds
     return max(1, int(math.ceil(seconds * sample_rate / hop_size - 1e-12)))
 
 
@@ -63,8 +88,9 @@ def resolve_signal_grid(
 
     The project contract is intentionally stricter than a generic STFT:
     frame equals FFT, hop is exactly half a frame, and the transform input is
-    therefore never padded. 16 kHz offers the low-latency 256 grid as an
-    explicit option; 512 remains its default.
+    therefore never padded. 8/16 kHz each default to their low-latency
+    8ms-hop grid (128/256); their 16ms-hop grid (256/512) remains a
+    supported, explicit alternate.
     """
 
     if sample_rate not in _ALLOWED_FFTS:

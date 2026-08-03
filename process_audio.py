@@ -278,6 +278,11 @@ def create_denoiser_from_config(
         # 'balanced' == base YAML (empty overlay). Explicit arg wins over config.
         strength = strength or config.get('strength', 'balanced')
         params = apply_strength(params, strength)
+        # params['strength'] records the choice so the constructor can tell
+        # apart the strength-preset overlay's post-16ms-grid alpha_noise/
+        # alpha_g/alpha_attack/alpha_decay values from balanced's pre-16ms
+        # base-YAML values (same rationale as params['mode'] below).
+        params['strength'] = strength
 
         # NR content-preservation mode (full | stationary). Explicit arg wins over config; the
         # preset overlay sets the stationary levers, then params['mode'] records the choice.

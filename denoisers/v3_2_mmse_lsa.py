@@ -19,6 +19,8 @@ from core.signal_grid import (
     retime_ema_alpha,
     retime_frame_count,
     validate_signal_grid,
+    _SIXTEEN_MS_HOP_SECONDS,
+    _REFERENCE_HOP_SECONDS,
 )
 
 
@@ -91,6 +93,20 @@ class MmseLsaDenoiser(BaseDenoiser):
         # stationary-floor / scene-change params below carry the preset. Default 'full' +
         # all-off → byte-identical shipped V3-2.
         mode: str = 'full',
+        # NR strength ('mild' | 'moderate' | 'balanced' | 'aggressive'). Set by
+        # nr_strength.apply_strength() upstream. 'balanced' is an EMPTY overlay
+        # (core/nr_strength.py) -- alpha_noise/alpha_g/alpha_decay at 'balanced'
+        # are always the untouched pre-16ms-grid base YAML values (git-dated:
+        # alpha_d/alpha_s/alpha_p 09e74d8 2026-01-08, alpha_g 02d7dc7/6bde3eb
+        # 2026-01-02/05 -- all predate the 16ms-hop grid switch, 04edc42,
+        # 2026-03-09); at any other strength they are always commit 6822129's
+        # (2026-07-10, post-16ms-grid) preset overlay. Unlike `mode`, `strength`
+        # alone disambiguates these three constants' provenance regardless of
+        # mode (mode's stationary overlay, when active, still wins over
+        # strength for alpha_noise -- see below). alpha_attack is NOT part of
+        # this group -- see its own dedicated comment below; it has a
+        # different provenance class (never YAML-sourced) and is unconditional.
+        strength: str = 'balanced',
         stationary_floor: bool = False,
         stationary_floor_exponent: float = 1.0,
         stationary_floor_beta: float = 1.0,
@@ -106,30 +122,114 @@ class MmseLsaDenoiser(BaseDenoiser):
         super().__init__(sample_rate, n_fft=fft_size)
         self.noise_method = noise_method
         self.mode = mode
+        self.strength = strength
 
         # Presets are authored in the legacy 10-ms frame domain. Convert every
         # temporal coefficient/count once at this outer model boundary so the
         # underlying estimators remain generic frame-domain components.
+        # `strength != 'balanced'` (mild/moderate/aggressive) unambiguously
+        # marks alpha_noise/alpha_g/alpha_decay as commit 6822129's
+        # post-16ms-grid preset overlay (core/nr_strength.py's 'balanced'
+        # entry is an EMPTY overlay, so at 'balanced' these three are always
+        # the untouched pre-16ms-grid base YAML values -- see dated evidence
+        # in the `strength` parameter's own docstring above). Composition
+        # order is strength-then-mode (core/nr_modes.py docstring: "Applied
+        # FIRST so the content mode composes on top"), so stationary mode's
+        # own alpha_noise=0.95 overlay, when active, always wins last
+        # regardless of strength. alpha_attack is excluded from this group --
+        # see its own unconditional handling below.
+        _strength_is_post_16ms_preset = strength != 'balanced'
+
         alpha_d_effective = alpha_d if alpha_d is not None else alpha_noise
-        alpha_d_effective = retime_ema_alpha(
-            alpha_d_effective, sample_rate, frame_shift
+        # alpha_noise=0.95 for mode=='stationary' is set unconditionally by
+        # nr_modes.NR_MODE_PRESETS['stationary'], applied AFTER the strength
+        # preset, so whenever mode=='stationary' this value is always that
+        # 2026-07-05 stationary-mode commit's 16ms-grid-authored 0.95, never
+        # the pre-16ms base/strength value -- same 16ms basis as a non-
+        # 'balanced' strength preset (commit 6822129), so both conditions
+        # share one call. Mirrors the C side (mmse_lsa_apply_stationary() in
+        # mmse_lsa_types.h).
+        if mode == 'stationary' or _strength_is_post_16ms_preset:
+            alpha_d_effective = retime_ema_alpha(
+                alpha_d_effective, sample_rate, frame_shift,
+                authored_hop_seconds=_SIXTEEN_MS_HOP_SECONDS,
+            )
+        else:
+            alpha_d_effective = retime_ema_alpha(
+                alpha_d_effective, sample_rate, frame_shift
+            )
+        # alpha_xi is 16ms-native regardless of which strength/mode preset is
+        # active: it is documented as "intentionally NOT set" by any strength
+        # preset (core/nr_strength.py) -- always the shared base YAML value --
+        # and that base value (0.92) was set by commit 6822129 (2026-07-10), a
+        # musical-noise fix validated with a 12-file PESQ guard directly
+        # against the live 16ms-hop grid (04edc42, 2026-03-09). Retiming it
+        # again from the 10ms reference silently undoes that fix (0.92 ->
+        # ~0.875 at the default 16kHz/512 grid, reintroducing nearly the
+        # exact pre-fix value).
+        alpha_xi = retime_ema_alpha(
+            alpha_xi, sample_rate, frame_shift,
+            authored_hop_seconds=_SIXTEEN_MS_HOP_SECONDS,
         )
-        alpha_xi = retime_ema_alpha(alpha_xi, sample_rate, frame_shift)
-        alpha_g = retime_ema_alpha(alpha_g, sample_rate, frame_shift)
+        # alpha_g/alpha_decay: same dual-provenance class as alpha_noise/
+        # alpha_d above, disambiguated the same way via `strength` (untouched
+        # by the mode/stationary overlay, only by strength).
+        _preset_hop = (
+            _SIXTEEN_MS_HOP_SECONDS if _strength_is_post_16ms_preset
+            else _REFERENCE_HOP_SECONDS
+        )
+        alpha_g = retime_ema_alpha(
+            alpha_g, sample_rate, frame_shift, authored_hop_seconds=_preset_hop
+        )
         alpha_s = retime_ema_alpha(alpha_s, sample_rate, frame_shift)
         alpha_p = retime_ema_alpha(alpha_p, sample_rate, frame_shift)
-        alpha_attack = retime_ema_alpha(alpha_attack, sample_rate, frame_shift)
+        # alpha_attack is UNCONDITIONALLY 16ms-authored, regardless of
+        # `strength` -- unlike alpha_g/alpha_decay/alpha_noise above, it is
+        # never YAML-sourced (config/v3_2_config.yaml explicitly documents
+        # "the fast attack (0.3) is fixed in code, not configurable here");
+        # its base 0.3 default was introduced by commit b913beb (2026-04-17),
+        # which already postdates the 16ms-hop grid switch (04edc42,
+        # 2026-03-09) by five weeks, so even the 'balanced' (non-overlaid)
+        # case is 16ms-authored, not 10ms. The strength-preset overlay values
+        # (0.4/0.4/0.15, commit 6822129, 2026-07-10) are likewise post-16ms.
+        # Confirmed independently by a Codex review (2026-08-03) that flagged
+        # the previous strength-conditional treatment of this field as wrong.
+        alpha_attack = retime_ema_alpha(
+            alpha_attack, sample_rate, frame_shift,
+            authored_hop_seconds=_SIXTEEN_MS_HOP_SECONDS,
+        )
         if alpha_decay is not None:
             alpha_decay = retime_ema_alpha(
-                alpha_decay, sample_rate, frame_shift
+                alpha_decay, sample_rate, frame_shift,
+                authored_hop_seconds=_preset_hop,
             )
-        L = retime_frame_count(L, sample_rate, frame_shift)
+        # L=32 is documented in the YAML as authored directly against the
+        # 16ms hop ("32 幀 × 16ms/hop = 512ms" -- config/v3_2_config.yaml's
+        # noise_estimation.L comment), unlike alpha_attack/alpha_s/alpha_p
+        # (and num_init_frames below, which carries no such comment) which
+        # have no hop-basis evidence and stay on the 10ms reference. L is
+        # never touched by the strength overlay (core/nr_strength.py), so
+        # this is unconditional -- no strength/mode branch needed.
+        L = retime_frame_count(
+            L, sample_rate, frame_shift,
+            authored_hop_seconds=_SIXTEEN_MS_HOP_SECONDS,
+        )
         num_init_frames = retime_frame_count(
             num_init_frames, sample_rate, frame_shift
         )
-        scene_change_min_frames = retime_frame_count(
-            scene_change_min_frames, sample_rate, frame_shift
-        )
+        if mode == 'stationary':
+            # scene_change_min_frames=30 for this mode is likewise set
+            # unconditionally by nr_modes.NR_MODE_PRESETS['stationary']
+            # (same 2026-07-05 commit, same 16ms-grid provenance as
+            # alpha_noise above) -- same fix, same C-side mirror.
+            scene_change_min_frames = retime_frame_count(
+                scene_change_min_frames, sample_rate, frame_shift,
+                authored_hop_seconds=_SIXTEEN_MS_HOP_SECONDS,
+            )
+        else:
+            scene_change_min_frames = retime_frame_count(
+                scene_change_min_frames, sample_rate, frame_shift
+            )
 
         # 創建處理器
         self.processor = FrameProcessor(

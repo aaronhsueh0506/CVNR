@@ -4,6 +4,134 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [Unreleased] - 2026-08-03 · Audio_ALG C pipeline NR tuning A/B 決策：改用 canonical（B）
+
+### 決策 (Decided)
+
+**Audio_ALG mono C (`audio_pipeline.c`) 與 4ch C (`4aec_nr_res.c`) 原本各自硬編碼覆寫
+`alpha_d=0.95`/`alpha_attack=0.3`（10ms 基準換算，pre-fix 公式），蓋過 `mmse_lsa_config_for_mode_grid()`
+本身已經正確的 canonical 預設（`alpha_d=0.7` YAML 基礎值、`alpha_attack` 無條件 16ms 換算 —— 上一則
+[4.5.0] 追加修復的同一批常數）。**這正是本專案這輪 Codex review 抓到的：C 端「覆寫」實際上是在對抗自己
+已經修好的 canonical 預設，導致 mono Python（已於本輪改用 canonical）、mono C、4ch C 三者 effective
+config 分岔。
+
+比對 A（legacy 硬編碼覆寫）vs B（canonical，即拿掉覆寫後 `mmse_lsa_config_for_mode_grid()` 的原樣輸出）：
+逐欄位比對後，四個覆寫欄位裡只有 `alpha_d`／`alpha_attack` 真的有差（`L`：150 用舊 10ms 基準換算後與
+canonical 的 pipeline-specific `L=94`-16ms-基準換算在每個 grid 都算出同一個 frame 數，是刻意設計成等價，
+非巧合；`alpha_decay=alpha_g` 本來就與 canonical 一致）。
+
+**兩條腿的實測證據**（16kHz/256/128 grid）：
+
+| 腿 | 內容 | 結果 |
+|---|---|---|
+| VCTK+DEMAND 824-case（純去噪，無回音） | PESQ/STOI/SI-SDR/segSNR | B 只贏 PESQ（+0.14）；STOI/SI-SDR/segSNR 都是 A 較好，B 的 STOI 沒過本專案自己的回歸門檻（−0.026 vs 允許 −0.002，超標約 13 倍） |
+| AEC 90-case blind manifest（回音+double-talk，這條 pipeline 實際使用場景） | AECMOS、ERLE-proxy、SDR-proxy、near-end preservation | AECMOS 在此樣本數下接近雜訊；ERLE-proxy／SDR-proxy／near-end 在全部 5 個 bucket 一致偏向 B，尤其在較可靠的大 bucket（movement n=25/26、NE n=30） |
+
+VCTK 那條腿的 STOI 退步是真的，但 VCTK 是純去噪語料，不含回音——不是這條 pipeline 的實際使用場景
+（這個 NR 元件在 Audio_ALG 裡永遠接在 AEC 後面處理殘留回音，從未單獨用於乾淨語料去噪）。實際使用場景
+（AEC-chained leg）一致、雖幅度不大地偏向 B。
+
+**決策：mono C／4ch C 改用 canonical（B）**——拿掉 `alpha_d`/`alpha_attack` 覆寫，讓
+`mmse_lsa_config_for_mode_grid()` 的 canonical 預設直接生效（`L`/`alpha_decay` 保留原樣，因為兩者本來
+就與 canonical 等價）。至此 mono Python／mono C／4ch C 三者共用同一份 effective config，不再各自維護
+一份會漂移的覆寫。
+
+新增 `c_impl/test/test_config_parity.c` + `test_config_parity.py`：對 3 個 grid（16k/256、16k/512、
+48k/1024）× 4 個 strength（mild/moderate/balanced/aggressive）逐欄位比對 Python
+`build_v3_2_base_params()+apply_strength()+MmseLsaDenoiser` 與 C `mmse_lsa_config_for_mode_grid()`
+的 effective config（不是只測「兩邊都有 finite output」）。13/13 通過；mutation test 確認真的會抓到
+偏移（人為在 C dump 注入 +0.05 的 `alpha_d` 偏移，13 項裡對應的 3 項立即 FAIL）。
+
+**⚠ 這解決/取代上一則 [4.5.0] 留下的「未決策項」**：那則只單獨測了 `alpha_attack` 在 VCTK 上的影響；
+這次是完整的 A/B（含 `alpha_d`）加上 AEC-chained 這條更貼近實際場景的證據，兩條腿放在一起看，比單獨看
+`alpha_attack` 更有把握——採用 canonical 的理由不只是「歷史授權基準正確」，而是在貼近實際使用場景的
+測試上也量測到一致（雖然幅度不大）的改善。
+
+## [Unreleased] - 2026-08-03 · retiming 授權基準修復（追加）：`alpha_attack` 修正為無條件 16ms
+
+### 修復 (Fixed)
+
+**[4.5.0] 對 `alpha_attack` 的判斷有誤：`balanced` 並非真正 10ms 授權**
+
+Codex review（2026-08-03）指出 `alpha_attack=0.3` 在 `strength=='balanced'` 時仍套用 10ms 基準換算，
+但其真正授權基準其實是 16ms——與 [4.5.0] 對 `alpha_g`/`alpha_decay`/`alpha_d` 的判斷（那三者確實是
+10ms 授權，`balanced` 换算無誤）不同類。逐一以 git 歷史核實：
+
+- `alpha_g`/`alpha_d`/`alpha_s`/`alpha_p`（YAML 基礎值）：commit `6bde3eb`/`02d7dc7`/`09e74d8`
+  （2026-01-02～01-08）—— 全部早於 16ms-hop grid 切換（`04edc42`,2026-03-09）,10ms 授權判斷正確不變。
+- `num_init_frames`（YAML=20）：`6bde3eb`（2026-01-02）,同樣早於切換,10ms 授權不變。
+- `scene_change_min_frames` base（YAML=5）：`2c779bb`（2026-03-05）,早於切換 4 天,10ms 授權不變。
+- **`alpha_attack` base（硬編碼 0.3,從未存在於 YAML——`config/v3_2_config.yaml` 自己註明「fixed in
+  code,not configurable here」）：commit `b913beb`（2026-04-17）,晚於切換 5 週 —— 16ms 授權**,原本
+  依 `strength` 條件式換算（`balanced`=10ms/其他=16ms）是錯的,應與 `alpha_xi`/`L` 一樣無條件 16ms。
+
+修復：`denoisers/v3_2_mmse_lsa.py` 把 `alpha_attack` 移出共用的 `_preset_hop`/`_strength_is_post_16ms_preset`
+機制,改為獨立、無條件 `authored_hop_seconds=_SIXTEEN_MS_HOP_SECONDS`；`c_impl/include/mmse_lsa_types.h`
+的 `mmse_lsa_default_config_for_grid()` 同步把 `alpha_attack` 從 `mmse_lsa_retime_alpha()`（10ms)
+改為 `mmse_lsa_retime_alpha_ref(..., 0.016)`（16ms)。strength 覆寫值（mild/moderate/aggressive 的
+0.4/0.4/0.15,commit `6822129`）本來就已經是無條件 16ms,不受影響。
+
+⚠ 非 byte-identical：新預設 16kHz/256/128 grid 上,`alpha_attack` 從錯誤的 0.380 變為（依證據）正確的
+0.548。**824-case VCTK+DEMAND 已重跑,結果並非單純變好**——`full` 模式明顯退步（PESQ −0.0050,
+STOI −0.0098,SI-SDR −0.821dB,segSNR −0.420dB）；`stationary` 模式反而持平略優（PESQ +0.0103,
+SI-SDR +0.105dB,segSNR +0.096dB,STOI −0.0018 在雜訊範圍內）。也就是說：對 `alpha_attack` 授權基準
+的判斷（16ms）本身有紮實 git 歷史證據支持,但套用後在最常用的 `full` 模式上量測到有感知意義的退步——
+「歷史授權正確」與「感知品質更好」在這個常數上並不一致。
+
+**⚠ 本項為未決策項,尚未視為可上線**：是否要接受這個退步以換取授權基準一致性,或改為保留舊的
+（授權基準不精確但實測較好的）`alpha_attack` 處理方式,需要人為決策,不由本次修復單方面認定。程式碼
+內的 provenance 註解本身（何時、哪個 commit 授權於哪個 grid）是紮實、值得保留的文件事實,與是否要讓
+這個修正後的數值成為新預設輸出是兩件事。
+
+## [4.5.0] - 2026-08-03 · retiming 授權基準修復 + 8ms-hop 預設 grid 擴展
+
+### 修復 (Fixed)
+
+**retiming 機制缺少「非 10ms 授權基準」表達能力，導致多個 16ms-hop 授權常數被錯誤地當成 10ms 授權常數 retime**
+- 最直接案例＝ `noise_estimation.L`（MCRA 最小值追蹤視窗）：`config/v3_2_config.yaml` 明載 `L: 32` 是直接對 16ms
+  hop 授權（「32 幀 × 16ms/hop = 512ms」），但 `denoisers/v3_2_mmse_lsa.py` 呼叫 retime 時完全沒有
+  authored-hop override，一律套用內建 10ms 假設——連在 16ms-hop grid 本身也給出錯的 `L=20`（應為 32）。
+- 同一根因也影響其餘已有明確 16ms 授權證據的常數：`alpha_xi`（2026-07-10 musical-noise fix,
+  commit 6822129,直接對 16ms-hop grid 調校）；strength preset 覆寫值
+  `alpha_g`/`alpha_attack`/`alpha_decay`/`alpha_d`（同一 commit；`balanced` 為空覆寫,其繼承值仍是真正
+  10ms 授權,不受影響）；`stationary` mode 的 `alpha_d`/`alpha_xi`/`scene_change_min_frames`
+  （2026-07-05 commit,同樣 16ms-hop 授權）。`num_init_frames` 等其餘鄰近常數已逐一確認無對應文件佐證,
+  維持原 10ms 基準不變。
+- 修復：兩端 retiming helper 新增 `authored_hop_seconds` 參數（預設 10ms＝行為不變）——Python 為
+  `retime_ema_alpha`/`retime_frame_count`；C 新增 `mmse_lsa_retime_alpha_ref`/`mmse_lsa_retime_frames_ref`。
+  `L`/`alpha_xi` 無條件套用 16ms 基準；`alpha_g`/`alpha_attack`/`alpha_decay`/`alpha_d` 依
+  `strength`/`mode` 是否為 post-16ms-grid 覆寫條件式套用（`denoisers/v3_2_mmse_lsa.py` 新增 `strength`
+  建構參數；`process_audio.py` 補上 `params['strength']`）；`scene_change_min_frames` 依
+  `mode=='stationary'` 條件式套用。C 側鏡像於 `c_impl/include/mmse_lsa_types.h`。
+- ⚠ 非 byte-identical：任何常數數值改變的 grid,輸出會隨之改變（例如舊 grid 上 `L` 20→32）。824-case
+  VCTK+DEMAND 重跑顯示：standalone NR 這條路徑（`mcra_accept_external_spp: True`）下 `L` 實際是死碼
+  （只驅動一個被外部 SPP 短路掉的內部指標),PESQ/STOI/SI-SDR/segSNR 全部無感知差異;真正會被 `L`
+  影響的是 `accept_external_spp=False` 的 AEC-整合路徑,尚待該路徑自己的 benchmark 驗證。
+
+**C 端浮點精度 bug：`mmse_lsa_retime_alpha_ref` / `mmse_lsa_retime_frames_ref` 的 `ref_hop_seconds` 誤用 `float`**
+- Python 原生以 double 表示 `0.016`；C 若沿用 `float ref_hop_seconds`,`0.016f` 的精度誤差在
+  `pow()`-based 的 alpha retiming 上因為是自我抵消的比值而無影響,但在 `ceil()`-based 的 frame-count
+  retiming 上是 step function,把一個原本精確落在整數邊界的案例（16kHz/512 anchor grid 的 `L`）推過邊界
+  幾個 ULP,令 rounding 結果整整多一幀（32 → 33）。
+- 修復：`ref_hop_seconds` 參數改為 `double`；所有呼叫點字面量 `0.016f`/`0.010f` → `0.016`/`0.010`。
+
+### 變更 (Changed)
+
+**16kHz 預設 grid：512/256（16ms hop）→ 256/128（8ms hop）；8kHz 新增 128/64（8ms hop）預設，原
+256/128（16ms hop）降為顯式替代選項**
+- `core/signal_grid.py`：`_DEFAULT_FFT[16000]` 512→256、`_DEFAULT_FFT[8000]` 256→128；
+  `_ALLOWED_FFTS[8000]` 由 `(256,)` 擴為 `(128, 256)`。C 端 `mmse_lsa_types.h` 的
+  `mmse_lsa_default_fft_size()` / `mmse_lsa_validate_config()` 同步。16ms-hop grid（8kHz/256、
+  16kHz/512）仍受支援,可顯式選用。
+- 16ms「授權基準」（上面 retiming 修復的 anchor）與「目前預設 grid 是哪一個」正交獨立——本次 grid
+  預設翻轉不影響 L/alpha_xi 等常數的授權基準判斷。
+
+### 測試
+
+`c_impl/test/test_config_validation.c`：舊斷言「L 至少保留 320ms」（沿用修復前 10ms 基準假設）已更正
+為「至少保留 512ms」（32 幀 × 16ms,對應修復後正確值）；grid 清單同步加入新的 8000/128。`make
+test-config` 全過（在無空白路徑重跑，原路徑空白字元會讓 Makefile 巢狀 -C 解析失敗,是既有已知問題）。
+
 ## [4.4.0] - 2026-07-10 · musical-noise fix + V3-2 強度預設（4 級）
 
 ### 修復 (Fixed)

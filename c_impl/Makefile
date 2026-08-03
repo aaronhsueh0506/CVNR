@@ -715,8 +715,8 @@ CFLAGS    += $(FP_POLICY)
 AC_FWD = BACKEND=$(BACKEND) SIMD=$(SIMD) WERROR=$(WERROR) CC='$(CC)' CXX='$(CXX)' EXTRA_CFLAGS='$(EXTRA_CFLAGS)' NO_STDIO=$(NO_STDIO) TOOLCHAIN_CHECK=$(TOOLCHAIN_CHECK)
 
 ifeq ($(AC_LIB),)
-.PHONY: all mem parity test-config
-all mem parity test-config:
+.PHONY: all mem parity test-config test-config-parity
+all mem parity test-config test-config-parity:
 	+@ac="$$($(MAKE) -s --no-print-directory -C $(AC_DIR) $(AC_FWD) print-lib-path)"; \
 	 test -n "$$ac" || { echo "FATAL: could not resolve audio_common archive path (AC_DIR=$(AC_DIR) -- is audio_common present as a sibling of this repo?)" >&2; exit 1; }; \
 	 $(MAKE) --no-print-directory $@ AC_LIB="$$ac"
@@ -941,6 +941,25 @@ $(TEST_TARGET): $(OBJS) $(OBJ_DIR)/test_config_validation.o $(AC_LIB) | _cfg_gua
 	@echo "Build complete: $@"
 
 $(OBJ_DIR)/test_config_validation.o: $(TEST_DIR)/test_config_validation.c | _cfg_guard
+	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
+
+# =============================================================================
+# Python<->C effective-config parity dump (2026-08-03): prints the canonical
+# MmseLsaConfig for every shipped (grid, strength) combination so
+# ../test_config_parity.py can certify it against process_audio.py's
+# build_v3_2_base_params()+apply_strength() composition. See
+# test/test_config_parity.c's own header comment.
+# =============================================================================
+.PHONY: test-config-parity
+TEST_PARITY_TARGET = $(BIN_DIR)/test_config_parity
+test-config-parity: $(TEST_PARITY_TARGET)
+	"$(abspath $(TEST_PARITY_TARGET))"
+
+$(TEST_PARITY_TARGET): $(OBJS) $(OBJ_DIR)/test_config_parity.o $(AC_LIB) | _cfg_guard
+	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/test_config_parity.o $(AC_LIB) $(LDFLAGS)
+	@echo "Build complete: $@"
+
+$(OBJ_DIR)/test_config_parity.o: $(TEST_DIR)/test_config_parity.c | _cfg_guard
 	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
 endif
 

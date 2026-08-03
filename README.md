@@ -2,7 +2,7 @@
 
 > **C 使用與整合**：[NR C User Manual（繁體中文）](docs/c_user_manual_zh_TW.md)
 
-**版本**: v4.4.0 · **Release 主推演算法**: V3-2 OMLSA (MMSE-LSA + Bayesian SPP + IMCRA)
+**版本**: v4.5.0 · **Release 主推演算法**: V3-2 OMLSA (MMSE-LSA + Bayesian SPP + IMCRA)
 
 傳統信號處理方法的實時語音降噪系統，採用漸進式學習路徑。
 
