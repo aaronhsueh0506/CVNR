@@ -399,6 +399,14 @@ MmseLsaDenoiser* mmse_lsa_init(void* mem, size_t mem_size,
 
     if (!self->noise_est || !self->spp_est) return NULL;
 
+    /* Lockstep guard: mmse_lsa_get_mem_size() and the carve sequence above
+     * (own arrays + the two sub-module carves) are independently-maintained
+     * additions that must total identically -- a field added/removed from
+     * one but not the other would otherwise only surface as a silent
+     * over/under-carve, not a build or test failure. cursor is expected to
+     * land exactly at mem + need. */
+    if ((size_t)(cursor - (uint8_t*)mem) != need) return NULL;
+
     _setup(self, config);
     self->is_static = true;
     return self;

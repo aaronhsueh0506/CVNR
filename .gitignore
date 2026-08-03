@@ -62,6 +62,7 @@ benchmark_results/
 comparison_results/
 *.txt
 !requirements.txt
+!requirements-dev.txt
 
 # 音樂保留 eval harness 產物（tools/eval_music_preservation.py 的輸出，含 wav/png/json）
 results/music_eval*/
@@ -90,3 +91,7 @@ Desktop.ini
 test_wav/**/*.opus
 test_wav/opus/
 *.opus
+
+# VCTK-DEMAND 壓縮包（~310MB，*.wav 廣規則擋不住 .zip；已解壓的 wav 本身已被
+# 上面的 *.wav 規則排除，這裡只排除壓縮包本身，不影響使用者的 dataset 內容）
+test_wav/vctk_demand/*.zip

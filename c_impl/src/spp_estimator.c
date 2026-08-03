@@ -125,6 +125,13 @@ SppEstimator* spp_init(void* mem, size_t mem_size,
     self->v_scratch         = (float*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(float));
     self->term_xi_scratch   = (float*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(float));
 
+    /* Lockstep guard: spp_get_mem_size() and the carve sequence above are two
+     * independently-maintained additions that must total identically -- a
+     * field added/removed from one but not the other would otherwise only
+     * surface as a silent over/under-carve, not a build or test failure.
+     * cursor is expected to land exactly at mem + need. */
+    if ((size_t)(cursor - (uint8_t*)mem) != need) return NULL;
+
     return self;
 }
 
