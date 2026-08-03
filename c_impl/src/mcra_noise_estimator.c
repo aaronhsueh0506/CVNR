@@ -615,8 +615,8 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
 
         if (hi_gamma > self->scene_change_threshold &&
             hi_flatness > self->scene_change_flatness_threshold) {
-            // Ceilinged at scene_change_min_frames (round-6 mechanical-sweep
-            // hardening; UBSan-probed). scene_change_min_frames is
+            // Ceilinged at scene_change_min_frames (UBSan-probed).
+            // scene_change_min_frames is
             // user-configurable with NO upper bound in validate_config
             // (unlike num_init_frames's <=200 cap), so a caller can legally
             // set it arbitrarily high. The ONLY consumer of this field is
