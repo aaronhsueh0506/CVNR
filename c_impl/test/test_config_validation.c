@@ -426,6 +426,67 @@ int main(void) {
     }
     printf("\n");
 
+    /* ---- 6. mmse_lsa_process_gain(..., NULL) matches a non-NULL call --- */
+    printf("-- gain_out==NULL matches mmse_lsa_get_gain() (Group 3) --\n");
+    {
+        MmseLsaConfig cfg = mmse_lsa_default_config(16000);
+        MmseLsaDenoiser* with_copy = mmse_lsa_create(&cfg);
+        MmseLsaDenoiser* no_copy   = mmse_lsa_create(&cfg);
+        CHECK(with_copy != NULL && no_copy != NULL,
+              "create() succeeds for both gain-borrow test instances");
+
+        if (with_copy && no_copy) {
+            int n_freqs = mmse_lsa_get_n_freqs(with_copy);
+            Complex* spec  = (Complex*)malloc((size_t)n_freqs * sizeof(Complex));
+            float* extra   = (float*)malloc((size_t)n_freqs * sizeof(float));
+            float* gain_out = (float*)malloc((size_t)n_freqs * sizeof(float));
+            unsigned seed = 987654321u;
+            int gain_ok = 1;
+            int rc_ok = 1;
+
+            for (int frame = 0; frame < 40 && spec && extra && gain_out;
+                 ++frame) {
+                for (int k = 0; k < n_freqs; ++k) {
+                    seed = seed * 1103515245u + 12345u;
+                    float r = ((float)((seed >> 8) & 0xFFFFu) / 65535.0f);
+                    spec[k].r = (r - 0.5f) * 0.2f;
+                    seed = seed * 1103515245u + 12345u;
+                    float i = ((float)((seed >> 8) & 0xFFFFu) / 65535.0f);
+                    spec[k].i = (i - 0.5f) * 0.2f;
+                    extra[k] = r * r * 1e-4f;
+                }
+                /* Exercise both the extra_noise_psd==NULL and non-NULL
+                 * branches across the run, identically on both instances. */
+                const float* extra_arg = (frame % 2 == 0) ? extra : NULL;
+
+                if (mmse_lsa_process_gain(with_copy, spec, extra_arg,
+                                          gain_out) < 0) rc_ok = 0;
+                if (mmse_lsa_process_gain(no_copy, spec, extra_arg,
+                                          NULL) < 0) rc_ok = 0;
+                if (!rc_ok) break;
+
+                int nf_check = -1;
+                const float* borrowed = mmse_lsa_get_gain(no_copy, &nf_check);
+                if (!borrowed || nf_check != n_freqs ||
+                    memcmp(borrowed, gain_out,
+                           (size_t)n_freqs * sizeof(float)) != 0) {
+                    gain_ok = 0;
+                    break;
+                }
+            }
+            CHECK(rc_ok, "mmse_lsa_process_gain(..., NULL) does not fail");
+            CHECK(gain_ok,
+                  "mmse_lsa_process_gain(..., NULL)'s internal gain, read "
+                  "via mmse_lsa_get_gain(), is byte-identical every frame "
+                  "to what a non-NULL call would have copied out");
+
+            free(spec); free(extra); free(gain_out);
+        }
+        if (with_copy) mmse_lsa_destroy(with_copy);
+        if (no_copy) mmse_lsa_destroy(no_copy);
+    }
+    printf("\n");
+
     free(big_buf);
 
     if (g_failures == 0) {

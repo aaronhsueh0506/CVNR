@@ -567,7 +567,7 @@ int mmse_lsa_process_gain(MmseLsaDenoiser* self,
                           const Complex*   spectrum_in,
                           const float*     extra_noise_psd,
                           float*           gain_out) {
-    if (!self || !spectrum_in || !gain_out) return -1;
+    if (!self || !spectrum_in) return -1;
 
     int nf = self->n_freqs;
 
@@ -630,8 +630,10 @@ int mmse_lsa_process_gain(MmseLsaDenoiser* self,
         mcra_update(self->noise_est, self->power, self->spp);
     }
 
-    /* Return the gain WITHOUT applying it (caller combines with res_gain). */
-    memcpy(gain_out, self->gain, nf * sizeof(float));
+    /* Return the gain WITHOUT applying it (caller combines with res_gain).
+     * gain_out is optional: a caller that only needs the gain transiently
+     * can read it via mmse_lsa_get_gain() instead of paying for this copy. */
+    if (gain_out) memcpy(gain_out, self->gain, nf * sizeof(float));
 
     return 0;
 }

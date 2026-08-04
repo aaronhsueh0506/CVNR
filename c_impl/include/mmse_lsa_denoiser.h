@@ -92,7 +92,9 @@ int mmse_lsa_process(MmseLsaDenoiser* self,
  * @param spectrum_in    Complex input [n_freqs] — caller's FFT output (e.g. E(f))
  * @param extra_noise_psd Extra noise PSD [n_freqs] on the |spectrum_in|² scale,
  *                        or NULL to behave exactly like the plain noise-only NR
- * @param gain_out       Output per-bin gain [n_freqs], linear [g_min, 1]
+ * @param gain_out       Output per-bin gain [n_freqs], linear [g_min, 1], or
+ *                        NULL to skip the copy -- the gain is always computed
+ *                        and left readable via mmse_lsa_get_gain() regardless
  * @return 0 on success, <0 on error
  */
 int mmse_lsa_process_gain(MmseLsaDenoiser* self,
