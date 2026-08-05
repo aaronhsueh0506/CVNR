@@ -6,6 +6,15 @@ import math
 from typing import Optional, Tuple
 
 
+# 8000 is fully supported by this standalone library and by the Audio_ALG
+# MONO pipeline (audio_pipeline.c accepts/tests it as a 4th grid -- see
+# Audio_ALG/pipelines/README.md "Parameter Alignment"). It is NOT supported
+# by the Audio_ALG 4-CHANNEL pipeline, whose public API contracts to
+# exactly three grids: 16 kHz/256, 16 kHz/512, 48 kHz/1024 (see
+# Audio_ALG/pipelines/4ch_pipelines/README.md and 4aec_nr_res.c's explicit
+# sample_rate check). Callers targeting the 4-channel pipeline specifically
+# should not construct an NR instance at 8 kHz even though this table
+# allows it.
 _ALLOWED_FFTS = {
     8000: (128, 256),
     16000: (256, 512),
