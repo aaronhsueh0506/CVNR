@@ -54,9 +54,8 @@ try:
     import yaml
     YAML_AVAILABLE = True
 except ImportError:
+    yaml = None
     YAML_AVAILABLE = False
-    print("Warning: pyyaml not installed. Using default parameters.")
-    print("Install with: pip install pyyaml")
 
 from utils.audio_io import read_audio, write_audio
 if MATPLOTLIB_AVAILABLE:
@@ -84,19 +83,29 @@ def load_config(config_file: str) -> dict:
         配置字典
     """
     if not YAML_AVAILABLE:
-        return {}
+        raise RuntimeError(
+            "PyYAML is required to load NR configuration files. "
+            "Install runtime dependencies with `pip install -r requirements.txt`."
+        )
 
     if not os.path.exists(config_file):
-        print(f"Warning: Config file not found: {config_file}")
-        return {}
+        raise FileNotFoundError(f"NR config file not found: {config_file}")
 
     try:
         with open(config_file, 'r', encoding='utf-8') as f:
             config = yaml.safe_load(f)
+        if config is None:
+            return {}
+        if not isinstance(config, dict):
+            raise ValueError(
+                f"NR config root must be a mapping, got {type(config).__name__}: "
+                f"{config_file}"
+            )
         return config
     except Exception as e:
-        print(f"Error loading config {config_file}: {e}")
-        return {}
+        if isinstance(e, (OSError, ValueError)):
+            raise
+        raise ValueError(f"Failed to parse NR config {config_file}: {e}") from e
 
 
 def build_v3_2_base_params(config, sample_rate, frame_size, frame_shift, fft_size):

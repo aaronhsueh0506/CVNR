@@ -13,31 +13,27 @@ denoiser via create_denoiser_from_config() with an explicit mode/strength/
 fft_size, scores PESQ (wideband, 16 kHz)/STOI/SI-SDR/segSNR against the clean
 reference, and writes one JSON record per file plus run-identifying metadata
 (including the repo's git commit / dirty state) to --output. Compare two such
-JSON files with compare_vctk_benchmark.py.
+JSON files with `tools/compare_vctk_benchmark.py`.
 
-Config-directory resolution note: process_audio.create_denoiser_from_config()
-resolves its config directory relative to the caller-supplied string with a
-plain os.path.join + os.path.exists check, and process_audio.load_config()
-silently returns {} (all-defaults) with only a printed warning if the file is
-missing -- i.e. a caller with the wrong CWD gets a silently-wrong denoiser,
-not a loud error. This script never hands it a bare relative path: --config-dir
-defaults to <nr-root>/config (nr-root defaults to this script's own directory,
+Config-directory resolution note: this script never hands the denoiser a bare
+relative path. `--config-dir` defaults to <nr-root>/config (nr-root defaults to
+the parent of this script's `tools/` directory,
 not CWD), and the resolved config file's existence is checked up front with a
 hard SystemExit if it is missing, before any case is processed.
 
 Usage:
-    python3 run_vctk_benchmark.py --mode full --strength balanced \\
+    python3 tools/run_vctk_benchmark.py --mode full --strength balanced \\
         --output results/vctk_full_balanced.json
 
-    python3 run_vctk_benchmark.py --mode stationary --strength balanced \\
+    python3 tools/run_vctk_benchmark.py --mode stationary --strength balanced \\
         --sample-rate 16000 --fft-size 512 \\
         --output results/vctk_stationary_balanced_fft512.json
 
-    python3 run_vctk_benchmark.py --mode full --strength aggressive \\
+    python3 tools/run_vctk_benchmark.py --mode full --strength aggressive \\
         --cases results/vctk_clean_50.txt --output /tmp/smoke.json --limit 10
 
 Then:
-    python3 compare_vctk_benchmark.py baseline.json candidate.json
+    python3 tools/compare_vctk_benchmark.py baseline.json candidate.json
 """
 import argparse
 import hashlib
@@ -61,7 +57,8 @@ try:
 except ImportError:
     stoi_fn = None
 
-SCRIPT_DIR = Path(__file__).resolve().parent
+TOOL_DIR = Path(__file__).resolve().parent
+DEFAULT_NR_ROOT = TOOL_DIR.parent
 
 DENOISER_VERSION = "V3-2"
 PESQ_SR = 16000  # pesq only supports 8000 (nb) / 16000 (wb); spec wants wb.
@@ -90,10 +87,8 @@ def resolve_config_dir(nr_root: Path, config_dir_arg: str, version: str):
             f"  nr_root     = {nr_root}\n"
             f"  config_dir  = {config_dir}\n"
             f"  config_arg  = {config_dir_arg!r}\n"
-            "process_audio.create_denoiser_from_config() would silently fall back\n"
-            "to hardcoded defaults here (load_config() only prints a warning and\n"
-            "returns {}) -- refusing to run rather than produce silently-wrong\n"
-            "numbers. Pass --config-dir explicitly if the config lives elsewhere,\n"
+            "Refusing to run rather than produce numbers from an unintended\n"
+            "configuration. Pass --config-dir explicitly if it lives elsewhere,\n"
             "or --nr-root if you meant to point at a different checkout."
         )
     return config_dir, config_file
@@ -118,7 +113,7 @@ def import_process_audio_module(nr_root: Path):
     """Import process_audio from nr_root specifically, regardless of what else
     is already on sys.path or cached in sys.modules (guards against a nested
     worktree / scratch dir shadowing the real module, the exact failure mode
-    that bit the throwaway scratchpad worker). Returns the module itself (not
+    that bit a nested-checkout regression). Returns the module itself (not
     just create_denoiser_from_config) so callers can also reach
     load_config/build_v3_2_base_params/apply_strength/apply_mode/
     resolve_signal_grid/MmseLsaDenoiser -- resolving config+params once per
@@ -273,9 +268,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Dataset root (default: <nr-root>/test_wav/vctk_demand).")
     p.add_argument("--clean-subdir", default=DEFAULT_CLEAN_SUBDIR)
     p.add_argument("--noisy-subdir", default=DEFAULT_NOISY_SUBDIR)
-    p.add_argument("--nr-root", default=str(SCRIPT_DIR),
+    p.add_argument("--nr-root", default=str(DEFAULT_NR_ROOT),
                    help="NR repo checkout to import process_audio/denoisers from and to "
-                        "read git identity from (default: this script's own directory). "
+                        "read git identity from (default: parent of tools/). "
                         "Set this to compare a different worktree/commit.")
     p.add_argument("--config-dir", default=None,
                    help="Override config directory (default: <nr-root>/config).")

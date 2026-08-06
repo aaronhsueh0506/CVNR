@@ -16,7 +16,7 @@
  * fields in a fixed order (see the header row this program prints first).
  * Grids match Audio_ALG/pipelines/4ch_pipelines/README.md's three checked-in
  * grids: 16k/256 (default, 8ms hop), 16k/512 (alternate, 16ms hop),
- * 48k/1024 (10.67ms hop). Consumed by NR/test_config_parity.py.
+ * 48k/1024 (10.67ms hop). Consumed by NR/tests/test_config_parity.py.
  *
  * Build (standalone, mirrors test_delay_reset.c's style -- this file only
  * needs the header, no other translation unit):

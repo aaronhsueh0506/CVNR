@@ -9,7 +9,7 @@
  *      size-arithmetic into a wrapped/undersized byte count.
  * F07: mmse_lsa_init() (and mcra_init/spp_init) must reject a mis-aligned
  *      pool base BEFORE writing a single byte into it.
- * R08 (external re-review, NR side): mmse_lsa_validate_config() checked
+ * Regression: mmse_lsa_validate_config() checked
  *      sample_rate + int dims only -- none of the 18 float tunables (SPP/
  *      MCRA/scene-change/gain/stationary-overlay knobs) were validated at
  *      all, so a NaN/Inf/sign-flipped/absurd-magnitude float could still
@@ -143,7 +143,7 @@ int main(void) {
     }
     printf("\n");
 
-    /* ---- 3. Float tunable validation (R08, external re-review, NR side) --
+    /* ---- 3. Float tunable validation -----------------------------------
      * mmse_lsa_validate_config() used to check sample_rate + int dims only;
      * none of the 18 float tunables (SPP/MCRA/scene-change/gain/stationary-
      * overlay knobs) were validated at all. This section checks: (a) NaN/Inf

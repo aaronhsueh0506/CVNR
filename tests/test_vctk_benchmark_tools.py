@@ -32,11 +32,12 @@ from pathlib import Path
 import pytest
 
 HERE = Path(__file__).resolve().parent
-if str(HERE) not in sys.path:
-    sys.path.insert(0, str(HERE))
+ROOT = HERE.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-compare_mod = importlib.import_module("compare_vctk_benchmark")
-run_mod = importlib.import_module("run_vctk_benchmark")
+compare_mod = importlib.import_module("tools.compare_vctk_benchmark")
+run_mod = importlib.import_module("tools.run_vctk_benchmark")
 
 
 # --------------------------------------------------------------------------

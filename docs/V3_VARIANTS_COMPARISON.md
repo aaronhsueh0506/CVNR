@@ -692,8 +692,8 @@ print("="*80)
 ### 相關資源
 - [README.md](../README.md) - 項目主文檔
 - [METRICS_USAGE.md](METRICS_USAGE.md) - 評估指標使用指南
-- [ALGORITHMS_EXPLANATION.md](../ALGORITHMS_EXPLANATION.md) - 演算法詳細解釋
+- [歷史演算法說明](archive/algorithm_history.md) - 舊版本公式與研究背景（非現行 release contract）
 
 ---
 
-**推薦閱讀順序**: README → METRICS_USAGE → V3_VARIANTS_COMPARISON → ALGORITHMS_EXPLANATION
+**推薦閱讀順序**: README → METRICS_USAGE → V3_VARIANTS_COMPARISON；需要舊版本背景時再讀 archive/algorithm_history

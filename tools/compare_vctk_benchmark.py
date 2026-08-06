@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare two run_vctk_benchmark.py JSON outputs (baseline vs candidate).
+"""Compare two VCTK benchmark JSON outputs (baseline vs candidate).
 
 FAIL-CLOSED by default: this tool refuses to produce a PASS/FAIL verdict
 unless the comparison is actually apples-to-apples. Specifically, before any
@@ -38,10 +38,10 @@ discontinuity outlier cannot misrepresent the aggregate; if you want to
 sanity-check whether one file is doing that, look at the worst-N list.
 
 Usage:
-    python3 compare_vctk_benchmark.py baseline.json candidate.json
-    python3 compare_vctk_benchmark.py baseline.json candidate.json --worst-n 10
-    python3 compare_vctk_benchmark.py baseline.json candidate.json --json-out delta.json
-    python3 compare_vctk_benchmark.py baseline.json candidate.json --allow-mismatch
+    python3 tools/compare_vctk_benchmark.py baseline.json candidate.json
+    python3 tools/compare_vctk_benchmark.py baseline.json candidate.json --worst-n 10
+    python3 tools/compare_vctk_benchmark.py baseline.json candidate.json --json-out delta.json
+    python3 tools/compare_vctk_benchmark.py baseline.json candidate.json --allow-mismatch
 """
 import argparse
 import json

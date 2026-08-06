@@ -37,7 +37,7 @@ typedef struct {
     int fft_size;           // Whitelisted power-of-two transform size
 
     // SPP parameters
-    float alpha_xi;         // A priori SNR smoothing (0.88)
+    float alpha_xi;         // A priori SNR smoothing; 0.92 at the 16 ms tuning anchor
     float q;                // Speech prior probability (0.5)
     float xi_min_db;        // A priori SNR floor in dB (-20)
 
@@ -54,7 +54,7 @@ typedef struct {
     int scene_change_min_frames;         // Consecutive duration (~50 ms by default)
     float scene_change_blend;            // Noise reset blend factor (0.5)
     float scene_change_flatness_threshold; // Hi-freq spectral flatness threshold (0.4)
-    float broadband_threshold;           // Broadband scene-reset gate (0.8; <1.0 enables)
+    float broadband_threshold;           // Broadband scene-reset gate; 1.0 disables it
 
     // Gain parameters
     float g_min_db;         // Minimum gain in amplitude dB, /20 (-30.0)
@@ -76,10 +76,9 @@ typedef struct {
  * Create default configuration for a supported sample rate and its default
  * no-padding power-of-two FFT grid.
  *
- * Low-latency 8ms-hop grid is the default at 8/16 kHz as of 2026-08-02
- * (was 16ms-hop/512 at 16 kHz since 04edc42, 2026-03-09; 8 kHz had no
- * alternate before). The 16ms-hop grids (8kHz/256, 16kHz/512) remain
- * supported, non-default options -- see mmse_lsa_validate_config().
+ * The low-latency 8-ms-hop grid is the default at 8/16 kHz. The 16-ms-hop
+ * grids (8kHz/256 and 16kHz/512) remain supported alternatives; see
+ * mmse_lsa_validate_config().
  */
 static inline int mmse_lsa_default_fft_size(int sample_rate) {
     return (sample_rate == 48000) ? 1024
@@ -157,16 +156,11 @@ static inline MmseLsaConfig mmse_lsa_default_config_for_grid(
     config.fft_size = fft_size;
 
     // SPP parameters (sync with Python v3_2_config.yaml)
-    // 16ms-native (mirrors Python's denoisers/v3_2_mmse_lsa.py exemption):
-    // this value was set by the 2026-07-10 musical-noise fix, validated
-    // directly against the 16ms-hop grid (04edc42, 2026-03-09), not the
-    // legacy 10ms grid -- retiming it from a 10ms reference would silently
-    // undo the fix (0.92 -> ~0.875 at the default 16kHz/512 grid).
+    // This value was authored at a 16-ms hop. Retiming it from the 10-ms
+    // reference would change the validated anchor value (0.92 -> ~0.875 at
+    // 16kHz/512).
     config.alpha_xi = mmse_lsa_retime_alpha_ref(0.92f, sample_rate, config.hop_size, 0.016);
-                                 // 2026-07 musical-noise fix (was 0.88): DD ξ-smoothing lever.
-                                 // Shared across all strength presets; damps ξ→SPP jitter (the
-                                 // isolated gain peaks = musical noise). ~free on speech (guard
-                                 // PESQ −0.001). Stationary already used 0.92 → undisturbed.
+                                 // DD ξ smoothing shared by all strengths.
     config.q = 0.5f;
     config.xi_min_db = -20.0f;
 
@@ -177,8 +171,8 @@ static inline MmseLsaConfig mmse_lsa_default_config_for_grid(
     // L=32 is documented in Python's config/v3_2_config.yaml as authored
     // directly against the 16ms hop ("32 幀 × 16ms/hop = 512ms") -- unlike
     // alpha_s/alpha_p/num_init_frames below, which carry no such hop-basis
-    // evidence and stay on the 10ms reference. Mirrors Python's
-    // denoisers/v3_2_mmse_lsa.py fix (2026-08-02).
+    // evidence and stay on the 10-ms reference. This must mirror Python's
+    // denoisers/v3_2_mmse_lsa.py.
     config.L = mmse_lsa_retime_frames_ref(32, sample_rate, config.hop_size, 0.016);
     config.delta_db = 10.0f;
     config.num_init_frames = mmse_lsa_retime_frames(20, sample_rate, config.hop_size);
@@ -199,13 +193,8 @@ static inline MmseLsaConfig mmse_lsa_default_config_for_grid(
     // Gain parameters (sync with Python v3_2_config.yaml)
     config.g_min_db = -30.0f;   /* amplitude dB (/20); = old -15 @ /10 → same 0.0316 floor */
     config.alpha_g = mmse_lsa_retime_alpha(0.88f, sample_rate, config.hop_size);
-    // alpha_attack is UNCONDITIONALLY 16ms-authored (mirrors Python's
-    // denoisers/v3_2_mmse_lsa.py): never YAML-sourced (fixed in code per
-    // config/v3_2_config.yaml's own comment), and its 0.3 default was
-    // introduced by commit b913beb (2026-04-17), which already postdates
-    // the 16ms-hop grid switch (04edc42, 2026-03-09) -- so even this
-    // 'balanced' default is 16ms-authored, unlike alpha_g/alpha_decay above
-    // which genuinely predate the grid switch (2026-01-02/05, 09e74d8-era).
+    // alpha_attack is authored at a 16-ms hop and is fixed in code rather
+    // than loaded from YAML. alpha_g/alpha_decay use the 10-ms reference.
     config.alpha_attack = mmse_lsa_retime_alpha_ref(0.3f, sample_rate, config.hop_size, 0.016);
     config.alpha_decay = mmse_lsa_retime_alpha(0.88f, sample_rate, config.hop_size);
 
@@ -238,10 +227,9 @@ static inline MmseLsaConfig mmse_lsa_config_for_mode_grid(
     MmseLsaConfig config = mmse_lsa_default_config_for_grid(sample_rate, fft_size);
 
     // MILD/MODERATE/AGGRESSIVE's alpha_d/alpha_g/alpha_attack/alpha_decay
-    // overlay values were set by the same 2026-07-10 musical-noise-fix
-    // commit as alpha_xi above, directly against the 16ms-hop grid -- NOT
-    // the legacy 10ms reference mmse_lsa_retime_alpha() assumes. Retiming
-    // them from 10ms silently double-corrects (e.g. mild's alpha_g=0.92
+    // overlay values were authored directly against a 16-ms hop, not the
+    // 10-ms reference mmse_lsa_retime_alpha() assumes. Retiming them from
+    // 10 ms silently double-corrects (e.g. mild's alpha_g=0.92
     // becomes ~0.875 at the default 16kHz/512 grid, the exact pre-fix
     // value). BALANCED is an empty overlay (falls through to `default`
     // below) so its inherited alpha_d/alpha_g/alpha_decay stay on
@@ -250,8 +238,8 @@ static inline MmseLsaConfig mmse_lsa_config_for_mode_grid(
     // one exception: its base 0.3 default is ALSO 16ms-authored (see the
     // dedicated comment on mmse_lsa_default_config_for_grid()'s alpha_attack
     // line), so it is unconditionally 16ms in every mode including BALANCED.
-    // Mirrors Python's core/nr_strength.py + denoisers/v3_2_mmse_lsa.py
-    // `strength` parameter fix (2026-08-02/03).
+    // This must mirror Python's core/nr_strength.py and
+    // denoisers/v3_2_mmse_lsa.py.
     switch (mode) {
     case MMSE_LSA_NR_MILD:
         config.g_min_db      = -20.0f;   /* amplitude dB (/20) → 0.10 floor */
@@ -316,10 +304,8 @@ static inline void mmse_lsa_apply_stationary(MmseLsaConfig* config) {
     config->stationary_floor_beta     = 1.0f;   // remove exactly N
     // residual-noise depth is set by xi_min (NOT g_min); leave natural comfort noise
     config->xi_min_db                 = -22.0f;
-    // This whole overlay (alpha_xi/alpha_d/scene_change_min_frames below) was
-    // added by the 2026-07-05 stationary-mode commit, directly against the
-    // 16ms-hop grid (04edc42, 2026-03-09) -- 16ms-native, not 10ms-legacy
-    // (mirrors Python core/nr_modes.py's stationary overlay).
+    // This overlay was authored at a 16-ms hop and mirrors Python
+    // core/nr_modes.py; do not retime it from the 10-ms reference.
     config->alpha_xi = mmse_lsa_retime_alpha_ref(
         0.92f, config->sample_rate, config->hop_size, 0.016);
     config->g_min_db                  = -30.0f;  // amplitude dB (/20); mostly inert under the bound
@@ -395,9 +381,8 @@ static inline bool mmse_lsa_validate_config(const MmseLsaConfig* config) {
     }
 
     // No-padding project grids: frame == FFT and hop == frame/2. 8 kHz and
-    // 16 kHz each support a low-latency 8ms-hop grid (default, since
-    // 2026-08-02) plus their pre-existing 16ms-hop grid, kept as an
-    // explicit alternate.
+    // 16 kHz each support a low-latency 8-ms-hop default and a 16-ms-hop
+    // alternate.
     if (config->frame_size <= 0 || config->frame_size != config->fft_size) {
         return false;
     }

@@ -1,7 +1,17 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # 監控 Optuna 優化進度
 
-cd /Users/mingyu/Desktop/Code/公司/speech_denoise/results/optimization
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NR_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+RESULTS_DIR="${NR_OPTUNA_RESULTS_DIR:-$NR_ROOT/results/optimization}"
+
+if [ ! -d "$RESULTS_DIR" ]; then
+    echo "尚無 Optuna 結果目錄: $RESULTS_DIR"
+    exit 0
+fi
+cd "$RESULTS_DIR"
 
 echo "=========================================="
 echo "Optuna 優化進度監控"

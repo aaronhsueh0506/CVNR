@@ -1,4 +1,8 @@
-# Part A — C 實作計劃
+# Part A — C 實作計劃（歷史封存）
+
+> 此計畫對應的修改已完成；內容只保留作為設計決策紀錄，不是目前的
+> build、API 或驗證說明。現行使用方式請見根目錄 README 與
+> `docs/c_user_manual_zh_TW.md`。
 
 > 對 Python Part A（commit `7bcdef1`）的 C 端 port。先確認範圍，user 核可後才動。
 

@@ -1,7 +1,12 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # 依序執行所有版本的 Optuna 優化
 
-cd /Users/mingyu/Desktop/Code/公司/speech_denoise
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+NR_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$NR_ROOT"
+mkdir -p results/optimization
 
 N_TRIALS=${1:-100}  # 默認 100 trials
 
@@ -20,7 +25,7 @@ for VERSION in "${VERSIONS[@]}"; do
 
     LOG_FILE="results/optimization/${VERSION}_optuna_$(date +%Y%m%d_%H%M%S).log"
 
-    python3 tools/parameter_optimizer.py \
+    "${PYTHON:-python3}" tools/parameter_optimizer.py \
         --version "$VERSION" \
         --method optuna \
         --n_trials "$N_TRIALS" \

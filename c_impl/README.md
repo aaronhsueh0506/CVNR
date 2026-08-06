@@ -376,7 +376,7 @@ Taylor 近似（小引數 worst ~0.11），會經遞迴平滑放大；屬 fast-m
 
 - **輸入格式**：單聲道（多聲道自動取第一聲道）、8 / 16 / 48 kHz PCM16 或 32-bit float
 - **首 200 ms 需為純噪聲（或無語音）**：用於初始化 MCRA 噪聲底噪，前 `num_init_frames * hop_size` 樣本為 passthrough
-- **Frame / hop 於建立後固定**：`frame_size == fft_size`、`hop_size == frame_size/2`，因此不做 zero-padding。`mmse_lsa_default_config(sample_rate)` 選 8k:256/128、16k:256/128、48k:1024/512；16 kHz 可用 `mmse_lsa_default_config_for_grid(16000, 512)` 選較高延遲的 512/256。example runners 也直接使用輸入 rate 對應的 grid；instance 建立後不可中途切換。
+- **Frame / hop 於建立後固定**：`frame_size == fft_size`、`hop_size == frame_size/2`，因此不做 zero-padding。`mmse_lsa_default_config(sample_rate)` 選 8k:128/64、16k:256/128、48k:1024/512；8 kHz 與 16 kHz 分別可用 `mmse_lsa_default_config_for_grid(8000, 256)`／`mmse_lsa_default_config_for_grid(16000, 512)` 選較高延遲的 256/128 或 512/256。example runners 也直接使用輸入 rate 對應的 grid；instance 建立後不可中途切換。
 - **Streaming 語義**：`mmse_lsa_process()` 是**頻域 API**——每次呼叫吃 `Complex[n_freqs]` 複數頻譜、
   吐 `Complex[n_freqs]`（套用 per-bin gain、相位不變），lib 核心本身**沒有**內部時域緩衝或 OLA；
   窗函數、rFFT、iFFT、50% overlap-add 全部由 caller 負責（見 `example/main.c` 的完整 freq-domain
@@ -419,12 +419,18 @@ Taylor 近似（小引數 worst ~0.11），會經遞迴平滑放大；屬 fast-m
 
 ## 配置參數
 
-| 參數 | 預設值 | 說明 |
+> **數值以 [`docs/c_user_manual_zh_TW.md`](../docs/c_user_manual_zh_TW.md) §4 為準。**
+> 下表只列欄位與用途。多數 EMA 係數與幀數（`alpha_*`、`L`、`num_init_frames`）
+> 在建構時會**依實際 hop retime**，所以這裡標的是「調校時的錨點值」，不是
+> `mmse_lsa_default_config_for_grid()` 實際填進 struct 的值——兩者在 16 kHz/256
+> 就已經不同。要看實際生效的值，讀該節，或直接印出 config。
+
+| 參數 | 調校錨點 | 說明 |
 |------|--------|------|
-| `frame_size` | 等於 `fft_size` | 不補零的 2 次方分析窗；8k→256、16k→256（可選 512）、48k→1024 |
-| `hop_size` | `frame_size / 2` | 固定 50% overlap；各 grid 為 128 / 256 / 512 samples |
+| `frame_size` | 等於 `fft_size` | 不補零的 2 次方分析窗；8k→128（可選 256）、16k→256（可選 512）、48k→1024 |
+| `hop_size` | `frame_size / 2` | 固定 50% overlap |
 | `fft_size` | 依 rate/grid 選擇 | 嚴格等於 frame，不再採「20 ms frame 補到下一個 2 次方」 |
-| `alpha_xi` | 0.92 | 先驗 SNR (ξ) DD 平滑；2026-07 musical-noise fix（was 0.88），全預設共用 |
+| `alpha_xi` | 0.92 | 先驗 SNR (ξ) DD 平滑；2026-07 musical-noise fix（was 0.88） |
 | `q` | 0.5 | 語音先驗機率 |
 | `xi_min_db` | -20 | 先驗 SNR 下限 (dB) |
 | `alpha_s` | 0.95 | MCRA 時間平滑 |
@@ -448,7 +454,8 @@ Taylor 近似（小引數 worst ~0.11），會經遞迴平滑放大；屬 fast-m
 
 | 採樣率 | frame_size | hop_size | fft_size | 延遲 |
 |--------|-----------|----------|----------|------|
-| 8 kHz  | 256 samples | 128 samples | 256  | 32 ms |
+| 8 kHz（預設） | 128 samples | 64 samples | 128 | 16 ms |
+| 8 kHz（可選，較高延遲） | 256 samples | 128 samples | 256 | 32 ms |
 | 16 kHz（預設） | 256 samples | 128 samples | 256 | 16 ms |
 | 16 kHz（可選，較高延遲） | 512 samples | 256 samples | 512 | 32 ms |
 | 48 kHz | 1024 samples | 512 samples | 1024 | 21.333 ms |

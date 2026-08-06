@@ -1,8 +1,8 @@
-# 🎛️ 語音降噪參數調整指南
+# 語音降噪參數調整指南
 
 > **適用版本**: v4.2 · **主推演算法**: V3-2 OMLSA（Python `v3_2_mmse_lsa.py` / C `c_impl/`）
 >
-> 本指南提供 release 場景下的快速調參，含四個核心旋鈕與場景切換相關參數。遇到本模組「不適用情境」（風聲 / 衝擊 / 迴響 / 重疊干擾），**請勿嘗試調參**，參見 [README.md](README.md#-演算法限制-limitations)。
+> 本指南提供 release 場景下的快速調參，含四個核心旋鈕與場景切換相關參數。遇到本模組「不適用情境」（風聲 / 衝擊 / 迴響 / 重疊干擾），**請勿嘗試調參**，參見 [README.md](../README.md#limitations)。
 
 ---
 
@@ -161,7 +161,7 @@ IMCRA/MCRA 的 scene change detector 用「高頻 gamma + spectral flatness」�
 
 ## 🚫 什麼時候不要調參
 
-下列情境屬於 OMLSA **本質限制**，無論怎麼調都無法解決——參見 [README.md#-演算法限制-limitations](README.md#演算法限制-limitations)：
+下列情境屬於 OMLSA **本質限制**，無論怎麼調都無法解決——參見 [README limitations](../README.md#limitations)：
 
 - **風聲 / buffeting**（強風直吹、車窗漏風）— 需硬體風罩或 NN 模型
 - **衝擊噪聲**（關門、敲擊、碗盤）— 預設管線無啟用的脈衝偵測（`core/transient_suppressor.py` 存在但 `v4_config.yaml` 預設 `enable: false`）
@@ -198,7 +198,7 @@ IMCRA/MCRA 的 scene change detector 用「高頻 gamma + spectral flatness」�
 
 ## 🔗 相關文檔
 
-- [README.md](README.md) — 項目總覽、演算法限制、完整調參章節
-- [ALGORITHMS_EXPLANATION.md](ALGORITHMS_EXPLANATION.md) — 算法原理詳解
-- [c_impl/README.md](c_impl/README.md) — C 實作使用方法與同等調參指引
-- [config/](config/) — 各版本配置文件
+- [README.md](../README.md) — 項目總覽與現行 release contract
+- [歷史演算法說明](archive/algorithm_history.md) — 只供理解早期版本
+- [C 使用說明](../c_impl/README.md) — C 實作使用方法與同等調參指引
+- [config/](../config/) — 各版本配置文件

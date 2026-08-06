@@ -1,4 +1,12 @@
-# Optional dependencies for plotting/diagnostic tooling (utils/visualization.py,
+# Runtime dependencies plus optional test/benchmark/plotting tooling.
+-r requirements.txt
+
+pytest
+librosa
+pesq
+pystoi
+
+# Plotting/diagnostic tooling (utils/visualization.py,
 # tools/ablate_nr_music.py, tools/diagnose_algorithm.py, tools/generate_csv_results.py,
 # results/plot_results.py). Not required to run the core NR algorithm, its C port,
 # or the pytest unit-test suite -- utils/__init__.py lazily imports visualization.py

@@ -11,7 +11,7 @@
 **Audio_ALG mono C (`audio_pipeline.c`) 與 4ch C (`4aec_nr_res.c`) 原本各自硬編碼覆寫
 `alpha_d=0.95`/`alpha_attack=0.3`（10ms 基準換算，pre-fix 公式），蓋過 `mmse_lsa_config_for_mode_grid()`
 本身已經正確的 canonical 預設（`alpha_d=0.7` YAML 基礎值、`alpha_attack` 無條件 16ms 換算 —— 上一則
-[4.5.0] 追加修復的同一批常數）。**這正是本專案這輪 Codex review 抓到的：C 端「覆寫」實際上是在對抗自己
+[4.5.0] 追加修復的同一批常數）。**這正是本專案這輪 source audit 抓到的：C 端「覆寫」實際上是在對抗自己
 已經修好的 canonical 預設，導致 mono Python（已於本輪改用 canonical）、mono C、4ch C 三者 effective
 config 分岔。
 
@@ -53,7 +53,7 @@ VCTK 那條腿的 STOI 退步是真的，但 VCTK 是純去噪語料，不含回
 
 **[4.5.0] 對 `alpha_attack` 的判斷有誤：`balanced` 並非真正 10ms 授權**
 
-Codex review（2026-08-03）指出 `alpha_attack=0.3` 在 `strength=='balanced'` 時仍套用 10ms 基準換算，
+source audit（2026-08-03）指出 `alpha_attack=0.3` 在 `strength=='balanced'` 時仍套用 10ms 基準換算，
 但其真正授權基準其實是 16ms——與 [4.5.0] 對 `alpha_g`/`alpha_decay`/`alpha_d` 的判斷（那三者確實是
 10ms 授權，`balanced` 换算無誤）不同類。逐一以 git 歷史核實：
 
@@ -843,7 +843,7 @@ if self.counter >= self.L:
 7. `denoisers/v4_imcra_omlsa.py` - 全面優化
 8. `examples/process_audio.py` - 移除 V3-1，添加參數支持
 
-詳見：[PROJECT_STATUS.md](PROJECT_STATUS.md)
+詳見歷史文件 `PROJECT_STATUS.md`（已自目前原始碼樹移除）。
 
 ---
 
@@ -1150,7 +1150,4 @@ output[start:end] += frame  # 不重複加窗
 
 ## 貢獻者
 
-- 主要開發：Claude Sonnet 4.5
-- 測試與反饋：mingyu
-
-感謝所有貢獻者！
+完整貢獻記錄以 repository commit history 為準。

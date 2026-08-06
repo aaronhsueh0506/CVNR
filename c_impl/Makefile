@@ -944,7 +944,7 @@ $(OBJ_DIR)/test_config_validation.o: $(TEST_DIR)/test_config_validation.c | _cfg
 # =============================================================================
 # Python<->C effective-config parity dump (2026-08-03): prints the canonical
 # MmseLsaConfig for every shipped (grid, strength) combination so
-# ../test_config_parity.py can certify it against process_audio.py's
+# ../tests/test_config_parity.py can certify it against process_audio.py's
 # build_v3_2_base_params()+apply_strength() composition. See
 # test/test_config_parity.c's own header comment.
 # =============================================================================
