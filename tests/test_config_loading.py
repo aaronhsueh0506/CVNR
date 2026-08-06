@@ -10,6 +10,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import process_audio
+from core.frame_processor import FrameProcessor
 
 
 def test_missing_yaml_dependency_is_fatal(monkeypatch, tmp_path):
@@ -38,3 +39,25 @@ def test_valid_mapping_loads(tmp_path):
     assert process_audio.load_config(str(config)) == {
         "audio": {"sample_rate": 16000}
     }
+
+
+@pytest.mark.parametrize(
+    "sample_rate,expected",
+    [
+        (8000, (128, 64, 128)),
+        (16000, (256, 128, 256)),
+        (48000, (1024, 512, 1024)),
+    ],
+)
+def test_frame_processor_uses_project_default_grid(sample_rate, expected):
+    processor = FrameProcessor(sample_rate=sample_rate)
+    assert (
+        processor.frame_size,
+        processor.frame_shift,
+        processor.fft_size,
+    ) == expected
+
+
+def test_frame_processor_rejects_partial_explicit_grid():
+    with pytest.raises(ValueError, match="must be set together"):
+        FrameProcessor(sample_rate=16000, fft_size=512)

@@ -4,6 +4,18 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [Unreleased] - 2026-08-06 · Python public default-grid alignment
+
+### 修復 (Fixed)
+
+- Exported `core.FrameProcessor` now resolves omitted dimensions through the
+  same project grid table as the denoisers: 8 kHz `128/64`, 16 kHz `256/128`,
+  and 48 kHz `1024/512`. Its old constructor defaults silently selected the
+  retired 16 kHz `512/256` default and made `FrameProcessor(sample_rate=48000)`
+  invalid unless all dimensions were repeated manually. Partial explicit
+  grids are now rejected; callers must either omit all three dimensions or
+  provide `frame_size`, `frame_shift`, and `fft_size` together.
+
 ## [Unreleased] - 2026-08-03 · Audio_ALG C pipeline NR tuning A/B 決策：改用 canonical（B）
 
 ### 決策 (Decided)

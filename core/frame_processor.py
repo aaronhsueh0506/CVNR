@@ -6,7 +6,7 @@ import math
 import numpy as np
 from typing import Tuple, Optional
 
-from .signal_grid import validate_signal_grid
+from .signal_grid import resolve_signal_grid, validate_signal_grid
 
 
 class FrameProcessor:
@@ -15,20 +15,27 @@ class FrameProcessor:
 
     參數:
         sample_rate: 採樣率 (Hz)
-        frame_size: 幀長 (samples, 512 @ 16kHz)
-        frame_shift: 幀移 (samples, 256 @ 16kHz)
-        fft_size: FFT 點數
+        frame_size: 幀長；省略時使用 sample_rate 的專案預設 grid
+        frame_shift: 幀移；省略時使用 frame_size / 2
+        fft_size: FFT 點數；省略時使用 sample_rate 的專案預設 grid
         window_type: 窗函數類型 ('hanning', 'hamming', 'blackman')
     """
 
     def __init__(
         self,
         sample_rate: int = 16000,
-        frame_size: int = 512,
-        frame_shift: int = 256,
-        fft_size: int = 512,
+        frame_size: Optional[int] = None,
+        frame_shift: Optional[int] = None,
+        fft_size: Optional[int] = None,
         window_type: str = 'hanning'
     ):
+        if frame_size is None and frame_shift is None and fft_size is None:
+            frame_size, frame_shift, fft_size = resolve_signal_grid(sample_rate)
+        elif None in (frame_size, frame_shift, fft_size):
+            raise ValueError(
+                "frame_size, frame_shift, and fft_size must be set together"
+            )
+
         self.sample_rate = sample_rate
         self.fft_size = fft_size
 
