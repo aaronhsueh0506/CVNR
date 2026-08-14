@@ -11,9 +11,10 @@
 - Added `tools/score_wav_directories.py` for scoring already-generated model
   output without invoking the NR algorithm. It requires matching clean and
   enhanced WAV trees; an optional noisy tree adds input baselines and
-  improvement values. Reports include PESQ-WB/STOI at 16 kHz and native-rate
-  SI-SDR/segmental-SNR/LSD in per-file CSV plus aggregate CSV/JSON.
-- File inventories, channel counts, sample rates, lengths, and metric outputs
+  improvement values. All signals are resampled to a common 16 kHz scoring
+  domain before every metric, including SI-SDR/segmental-SNR/LSD, so 48 kHz
+  clean/noisy references can be compared directly with 16 kHz enhanced WAVs.
+- File inventories, channel counts, post-resample durations, and metric outputs
   are validated fail-closed. The scorer does not automatically align signals,
   so processing latency remains visible rather than being hidden by evaluation.
 

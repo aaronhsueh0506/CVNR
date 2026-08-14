@@ -6,10 +6,11 @@ with identical relative paths.  ``--clean-dir`` and ``--enhanced-dir`` are
 required; ``--noisy-dir`` is optional and enables input-baseline and
 improvement metrics.
 
-PESQ-WB and STOI are evaluated at 16 kHz.  SI-SDR, segmental SNR, and LSD are
-evaluated at the WAVs' native sample rate.  The three signals are never shifted
-or independently resampled, so an algorithmic delay remains visible in the
-scores.
+All input signals are independently sample-rate converted to the common 16 kHz
+scoring domain before their lengths are checked.  Every metric (PESQ-WB, STOI,
+SI-SDR, segmental SNR, and LSD) is evaluated on those same 16 kHz samples.
+No delay estimation or time shifting is performed, so algorithmic delay remains
+visible in the scores.
 """
 
 import argparse
@@ -114,7 +115,13 @@ def _read_mono(path):
     return audio, int(sample_rate)
 
 
-def load_case(case, length_tolerance_samples=0):
+def load_case(case, length_tolerance_samples=0, score_sample_rate=PESQ_STOI_SR):
+    """Load one case and convert every role to the common scoring rate.
+
+    ``length_tolerance_samples`` is expressed in samples at
+    ``score_sample_rate``.  Resampling preserves each signal's time origin; it
+    does not estimate or compensate delay between the roles.
+    """
     signals = {}
     sample_rates = {}
     for role in ("clean", "enhanced", "noisy"):
@@ -123,25 +130,29 @@ def load_case(case, length_tolerance_samples=0):
             continue
         signals[role], sample_rates[role] = _read_mono(path)
 
-    if len(set(sample_rates.values())) != 1:
-        raise ValueError(
-            "sample rates differ for {}: {}".format(case["relative_path"], sample_rates)
-        )
+    if score_sample_rate <= 0:
+        raise ValueError("score_sample_rate must be positive")
+
+    signals = {
+        role: _resample(signal, sample_rates[role], score_sample_rate)
+        for role, signal in signals.items()
+    }
 
     lengths = {role: len(signal) for role, signal in signals.items()}
     spread = max(lengths.values()) - min(lengths.values())
     if spread > length_tolerance_samples:
         raise ValueError(
-            "lengths differ for {}: {} (tolerance={} samples); no automatic "
-            "alignment is performed".format(
-                case["relative_path"], lengths, length_tolerance_samples
+            "durations differ after resampling for {}: {} at {} Hz "
+            "(tolerance={} samples); no automatic alignment is performed".format(
+                case["relative_path"], lengths, score_sample_rate,
+                length_tolerance_samples
             )
         )
     if spread:
         n = min(lengths.values())
         signals = {role: signal[:n] for role, signal in signals.items()}
 
-    return signals, next(iter(sample_rates.values()))
+    return signals, score_sample_rate
 
 
 def _resample(signal, source_rate, target_rate=PESQ_STOI_SR):
@@ -206,18 +217,24 @@ def log_spectral_distance(estimate, reference, sample_rate, frame_ms=32.0):
 
 
 def score_signal(candidate, clean, sample_rate):
-    clean_16k = _resample(clean, sample_rate)
-    candidate_16k = _resample(candidate, sample_rate)
-    n_16k = min(len(clean_16k), len(candidate_16k))
-    clean_16k = clean_16k[:n_16k]
-    candidate_16k = candidate_16k[:n_16k]
+    clean_scored = _resample(clean, sample_rate, PESQ_STOI_SR)
+    candidate_scored = _resample(candidate, sample_rate, PESQ_STOI_SR)
+    n_scored = min(len(clean_scored), len(candidate_scored))
+    clean_scored = clean_scored[:n_scored]
+    candidate_scored = candidate_scored[:n_scored]
 
     metrics = {
-        "pesq": float(pesq_fn(PESQ_STOI_SR, clean_16k, candidate_16k, "wb")),
-        "stoi": float(stoi_fn(clean_16k, candidate_16k, PESQ_STOI_SR, extended=False)),
-        "si_sdr": si_sdr(candidate, clean),
-        "seg_snr": segmental_snr(candidate, clean, sample_rate),
-        "lsd_db": log_spectral_distance(candidate, clean, sample_rate),
+        "pesq": float(pesq_fn(PESQ_STOI_SR, clean_scored, candidate_scored, "wb")),
+        "stoi": float(stoi_fn(
+            clean_scored, candidate_scored, PESQ_STOI_SR, extended=False
+        )),
+        "si_sdr": si_sdr(candidate_scored, clean_scored),
+        "seg_snr": segmental_snr(
+            candidate_scored, clean_scored, PESQ_STOI_SR
+        ),
+        "lsd_db": log_spectral_distance(
+            candidate_scored, clean_scored, PESQ_STOI_SR
+        ),
     }
     for name, value in metrics.items():
         if not np.isfinite(value):
@@ -358,7 +375,10 @@ def build_arg_parser():
         "--length-tolerance-samples",
         type=int,
         default=0,
-        help="Permit and trim only this many tail samples (default: 0). Does not align signals.",
+        help=(
+            "Permit and trim only this many 16 kHz tail samples (default: 0). "
+            "Does not align signals."
+        ),
     )
     parser.add_argument("--worst-n", type=int, default=10)
     parser.add_argument("--progress-every", type=int, default=10)
@@ -408,8 +428,9 @@ def main(argv=None):
         "noisy_dir": str(Path(args.noisy_dir).resolve()) if args.noisy_dir else None,
         "n_cases": len(records),
         "length_tolerance_samples": args.length_tolerance_samples,
-        "pesq_stoi_sample_rate": PESQ_STOI_SR,
-        "native_metrics": ["si_sdr", "seg_snr", "lsd_db"],
+        "score_sample_rate": PESQ_STOI_SR,
+        "metrics_at_score_sample_rate": list(ABSOLUTE_METRICS),
+        "resample_before_length_check": True,
         "automatic_alignment": False,
         "elapsed_sec": time.time() - start,
     }

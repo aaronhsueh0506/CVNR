@@ -98,9 +98,11 @@ python tools/score_wav_directories.py \
 ```
 
 The output directory contains `summary.json`, `summary.csv`, and
-`per_file.csv`. PESQ-WB and STOI use a common 16 kHz scoring sidechain;
-SI-SDR, segmental SNR, and LSD use the native WAV sample rate. This scorer
-requires the PESQ/STOI packages from `requirements-dev.txt`.
+`per_file.csv`. Clean, enhanced, and optional noisy WAVs may have different
+sample rates; each is resampled to the common 16 kHz scoring domain before
+length validation, and all metrics use those same 16 kHz samples. Resampling
+does not estimate or remove delay. This scorer requires the PESQ/STOI packages
+from `requirements-dev.txt`.
 
 ## Limitations
 

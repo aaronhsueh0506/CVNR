@@ -46,21 +46,22 @@ def test_discover_cases_rejects_missing_or_extra_files(tmp_path):
         score.discover_cases(clean, enhanced)
 
 
-def test_load_case_rejects_sample_rate_channel_and_length_mismatch(tmp_path):
+def test_load_case_resamples_mixed_rates_and_rejects_channel_or_duration_mismatch(tmp_path):
     clean = tmp_path / "clean.wav"
     enhanced = tmp_path / "enhanced.wav"
     write_wav(clean, tone())
     write_wav(enhanced, tone(48000), 48000)
     case = {"relative_path": "x.wav", "clean": clean, "enhanced": enhanced, "noisy": None}
-    with pytest.raises(ValueError, match="sample rates differ"):
-        score.load_case(case)
+    signals, sample_rate = score.load_case(case)
+    assert sample_rate == 16000
+    assert len(signals["clean"]) == len(signals["enhanced"]) == 8000
 
     write_wav(enhanced, np.column_stack((tone(), tone())))
     with pytest.raises(ValueError, match="mono WAV required"):
         score.load_case(case)
 
     write_wav(enhanced, tone()[:-2])
-    with pytest.raises(ValueError, match="lengths differ"):
+    with pytest.raises(ValueError, match="durations differ after resampling"):
         score.load_case(case)
     signals, _ = score.load_case(case, length_tolerance_samples=2)
     assert len(signals["clean"]) == len(signals["enhanced"])
@@ -75,7 +76,7 @@ def test_identity_native_metrics_have_expected_direction():
     assert score.log_spectral_distance(changed, clean, 16000) > 0.0
 
 
-def test_score_signal_resamples_only_perceptual_branch(monkeypatch):
+def test_score_signal_resamples_all_metrics_to_16k(monkeypatch):
     calls = {}
 
     def fake_pesq(sample_rate, clean, candidate, mode):
@@ -88,11 +89,54 @@ def test_score_signal_resamples_only_perceptual_branch(monkeypatch):
 
     monkeypatch.setattr(score, "pesq_fn", fake_pesq)
     monkeypatch.setattr(score, "stoi_fn", fake_stoi)
+    native_calls = {}
+
+    def fake_si_sdr(candidate, clean):
+        native_calls["si_sdr"] = (len(candidate), len(clean))
+        return 1.0
+
+    def fake_seg_snr(candidate, clean, sample_rate):
+        native_calls["seg_snr"] = (sample_rate, len(candidate), len(clean))
+        return 2.0
+
+    def fake_lsd(candidate, clean, sample_rate):
+        native_calls["lsd_db"] = (sample_rate, len(candidate), len(clean))
+        return 3.0
+
+    monkeypatch.setattr(score, "si_sdr", fake_si_sdr)
+    monkeypatch.setattr(score, "segmental_snr", fake_seg_snr)
+    monkeypatch.setattr(score, "log_spectral_distance", fake_lsd)
     clean = tone(48000)
     result = score.score_signal(clean * 0.9, clean, 48000)
     assert calls["pesq"] == (16000, 8000, 8000, "wb")
     assert calls["stoi"] == (16000, 8000, 8000, False)
+    assert native_calls["si_sdr"] == (8000, 8000)
+    assert native_calls["seg_snr"] == (16000, 8000, 8000)
+    assert native_calls["lsd_db"] == (16000, 8000, 8000)
     assert set(result) == set(score.ABSOLUTE_METRICS)
+
+
+def test_score_case_accepts_48k_clean_noisy_and_16k_enhanced(monkeypatch, tmp_path):
+    monkeypatch.setattr(score, "pesq_fn", lambda *args, **kwargs: 3.0)
+    monkeypatch.setattr(score, "stoi_fn", lambda *args, **kwargs: 0.9)
+    paths = {
+        "clean": tmp_path / "clean.wav",
+        "noisy": tmp_path / "noisy.wav",
+        "enhanced": tmp_path / "enhanced.wav",
+    }
+    write_wav(paths["clean"], tone(48000), 48000)
+    write_wav(paths["noisy"], tone(48000) * 0.8, 48000)
+    write_wav(paths["enhanced"], tone(16000) * 0.9, 16000)
+
+    record = score.score_case({"relative_path": "mixed-rate.wav", **paths})
+
+    assert record["sample_rate"] == 16000
+    assert record["n_samples"] == 8000
+    assert set(score.ABSOLUTE_METRICS).issubset({
+        key.removeprefix("enhanced_")
+        for key in record
+        if key.startswith("enhanced_")
+    })
 
 
 def test_score_case_noisy_adds_positive_improvements(monkeypatch, tmp_path):
