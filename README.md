@@ -84,6 +84,24 @@ missing metrics before producing a verdict. PESQ/STOI are regression metrics,
 not proof of subjective quality; release candidates still require the agreed
 listening and target-device checks.
 
+To score WAV files already produced by any enhancement model, without running
+this NR implementation, use the directory scorer. Relative WAV paths must
+match exactly; it never performs automatic delay alignment. The noisy input is
+optional, but supplying it adds baseline and improvement metrics:
+
+```bash
+python tools/score_wav_directories.py \
+  --clean-dir /path/to/clean \
+  --enhanced-dir /path/to/enhanced \
+  --noisy-dir /path/to/noisy \
+  --output-dir results/model_name
+```
+
+The output directory contains `summary.json`, `summary.csv`, and
+`per_file.csv`. PESQ-WB and STOI use a common 16 kHz scoring sidechain;
+SI-SDR, segmental SNR, and LSD use the native WAV sample rate. This scorer
+requires the PESQ/STOI packages from `requirements-dev.txt`.
+
 ## Limitations
 
 - The first approximately 200 ms should contain noise or very little speech

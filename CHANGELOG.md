@@ -4,6 +4,19 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [Unreleased] - 2026-08-14 · Standalone WAV directory scoring
+
+### 新增 (Added)
+
+- Added `tools/score_wav_directories.py` for scoring already-generated model
+  output without invoking the NR algorithm. It requires matching clean and
+  enhanced WAV trees; an optional noisy tree adds input baselines and
+  improvement values. Reports include PESQ-WB/STOI at 16 kHz and native-rate
+  SI-SDR/segmental-SNR/LSD in per-file CSV plus aggregate CSV/JSON.
+- File inventories, channel counts, sample rates, lengths, and metric outputs
+  are validated fail-closed. The scorer does not automatically align signals,
+  so processing latency remains visible rather than being hidden by evaluation.
+
 ## [Unreleased] - 2026-08-06 · Python public default-grid alignment
 
 ### 修復 (Fixed)
