@@ -27,7 +27,7 @@ pre code{background:none;padding:0}
 
 <h2>概要</h2>
 <p><code>MmseLsaDenoiser</code>(V3-2)是 OM-LSA 族降噪核心:Ephraim-Malah 1985 MMSE-LSA 增益 + Cohen&amp;Berdugo 2001 MCRA 噪聲估計 + SPP。<b>頻域 I/O</b>:輸入/輸出都是 <code>Complex[n_freqs]</code> 頻譜,window / forward FFT / inverse FFT / OLA 全由呼叫端負責(mono pipeline 直接餵 AEC 的 <code>ctx.error_spec</code>,一次 FFT 走完 AEC+NR+RES 三級)。純 DSP、無 NN/NPU 成分;全部 state 收在 <code>MmseLsaDenoiser</code> C struct(caller pool 或 heap)。</p>
-<p>mono pipeline(<code>pipelines/audio_pipeline.c</code>)實際使用的 seam 是 <b><code>mmse_lsa_process_gain()</code> + <code>mmse_lsa_get_gain()</code></b>:算出每 bin 增益但不套用,並可把外部殘留回音 PSD R² 折進噪聲底(unified gain,ξ = S²/(N²+R²));MCRA 追蹤器只吃乾淨功率,R² 不污染噪聲估計。下游再取 <code>g_total = min(G_nr, G_res)</code>。</p>
+<p>mono pipeline(<code>pipelines/mono_aec_nr_res/audio_pipeline.c</code>)實際使用的 seam 是 <b><code>mmse_lsa_process_gain()</code> + <code>mmse_lsa_get_gain()</code></b>:算出每 bin 增益但不套用,並可把外部殘留回音 PSD R² 折進噪聲底(unified gain,ξ = S²/(N²+R²));MCRA 追蹤器只吃乾淨功率,R² 不污染噪聲估計。下游再取 <code>g_total = min(G_nr, G_res)</code>。</p>
 <div class="tblwrap"><table>
 <tr><th>sr</th><th>fft_size(白名單)</th><th>hop</th><th>n_freqs</th><th>L(balanced 實測)</th><th>num_init_frames</th><th>mmse_lsa_get_mem_size(balanced 實測)</th></tr>
 <tr><td>8000</td><td>128(預設)/ 256</td><td>64 / 128</td><td>65 / 129</td><td>64 / 32</td><td>25 / 13</td><td>29,760 / 35,424 B</td></tr>
@@ -145,7 +145,7 @@ caller(合成)  g_total=min(gain,G_res)  同左                      同左
 <h2>相關檔案與測試路徑</h2>
 <ul>
 <li>API:<code>lib/nr/c_impl/include/mmse_lsa_denoiser.h</code>、<code>mmse_lsa_types.h</code>(config/preset/驗證全在此);實作:<code>src/mmse_lsa_denoiser.c</code>、<code>src/mcra_noise_estimator.c</code>、<code>src/spp_estimator.c</code></li>
-<li>使用端:<code>pipelines/audio_pipeline.c</code>(mono pipeline 的 NR seam;overlay 註解含 2026-08-03 A/B 決策依據)、<code>lib/nr/c_impl/example/main_mem.c</code>(獨立 freq-domain runner,含 <code>build_sqrt_hann()</code>)</li>
+<li>使用端:<code>pipelines/mono_aec_nr_res/audio_pipeline.c</code>(mono pipeline 的 NR seam;overlay 註解含 2026-08-03 A/B 決策依據)、<code>lib/nr/c_impl/example/main_mem.c</code>(獨立 freq-domain runner,含 <code>build_sqrt_hann()</code>)</li>
 <li>文件:<code>lib/nr/docs/c_user_manual_zh_TW.md</code>、<code>lib/nr/c_impl/README.md</code></li>
 <li>測試(本頁撰寫時實跑):<code>make test-config</code> 186 檢查全過(ALL CHECKS PASSED;config 驗證 + gain-borrow 行為)/ <code>make test-config-parity</code> 3 格點 × 4 strength 的 12 列常數 CSV 輸出,exit 0(供 Python 端 parity 比對)</li>
 </ul>
