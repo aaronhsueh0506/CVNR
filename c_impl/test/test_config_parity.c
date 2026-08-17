@@ -5,7 +5,7 @@
  * following the A/B tuning-provenance investigation that found the C mono/
  * 4ch pipelines had been silently overriding this canonical default back to
  * a stale, worse-measured legacy tuning -- see NR/CHANGELOG.md and
- * Audio_ALG/pipelines/audio_pipeline.c's matching comment).
+ * Audio_ALG/pipelines/mono_aec_nr_res/audio_pipeline.c's matching comment).
  *
  * This intentionally does NOT link aec.c or any pipeline code -- it only
  * exercises mmse_lsa_config_for_mode_grid(), the single function both
@@ -14,7 +14,7 @@
  *
  * Output: one CSV line per (sample_rate, fft_size, strength) to stdout,
  * fields in a fixed order (see the header row this program prints first).
- * Grids match Audio_ALG/pipelines/4ch_pipelines/README.md's three checked-in
+ * Grids match Audio_ALG/pipelines/4ch_aec_bf_nr_res/README.md's three checked-in
  * grids: 16k/256 (default, 8ms hop), 16k/512 (alternate, 16ms hop),
  * 48k/1024 (10.67ms hop). Consumed by NR/tests/test_config_parity.py.
  *
