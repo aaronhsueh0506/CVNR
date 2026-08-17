@@ -15,9 +15,8 @@ class FrameProcessor:
 
     參數:
         sample_rate: 採樣率 (Hz)
-        frame_size: 幀長；省略時使用 sample_rate 的專案預設 grid
-        frame_shift: 幀移；省略時使用 frame_size / 2
-        fft_size: FFT 點數；省略時使用 sample_rate 的專案預設 grid
+        frame_size/frame_shift/fft_size: 三者必須一起提供；三者全部省略時
+            使用 sample_rate 的專案預設 grid
         window_type: 窗函數類型 ('hanning', 'hamming', 'blackman')
     """
 
