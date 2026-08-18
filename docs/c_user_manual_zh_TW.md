@@ -379,12 +379,12 @@ instance 之間不共用可變狀態，可各自在不同 thread 使用。多條
 建置 archive（在 repo 根目錄執行）：
 
 ```bash
-make -C c_impl BACKEND=kiss lib          # 可攜參考 backend
-make -C c_impl BACKEND=ne10 lib          # NEON backend（目標平台交付組合）
-make -C c_impl BACKEND=kiss              # 加建 denoise_wav
-make -C c_impl BACKEND=kiss mem          # 加建 denoise_mem（static memory 示範）
-make -C c_impl BACKEND=kiss debug        # standard math、關閉最佳化開關
-make -C c_impl BACKEND=kiss WERROR=1     # 對本 repo 原始碼開 -Werror
+make -C c_impl lib                       # 預設 BACKEND=ne10：NEON backend（目標平台交付組合）
+make -C c_impl BACKEND=kiss lib          # 可攜、逐位元可重現的參考 backend（顯式指定）
+make -C c_impl                           # 加建 denoise_wav
+make -C c_impl mem                       # 加建 denoise_mem（static memory 示範）
+make -C c_impl debug                     # standard math、關閉最佳化開關
+make -C c_impl WERROR=1                  # 對本 repo 原始碼開 -Werror
 make -C c_impl EXTRA_CFLAGS="-DUSE_FAST_PERCENTILE"   # 較小的 MCRA 初始化記憶體
 make -C c_impl clean
 ```
@@ -392,20 +392,30 @@ make -C c_impl clean
 取得產出路徑：
 
 ```bash
-make -s -C c_impl BACKEND=kiss print-lib-path   # libmmse_lsa.a 的絕對路徑
-make -s -C c_impl BACKEND=kiss print-bin-dir    # 執行檔所在目錄
-make -C c_impl BACKEND=kiss publish             # 穩定的 dist/<backend>/current/ 交付路徑
+make -s -C c_impl print-lib-path   # libmmse_lsa.a 的絕對路徑
+make -s -C c_impl print-bin-dir    # 執行檔所在目錄
+make -C c_impl publish             # 穩定的 dist/<backend>/current/ 交付路徑
 ```
 
 驗證：
 
 ```bash
-make -C c_impl BACKEND=kiss test-config
-make -C c_impl BACKEND=kiss test-config-parity
+make -C c_impl test-config
+make -C c_impl test-config-parity
 ```
 
-連結你自己的程式（KISS backend；換 NE10 時兩個 `print-lib-path` 都要帶 `BACKEND=ne10`，
-並改用 C++ driver 連結）：
+連結你自己的程式（預設 NE10 backend 含 C++ TU，用 C++ driver 連結）：
+
+```bash
+c++ -std=gnu99 app.c \
+   -Ic_impl/include -I../audio_common/include \
+   $(make -s -C c_impl print-lib-path) \
+   $(make -s -C ../audio_common print-lib-path) \
+   -lm -o app
+```
+
+換成可攜、逐位元可重現的參考 backend 時，兩個 `print-lib-path` 都要帶 `BACKEND=kiss`；
+KISS backend 純 C，可改回 `cc` driver 連結：
 
 ```bash
 cc -std=gnu99 app.c \

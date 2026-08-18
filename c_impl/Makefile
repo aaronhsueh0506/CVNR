@@ -8,23 +8,23 @@
 # ../audio_common layer (consumed as a prebuilt static archive, libaudio_common.a).
 # audio_common exposes two backends behind the SAME public API (fft_wrapper.h):
 #
-#   BACKEND=kiss   portable KISS FFT     (default here; bit-reproducible
-#                                         reference + the Python<->C parity backend)
-#   BACKEND=ne10   ARM NEON NE10 FFT     (embedded target; pass explicitly)
+#   BACKEND=ne10   ARM NEON NE10 FFT     (embedded target; DEFAULT everywhere
+#                                         since 2026-08-18)
+#   BACKEND=kiss   portable KISS FFT     (bit-reproducible reference + the
+#                                         Python<->C parity backend; pass
+#                                         explicitly)
 #
-# This branch's DELIVERABLE is the NE10 backend for the embedded target:
-#     make BACKEND=ne10 ...
-# KISS stays the default (`BACKEND ?= kiss`) so every existing parity / bit-exact
-# gate (tools/parity_nr.py, the debug/standard-math builds, the byte-equal
-# regression checks) keeps its deterministic reference build without callers
-# having to pass anything.
+# The deliverable and the default are both the NE10 backend. Parity /
+# bit-exact gates that need the deterministic KISS reference (tools/
+# parity_nr.py, byte-equal regression checks) must pass BACKEND=kiss
+# explicitly.
 # =============================================================================
 
 CC  ?= gcc
 CXX ?= c++
 AR      ?= ar
 RANLIB  ?= ranlib
-BACKEND ?= kiss
+BACKEND ?= ne10
 
 # Announce the resolved backend on every build (same MAKECMDGOALS guard as
 # audio_common's own banner: print-bin-dir/print-obj-dir/print-lib-path are
@@ -1341,8 +1341,8 @@ help:
 	@echo "  help     - Show this help"
 	@echo ""
 	@echo "Build Configurations:"
-	@echo "  make                                          - Standard build (KISS FFT, fast math)"
-	@echo "  make BACKEND=ne10                             - NE10 R2C/C2R build (ARM NEON, embedded deliverable)"
+	@echo "  make                                          - Standard build (NE10 FFT, ARM NEON, embedded deliverable, fast math - default)"
+	@echo "  make BACKEND=kiss                             - KISS FFT build (portable, bit-reproducible reference)"
 	@echo "  make debug                                    - Debug build (DEBUG=1, matches Python output)"
 	@echo "  make EXTRA_CFLAGS=\"-DUSE_FAST_PERCENTILE\"    - Optimized build (all approximations)"
 	@echo "  make WERROR=1                                  - Opt-in: -Werror for this repo's own sources"

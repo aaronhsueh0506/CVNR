@@ -113,8 +113,8 @@ make EXTRA_CFLAGS="-DUSE_FAST_PERCENTILE"
 ### 靜態記憶體版本（嵌入式，零 malloc）
 
 ```bash
-make mem              # → bin/<backend>-<config-hash>/denoise_mem（範例 example/main_mem.c），預設 BACKEND=kiss
-make mem BACKEND=ne10 # 嵌入式目標的實際 deliverable（ARM NEON）
+make mem              # → bin/<backend>-<config-hash>/denoise_mem（範例 example/main_mem.c），預設 BACKEND=ne10（嵌入式 deliverable，ARM NEON）
+make mem BACKEND=kiss # 可攜、逐位元可重現的參考 backend（顯式指定）
 ```
 
 輸出檔案位於依 backend + 編譯參數雜湊命名的 `bin/<backend>-<config-hash>/` 目錄；

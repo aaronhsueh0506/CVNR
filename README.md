@@ -44,11 +44,12 @@ the CLI never silently falls back to unrelated defaults.
 ## C build and integration
 
 ```bash
-make -C c_impl BACKEND=kiss WERROR=1
-make -C c_impl BACKEND=kiss SIMD=0 test
+# NE10/NEON build (embedded deliverable, default backend everywhere). SIMD=1 is the default.
+make -C c_impl WERROR=1
+make -C c_impl SIMD=0 test
 
-# Embedded NE10/NEON build. SIMD=1 is the default.
-make -C c_impl BACKEND=ne10 SIMD=1 WERROR=1
+# Portable, bit-reproducible reference build (explicit).
+make -C c_impl BACKEND=kiss SIMD=0 WERROR=1
 ```
 
 Use `mmse_lsa_get_mem_size()` followed by `mmse_lsa_init()` for the
@@ -68,8 +69,8 @@ copy an arbitrary file from a stale `bin/` directory.
 python -m pytest tests
 
 # C validation and configuration parity dump.
-make -C c_impl BACKEND=kiss SIMD=0 test
-make -C c_impl BACKEND=kiss test-config-parity
+make -C c_impl SIMD=0 test
+make -C c_impl test-config-parity
 
 # Full VCTK+DEMAND benchmark and fail-closed comparison.
 pip install -r requirements-dev.txt
