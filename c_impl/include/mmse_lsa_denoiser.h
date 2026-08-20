@@ -105,6 +105,45 @@ int mmse_lsa_process_gain(MmseLsaDenoiser* self,
 /** Reset all internal state (call when switching audio streams). */
 void mmse_lsa_reset(MmseLsaDenoiser* self);
 
+/* ── Runtime reconfiguration ──────────────────────────────────────────────
+ * Swap the tuning scalars on a RUNNING instance. Nothing is reallocated, so
+ * the grid (sample_rate / frame_size / hop_size / fft_size) and the two
+ * pool-sizing fields (L, num_init_frames) must equal the instance's current
+ * values; `target` must also pass mmse_lsa_validate_config() in full.
+ *
+ * State is PRESERVED on purpose: the tracked noise floor, the MCRA
+ * min-tracking ring and its scene-change run length, the SPP a-priori-SNR
+ * history and the gain smoothing history all carry on. A strength change is
+ * not a restart, and discarding the noise estimate mid-stream is a worse
+ * artefact than whatever was being tuned away. Use mmse_lsa_reset() when a
+ * restart is what you actually want.
+ *
+ * `target` is taken VERBATIM -- this entry point performs no preset lookup and
+ * no overlay composition. That is deliberate: a caller whose configuration is
+ * a preset plus its own overrides (as both shipped pipelines are) must rebuild
+ * the whole composition and pass the result, or the overrides are silently
+ * reverted to the canonical preset values.
+ *
+ * Call between hops, serialised with mmse_lsa_process(); not thread-safe.
+ * Returns 0 on success, -1 on NULL, an invalid target, or a geometry
+ * mismatch. On -1 NOTHING is written.
+ */
+int mmse_lsa_reconfigure(MmseLsaDenoiser* self, const MmseLsaConfig* target);
+
+/* Convenience wrapper for the STANDALONE case: compose the canonical config
+ * for `mode` on this instance's grid and hand it to mmse_lsa_reconfigure().
+ *
+ * The content axis is orthogonal to strength, so an instance built through
+ * mmse_lsa_apply_stationary() has that overlay RE-APPLIED here -- a strength
+ * change must not silently turn a stationary instance into a hybrid.
+ *
+ * NOT for a caller that layers its own overrides on top of the preset: this
+ * composes the canonical config only, and would revert them. Such a caller
+ * should rebuild its own composition and call mmse_lsa_reconfigure() directly.
+ *
+ * Returns 0, or -1 on NULL, an out-of-enum mode, or a rejected target. */
+int mmse_lsa_set_mode(MmseLsaDenoiser* self, MmseLsaNrMode mode);
+
 /* ============================================================================
  * Query API
  * ========================================================================== */

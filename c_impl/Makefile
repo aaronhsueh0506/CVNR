@@ -713,8 +713,8 @@ CFLAGS    += $(FP_POLICY)
 AC_FWD = BACKEND=$(BACKEND) SIMD=$(SIMD) WERROR=$(WERROR) CC='$(CC)' CXX='$(CXX)' EXTRA_CFLAGS='$(EXTRA_CFLAGS)' NO_STDIO=$(NO_STDIO) TOOLCHAIN_CHECK=$(TOOLCHAIN_CHECK)
 
 ifeq ($(AC_LIB),)
-.PHONY: all mem parity test-config test-config-parity
-all mem parity test-config test-config-parity:
+.PHONY: all mem parity test-config test-config-parity test-reconfigure
+all mem parity test-config test-config-parity test-reconfigure:
 	+@ac="$$($(MAKE) -s --no-print-directory -C $(AC_DIR) $(AC_FWD) print-lib-path)"; \
 	 test -n "$$ac" || { echo "FATAL: could not resolve audio_common archive path (AC_DIR=$(AC_DIR) -- is audio_common present as a sibling of this repo?)" >&2; exit 1; }; \
 	 $(MAKE) --no-print-directory $@ AC_LIB="$$ac"
@@ -931,14 +931,26 @@ $(OBJ_DIR)/main_mem.o: $(EXAMPLE_DIR)/main_mem.c | _cfg_guard
 # =============================================================================
 .PHONY: test-config
 TEST_TARGET = $(BIN_DIR)/test_config_validation
+TEST_RECFG_TARGET = $(BIN_DIR)/test_reconfigure
 test-config: $(TEST_TARGET)
 	"$(abspath $(TEST_TARGET))"
+
+test-reconfigure: $(TEST_RECFG_TARGET)
+	"$(abspath $(TEST_RECFG_TARGET))"
 
 $(TEST_TARGET): $(OBJS) $(OBJ_DIR)/test_config_validation.o $(AC_LIB) | _cfg_guard
 	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/test_config_validation.o $(AC_LIB) $(LDFLAGS)
 	@echo "Build complete: $@"
 
+$(TEST_RECFG_TARGET): $(OBJS) $(OBJ_DIR)/test_reconfigure.o $(AC_LIB) | _cfg_guard
+	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/test_reconfigure.o $(AC_LIB) $(LDFLAGS)
+	@echo "Build complete: $@"
+
+
 $(OBJ_DIR)/test_config_validation.o: $(TEST_DIR)/test_config_validation.c | _cfg_guard
+	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
+
+$(OBJ_DIR)/test_reconfigure.o: $(TEST_DIR)/test_reconfigure.c | _cfg_guard
 	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
 
 # =============================================================================

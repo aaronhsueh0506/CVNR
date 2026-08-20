@@ -27,6 +27,15 @@ typedef enum {
     MMSE_LSA_NR_AGGRESSIVE = 3    // Deepest noise removal (g_min -40)
 } MmseLsaNrMode;
 
+/* The mode whitelist, in one place. Every runtime entry point that accepts a
+ * mode needs to REFUSE an out-of-enum value rather than let it reach
+ * mmse_lsa_config_for_mode_grid(), whose `default:` silently yields balanced.
+ * Declared beside the enum so a fifth mode is one edit, not one per setter. */
+static inline bool mmse_lsa_nr_mode_is_valid(MmseLsaNrMode mode) {
+    return mode == MMSE_LSA_NR_MILD || mode == MMSE_LSA_NR_MODERATE ||
+           mode == MMSE_LSA_NR_BALANCED || mode == MMSE_LSA_NR_AGGRESSIVE;
+}
+
 /**
  * Configuration structure for MMSE-LSA denoiser
  */

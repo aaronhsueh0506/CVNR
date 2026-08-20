@@ -67,6 +67,24 @@ for (每個 hop) {
 mmse_lsa_destroy(d);   /* mmse_lsa_init 實例為 no-op */</code></pre>
 <p class="small">獨立使用(不外接 RES)可改用 <code>mmse_lsa_process(d, spec_in, spec_out)</code>:直接把增益套在頻譜上,可 in-place。查詢:<code>mmse_lsa_get_spp/get_noise_psd/get_gain/is_initialized/debug_status</code>。切換音訊流呼叫 <code>mmse_lsa_reset()</code>。</p>
 
+<p><b>執行期重設定</b>(在 running instance 上換 tuning,不重建、不重新配置記憶體):</p>
+<pre><code>int mmse_lsa_reconfigure(MmseLsaDenoiser* self, const MmseLsaConfig* target);
+int mmse_lsa_set_mode(MmseLsaDenoiser* self, MmseLsaNrMode mode);
+
+/* A. standalone:直接換強度 */
+if (mmse_lsa_set_mode(d, MMSE_LSA_NR_AGGRESSIVE) != 0) { /* 引數不合法 */ }
+
+/* B. 自己疊了覆寫的呼叫端(兩條出貨 pipeline 都屬此類):重組整份組態再交出去 */
+MmseLsaConfig target = mmse_lsa_config_for_mode_grid(sr, fft_size, MMSE_LSA_NR_AGGRESSIVE);
+target.broadband_threshold = 0.8f;                           /* 我方覆寫 */
+target.L = mmse_lsa_retime_frames(150, sr, target.hop_size); /* 我方覆寫 */
+target.alpha_decay = target.alpha_g;                         /* 我方覆寫 */
+if (mmse_lsa_reconfigure(d, &amp;target) != 0) { /* 幾何不符或 target 無效 */ }</code></pre>
+<p class="small">不重新配置任何記憶體,所以格點(<code>sample_rate</code>/<code>frame_size</code>/<code>hop_size</code>/<code>fft_size</code>)與兩個決定 pool 大小的欄位(<code>L</code>、<code>num_init_frames</code>)<b>必須等於實例當下的值</b>,<code>target</code> 另外要完整通過 <code>mmse_lsa_validate_config()</code>。回 0,或 −1(NULL / target 無效 / 幾何不符)且<b>什麼都不寫</b>。在兩個 hop 之間呼叫、與 <code>mmse_lsa_process()</code> 序列化;<b>非 thread-safe</b>。</p>
+<p class="small"><b>狀態刻意保留</b>:追蹤中的噪聲底、MCRA 最小值追蹤環與其 scene-change run length、SPP 的 a-priori-SNR 歷史、增益平滑歷史全部繼續跑。換強度不是重啟——串流中途丟掉噪聲估計造成的 artefact 比原本想調掉的東西更糟;真的要重啟用 <code>mmse_lsa_reset()</code>。</p>
+<p class="small"><code>mmse_lsa_reconfigure()</code> <b>逐字採用</b> <code>target</code>:不做 preset 查表、不做 overlay 疊加。<code>mmse_lsa_set_mode()</code> 則是 <b>standalone 專用</b>的便利包裝——組出該 mode 的 canonical 組態後交給 <code>reconfigure()</code>;內容軸與強度軸正交,所以經 <code>mmse_lsa_apply_stationary()</code> 建立的實例會<b>重新套上</b>該 overlay(換強度不該讓 stationary 實例悄悄變成 hybrid)。</p>
+<p class="small"><b>兩者不可互換。</b>mono 與四麥克風核心兩條出貨 pipeline 的 NR 組態都是「canonical preset <b>加上</b>自己的覆寫」(<code>broadband_threshold</code>、<code>L</code>、<code>alpha_decay</code>,見下方「使用端」)。把裸的 canonical preset 交給 <code>mmse_lsa_set_mode()</code>,在這種實例上會被<b>拒絕</b>(它的 <code>L</code> 不同)——這正是兩條 pipeline 各自提供 setter(<code>audio_pipeline_set_nr_mode()</code> / <code>four_aec_nr_res_set_nr_mode()</code>)重組完整組態再呼叫 <code>mmse_lsa_reconfigure()</code> 的原因。整合時請勿改用便利包裝。回歸測試 <code>make test-reconfigure</code>(<code>test/test_reconfigure.c</code>)。</p>
+
 <h2>Block diagram(一次 <code>mmse_lsa_process_gain()</code> 的程式流)</h2>
 <pre>
  spectrum_in Complex[n_freqs]         extra_noise_psd float[n_freqs] | NULL

@@ -338,6 +338,55 @@ mmse_lsa_destroy(denoiser);
 fft_destroy(fft);
 ```
 
+### 執行期重設定（running instance 上換 tuning）
+
+```c
+int mmse_lsa_reconfigure(MmseLsaDenoiser* self, const MmseLsaConfig* target);
+int mmse_lsa_set_mode(MmseLsaDenoiser* self, MmseLsaNrMode mode);
+```
+
+兩者都不重新配置任何記憶體，所以格點（`sample_rate` / `frame_size` / `hop_size` /
+`fft_size`）與兩個決定 pool 大小的欄位（`L`、`num_init_frames`）**必須等於實例當下的
+值**，`target` 另外還要完整通過 `mmse_lsa_validate_config()`。回 `0`，或 `-1`
+（NULL、target 無效、幾何不符）；`-1` 時**什麼都不寫**。在兩個 hop 之間呼叫、與
+`mmse_lsa_process()` 序列化；**非 thread-safe**。
+
+**狀態是刻意保留的**：追蹤中的噪聲底、MCRA 最小值追蹤環與它的 scene-change run
+length、SPP 的 a-priori-SNR 歷史、增益平滑歷史，全部繼續跑。換強度不是重啟——
+把噪聲估計在串流中途丟掉，造成的 artefact 比原本想調掉的東西更糟。真的要重啟請用
+`mmse_lsa_reset()`。
+
+**`mmse_lsa_reconfigure()` 逐字採用 `target`**：不做 preset 查表、不做 overlay 疊加。
+這是刻意的——組態是「preset 加上自己的覆寫」的呼叫端，必須自己重建整份組合再傳進來，
+否則那些覆寫會被悄悄還原回 canonical preset 的值。
+
+**`mmse_lsa_set_mode()` 只給 standalone 情境**：它替該 mode 組出 canonical 組態、
+交給 `mmse_lsa_reconfigure()`。內容軸與強度軸正交，所以經 `mmse_lsa_apply_stationary()`
+建立的實例會**重新套上**該 overlay——換強度不該讓一個 stationary 實例悄悄變成 hybrid。
+回 `0`，或 `-1`（NULL、超出 enum 的 mode、target 被拒）。
+
+> **不要在 pipeline 實例上用 `mmse_lsa_set_mode()`。** 兩條出貨 pipeline（mono 與
+> 四麥克風核心）的 NR 組態都是「canonical preset **加上**自己的覆寫」
+> （`broadband_threshold`、`L`、`alpha_decay`）。把裸的 canonical preset 交給
+> `mmse_lsa_set_mode()`，在這種實例上會被**拒絕**（它的 `L` 不同）——這正是兩條
+> pipeline 各自提供 setter（`audio_pipeline_set_nr_mode()` /
+> `four_aec_nr_res_set_nr_mode()`）重組完整組態再呼叫 `mmse_lsa_reconfigure()` 的原因。
+
+```c
+/* standalone：直接換強度，噪聲底與平滑歷史保留 */
+if (mmse_lsa_set_mode(denoiser, MMSE_LSA_NR_AGGRESSIVE) != 0) { /* 引數不合法 */ }
+
+/* 自己疊了覆寫的呼叫端：重組整份組態再交出去 */
+MmseLsaConfig target = mmse_lsa_config_for_mode_grid(
+    sr, fft_size, MMSE_LSA_NR_AGGRESSIVE);
+target.broadband_threshold = 0.8f;                        /* 我方覆寫 */
+target.L = mmse_lsa_retime_frames(150, sr, target.hop_size);
+target.alpha_decay = target.alpha_g;
+if (mmse_lsa_reconfigure(denoiser, &target) != 0) { /* 幾何不符或 target 無效 */ }
+```
+
+回歸測試：`make test-reconfigure`（`test/test_reconfigure.c`）。
+
 ### Python↔C 數值對齊驗證 (parity harness)
 
 `tools/parity_nr.py` + `example/parity_runner.c` 提供可重現的埠正確性驗證，

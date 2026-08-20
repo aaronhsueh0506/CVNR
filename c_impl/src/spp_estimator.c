@@ -20,6 +20,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
+#include "mmse_lsa_internal.h"
 
 // Internal structure
 struct SppEstimator {
@@ -65,11 +66,11 @@ struct SppEstimator {
                          // 0 == heap instance from spp_create() (owns its mallocs)
 };
 
-/* Shared scalar/config initialisation — identical for both malloc and ext-mem
- * builds (state arrays are zeroed separately: calloc / block memset). */
-static void spp_init_scalars(SppEstimator* self, int n_freqs,
-                             const MmseLsaConfig* config) {
-    self->n_freqs = n_freqs;
+/* Tuning scalars ONLY -- no geometry, no state. Split out from
+ * spp_init_scalars so a runtime reconfiguration can swap the coefficients
+ * without discarding the a-priori-SNR history they smooth. */
+void spp_apply_config_scalars(SppEstimator* self,
+                              const MmseLsaConfig* config) {
     self->alpha = config->alpha_xi;
     // Fix #9: clip q to (eps, 1-eps) so prior_ratio is well defined
     {
@@ -81,6 +82,14 @@ static void spp_init_scalars(SppEstimator* self, int n_freqs,
         self->prior_ratio = (1.0f - q_clipped) / q_clipped;
     }
     self->xi_min = powf(10.0f, config->xi_min_db / 10.0f);
+}
+
+/* Shared scalar/config initialisation — identical for both malloc and ext-mem
+ * builds (state arrays are zeroed separately: calloc / block memset). */
+static void spp_init_scalars(SppEstimator* self, int n_freqs,
+                             const MmseLsaConfig* config) {
+    self->n_freqs = n_freqs;
+    spp_apply_config_scalars(self, config);
     self->is_initialized = false;
 }
 

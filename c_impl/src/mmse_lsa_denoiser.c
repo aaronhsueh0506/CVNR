@@ -27,6 +27,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
+#include "mmse_lsa_internal.h"
 
 /* -------------------------------------------------------------------------
  * Internal structure
@@ -108,8 +109,11 @@ struct MmseLsaDenoiser {
  * Gain calculation
  * ---------------------------------------------------------------------- */
 
-static void init_gain_params(MmseLsaDenoiser* self,
-                              const MmseLsaConfig* config) {
+/* Parameters ONLY. Split out from the state clearing below so a runtime
+ * reconfiguration can swap the gain coefficients without discarding the
+ * smoothing history they smooth -- a strength change is not a restart. */
+static void apply_gain_config_scalars(MmseLsaDenoiser* self,
+                                       const MmseLsaConfig* config) {
     /* Amplitude-dB (/20): the gain is applied directly to the magnitude spectrum
      * (fft_apply_gain multiplies each bin, no sqrt), so g_min is an AMPLITUDE floor.
      * g_min_db=-15 → 10^(-15/20)=0.178 (a true -15 dB amplitude floor). Mirrors Python
@@ -119,7 +123,6 @@ static void init_gain_params(MmseLsaDenoiser* self,
     self->alpha_g      = config->alpha_g;
     self->alpha_attack = config->alpha_attack;
     self->alpha_decay  = config->alpha_decay;
-    self->gain_initialized = false;
 
     self->stationary_floor          = config->stationary_floor;
     self->stationary_floor_exponent = config->stationary_floor_exponent;
@@ -302,7 +305,8 @@ static void _setup(MmseLsaDenoiser* self, const MmseLsaConfig* config) {
     self->n_freqs          = config->fft_size / 2 + 1;
     self->init_frame_count = 0;
     self->is_initialized   = false;
-    init_gain_params(self, config);
+    apply_gain_config_scalars(self, config);
+    reset_gain_state(self);
 }
 
 /* -------------------------------------------------------------------------
@@ -641,6 +645,49 @@ int mmse_lsa_process_gain(MmseLsaDenoiser* self,
 /* -------------------------------------------------------------------------
  * Reset
  * ---------------------------------------------------------------------- */
+
+int mmse_lsa_reconfigure(MmseLsaDenoiser* self, const MmseLsaConfig* target) {
+    if (!self || !target) return -1;
+    /* Full validation first, exactly as the construction paths do: only
+     * comparing the geometry below would let a target through whose tuning
+     * scalars are outside the ranges init would have refused. */
+    if (!mmse_lsa_validate_config(target)) return -1;
+    /* Grid and the two pool-sizing fields must match the instance: everything
+     * downstream is carved from them, and this entry point reallocates
+     * nothing. Checked before any write so a refusal leaves the instance
+     * bit-identical. */
+    if (target->sample_rate != self->config.sample_rate ||
+        target->frame_size  != self->config.frame_size  ||
+        target->hop_size    != self->config.hop_size    ||
+        target->fft_size    != self->config.fft_size    ||
+        target->L           != self->config.L           ||
+        target->num_init_frames != self->config.num_init_frames) {
+        return -1;
+    }
+
+    /* Parameters only. Deliberately NO mcra_reset / spp_reset /
+     * reset_gain_state: a strength change is not a restart, and discarding the
+     * tracked noise floor mid-stream would be a worse artefact than the one
+     * being tuned away. */
+    apply_gain_config_scalars(self, target);
+    mcra_apply_config_scalars(self->noise_est, target);
+    spp_apply_config_scalars(self->spp_est, target);
+    self->config = *target;
+    return 0;
+}
+
+int mmse_lsa_set_mode(MmseLsaDenoiser* self, MmseLsaNrMode mode) {
+    MmseLsaConfig target;
+    if (!self) return -1;
+    if (!mmse_lsa_nr_mode_is_valid(mode)) return -1;
+    target = mmse_lsa_config_for_mode_grid(self->config.sample_rate,
+                                           self->config.fft_size, mode);
+    /* The content axis is ORTHOGONAL to strength: an instance built through
+     * mmse_lsa_apply_stationary() must stay stationary after a strength
+     * change, or the switch silently produces a hybrid that is neither mode. */
+    if (self->config.stationary_floor) mmse_lsa_apply_stationary(&target);
+    return mmse_lsa_reconfigure(self, &target);
+}
 
 void mmse_lsa_reset(MmseLsaDenoiser* self) {
     if (!self) return;

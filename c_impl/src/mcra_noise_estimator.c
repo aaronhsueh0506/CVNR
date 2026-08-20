@@ -25,6 +25,7 @@
 #include <string.h>
 #include <math.h>
 #include <float.h>
+#include "mmse_lsa_internal.h"
 
 // Internal structure
 struct McraNoiseEstimator {
@@ -142,17 +143,20 @@ static void mcra_reset_noise_floor(McraNoiseEstimator* self, const float* power)
 /* Shared scalar/config initialisation — identical for both malloc and ext-mem
  * builds (arrays are zeroed separately: calloc in the malloc path, memset of the
  * whole block in the ext-mem path). */
-static void mcra_init_scalars(McraNoiseEstimator* self, int n_freqs,
-                              const MmseLsaConfig* config) {
-    self->n_freqs = n_freqs;
+/* Tuning scalars ONLY -- no geometry, no state. Split out from
+ * mcra_init_scalars so a runtime reconfiguration can swap the coefficients
+ * without discarding the tracked noise floor, the min-tracking ring position
+ * or the scene-change run length. `L` and `num_init_frames` size caller-owned
+ * buffers, so a reconfiguration path must have already established that they
+ * are unchanged before calling this; they are re-applied here anyway so the
+ * function is a complete statement of what the config controls. */
+void mcra_apply_config_scalars(McraNoiseEstimator* self,
+                               const MmseLsaConfig* config) {
     self->L = config->L;
     self->alpha_s = config->alpha_s;
     self->alpha_d = config->alpha_d;
     self->alpha_p = config->alpha_p;
     self->delta = powf(10.0f, config->delta_db / 10.0f);
-
-    self->ring_idx = 0;
-    self->is_initialized = false;
 
     // Scene change detection
     self->scene_change_threshold = powf(10.0f, config->scene_change_threshold_db / 10.0f);
@@ -162,11 +166,20 @@ static void mcra_init_scalars(McraNoiseEstimator* self, int n_freqs,
     self->broadband_threshold = config->broadband_threshold;
     self->scene_change_tonal_veto = config->scene_change_tonal_veto;
     self->scene_change_lo_flatness_max = config->scene_change_lo_flatness_max;
-    self->scene_change_count = 0;
 
 #ifndef USE_FAST_PERCENTILE
     self->num_init_frames = config->num_init_frames;
 #endif
+}
+
+static void mcra_init_scalars(McraNoiseEstimator* self, int n_freqs,
+                              const MmseLsaConfig* config) {
+    self->n_freqs = n_freqs;
+    mcra_apply_config_scalars(self, config);
+
+    self->ring_idx = 0;
+    self->is_initialized = false;
+    self->scene_change_count = 0;
 }
 
 /* ---- Static-memory (no malloc) variant ------------------------------------ */

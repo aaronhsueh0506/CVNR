@@ -58,6 +58,19 @@ wrapper. The pool path and heap path share the same processing core; see
 [`c_impl/README.md`](c_impl/README.md) and the
 [C integration manual](docs/c_user_manual_zh_TW.md) for API details.
 
+The tuning scalars can also be swapped on a running instance:
+`mmse_lsa_reconfigure()` takes a caller-composed `MmseLsaConfig` verbatim, and
+`mmse_lsa_set_mode()` is the standalone convenience that composes the canonical
+config for a strength mode (re-applying the stationary overlay if the instance
+has one). Nothing is reallocated, so the grid and the two pool-sizing fields
+(`L`, `num_init_frames`) must match the instance; the noise floor, MCRA ring,
+SPP history and gain smoothing history are all preserved. A caller that layers
+its own overrides on top of a preset — as both Audio_ALG pipelines do — must
+rebuild its whole composition and call `mmse_lsa_reconfigure()`; handing the bare
+canonical preset to `mmse_lsa_set_mode()` would revert those overrides, or be
+refused outright when the composition changed `L`. Details in
+[`c_impl/README.md`](c_impl/README.md).
+
 Build outputs are keyed by backend and configuration. `make -C c_impl
 publish` creates the immutable release layout and provenance manifest; do not
 copy an arbitrary file from a stale `bin/` directory.
