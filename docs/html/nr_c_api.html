@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NR C API 使用說明</title>
+<style>
+body{font-family:-apple-system,"PingFang TC","Noto Sans TC",sans-serif;margin:0 auto;padding:0 1rem 3rem;line-height:1.55;color:#1a1a1a;max-width:70rem}
+nav{padding:.6rem 0;border-bottom:2px solid #2a6;margin-bottom:1rem;font-size:.95rem}
+nav a{margin-right:1rem;color:#164;text-decoration:none;font-weight:600}
+nav a:hover{text-decoration:underline}
+nav .sep{color:#999;margin-right:1rem}
+h1{font-size:1.5rem;border-bottom:1px solid #ccc;padding-bottom:.3rem}
+h2{font-size:1.15rem;margin-top:1.6rem;border-left:4px solid #2a6;padding-left:.5rem}
+h3{font-size:1rem;margin-top:1.1rem;color:#164}
+table{border-collapse:collapse;margin:.6rem 0;font-size:.86rem}
+th,td{border:1px solid #bbb;padding:.25rem .5rem;text-align:left;vertical-align:top}
+th{background:#eef5f0}
+pre{background:#f4f6f5;border:1px solid #dde;padding:.6rem;overflow-x:auto;font-size:.8rem;line-height:1.35}
+code{font-family:ui-monospace,Menlo,monospace;font-size:.86em;background:#f2f2f2;padding:0 .15em}
+pre code{background:none;padding:0}
+.note{background:#fff8e6;border:1px solid #e0c878;padding:.4rem .6rem;font-size:.88rem;margin:.5rem 0}
+.warn{background:#fdeeee;border:1px solid #e0a0a0;padding:.4rem .6rem;font-size:.88rem;margin:.5rem 0}
+.small{font-size:.82rem;color:#555}
+.tblwrap{overflow-x:auto}
+.dead{color:#a00;font-weight:600}
+</style>
+</head>
+<body>
+<nav>
+<a href="../../../Audio_ALG/docs/html/index.html">index</a>
+<a href="../../../AEC/docs/html/aec.html">aec</a>
+<a href="nr.html">nr</a>
+<a href="../../../audio_common/docs/html/audio_common.html">audio_common</a>
+<span class="sep">|</span>
+<a href="../../../AEC/docs/html/aec_c_api.html">AEC API</a>
+<a href="nr_c_api.html"><b>NR API</b></a>
+<a href="../../../audio_common/docs/html/audio_common_c_api.html">audio_common API</a>
+<a href="../../../Audio_ALG/docs/html/integration_example.html">串接範例</a>
+</nav>
+
+<h1>NR C API 使用說明 — <code>lib/nr/c_impl</code></h1>
+<p class="small">本頁是<b>整合者視角</b>的 API 說明：init/process 要呼叫什麼、input/output 怎麼給、每個參數調了會有什麼結果。演算法內部機制見 <a href="nr.html">nr.html</a>;完整欄位與錯誤語意的 canonical 出處是 <code>NR/docs/c_user_manual_zh_TW.md</code>。函式內部自行呼叫的子模組不在本頁範圍。</p>
+
+<h2>1. 責任邊界(先看這個)</h2>
+<p>NR 是<b>純頻域</b> MMSE-LSA/OMLSA 降噪核心。它<b>只吃 <code>Complex[n_freqs]</code>、只吐 <code>Complex[n_freqs]</code></b>,不含 window、FFT、IFFT、OLA 或任何 PCM buffer 邏輯——這些全部是呼叫端的責任(<code>NR/c_impl/include/mmse_lsa_denoiser.h:2-9,64-68</code>)。</p>
+<div class="note">如果 application 手上只有 PCM,<b>不要自己補一套 WOLA</b>。直接用 Audio_ALG 的 pipeline(它已經把 window/FFT/OLA/gain fusion 做對了),或照 <a href="../../../Audio_ALG/docs/html/integration_example.html">串接範例</a> 的做法。</div>
+<p>連結時需要<b>兩個</b> archive:<code>libmmse_lsa.a</code> 與 <code>libaudio_common.a</code>——NR 自己不含 FFT。</p>
+
+<h3>可以 include 的 header</h3>
+<div class="tblwrap"><table>
+<tr><th>Header</th><th>分類</th><th>說明</th></tr>
+<tr><td><code>mmse_lsa_denoiser.h</code></td><td><b>公開</b></td><td>整合只需要這一個;它已自動含入下面兩個</td></tr>
+<tr><td><code>mmse_lsa_types.h</code></td><td>公開(自動含入)</td><td><code>MmseLsaConfig</code>／<code>MmseLsaNrMode</code>／constructor／<code>validate_config</code></td></tr>
+<tr><td><code>fft_wrapper.h</code>(audio_common)</td><td>公開(自動含入)</td><td><code>Complex</code>／<code>FftHandle</code></td></tr>
+<tr><td><code>mcra_noise_estimator.h</code></td><td class="dead">內部,勿呼叫</td><td>denoiser 自行建立/驅動/釋放</td></tr>
+<tr><td><code>spp_estimator.h</code></td><td class="dead">內部,勿呼叫</td><td>同上</td></tr>
+</table></div>
+<div class="warn"><b>兩個內部 header 有「宣告了但整個 archive 裡沒有實作」的符號</b>,照 header 呼叫會得到 link error:<code>mcra_get_spp()</code>(<code>mcra_noise_estimator.h:95</code>,實作端只有名字不同的 <code>mcra_get_internal_spp()</code>)、<code>mcra_get_n_freqs()</code>(<code>:110</code>)、<code>spp_get_n_freqs()</code>(<code>spp_estimator.h:101</code>)。要讀 SPP／噪聲底請走 denoiser 自己的 <code>mmse_lsa_get_spp()</code>／<code>mmse_lsa_get_noise_psd()</code>。</div>
+
+<h2>2. 這個 lib 可以設定的 grid(與 AEC 不同,注意)</h2>
+<p><code>mmse_lsa_validate_config()</code>(<code>mmse_lsa_types.h:401-407</code>)接受<b>五組</b> grid。硬性關係:<code>frame_size == fft_size</code>(不補零)、<code>hop_size == frame_size/2</code>(固定 50% overlap)。</p>
+<div class="tblwrap"><table>
+<tr><th>sample_rate</th><th>fft_size = frame_size</th><th>hop_size</th><th>hop 時長</th><th>n_freqs</th><th>演算法延遲</th><th>狀態</th></tr>
+<tr><td>8000</td><td>128</td><td>64</td><td>8.000 ms</td><td>65</td><td>16 ms</td><td>8k 預設</td></tr>
+<tr><td>8000</td><td>256</td><td>128</td><td>16.000 ms</td><td>129</td><td>32 ms</td><td>8k 替代</td></tr>
+<tr><td><b>16000</b></td><td><b>256</b></td><td><b>128</b></td><td>8.000 ms</td><td>129</td><td>16 ms</td><td><b>產品預設(低延遲)</b></td></tr>
+<tr><td><b>16000</b></td><td><b>512</b></td><td><b>256</b></td><td>16.000 ms</td><td>257</td><td>32 ms</td><td><b>產品替代(高頻率解析度)</b></td></tr>
+<tr><td><b>48000</b></td><td><b>1024</b></td><td><b>512</b></td><td>10.667 ms</td><td>513</td><td>21.333 ms</td><td><b>48k 唯一 grid</b></td></tr>
+</table></div>
+<p><b>兩個產品 sample rate(16k／48k),而 16 kHz 是唯一有兩種 hop 可選的。</b>選 hop 的取捨:</p>
+<div class="tblwrap"><table>
+<tr><th>選 16k/256(hop 128)</th><th>選 16k/512(hop 256)</th></tr>
+<tr><td>延遲減半(16 ms vs 32 ms)</td><td>頻率解析度加倍(129→257 bins),低頻噪聲與 tonal 成分分得更開</td></tr>
+<tr><td>每秒處理次數加倍 → CPU 較高</td><td>每秒處理次數減半 → CPU 較低</td></tr>
+<tr><td>對瞬態/起音反應快</td><td>長窗對非穩態噪聲反應較鈍</td></tr>
+<tr><td>記憶體 58,176 B</td><td>記憶體 69,728 B</td></tr>
+</table></div>
+<div class="warn"><b>與 AEC 的 grid 表不完全相同。</b>AEC 不接受 8k/128(它的 8k legacy grid 是 256/128);NR 的 8 kHz 預設卻是 128/64(<code>mmse_lsa_default_fft_size()</code>,<code>mmse_lsa_types.h:92-96</code>)。<b>串成一條鏈時不要各自呼叫各自的 default,要由上層 resolve 出同一組 <code>(sample_rate, fft_size, hop)</code> 再明確傳給兩邊。</b></div>
+<p>建立後<b>不可</b>中途換 grid:<code>mmse_lsa_reconfigure()</code> 連 grid 都不給換(<code>mmse_lsa_denoiser.c:659-666</code>),要換必須 destroy 重建。</p>
+
+<h2>3. 建立與生命週期</h2>
+<p>兩條路徑<b>永遠同時編進同一份 object</b>(不是 <code>#ifdef</code> 二選一);handle 內有 runtime flag <code>is_static</code>,<code>destroy()</code> 靠它決定要不要真的 <code>free()</code>(<code>mmse_lsa_denoiser.c:104-106,415,463,467-469</code>)。</p>
+
+<h3>A. Static pool(板端路徑)</h3>
+<pre>MmseLsaConfig cfg = mmse_lsa_config_for_mode_grid(16000, 256, MMSE_LSA_NR_BALANCED);
+
+if (!mmse_lsa_validate_config(&amp;cfg)) { /* 唯一能事先知道為何被拒的手段 */ }
+
+size_t need = mmse_lsa_get_mem_size(&amp;cfg);   /* 0 = config 無效或尺寸溢位 */
+void  *pool = board_alloc_aligned(16, need); /* 基底必須 16-byte 對齊 */
+MmseLsaDenoiser *nr = pool ? mmse_lsa_init(pool, need, &amp;cfg) : NULL;
+if (!nr) { /* 對齊錯 / pool 太小 / config 無效 */ }
+
+/* ... 每 frame 呼叫 process ... */
+
+mmse_lsa_destroy(nr);   /* static instance 上是真 no-op,可重複呼叫 */
+board_free(pool);       /* pool ownership 永遠在 caller */</pre>
+
+<h3>B. Heap(桌面/測試)</h3>
+<pre>MmseLsaDenoiser *nr = mmse_lsa_create(&amp;cfg);
+mmse_lsa_destroy(nr);   /* heap instance 只能呼叫一次,重複呼叫 = double free */</pre>
+
+<h3>記憶體實測(KISS backend)</h3>
+<div class="tblwrap"><table>
+<tr><th>grid</th><th><code>mmse_lsa_get_mem_size()</code></th><th>加 <code>USE_FAST_PERCENTILE</code></th><th>另外要的 <code>fft_get_mem_size()</code></th></tr>
+<tr><td>8k/128</td><td>29,760</td><td>23,104</td><td>4,688</td></tr>
+<tr><td>8k/256</td><td>35,424</td><td>28,608</td><td>8,784</td></tr>
+<tr><td>16k/256</td><td>58,176</td><td>45,120</td><td>8,784</td></tr>
+<tr><td>16k/512</td><td>69,728</td><td>56,256</td><td>16,976</td></tr>
+<tr><td>48k/1024</td><td>183,488</td><td>144,384</td><td>33,360</td></tr>
+</table></div>
+<p class="small">FFT pool 是<b>另一塊</b>,各自查詢、各自 16-byte 對齊。<b>不要把這裡的 byte 數寫死進產品</b>——永遠用當前 config 呼叫 <code>mmse_lsa_get_mem_size()</code>。只有 <code>fft_size</code>／<code>L</code>／<code>num_init_frames</code> 會改變需求量。</p>
+
+<h2>4. 每-frame 處理入口</h2>
+<div class="tblwrap"><table>
+<tr><th>入口</th><th>什麼時候用</th></tr>
+<tr><td><code>mmse_lsa_process()</code></td><td>NR 是最後一級:直接把 gain 套上頻譜(相位不變)</td></tr>
+<tr><td><code>mmse_lsa_process_gain()</code></td><td><b>NR 是串接鏈的一環</b>:只要 gain、不要套用,交給上層與 AEC/RES 的 gain 融合</td></tr>
+</table></div>
+<pre>/* A. 直接套用,可 in-place */
+if (mmse_lsa_process(nr, spectrum, spectrum) != 0) { /* NULL handle/buffer */ }
+
+/* B. 只取 gain(pipeline 都走這條) */
+float gain[257];
+if (mmse_lsa_process_gain(nr, error_spec, extra_noise_psd, gain) != 0) { /* error */ }</pre>
+<div class="tblwrap"><table>
+<tr><th>項目</th><th>契約</th></tr>
+<tr><td>buffer 長度</td><td>全部 <code>n_freqs = fft_size/2+1</code>;函式<b>沒有長度參數</b>,傳錯不會替你報錯</td></tr>
+<tr><td>FFT 誰做</td><td>呼叫端。NR 不碰時域</td></tr>
+<tr><td>Aliasing</td><td><code>spectrum_out == spectrum_in</code>(<b>完全同一指標</b>)支援;完全不相交也支援;<b>部分重疊不支援</b>(<code>mmse_lsa_denoiser.c:557-565</code>)</td></tr>
+<tr><td><code>extra_noise_psd</code></td><td>長度 <code>n_freqs</code>,可為 <code>NULL</code>。非 NULL 時做 echo-as-extra-noise:<code>ξ=S²/(N²+R²)</code>,<b>只餵進 SPP／先驗 SNR</b>,MCRA 噪聲估計仍只用乾淨功率更新(<code>:606-634</code>)</td></tr>
+<tr><td><code>gain_out</code></td><td>可傳 <code>NULL</code> 省一次 memcpy,之後用 <code>mmse_lsa_get_gain()</code> 讀同一份</td></tr>
+<tr><td>回傳值</td><td><code>0</code> 成功;<code>-1</code> 只在 <code>self</code>／<code>spectrum_in</code>(<code>process</code> 另加 <code>spectrum_out</code>)為 NULL 時。<code>extra_noise_psd</code>／<code>gain_out</code> 傳 NULL <b>是合法用法</b></td></tr>
+<tr><td>初始化期</td><td>前 <code>num_init_frames</code> 個 frame 是 pass-through(gain 全 1.0),同時累積噪聲統計(<code>:505-528,583-602</code>)</td></tr>
+</table></div>
+<div class="warn"><b>Aliasing 規則與 FFT 層相反。</b><code>fft_forward()</code>／<code>fft_inverse()</code> 用 <code>restrict</code>,<b>任何</b>重疊(含完全相同指標)都是 UB;NR 這裡卻明確支援完全同一指標。兩層不要套用同一條直覺。</div>
+<div class="note"><b>接 AEC 的 <code>r2</code> 時要先換算尺度。</b><code>AecResContext.r2</code> 是 int16-square scale,直接當 <code>extra_noise_psd</code> 前必須除以 <code>32768²</code>。現有 pipeline 已經處理好,application 不要再複製一份。</div>
+
+<h2>5. 參數設定與效果</h2>
+<p>設定強度的正規做法是選一個 mode,不要逐欄位手調。<code>mmse_lsa_config_for_mode_grid()</code> 在 balanced 基礎上覆寫<b>七個</b>欄位:三個強度欄位 + 四個平滑係數。</p>
+<div class="tblwrap"><table>
+<tr><th>MmseLsaNrMode</th><th><code>g_min_db</code></th><th><code>q</code></th><th><code>xi_min_db</code></th><th><code>alpha_d</code></th><th><code>alpha_g</code></th><th><code>alpha_attack</code></th><th><code>alpha_decay</code></th><th>聽感</th></tr>
+<tr><td><code>MILD</code></td><td>-20.0</td><td>0.60</td><td>-15.0</td><td>0.85</td><td>0.92</td><td>0.40</td><td>0.92</td><td>最保守,優先保留語音細節,殘留底噪最多</td></tr>
+<tr><td><code>MODERATE</code></td><td>-25.0</td><td>0.55</td><td>-18.0</td><td>0.85</td><td>0.92</td><td>0.40</td><td>0.92</td><td>mild 與 balanced 之間</td></tr>
+<tr><td><code>BALANCED</code></td><td>-30.0</td><td>0.50</td><td>-20.0</td><td colspan="4" style="text-align:center">(空 overlay,沿用 base)</td><td><b>預設</b>,<code>switch</code> 的 <code>default:</code> 分支</td></tr>
+<tr><td><code>AGGRESSIVE</code></td><td>-40.0</td><td>0.35</td><td>-25.0</td><td>0.50</td><td>0.85</td><td>0.15</td><td>0.88</td><td>抑噪最深,較可能犧牲語音細節、出現處理痕跡</td></tr>
+</table></div>
+<p class="small">四個平滑係數欄位填的是<b>錨點值</b>(grid 無關);實際存進 config 的是 <code>mmse_lsa_retime_alpha_ref(anchor, sr, hop, <b>0.016</b>)</code> 的結果。<b>注意錨點是 16 ms、不是 retime 系列預設的 10 ms</b>——這幾個 overlay 當初就是對著 16 ms hop 調的,用 10 ms 去 retime 會靜默地二次修正。</p>
+<div class="tblwrap"><table>
+<tr><th>16k/256(hop 128)實際值</th><th><code>alpha_d</code></th><th><code>alpha_g</code></th><th><code>alpha_attack</code></th><th><code>alpha_decay</code></th></tr>
+<tr><td>MILD / MODERATE</td><td>0.921954</td><td>0.959166</td><td>0.632456</td><td>0.959166</td></tr>
+<tr><td>BALANCED</td><td>0.751759</td><td>0.902789</td><td>0.547723</td><td>0.902789</td></tr>
+<tr><td>AGGRESSIVE</td><td>0.707107</td><td>0.921954</td><td>0.387298</td><td>0.938083</td></tr>
+</table></div>
+<div class="note"><b>兩個容易誤解的地方:</b>
+<ul>
+<li><b>MILD 與 MODERATE 的四個平滑係數完全相同</b>——這兩級只差 <code>g_min_db</code>／<code>q</code>／<code>xi_min_db</code>。</li>
+<li><b><code>alpha_g</code> 雖然逐 mode 不同,但它是死旗鈕</b>(見下方逐欄位表),所以 mode 之間真正生效的平滑差異來自 <code>alpha_d</code>／<code>alpha_attack</code>／<code>alpha_decay</code>。</li>
+</ul></div>
+
+<h3>逐欄位效果(預設值為 16k/256 實測)</h3>
+<div class="tblwrap"><table>
+<tr><th>欄位</th><th>預設</th><th>合法範圍</th><th>調了會怎樣</th></tr>
+<tr><td colspan="4" style="background:#eef5f0"><b>增益(強度主軸)</b></td></tr>
+<tr><td><code>g_min_db</code></td><td>-30.0</td><td><code>[-80,80]</code> finite</td><td><b>振幅</b> dB(<code>/20</code>)增益下限,四級 preset 的核心差異。調低 → 更乾淨,但處理痕跡與傷語音風險上升</td></tr>
+<tr><td><code>alpha_attack</code></td><td>0.547723</td><td><code>[0,1]</code></td><td>增益「上升」方向平滑。調小 → 起音更清楚,但噪聲易短暫漏出</td></tr>
+<tr><td><code>alpha_decay</code></td><td>0.902789</td><td><code>[0,1]</code></td><td>增益「下降」方向平滑。調大 → musical noise 明顯減少,但尾音拖長。<b>這才是真正生效的增益平滑旋鈕</b></td></tr>
+<tr><td><code class="dead">alpha_g</code></td><td>0.902789</td><td><code>[0,1]</code></td><td class="dead"><b>死旋鈕</b>——會被複製進 instance、會通過驗證,但 <code>calculate_gain()</code> 從不讀它(<code>mmse_lsa_denoiser.c</code> 內只有 :93 宣告與 :123 賦值兩處)。四級 preset 剛好把它設成與 <code>alpha_decay</code> 同值,造成「調它好像有效」的錯覺。要調平滑請改 <code>alpha_decay</code></td></tr>
+<tr><td colspan="4" style="background:#eef5f0"><b>SPP(語音存在機率)</b></td></tr>
+<tr><td><code>q</code></td><td>0.5</td><td>finite,<b>開區間 (0,1)</b>;0 與 1 都被拒</td><td>語音先驗機率,經 <code>prior_ratio=(1-q)/q</code> 進 SPP sigmoid。調大(趨近 1)→ 偏 mild、更保語音;調小 → 偏 aggressive、抑噪更深</td></tr>
+<tr><td><code>alpha_xi</code></td><td>0.959166</td><td><code>[0,1]</code></td><td>DD 先驗 SNR 平滑。調大 → 更平滑、musical noise 更少,但起音較鈍</td></tr>
+<tr><td><code>xi_min_db</code></td><td>-20.0</td><td><code>[-80,80]</code></td><td>先驗 SNR 下限(<b>功率</b> dB,<code>/10</code>)。調低 → 殘留底噪更少但處理痕跡更明顯。stationary 模式下是控制殘留噪聲深度的主要旋鈕</td></tr>
+<tr><td colspan="4" style="background:#eef5f0"><b>MCRA 噪聲估計</b></td></tr>
+<tr><td><code>alpha_s</code></td><td>0.959796</td><td><code>[0,1]</code></td><td>功率譜時間平滑。調大 → 噪聲追蹤更穩、對瞬態不敏感。一般不動</td></tr>
+<tr><td><code>alpha_d</code></td><td>0.751759</td><td><code>[0,1]</code></td><td>噪聲估計更新慣性。調大 → 更新更慢、更不易把語音吸收進噪聲底(stationary 走這個方向);調小 → 追噪聲底快但易吃掉語音</td></tr>
+<tr><td><code>alpha_p</code></td><td>0.275946</td><td><code>[0,1]</code></td><td>語音存在指示平滑。一般不動</td></tr>
+<tr><td><code>L</code></td><td>64</td><td><code>1..320</code></td><td>MCRA 最小值追蹤視窗(frame 數,≈512 ms)。調大 → 不易把持續語音誤判為噪聲,但噪聲底上升時追得慢。<b>會改變記憶體需求</b></td></tr>
+<tr><td><code>delta_db</code></td><td>10.0</td><td><code>[-80,80]</code></td><td>語音判定門檻(功率 dB)。調高 → 更難判為語音,噪聲估計更易吸收訊號 → 抑噪深但傷語音風險高</td></tr>
+<tr><td><code>num_init_frames</code></td><td>25</td><td><code>1..200</code></td><td>啟動 pass-through 長度(≈200 ms),這段期間完全不降噪。<b>會改變記憶體需求</b></td></tr>
+<tr><td colspan="4" style="background:#eef5f0"><b>場景變化偵測</b></td></tr>
+<tr><td><code>scene_change_threshold_db</code></td><td>10.0</td><td><code>[-80,80]</code></td><td>高頻 gamma 觸發門檻。調低 → 更容易判定場景變化</td></tr>
+<tr><td><code>scene_change_min_frames</code></td><td>7</td><td><code>&gt;=0</code>(<b>無上限</b>)</td><td>要連續成立幾個 frame 才確認。調大 → 抗誤觸但反應慢</td></tr>
+<tr><td><code>scene_change_blend</code></td><td>0.5</td><td><code>[0,1]</code></td><td>確認後保留舊噪聲底的比例:<code>new = blend*old + (1-blend)*obs</code></td></tr>
+<tr><td><code>scene_change_flatness_threshold</code></td><td>0.4</td><td><code>[0,1]</code></td><td>高頻頻譜平坦度門檻。調高 → 更保守,音樂/語音不易誤觸</td></tr>
+<tr><td><code>broadband_threshold</code></td><td>1.0</td><td><code>[0,1]</code>;<b><code>1.0</code> = 停用</b></td><td>寬頻場景重置閘門。設 <code>&lt;1.0</code> 時噪聲突然出現能更快追上</td></tr>
+<tr><td colspan="4" style="background:#eef5f0"><b>內容保留(stationary)疊加層,正交於強度軸,預設全關</b></td></tr>
+<tr><td><code>stationary_floor</code></td><td>false</td><td>bool,不做範圍檢查</td><td>啟用 Wiener 增益下限 <code>gain &gt;= (ξ/(β+ξ))^p</code></td></tr>
+<tr><td><code>stationary_floor_exponent</code></td><td>1.0</td><td><code>[0.5, 8.0]</code></td><td>下限陡峭度。調大 → 抑噪更深、內容保留變少</td></tr>
+<tr><td><code>stationary_floor_beta</code></td><td>1.0</td><td><code>&gt;0</code> 且 <code>&lt;=16.0</code></td><td>下限偏移。調大 → 抑噪更深</td></tr>
+<tr><td><code>scene_change_tonal_veto</code></td><td>false</td><td>bool,不做範圍檢查</td><td>低頻呈音調性(音樂)時否決場景重置</td></tr>
+<tr><td><code>scene_change_lo_flatness_max</code></td><td>0.4</td><td><code>[0,1]</code></td><td>低頻「算不算音調性」門檻,只在 <code>tonal_veto=true</code> 時生效</td></tr>
+</table></div>
+<p class="small">全部範圍取自 <code>mmse_lsa_validate_config()</code>(<code>mmse_lsa_types.h:364-525</code>),它是 <code>get_mem_size()</code>／<code>create()</code>／<code>init()</code>／<code>reconfigure()</code> 共用的唯一閘門。</p>
+
+<h3>stationary 疊加層的陷阱</h3>
+<p><code>mmse_lsa_apply_stationary(&amp;cfg)</code>(<code>mmse_lsa_types.h:309-331</code>)是<b>就地</b>疊加,且<b>無 NULL 檢查</b>(傳 NULL 直接當機)。呼叫順序固定:<code>config_for_mode()</code> → <code>apply_stationary()</code> → <code>validate_config()</code>。</p>
+<div class="warn">它<b>無條件覆寫</b> <code>g_min_db</code>(→ -30.0)與 <code>xi_min_db</code>(→ -22.0)。所以 <code>mild+stationary</code>／<code>moderate+stationary</code>／<code>aggressive+stationary</code> 的這兩個欄位<b>會變成完全一樣</b>,疊完之後只剩 <code>q</code> 與平滑係數還有差異。若要「mild 的增益下限 + stationary 行為」,必須在 <code>apply_stationary()</code> <b>之後</b>手動把 <code>g_min_db</code> 改回去,再重跑一次 <code>validate_config()</code>。</div>
+
+<h3>為什麼有 retime 系列函式</h3>
+<p>EMA 係數與 frame 計數多半是在某個參考 hop(10 ms 或 16 ms)下調出來的錨點值;不同 grid 的實際 hop 不同(8／16／10.667 ms),原封套用會讓真實時間常數跑掉。<code>mmse_lsa_retime_alpha()</code>／<code>_retime_frames()</code>(及帶 <code>_ref</code> 的顯式版本)把「錨點值 + 錨點 hop」換算成當前 grid 的等效值。</p>
+<div class="note">參數越界時它們<b>不報錯</b>:<code>retime_alpha*</code> 原封回傳輸入,<code>retime_frames*</code> 回 <code>0</code>。<code>ref_hop_seconds</code> 刻意用 <code>double</code>——float32 的「16 ms」曾讓 <code>ceil()</code> 階梯多跳一格(16k/512 上 <code>L</code> 從 32 變 33)。</div>
+
+<h2>6. 執行期改強度(不重啟、不重配記憶體)</h2>
+<pre>int mmse_lsa_reconfigure(MmseLsaDenoiser *nr, const MmseLsaConfig *target);
+int mmse_lsa_set_mode(MmseLsaDenoiser *nr, MmseLsaNrMode mode);</pre>
+<div class="tblwrap"><table>
+<tr><th>契約</th><th>內容</th></tr>
+<tr><td>幾何必須相同</td><td><code>sample_rate</code>／<code>frame_size</code>／<code>hop_size</code>／<code>fft_size</code>／<code>L</code>／<code>num_init_frames</code> 六個欄位必須與 instance 當下值<b>完全相同</b>(這條路徑不重新配置任何記憶體)</td></tr>
+<tr><td>刻意保留</td><td>追蹤中的噪聲底、MCRA 最小值追蹤環與其 run length、SPP 先驗 SNR 歷史、增益平滑歷史<b>全部繼續跑</b>。換強度不是重啟</td></tr>
+<tr><td>逐字採用</td><td><code>target</code> <b>不</b>做 preset 查表、<b>不</b>做 overlay 疊加。呼叫端自己疊的覆寫必須自己重建整份,否則會被悄悄還原成 canonical</td></tr>
+<tr><td>回 <code>-1</code></td><td><code>self</code>/<code>target</code> 為 NULL、<code>target</code> 未過 <code>validate_config()</code>、六個幾何欄位任一不符。<b><code>-1</code> 時什麼都沒寫</b></td></tr>
+<tr><td>時序</td><td>在兩個 frame <b>之間</b>呼叫、與 <code>process()</code> 序列化。<b>非 thread-safe</b></td></tr>
+</table></div>
+<div class="warn"><b><code>set_mode()</code> 與 <code>reconfigure()</code> 不可互換。</b><code>set_mode()</code> 組的是<b>裸的 canonical preset</b>,只適用 standalone(它會自動重新套上 stationary overlay,避免變成 hybrid)。兩條出貨 pipeline 的 NR 組態都是「canonical preset <b>加上</b>自己的覆寫」(<code>broadband_threshold</code>／<code>L</code>／<code>alpha_decay</code>),把 canonical preset 丟給 <code>set_mode()</code> 會因為 <code>L</code> 不同而<b>被拒絕</b>。這正是 <code>audio_pipeline_set_nr_mode()</code>／<code>four_aec_nr_res_set_nr_mode()</code> 各自重組完整組態再呼叫 <code>reconfigure()</code> 的原因——application 不要繞過 pipeline setter。</div>
+<pre>/* standalone:直接換 mode */
+mmse_lsa_set_mode(nr, MMSE_LSA_NR_AGGRESSIVE);
+
+/* 自己疊了覆寫:重組整份,逐字交出去 */
+MmseLsaConfig t = mmse_lsa_config_for_mode_grid(sr, fft_size, MMSE_LSA_NR_AGGRESSIVE);
+t.broadband_threshold = 0.8f;                        /* 我方覆寫 */
+t.L                   = mmse_lsa_retime_frames(150, sr, t.hop_size);
+t.alpha_decay         = t.alpha_g;
+mmse_lsa_reconfigure(nr, &amp;t);</pre>
+
+<h3><code>mmse_lsa_reset()</code></h3>
+<p>清除 MCRA(噪聲底／最小值追蹤環／<code>ring_idx</code>／<code>scene_change_count</code>)、SPP、增益平滑歷史、<code>init_frame_count</code>。<b>不</b>清除呼叫端自己的 analysis／OLA buffer——library 根本不知道它們存在。<code>self==NULL</code> 時<b>安靜 no-op</b>,沒有任何回報。</p>
+<div class="note">reset 後會<b>再次</b>經歷 <code>num_init_frames</code> 個 pass-through frame。換串流／換檔／換裝置／中斷重連時<b>必須</b>呼叫,library 永遠不會自動 reset;而且要<b>同時</b> reset NR 與 caller 的 WOLA buffer,只做一邊會留下不一致的尾巴。</div>
+
+<h2>7. 狀態查詢與診斷</h2>
+<div class="tblwrap"><table>
+<tr><th>函式</th><th>回傳</th><th>NULL handle 時</th></tr>
+<tr><td><code>mmse_lsa_get_hop_size()</code>／<code>_get_frame_size()</code>／<code>_get_n_freqs()</code></td><td>grid 幾何</td><td><code>0</code></td></tr>
+<tr><td><code>mmse_lsa_get_latency()</code></td><td><b>永遠 <code>0</code></b>——頻域 core 本身零延遲;IFFT+OLA 的 <code>frame_size</code> 延遲要呼叫端自己算</td><td><code>0</code></td></tr>
+<tr><td><code>mmse_lsa_is_initialized()</code></td><td>啟動 pass-through 是否已結束</td><td><code>false</code></td></tr>
+<tr><td><code>mmse_lsa_get_spp()</code>／<code>_get_noise_psd()</code>／<code>_get_gain()</code></td><td>instance <b>內部唯讀</b>記憶體的 borrowed pointer</td><td><code>NULL</code>,<code>*n_freqs=0</code></td></tr>
+<tr><td><code>mmse_lsa_debug_status()</code></td><td>結構化快照,唯讀不擾動 DSP,不呼叫就零成本</td><td><code>out</code> 全部歸零(不寫 NaN)</td></tr>
+</table></div>
+<div class="warn">三個 <code>_get_*</code> 回的是 borrowed pointer:<b>不要改、不要 free、不要跨下一次 <code>process()</code>／<code>reset()</code>／<code>destroy()</code> 保存</b>,要留就複製走。</div>
+
+<h3><code>MmseLsaDebugStatus</code> 五個欄位</h3>
+<div class="tblwrap"><table>
+<tr><th>欄位</th><th>計算式</th><th>怎麼判讀</th></tr>
+<tr><td><code>initialized</code></td><td>= <code>mmse_lsa_is_initialized()</code></td><td><code>0</code> 表示還在 pass-through,此時完全沒降噪是正常的</td></tr>
+<tr><td><code>mean_gain_db</code></td><td><code>20*log10(mean(gain)+1e-10)</code></td><td>整體壓抑量。長期貼近 <code>g_min_db</code> = 幾乎全頻被壓死</td></tr>
+<tr><td><code>min_gain_db</code></td><td><code>20*log10(min(gain)+1e-10)</code></td><td>最深的那個 bin;應該貼著 <code>g_min_db</code> 而不會低於它</td></tr>
+<tr><td><code>mean_spp</code></td><td><code>mean(spp[k])</code>,<code>[0,1]</code></td><td>持續接近 0 = 判定沒有語音 → 檢查電平/噪聲底是否估過高</td></tr>
+<tr><td><code>noise_floor_db</code></td><td><code>10*log10(mean(noise_psd)+1e-10)</code></td><td>噪聲底(<b>功率</b> dB)。若隨語音一起爬升 = 噪聲估計正在吸收語音</td></tr>
+</table></div>
+<p class="small">用途:板上每秒輪詢一次做監看。這是 pull 型結構化快照,在 release build 一樣可用——詳見 <a href="../../../Audio_ALG/docs/html/integration_example.html">串接範例</a> 的 DEBUG 章節。</p>
+
+<h2>8. 建置與連結</h2>
+<pre>make -C NR/c_impl lib BACKEND=ne10 SIMD=1     # 產品(ARM NEON)
+make -C NR/c_impl lib BACKEND=kiss SIMD=0     # 參考建置</pre>
+<div class="tblwrap"><table>
+<tr><th>旗標</th><th>影響</th></tr>
+<tr><td><code>BACKEND=kiss|ne10</code></td><td>FFT 後端,<b>編譯期</b>決定。兩後端輸出<b>不是</b>逐位元相同 → 位元級回歸比對必須同後端</td></tr>
+<tr><td><code>SIMD=0|1</code></td><td>手寫核心開關。<b>archive 與消費端 TU 的 <code>SIMD_KERNELS_FORCE_SCALAR</code> 狀態必須一致</b></td></tr>
+<tr><td><code>-ffp-contract=off</code></td><td>必要。任何 include 了 <code>simd_kernels.h</code>／<code>fast_math.h</code> 的<b>你自己的</b> TU 也要帶</td></tr>
+</table></div>
+<p>不要混用不同 <code>BACKEND</code>／<code>SIMD</code> 產物;archive 路徑由 build flags hash 決定,用 <code>make -s ... print-lib-path</code> 取得,不要自行拼 <code>bin/</code> 路徑。不要用 <code>-Ofast</code>／<code>-ffast-math</code>,它們會改變遞迴 DSP 數值。</p>
+
+<h2>9. 整合檢查清單</h2>
+<ul>
+<li>grid 是上表五組其中之一,且與鏈上其他 lib <b>同一組</b>(不要各自取各自的 default)。</li>
+<li>WOLA 是 periodic sqrt-Hann、50% overlap、<code>frame_size == fft_size</code>、不補零。</li>
+<li>每次 <code>process</code> 恰好給 <code>n_freqs</code> 個 bin,函式不會替你檢查長度。</li>
+<li>pool 基底 16-byte 對齊;<code>get_mem_size()</code> 與 <code>init()</code> 的回傳值都檢查。</li>
+<li>borrowed pointer(<code>_get_gain</code>／<code>_get_spp</code>／<code>_get_noise_psd</code>)沒有跨下一次 <code>process()</code> 保存。</li>
+<li>stream boundary 同時 reset NR <b>與</b> caller 的 WOLA/ring state。</li>
+<li>要調平滑用 <code>alpha_decay</code>,<b>不是</b> <code>alpha_g</code>。</li>
+<li>沒有 include <code>mcra_noise_estimator.h</code>／<code>spp_estimator.h</code>。</li>
+</ul>
+
+<h2>相關檔案與測試路徑</h2>
+<ul class="small">
+<li><code>NR/c_impl/include/mmse_lsa_denoiser.h</code>、<code>mmse_lsa_types.h</code> — 公開 API 與 config</li>
+<li><code>NR/c_impl/src/mmse_lsa_denoiser.c</code> — 生命週期、process、reconfigure</li>
+<li><code>NR/c_impl/example/main.c</code>、<code>main_mem.c</code> — heap 與 static pool 的完整可編譯範例</li>
+<li><code>NR/docs/c_user_manual_zh_TW.md</code> — canonical 手冊(完整欄位、錯誤語意表)</li>
+<li><code>NR/docs/parameter_tuning.md</code> — 調校指引</li>
+</ul>
+</body>
+</html>
