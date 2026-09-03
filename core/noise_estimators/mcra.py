@@ -66,6 +66,13 @@ class McraNoiseEstimator:
         accept_external_spp: True = IMCRA mode；False = plain MCRA mode
     """
 
+    # Below this the 1e-10 epsilons in every consumer of noise_psd dominate it
+    # (float32: 1e-10 + N == 1e-10 for N < ~6e-18), so the estimate can no
+    # longer influence anything and, after a signal returns, can no longer be
+    # updated either (see update()). Any real signal scale sits >30 orders
+    # above it. Mirrored by MCRA_NOISE_PSD_INERT in the C port.
+    NOISE_PSD_INERT = 1e-20
+
     def __init__(
         self,
         alpha_s: float = 0.9,
@@ -268,6 +275,20 @@ class McraNoiseEstimator:
 
         # N(k,l) = α̃_d·N(k,l-1) + (1-α̃_d)·|Y(k,l)|²
         self.noise_psd = tilde_alpha_d * self.noise_psd + (1 - tilde_alpha_d) * power
+
+        # Dead-bin restart. A bin whose N has decayed below NOISE_PSD_INERT
+        # (digital silence for a few seconds: N shrinks by α̃_d every frame with
+        # nothing to pull it up) is numerically inert: every consumer adds
+        # 1e-10 to N, so γ and the min-statistics ratio no longer see it. When
+        # signal returns, γ = |Y|²/1e-10 saturates the posterior at exactly 1.0,
+        # α̃_d becomes exactly 1.0 and the update above is a fixed point -- the
+        # bin never tracks again and its gain stays at ~1. Restart such bins
+        # with the ungated blend (p = 0); no other bin is touched, so streams
+        # that never go numerically dead are bit-identical to before.
+        dead = self.noise_psd < self.NOISE_PSD_INERT
+        if np.any(dead):
+            self.noise_psd[dead] = (self.alpha_d * self.noise_psd[dead]
+                                    + (1 - self.alpha_d) * power[dead])
 
         self.frame_count += 1
 

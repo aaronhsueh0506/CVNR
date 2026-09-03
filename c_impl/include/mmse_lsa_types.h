@@ -10,6 +10,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include <string.h>
 #include <limits.h>
 #include <math.h>
 
@@ -34,6 +35,30 @@ typedef enum {
 static inline bool mmse_lsa_nr_mode_is_valid(MmseLsaNrMode mode) {
     return mode == MMSE_LSA_NR_MILD || mode == MMSE_LSA_NR_MODERATE ||
            mode == MMSE_LSA_NR_BALANCED || mode == MMSE_LSA_NR_AGGRESSIVE;
+}
+
+/* Name <-> enum for command lines and configs. Kept beside the enum so a
+ * fifth mode is one edit here, not one per tool (the two shipped CLIs each
+ * carried a hand-copied table and both silently lacked `moderate`).
+ * mmse_lsa_nr_mode_from_name returns -1 for an unknown name; callers decide
+ * whether that falls back to balanced or is rejected. */
+static inline int mmse_lsa_nr_mode_from_name(const char *name) {
+    if (!name) return -1;
+    if (strcmp(name, "mild") == 0)       return MMSE_LSA_NR_MILD;
+    if (strcmp(name, "moderate") == 0)   return MMSE_LSA_NR_MODERATE;
+    if (strcmp(name, "balanced") == 0)   return MMSE_LSA_NR_BALANCED;
+    if (strcmp(name, "aggressive") == 0) return MMSE_LSA_NR_AGGRESSIVE;
+    return -1;
+}
+
+static inline const char *mmse_lsa_nr_mode_name(MmseLsaNrMode mode) {
+    switch (mode) {
+        case MMSE_LSA_NR_MILD:       return "mild";
+        case MMSE_LSA_NR_MODERATE:   return "moderate";
+        case MMSE_LSA_NR_BALANCED:   return "balanced";
+        case MMSE_LSA_NR_AGGRESSIVE: return "aggressive";
+        default:                     return "invalid";
+    }
 }
 
 /**
@@ -67,7 +92,14 @@ typedef struct {
 
     // Gain parameters
     float g_min_db;         // Minimum gain in amplitude dB, /20 (-30.0)
-    float alpha_g;          // Gain smoothing (0.88)
+    float alpha_g;          // Symmetric log-gain smoothing of the Python
+                            // reference's use_asymmetric_smoothing=False mode
+                            // (0.88). The C port implements only the
+                            // asymmetric attack/decay pair below, so this
+                            // field is NOT read by the gain path; it is kept
+                            // because every preset derives alpha_decay from
+                            // it (alpha_decay = alpha_g) and the config-parity
+                            // test compares it. Tune alpha_decay, not this.
     float alpha_attack;     // Asymmetric attack (0.3)
     float alpha_decay;      // Asymmetric decay (0.88 = alpha_g)
 

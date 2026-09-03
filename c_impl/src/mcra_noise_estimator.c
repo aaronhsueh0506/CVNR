@@ -27,6 +27,13 @@
 #include <float.h>
 #include "mmse_lsa_internal.h"
 
+/* Below this the 1e-10f epsilons in every consumer of noise_psd dominate it
+ * (float32: 1e-10f + N == 1e-10f for N < ~6e-18), so the estimate can neither
+ * influence anything nor, once a signal returns, be updated (see the dead-bin
+ * restart in mcra_update). Any real signal scale sits >30 orders above it.
+ * Mirrors McraNoiseEstimator.NOISE_PSD_INERT in the Python reference. */
+#define MCRA_NOISE_PSD_INERT 1e-20f
+
 // Internal structure
 struct McraNoiseEstimator {
     int n_freqs;
@@ -694,6 +701,22 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
     // construction (see that kernel's header comment).
     sk_mcra_noise_update_f32(self->noise_psd, spp_for_update, power,
                               alpha_d, bb_scale, n_freqs);
+
+    /* Dead-bin restart (Python mcra.py, same step). A bin whose N decayed
+     * below MCRA_NOISE_PSD_INERT (a few seconds of digital silence) is
+     * numerically inert: every consumer adds 1e-10f, so gamma and the
+     * min-statistics ratio no longer see it, and once signal returns
+     * gamma = |Y|^2/1e-10 saturates the posterior at exactly 1.0f, which makes
+     * tilde_alpha_d exactly 1.0f and the kernel above a fixed point -- the bin
+     * never tracks again. Restart such bins with the ungated blend (p = 0),
+     * written as the kernel writes it (alpha_d*N + (1-alpha_d)*power, no
+     * fusion) so Python and C stay bit-identical; no other bin is touched. */
+    for (int k = 0; k < n_freqs; k++) {
+        if (self->noise_psd[k] < MCRA_NOISE_PSD_INERT) {
+            self->noise_psd[k] = alpha_d * self->noise_psd[k]
+                               + (1.0f - alpha_d) * power[k];
+        }
+    }
 }
 
 const float* mcra_get_noise_psd(const McraNoiseEstimator* self) {

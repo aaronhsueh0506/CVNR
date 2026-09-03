@@ -714,7 +714,7 @@ AC_FWD = BACKEND=$(BACKEND) SIMD=$(SIMD) WERROR=$(WERROR) CC='$(CC)' CXX='$(CXX)
 
 ifeq ($(AC_LIB),)
 .PHONY: all mem parity test-config test-config-parity test-reconfigure
-all mem parity test-config test-config-parity test-reconfigure:
+all mem parity test-config test-config-parity test-reconfigure test-noise-restart:
 	+@ac="$$($(MAKE) -s --no-print-directory -C $(AC_DIR) $(AC_FWD) print-lib-path)"; \
 	 test -n "$$ac" || { echo "FATAL: could not resolve audio_common archive path (AC_DIR=$(AC_DIR) -- is audio_common present as a sibling of this repo?)" >&2; exit 1; }; \
 	 $(MAKE) --no-print-directory $@ AC_LIB="$$ac"
@@ -932,11 +932,15 @@ $(OBJ_DIR)/main_mem.o: $(EXAMPLE_DIR)/main_mem.c | _cfg_guard
 .PHONY: test-config
 TEST_TARGET = $(BIN_DIR)/test_config_validation
 TEST_RECFG_TARGET = $(BIN_DIR)/test_reconfigure
+TEST_RESTART_TARGET = $(BIN_DIR)/test_noise_restart
 test-config: $(TEST_TARGET)
 	"$(abspath $(TEST_TARGET))"
 
 test-reconfigure: $(TEST_RECFG_TARGET)
 	"$(abspath $(TEST_RECFG_TARGET))"
+
+test-noise-restart: $(TEST_RESTART_TARGET)
+	"$(abspath $(TEST_RESTART_TARGET))"
 
 $(TEST_TARGET): $(OBJS) $(OBJ_DIR)/test_config_validation.o $(AC_LIB) | _cfg_guard
 	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/test_config_validation.o $(AC_LIB) $(LDFLAGS)
@@ -951,6 +955,14 @@ $(OBJ_DIR)/test_config_validation.o: $(TEST_DIR)/test_config_validation.c | _cfg
 	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
 
 $(OBJ_DIR)/test_reconfigure.o: $(TEST_DIR)/test_reconfigure.c | _cfg_guard
+	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
+
+# Noise-tracker recovery after digital silence (see test/test_noise_restart.c).
+$(TEST_RESTART_TARGET): $(OBJS) $(OBJ_DIR)/test_noise_restart.o $(AC_LIB) | _cfg_guard
+	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/test_noise_restart.o $(AC_LIB) $(LDFLAGS)
+	@echo "Build complete: $@"
+
+$(OBJ_DIR)/test_noise_restart.o: $(TEST_DIR)/test_noise_restart.c | _cfg_guard
 	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
 
 # =============================================================================
