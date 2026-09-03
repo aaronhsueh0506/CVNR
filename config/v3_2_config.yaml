@@ -16,7 +16,11 @@ name: MMSE-LSA
 noise_estimation:
   method: mcra
   alpha_s: 0.95                # 調優：更高平滑 → 更穩定功率譜估計
-  alpha_d: 0.7
+  alpha_d: 0.903414             # 2026-09-03 retune (C3): = 0.85 on the 16 ms grid (0.85^(10/16),
+                                # authored here in the legacy 10 ms domain like its siblings).
+                                # Was 0.7 (= 0.565 at 16 ms): that fast tracking is what hurt speech at
+                                # balanced -- 824-case VCTK+DEMAND STOI 0.868 -> 0.880, SI-SDR 10.84 -> 11.48,
+                                # segSNR 5.00 -> 5.36, PESQ 2.431 -> 2.448 (all four improve).
   alpha_p: 0.2
   L: 32                        # 最小值窗長 32 幀 × 16ms/hop = 512ms（原 48 幀 = 768ms；hop=256）
   delta_db: 10.0

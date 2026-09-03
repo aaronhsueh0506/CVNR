@@ -207,7 +207,10 @@ static inline MmseLsaConfig mmse_lsa_default_config_for_grid(
 
     // MCRA parameters (sync with Python v3_2_config.yaml)
     config.alpha_s = mmse_lsa_retime_alpha(0.95f, sample_rate, config.hop_size);
-    config.alpha_d = mmse_lsa_retime_alpha(0.7f, sample_rate, config.hop_size);
+    /* 0.903414 (10 ms domain) = 0.85 on the 16 ms grid: the 2026-09-03
+     * balanced retune (mirrors config/v3_2_config.yaml). Was 0.7 = 0.565 at
+     * 16 ms, whose fast noise tracking is what hurt speech at balanced. */
+    config.alpha_d = mmse_lsa_retime_alpha(0.903414f, sample_rate, config.hop_size);
     config.alpha_p = mmse_lsa_retime_alpha(0.2f, sample_rate, config.hop_size);
     // L=32 is documented in Python's config/v3_2_config.yaml as authored
     // directly against the 16ms hop ("32 幀 × 16ms/hop = 512ms") -- unlike
@@ -314,7 +317,7 @@ static inline MmseLsaConfig mmse_lsa_config_for_mode_grid(
 
     case MMSE_LSA_NR_BALANCED:
     default:
-        break;  // already default
+        break;  // == the base config above (its alpha_d carries the 2026-09-03 retune)
     }
 
     return config;

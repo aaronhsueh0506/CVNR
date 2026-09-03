@@ -4,6 +4,43 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [Unreleased] - 2026-09-03 · balanced noise tracking slowed; dead-bin restart
+
+### 變更 (Changed)
+
+- `balanced` (== the base config) noise-tracking rate `alpha_d` re-authored
+  0.7 → 0.903414 in the 10 ms domain, i.e. 0.85 on the 16 ms grid -- the
+  same rate `mild` / `moderate` already use. Depth (`g_min`/`q`/`xi_min`) and
+  attack/decay are unchanged. The fast tracking (0.565 at 16 ms, in effect
+  since the 2026-08-03 pipeline override removal) let the noise estimate
+  climb during speech and is what made balanced sound distorted.
+  824-case VCTK+DEMAND (16 kHz, `tools/run_vctk_benchmark.py --mode full`):
+  PESQ 2.431 → 2.448, STOI 0.868 → 0.880, SI-SDR 10.84 → 11.48 dB,
+  segSNR 5.00 → 5.36 dB -- every metric improves. Single-axis attribution
+  over `alpha_d` ∈ {0.565, 0.75, 0.85, 0.92} (16 ms): STOI 0.868 / 0.874 /
+  0.880 / 0.887, PESQ 2.431 / 2.451 / 2.448 / 2.425; slower attack (0.4)
+  costs SI-SDR 0.6 dB and was not taken; slower decay (0.92) buys STOI
+  0.893 / SI-SDR 11.89 at PESQ −0.048 and is left as an option.
+  AEC-chained cost (mono C pipeline, AEC 90-case manifest, AECMOS): DT deg
+  −0.020 / −0.044 (static / movement, n = 4 / 26), FS echo within ±0.01,
+  NE deg +0.002. User-confirmed by ear ("C3").
+  Mirrored in `mmse_lsa_default_config_for_grid()`; config-parity test and
+  the Python↔C gain parity harness unchanged.
+
+### 修復 (Fixed)
+
+- MCRA noise tracker: a bin whose estimate decays below 1e-20 (a few seconds
+  of exact-zero input) could never track again once a signal returned (the
+  posterior saturates at exactly 1.0, the gated update coefficient at exactly
+  1.0), leaving its gain near unity. Such bins are now re-seeded with the
+  ungated blend right after the update, in the Python reference and the C
+  port alike; streams that never go numerically dead are byte-identical.
+  Pinned by `tests/test_noise_tracker_restart.py` and
+  `c_impl/test/test_noise_restart.c` (`make test-noise-restart`).
+- `alpha_g` is documented as not read by the C gain path (presets derive
+  `alpha_decay` from it); `mmse_lsa_nr_mode_from_name()` /
+  `mmse_lsa_nr_mode_name()` added beside the mode enum for tools.
+
 ## [Unreleased] - 2026-08-14 · Standalone WAV directory scoring
 
 ### 新增 (Added)

@@ -49,6 +49,10 @@ NR_STRENGTH_PRESETS = {
         'alpha_decay': 0.92,
     },
     # ear-locked anchor (user-confirmed 2026-07): == base YAML (alpha_xi=0.92), EMPTY overlay.
+    # 2026-09-03 (user-confirmed, 'C3'): the base YAML's alpha_d was re-authored 0.7 -> 0.903414
+    # (= 0.85 on the 16 ms grid, the same tracking rate mild/moderate use) because the fast
+    # tracking hurt speech; depth (g_min/q/xi_min) and attack/decay are unchanged. Still an
+    # EMPTY overlay so the provenance rule in denoisers/v3_2_mmse_lsa.py holds.
     # This is the `only_alpha_xi` set. The alpha_xi 0.88→0.92 fix is the whole musical-noise win
     # (MN 0.067→0.061, −9%) and is essentially free on speech (PESQ −0.001 on the 12-file guard).
     # The extra attack/decay smoothing (`only_alpha_xi_and_smoothing`) was DROPPED: it bought only

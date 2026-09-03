@@ -149,7 +149,7 @@ IMCRA/MCRA 的 scene change detector 用「高頻 gamma + spectral flatness」�
 下列參數會改變演算法內部穩定性，預設值是 Optuna / Cohen 文獻 / VCTK 驗證的結果：
 
 - `alpha_xi` (0.92)：DD ξ 平滑 = **musical-noise lever**（2026-07 由 0.88 調高至 0.92，全預設共用，語音幾乎零成本）。調更高 → ξ 更平滑 → musical noise 更少，但過高會平滑掉語音瞬態；調低會帶回 musical noise。
-- `alpha_s` (0.95) / `alpha_d` (0.7) / `alpha_p` (0.2) / `L` (32)：IMCRA/MCRA 核心常數
+- `alpha_s` (0.95) / `alpha_d` (0.903414，即 16 ms grid 上的 0.85；2026-09-03 由 0.7 調慢，0.7 的快速追蹤會傷語音) / `alpha_p` (0.2) / `L` (32)：IMCRA/MCRA 核心常數
 - `num_init_frames` (20 = 200 ms)：調短會讓底噪估計 under-fit
 - `delta_db` (10)：IMCRA/MCRA 內部 speech indicator 偏移（IMCRA 另有 OM-LSA posterior 作為主要 gate）
 - `mcra_accept_external_spp` (True)：**True = IMCRA mode（standalone NR 預設）；False = plain MCRA（AEC pipeline 用）**
