@@ -893,7 +893,7 @@ Hu, Y., & Loizou, P. C. (2008). "Evaluation of objective quality measures for sp
 
 > **v4.2 注記**：本章標題所稱「V4 IMCRA-OMLSA」指 v1.5.0 時期的 IMCRA + OMLSA 組合。現行 v4.2 release 的 V4 模組（`denoisers/v4_omlsa.py`）為 **OMLSA + Wind Handler research 框架**，與此章描述不是同一個東西。
 >
-> 本章技術原理（IMCRA 偏移校正、OMLSA 對數域平滑）**仍是 V3-2 release 主線背後的設計基礎**，可讀；但**實作層面**以 [V3-2 MMSE-LSA (Log-Spectral Amplitude MMSE)](#v3-2-mmse-lsa) 章節為準。V3-2 的噪聲估計器 `noise_estimators/mcra.py`（`McraNoiseEstimator`）在 `accept_external_spp=True`（預設）下即為 IMCRA；AEC pipeline 設 `mcra_accept_external_spp=False` 改用 plain MCRA。
+> 本章技術原理（IMCRA 偏移校正、OMLSA 對數域平滑）**仍是 V3-2 release 主線背後的設計基礎**，可讀；但**實作層面**以 [V3-2 MMSE-LSA (Log-Spectral Amplitude MMSE)](#v3-2-mmse-lsa) 章節為準。V3-2 的噪聲估計器 `noise_estimators/mcra.py`（`McraNoiseEstimator`）在 `accept_external_spp=True`（預設）下使用 denoiser 的 Bayesian posterior SPP；目前 Audio_ALG pipeline 同樣保留這個預設。`False` 會改用 MCRA 內部 binary ratio-test，是另行驗證用的 plain-MCRA 組態，不是目前出貨設定。
 
 **v1.5.0 歷史優化紀錄**（對應當時的 V4 config）：
 - 修復音量損失問題（8-10dB → 3-5dB）

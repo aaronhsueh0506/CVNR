@@ -152,7 +152,9 @@ IMCRA/MCRA 的 scene change detector 用「高頻 gamma + spectral flatness」�
 - `alpha_s` (0.95) / `alpha_d` (0.903414，即 16 ms grid 上的 0.85；2026-09-03 由 0.7 調慢，0.7 的快速追蹤會傷語音) / `alpha_p` (0.2) / `L` (32)：IMCRA/MCRA 核心常數
 - `num_init_frames` (20 = 200 ms)：調短會讓底噪估計 under-fit
 - `delta_db` (10)：IMCRA/MCRA 內部 speech indicator 偏移（IMCRA 另有 OM-LSA posterior 作為主要 gate）
-- `mcra_accept_external_spp` (True)：**True = IMCRA mode（standalone NR 預設）；False = plain MCRA（AEC pipeline 用）**
+- `mcra_accept_external_spp` (True)：**True = 使用 denoiser 的 Bayesian posterior SPP
+  （standalone 與目前 Audio_ALG pipeline 都採用）；False = 改用 MCRA 內部 binary
+  ratio-test（plain MCRA，僅供另外驗證的組態）**
 - `alpha_attack` (0.3) / `alpha_decay` (= alpha_g)：非對稱平滑，預設即最佳
 
 如確實需要動，**請務必以 VCTK/DEMAND 800+ 檔做 regression 驗證**，避免改善單一 case 但整體退步。

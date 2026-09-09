@@ -367,7 +367,8 @@ length、SPP 的 a-priori-SNR 歷史、增益平滑歷史，全部繼續跑。�
 
 > **不要在 pipeline 實例上用 `mmse_lsa_set_mode()`。** 兩條出貨 pipeline（mono 與
 > 四麥克風核心）的 NR 組態都是「canonical preset **加上**自己的覆寫」
-> （`broadband_threshold`、`L`、`alpha_decay`）。把裸的 canonical preset 交給
+> （`L`、`alpha_decay`；`broadband_threshold` 保留 canonical `1.0`）。把裸的
+> canonical preset 交給
 > `mmse_lsa_set_mode()`，在這種實例上會被**拒絕**（它的 `L` 不同）——這正是兩條
 > pipeline 各自提供 setter（`audio_pipeline_set_nr_mode()` /
 > `four_aec_nr_res_set_nr_mode()`）重組完整組態再呼叫 `mmse_lsa_reconfigure()` 的原因。
@@ -379,7 +380,6 @@ if (mmse_lsa_set_mode(denoiser, MMSE_LSA_NR_AGGRESSIVE) != 0) { /* 引數不合�
 /* 自己疊了覆寫的呼叫端：重組整份組態再交出去 */
 MmseLsaConfig target = mmse_lsa_config_for_mode_grid(
     sr, fft_size, MMSE_LSA_NR_AGGRESSIVE);
-target.broadband_threshold = 0.8f;                        /* 我方覆寫 */
 target.L = mmse_lsa_retime_frames(150, sr, target.hop_size);
 target.alpha_decay = target.alpha_g;
 if (mmse_lsa_reconfigure(denoiser, &target) != 0) { /* 幾何不符或 target 無效 */ }

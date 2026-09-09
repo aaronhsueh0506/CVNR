@@ -191,6 +191,7 @@ if (mmse_lsa_process_gain(nr, error_spec, extra_noise_psd, gain) != 0) { /* erro
 <tr><td><code>scene_change_tonal_veto</code></td><td>false</td><td>bool,不做範圍檢查</td><td>低頻呈音調性(音樂)時否決場景重置</td></tr>
 <tr><td><code>scene_change_lo_flatness_max</code></td><td>0.4</td><td><code>[0,1]</code></td><td>低頻「算不算音調性」門檻,只在 <code>tonal_veto=true</code> 時生效</td></tr>
 </table></div>
+<div class="note"><code>q=0.5</code> 是 balanced preset 的作者設定,不是把輸出 SPP 固定為 0.5。頻譜沒有偏向語音或非語音的證據時,Bayesian posterior 會自然回到約 <code>q</code>(套用 <code>xi_min_db=-20</code> 後約 0.498),所以 debug 的 <code>mean_spp≈0.50</code> 是預期的中性狀態。MCRA broadband gate 內部的 <code>spp &gt; 0.5</code> 是另一個分類門檻。</div>
 <p class="small">全部範圍取自 <code>mmse_lsa_validate_config()</code>(<code>mmse_lsa_types.h:364-525</code>),它是 <code>get_mem_size()</code>／<code>create()</code>／<code>init()</code>／<code>reconfigure()</code> 共用的唯一閘門。</p>
 
 <h3>stationary 疊加層的陷阱</h3>
@@ -212,13 +213,12 @@ int mmse_lsa_set_mode(MmseLsaDenoiser *nr, MmseLsaNrMode mode);</pre>
 <tr><td>回 <code>-1</code></td><td><code>self</code>/<code>target</code> 為 NULL、<code>target</code> 未過 <code>validate_config()</code>、六個幾何欄位任一不符。<b><code>-1</code> 時什麼都沒寫</b></td></tr>
 <tr><td>時序</td><td>在兩個 frame <b>之間</b>呼叫、與 <code>process()</code> 序列化。<b>非 thread-safe</b></td></tr>
 </table></div>
-<div class="warn"><b><code>set_mode()</code> 與 <code>reconfigure()</code> 不可互換。</b><code>set_mode()</code> 組的是<b>裸的 canonical preset</b>,只適用 standalone(它會自動重新套上 stationary overlay,避免變成 hybrid)。兩條出貨 pipeline 的 NR 組態都是「canonical preset <b>加上</b>自己的覆寫」(<code>broadband_threshold</code>／<code>L</code>／<code>alpha_decay</code>),把 canonical preset 丟給 <code>set_mode()</code> 會因為 <code>L</code> 不同而<b>被拒絕</b>。這正是 <code>audio_pipeline_set_nr_mode()</code>／<code>four_aec_nr_res_set_nr_mode()</code> 各自重組完整組態再呼叫 <code>reconfigure()</code> 的原因——application 不要繞過 pipeline setter。</div>
+<div class="warn"><b><code>set_mode()</code> 與 <code>reconfigure()</code> 不可互換。</b><code>set_mode()</code> 組的是<b>裸的 canonical preset</b>,只適用 standalone(它會自動重新套上 stationary overlay,避免變成 hybrid)。兩條出貨 pipeline 的 NR 組態都是「canonical preset <b>加上</b>自己的覆寫」(<code>L</code>／<code>alpha_decay</code>; <code>broadband_threshold</code> 保留 canonical <code>1.0</code>),把 canonical preset 丟給 <code>set_mode()</code> 會因為 <code>L</code> 不同而<b>被拒絕</b>。這正是 <code>audio_pipeline_set_nr_mode()</code>／<code>four_aec_nr_res_set_nr_mode()</code> 各自重組完整組態再呼叫 <code>reconfigure()</code> 的原因——application 不要繞過 pipeline setter。</div>
 <pre>/* standalone:直接換 mode */
 mmse_lsa_set_mode(nr, MMSE_LSA_NR_AGGRESSIVE);
 
 /* 自己疊了覆寫:重組整份,逐字交出去 */
 MmseLsaConfig t = mmse_lsa_config_for_mode_grid(sr, fft_size, MMSE_LSA_NR_AGGRESSIVE);
-t.broadband_threshold = 0.8f;                        /* 我方覆寫 */
 t.L                   = mmse_lsa_retime_frames(150, sr, t.hop_size);
 t.alpha_decay         = t.alpha_g;
 mmse_lsa_reconfigure(nr, &amp;t);</pre>
