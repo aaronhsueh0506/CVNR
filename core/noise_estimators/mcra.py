@@ -130,7 +130,8 @@ class McraNoiseEstimator:
         """
         初始化噪聲估計
 
-        v2.1: 改用 20th 百分位數作為噪聲估計，避免語音幀導致過高估計。
+        取前 num_init_frames 幀功率的 30th 百分位數（第 k 小值，與 C quickselect 對齊）
+        作為噪聲估計，避免語音幀導致過高估計。
 
         參數:
             magnitude_spectrum: 幅度譜 (n_frames, n_freqs) 或 (n_freqs,)

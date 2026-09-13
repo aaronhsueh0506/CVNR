@@ -2,6 +2,56 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [v1.12.3] - 2026-09-12 · 共用 fast_math：`fast_log` 改 minimax、`fast_sqrt` 改 AArch64 硬體指令
+
+> 承 v1.12.2。改動全部在共用的 `audio_common/include/{fast_math.h,simd_kernels.h}`
+> （header-only，NR／AEC／Audio_ALG 重新編譯即生效）；本 repo 的 C 原始碼只動註解與文件。
+
+### 變更
+
+- **`fast_log` / `fast_log10`：4 階 Taylor → 端點約束的 degree-4 minimax 多項式**：
+  原本 `ln(1+m) ≈ m − m²/2 + m³/3 − m⁴/4` 在 m→1 時最大絕對誤差 0.1098，且永遠低估，
+  等於每個 2 的冪次下方 −0.95 dB 的 gain 偏差，再經 E1 的 −2.31 係數放大成 v<0.1 區
+  每個 binade 5.4% 的 gain 懸崖；這是 production C 與 Python 參考長期差距的主因。
+  新多項式 `m·(c1 + m·(c2 + m·(c3 + m·c4)))` 以 p(0)=0、p(1)=ln2 約束，binade 接縫
+  從 0.11 降到 1 ulp，正規化 mantissa 全域 worst 7.86e-5，含指數項捨入後全域 worst
+  8.6e-5（契約 <1e-4）。乘法 6 → 4。scalar／NEON 逐位元相同（分離乘加、不用 FMA、
+  各目標同一運算順序），本 repo 三個 object 在 FP-contract audit 中維持 SCALAR、0 個 FMA。
+- **`fast_sqrt`（AArch64）：bit-seed + 2 次 Newton → `sqrtf`／`vsqrtq_f32`（硬體 FSQRT）**：
+  舊路徑最差 19 ULP 且比硬體指令慢；新路徑正確捨入、與 `sqrtf` 逐位元一致（Python 端以 float32 輸入呼叫 `np.sqrt` 時同樣是正確捨入的結果）。
+  `!(v>0) → 0.0f` 的定義域邊界契約不變（NaN、負數、−0.0 仍回 +0.0），只有 `+Inf`
+  改回 `+Inf`。非 AArch64 目標保留 Newton fallback。NR 本身不呼叫 `fast_sqrt`，
+  此項只影響 AEC。
+- 四個 production Makefile 都在 FP policy 尾端加入 `-fno-math-errno`；A53/A73
+  codegen gate 要求 `fast_sqrt` 有 `FSQRT` 且不能殘留 `sqrtf` errno fallback。
+- **`exp1_approx` 係數不變**：三段式係數經文獻核對為 Martin, Malah, Cox & Accardi
+  （EURASIP JASP 2004）式 (17)，Python 與 C 同公式；audio_common selftest 新增公式鎖定
+  測試。本 repo 預設啟用的 `USE_OPTIMIZED_E1` 分支序，其上段判斷改寫為 `!(v <= 1.0f)`，
+  有限輸入完全不變，NaN 則與預設分支序一樣落到 `fast_exp` 分支回 0（原本回約 6.7e9）；
+  audio_common `make selftest` 現在也以 `-DUSE_OPTIMIZED_E1` 跑第二遍。它相對精確 E1 的 5.5% gain-factor 誤差是 Python 參考也有的設計取捨，不在本版範圍。
+- **文件／註解校正**：`USE_FAST_PERCENTILE` 的說明由 `mean×0.17`／20th 改為程式實際的
+  `mean×0.23`／30th（Makefile、header、README、`core/noise_estimators/mcra.py`）；
+  `USE_FAST_GAIN_SMOOTHING` 與 `USE_SHARED_XI_RATIO` 標示為「公式等價，fast-math 下不保證
+  bit-exact」（前者省掉 exp→log 往返，後者以 `v/(γ+1e-10)` 反推 `xi_ratio`）；
+  `mmse_lsa.py` 的「與 C bit-exact 對齊」改為「公式對齊」（Python 用 float64 精確 log，
+  C 用 float32 近似）。
+
+### 驗證
+
+- `audio_common make selftest`（kiss／ne10／`-DUSE_STANDARD_MATH`）全 PASS；新增
+  `test_fast_log_accuracy`（全部 2^23 個 mantissa ≤ 8.9e-5 即 1e-4 契約減 E·ln2 捨入預算、跨全部 binade 抽樣 ≤ 1e-4、
+  接縫 ≤ 2e-6）、`test_fast_sqrt_accuracy`、`test_exp1_published_formula`；x86_64
+  portable 分支同樣 ALL PASS。
+- `make test-config` / `test-reconfigure` / `test-noise-restart` / `test-config-parity` 全 PASS。
+- parity harness（48 kHz babble_10dB.wav，3480 幀 × 513 bin）：fast-math worst |Δgain|
+  3.7e-1 → 3.176e-3、median 1.9e-3 → 7.829e-5；standard-math worst 7.212e-6、median 2.235e-8。
+- VCTK+DEMAND 824 筆（16 kHz、FFT 256、balanced），舊 C 對新 C：PESQ +0.0108、
+  SI-SDR +0.150 dB、segSNR +1.18 dB（主要是移除舊路徑約 0.8 dB 的位準偏低）、
+  STOI −0.0019（舊 C 過度壓 gain 的偶然高分）；新 C 對 Python 參考 PESQ +0.0004、
+  SI-SDR −0.0005 dB，即 production C 回到 Python 的行為。證據與 runner 二進位（含 SHA256）
+  在不進版的 `results/ab_evidence/2026-09-11-balanced-alpha-d/fast_math_analysis/`，隨 release 附件保存。
+- 未涵蓋：目標板（A53／A73，aarch64-linux-gnu-gcc）的反組譯與計時仍待量。
+
 ## [v1.12.2] - 2026-07-13 · 移除 `USE_FAST_RECIPROCAL` 編譯開關
 
 > 承 v1.12.1。`feature/static-memory` 分支。

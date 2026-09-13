@@ -1,6 +1,6 @@
 # OMLSA Speech Denoiser — C Implementation (V3-2 主線)
 
-> **Release**: v1.12.2（c_impl）· 移除 `USE_FAST_RECIPROCAL` 編譯開關（維持單一 bit-exact IEEE 除法路徑；`fast_recip`/`fast_div` 也一併從 `audio_common/fast_math.h` 移除）
+> **Release**: v1.12.3（c_impl）· 共用 `audio_common/fast_math.h`：`fast_log` 改 degree-4 minimax（worst 誤差 0.11 → <1e-4，production C 回到 Python 參考）、`fast_sqrt` 在 AArch64 改用硬體 `FSQRT`；本 repo 的 C 原始碼只更新註解與文件
 > **對應 Python**: `denoisers/v3_2_mmse_lsa.py`
 
 基於 Ephraim-Malah 1985 的 MMSE-LSA (Minimum Mean Square Error Log-Spectral Amplitude) 語音降噪演算法 C 實現，搭配 Cohen & Berdugo (2002) MCRA 噪聲估計與 Cohen & Berdugo (2001) Bayesian SPP 軟判決。整體通稱 **OMLSA**。
@@ -173,9 +173,9 @@ arm64（Apple Silicon）上原生編譯 + 驗證 NE10 版 mem==malloc byte-for-b
 
 ### FP-contraction 統一政策
 
-`-ffp-contract=off` 現在是**橫跨四個 repo 的統一政策**（`audio_common`、
+`-ffp-contract=off -fno-math-errno` 現在是**橫跨四個 repo 的統一政策**（`audio_common`、
 `NR/c_impl`、`AEC/c_impl`、`Audio_ALG/pipelines`）：每個 Makefile 編譯的每一個
-TU——自己的原始碼**與**vendored 的 KISS/NE10 C/C++ 一律套用此 flag。本 repo
+TU——自己的原始碼**與**vendored 的 KISS/NE10 C/C++ 一律套用這兩個 flag。本 repo
 無自己的 C++ TU（`CXXFLAGS` 只是 CFG_SIG payload-coverage 佔位，見 Makefile
 註解），所以只有 `CFLAGS` 需要這個 flag。它被附加在 `CFLAGS` 組裝的**最後一步**
 （`EXTRA_CFLAGS`、DEBUG-vs-預設優化區塊、`WERROR` 全部疊加完之後），確保呼叫端傳
@@ -200,8 +200,8 @@ fmadd/fmsub/fnmadd/fnmsub/fmla/fmls 指令即判定失敗——那正是編譯�
 
 | 開關 | 說明 | 效果 | 相關度 |
 |------|------|------|--------|
-| `USE_FAST_GAIN_SMOOTHING` | 在 log 域直接 clamp，省略 exp→log 轉換 | 每頻點省 ~150 cycles | 100% |
-| `USE_SHARED_XI_RATIO` | SPP 和 Gain 共用 v 計算結果 | 每頻點省 1 次除法 | 100% |
+| `USE_FAST_GAIN_SMOOTHING` | 在 log 域直接 clamp，省略 exp→log 轉換 | 每頻點省 ~150 cycles | 公式等價；fast-math 下不保證 bit-exact |
+| `USE_SHARED_XI_RATIO` | SPP 和 Gain 共用 v 計算結果 | 每頻點省 1 次除法 | 公式等價；≤1 ulp，不保證 bit-exact |
 | `USE_OPTIMIZED_MIN_BUFFER` | MCRA 最小值緩衝改為連續記憶體佈局 | 改善 cache 效率 | 100% |
 | `USE_OPTIMIZED_E1` | E1(v) 指數積分分支重排 + 共用 log10 | 每頻點省 ~50 cycles | 100% |
 | `USE_SINGLE_CLAMP` | 移除冗餘的 gain clamp（僅在 `USE_FAST_GAIN_SMOOTHING` **關閉**時有作用——預設兩者皆開,此 flag 守的分支不會被編譯,等於 no-op;FAST_GAIN_SMOOTHING 的 log-域 clamp 已結構性避免 double-clamp） | (預設組合下無效果) | 100% |
@@ -211,7 +211,7 @@ fmadd/fmsub/fnmadd/fnmsub/fmla/fmls 指令即判定失敗——那正是編譯�
 
 | 開關 | 說明 | 效果 | 相關度 |
 |------|------|------|--------|
-| `USE_FAST_PERCENTILE` | 使用 mean×0.17 近似 20th percentile | 省 ~20KB 記憶體 | ~99.5% |
+| `USE_FAST_PERCENTILE` | 使用 mean×0.23 近似目前設定的 30th percentile | 省 ~20KB 記憶體 | 近似模式，需獨立做品質驗證 |
 
 ### 調試用
 
@@ -413,13 +413,14 @@ NRP2 dump header 會攜帶 `sample_rate`；C 端據此建立完全相同的 sign
 與 wall-clock-retimed EMA/count。仍可讀舊 NRP1（視為 16 kHz）。實測
 （48 kHz babble_10dB.wav，3480 幀 × 513 bin）：
 
-| build | worst &#124;Δgain&#124; | median &#124;Δgain&#124; |
-|-------|--------------|---------------|
-| standard-math (`-DUSE_STANDARD_MATH`) | 1.675e-5 | 2.235e-8 |
-| fast-math (預設) | 3.7e-1 | 1.9e-3 |
+| build | worst &#124;Δgain&#124; | median &#124;Δgain&#124; | mean &#124;Δgain&#124; |
+|-------|--------------|---------------|-------------|
+| standard-math (`-DUSE_STANDARD_MATH`) | 7.212e-6 | 2.235e-8 | 5.028e-8 |
+| fast-math (預設) | 3.176e-3 | 7.829e-5 | 1.635e-4 |
 
-standard-math 近 bit-exact ⇒ 埠邏輯正確。fast-math 尾端較大來自 `fast_log`
-Taylor 近似（小引數 worst ~0.11），會經遞迴平滑放大；屬 fast-math 固有取捨，非埠 bug。
+standard-math 近 bit-exact ⇒ 埠邏輯正確。fast-math 的殘差來自 `fast_exp`（LUT +
+Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差 < 1e-4），兩者都是
+有界的近似（NR 不呼叫 `fast_sqrt`）。
 
 ## 使用條件 (Usage Requirements)
 
@@ -458,7 +459,7 @@ Taylor 近似（小引數 worst ~0.11），會經遞迴平滑放大；屬 fast-m
 ### 不建議在 release 動
 - `alpha_xi` / `alpha_s` / `alpha_d` / `L` / `alpha_p` — 內部穩定性依賴這些預設
 - `num_init_frames` — 固定 20，改短會讓底噪估計 under-fit
-- 編譯開關：v4.2 recommended configuration 即 `make`（已啟用 6 個 bit-exact 優化）
+- 編譯開關：v4.2 recommended configuration 即 `make`（已啟用 6 個公式等價／回歸驗證過的優化；其中 fast gain smoothing 在近似數學下不宣稱 bit-exact）
 
 ### 當這些都不夠
 - 檢查是否屬於「不適用情境」—— 本模組 by design 無法處理風聲 / 衝擊 / 重疊干擾
@@ -535,7 +536,7 @@ c_impl/
 
 ../audio_common/                # 共用層（本 repo 之外，siblings 目錄）：
 ├── include/fft_wrapper.h        #   Complex 型別、FFT heap+靜態記憶體 API、ALIGN16
-├── include/fast_math.h          #   快速數學函數 (LUT+Taylor)
+├── include/fast_math.h          #   快速數學 (LUT/Taylor exp, minimax log, AArch64 hardware sqrt)
 └── lib/{kiss_fft,ne10}/         #   兩個 FFT backend 的原始碼；`make BACKEND=kiss|ne10 lib`
                                   #   產出 bin/<backend>-<config-hash>/libaudio_common.a
                                   #   （`make print-lib-path` 取得確切路徑），c_impl 連結它

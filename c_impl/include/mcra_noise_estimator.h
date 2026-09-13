@@ -60,8 +60,8 @@ void mcra_accumulate_init_power(McraNoiseEstimator* self, const float* power, in
 /**
  * Initialize noise estimate from accumulated power
  *
- * When USE_FAST_PERCENTILE is defined: Uses mean × 0.17 approximation
- * When USE_FAST_PERCENTILE is NOT defined: Uses exact 20th percentile via Quickselect
+ * When USE_FAST_PERCENTILE is defined: Uses mean × 0.23 approximation
+ * When USE_FAST_PERCENTILE is NOT defined: Uses exact 30th percentile via Quickselect
  *
  * @param self Estimator instance
  * @param power_sum Accumulated power spectrum [n_freqs]

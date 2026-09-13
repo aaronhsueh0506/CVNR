@@ -207,7 +207,7 @@ ifeq ($(BACKEND),ne10)
 endif
 
 # =============================================================================
-# Default optimizations (mathematically equivalent, 100% bit-exact) vs DEBUG
+# Default optimizations (formula-equivalent, regression tested) vs DEBUG
 # (DEBUG resolved BEFORE CFG_SIG, replacing the old
 # `debug: CFLAGS += -DUSE_STANDARD_MATH; debug: CFLAGS := $(filter-out ...)`
 # target-specific-variable pair. That old scheme mutated CFLAGS only in the
@@ -237,17 +237,20 @@ endif
 #
 # USE_STANDARD_MATH - Use standard math library functions (for debugging)
 #   When defined: Uses expf(), logf(), sqrtf(), log10f(), powf()
-#   When not defined: Uses fast LUT+Taylor approximations
-#   Now selected via `make debug` (DEBUG=1), not EXTRA_CFLAGS -- see above.
+#   When not defined: Uses fast LUT/Taylor exp, minimax log, and target sqrt
+#   Selector: `make debug` (DEBUG=1) -- also drops the six USE_* optimizations;
+#   EXTRA_CFLAGS="-DUSE_STANDARD_MATH" keeps them (README's parity procedure).
 #
 # USE_FAST_PERCENTILE - Use fast percentile approximation (for speed optimization)
-#   When defined: Uses mean × 0.17 approximation for 20th percentile
-#   When not defined: Uses exact Quickselect algorithm (requires extra ~20KB memory)
+#   When defined: Uses mean × 0.23 approximation for configured 30th percentile
+#   When not defined: Uses exact 30th percentile Quickselect (requires extra ~20KB memory)
 #   Example: make EXTRA_CFLAGS="-DUSE_FAST_PERCENTILE"
 #
 # USE_FAST_GAIN_SMOOTHING - Optimize gain smoothing by eliminating log-exp-log redundancy
 #   When defined: Performs clamping in log domain, avoids exp→log conversion
 #   When not defined: Uses original exp→clamp→log sequence
+#   Formula-equivalent only: with approximate math the skipped exp->log round
+#   trip makes it not bit-exact to the disabled path.
 #   Example: make EXTRA_CFLAGS="-DUSE_FAST_GAIN_SMOOTHING"
 #
 # USE_SHARED_XI_RATIO - Share v=xi/(1+xi)*gamma computation between SPP and Gain
@@ -334,7 +337,9 @@ endif
 # $(FP_POLICY)`, appended LAST), so there is exactly one `:=` definition of
 # FP_POLICY in this file, just moved. Same fix audio_common/AEC already
 # applied to their own Makefiles.
-FP_POLICY := -ffp-contract=off
+# Keep scalar/NEON operation ordering stable and let audio_common's guarded
+# AArch64 sqrtf calls lower to FSQRT without an errno-checking libm fallback.
+FP_POLICY := -ffp-contract=off -fno-math-errno
 
 # FP_ALLOWED_CHARS_RE (added alongside the FP-policy allow-list redesign
 # below -- replicated from audio_common's/AEC's identical fix, see the
@@ -1380,7 +1385,7 @@ help:
 	@echo ""
 	@echo "Flags:"
 	@echo "  USE_STANDARD_MATH   - now selected via \`make debug\` (DEBUG=1), not EXTRA_CFLAGS"
-	@echo "  USE_FAST_PERCENTILE - Use mean*0.17 approximation instead of exact percentile"
+	@echo "  USE_FAST_PERCENTILE - Use mean*0.23 approximation instead of exact 30th percentile"
 	@echo ""
 	@echo "Memory usage:"
 	@echo "  Without USE_FAST_PERCENTILE: +20KB for exact percentile buffer"

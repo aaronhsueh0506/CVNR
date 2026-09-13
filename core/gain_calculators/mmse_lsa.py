@@ -14,7 +14,7 @@ MMSE-LSA Gain Calculator (Log-Spectral Amplitude)
 
 增益公式 = OM-LSA (Cohen 2002)：在 log 域以 SPP 加權混合
     G = G_H1^spp × g_min^(1-spp)，  G_H1 = (ξ/(1+ξ)) × exp(0.5 × E1(v))
-此 calculator 一律走 OM-LSA 混合（與 C 埠 mmse_lsa_denoiser.c bit-exact 對齊）。
+此 calculator 一律走 OM-LSA 混合（與 C 埠 mmse_lsa_denoiser.c 公式對齊；近似數學的數值 parity 另行以 harness 驗證）。
 """
 
 import numpy as np
@@ -22,12 +22,10 @@ from typing import Optional
 
 
 def _exp1_approx(v: np.ndarray) -> np.ndarray:
-    """E1(v) three-segment approximation (Cohen & Berdugo 2002 / Loizou 2007).
+    """Published three-segment E1 approximation (Martin et al., 2004, Eq. 17).
 
-    Segments:
-      v < 0.1  : -2.31  * log10(v) - 0.6
-      0.1..1.0 : -1.544 * log10(v) + 0.166
-      v > 1.0  : 10^(-0.52*v - 0.26)
+    E1 is part of the Ephraim-Malah MMSE-LSA gain.  Keep these published
+    coefficients aligned with the C implementation for paper traceability.
 
     Shared with SppMmseGainCalculator (imported there).
     """
@@ -42,7 +40,7 @@ def _exp1_approx(v: np.ndarray) -> np.ndarray:
     return result
 
 
-# v4.2.1 C-align: E1(v) 一律走 3 段近似（與 C `exp1_approx` bit-exact 對齊）。
+# v4.2.1 C-align: E1(v) 一律走 3 段近似（與 C `exp1_approx` 公式對齊）。
 # scipy.special.exp1 路徑已移除——C 端不會鏈結 scipy，保留 scipy 分支只會是 parity footgun。
 
 
@@ -226,7 +224,6 @@ class MmseLsaGainCalculator:
         v = (xi / (1 + xi)) * gamma
         v = np.clip(v, 1e-10, 700)  # 防止溢出
 
-        # v4.2.1 C-align: 一律用 3 段近似（與 C `exp1_approx` bit-exact 對齊）。
         exp1_v = _exp1_approx(v)
 
         gain = (xi / (1 + xi)) * np.exp(0.5 * exp1_v)

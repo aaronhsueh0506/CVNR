@@ -431,11 +431,10 @@ void mcra_init_noise(McraNoiseEstimator* self, const float* power_sum, int n_fra
     int n_freqs = self->n_freqs;
 
 #ifdef USE_FAST_PERCENTILE
-    // Fast approximation: 20th percentile ≈ mean × 0.17
-    // This is an empirical approximation for power spectrum distribution
+    // Low-memory empirical stand-in for the configured 30th percentile.
     for (int k = 0; k < n_freqs; k++) {
         float avg_power = power_sum[k] / (float)n_frames;
-        float init_psd = avg_power * 0.23f;  // v4.0: 30th percentile (more accurate)
+        float init_psd = avg_power * 0.23f;
 
         if (init_psd < 1e-10f) init_psd = 1e-10f;
 
