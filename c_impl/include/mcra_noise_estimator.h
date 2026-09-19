@@ -78,6 +78,19 @@ void mcra_init_noise(McraNoiseEstimator* self, const float* power_sum, int n_fra
  */
 void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp);
 
+/** Update with an optional frame-level low-frequency speech hold.
+ *
+ * When slow_lf_rise is true, bins [0, slow_lf_bins) may fall at the normal
+ * rate but may rise no faster than alpha_d_speech. This protects weak LF
+ * speech without allocating a per-bin mask.
+ */
+void mcra_update_ex(McraNoiseEstimator* self,
+                    const float* power,
+                    const float* spp,
+                    bool slow_lf_rise,
+                    int slow_lf_bins,
+                    float alpha_d_speech);
+
 /**
  * Get current noise PSD estimate
  *

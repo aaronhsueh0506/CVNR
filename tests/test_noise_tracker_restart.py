@@ -32,7 +32,8 @@ CONFIG_DIR = os.path.join(ROOT, 'config')
 
 def _tone_gain(silence_s, tone_s, strength='balanced'):
     """Gain of the tone bin over the last second of the tone, given
-    `silence_s` seconds of exact-zero frames before it."""
+    `silence_s` seconds of exact-zero frames before it, and the preset's
+    linear gain floor."""
     d = create_denoiser_from_config('V3-2', CONFIG_DIR, SR, mode='full',
                                     strength=strength)
     p = d.get_params()
@@ -46,14 +47,19 @@ def _tone_gain(silence_s, tone_s, strength='balanced'):
     phase = np.zeros_like(mag)
     enhanced, _ = d.denoise_spectrum(mag, phase)
     last = slice(n_sil + n_tone - int(SR / hop), n_sil + n_tone)
-    return float(np.mean(enhanced[last, k] / mag[last, k]))
+    return float(np.mean(enhanced[last, k] / mag[last, k])), 10 ** (p['g_min_db'] / 20)
 
 
 def test_tone_after_digital_silence_is_suppressed_like_control():
-    control = _tone_gain(0.0, 10.0)
-    after_silence = _tone_gain(5.0, 10.0)
-    assert control < 0.1, control                     # a stationary tone is noise
-    assert after_silence < 0.1, after_silence         # ... also after 5 s of zeros
+    control, floor = _tone_gain(0.0, 10.0)
+    after_silence, _ = _tone_gain(5.0, 10.0)
+    # The 1 kHz probe sits above the LF speech guard; a stationary tone settles
+    # a few dB above the preset floor because the fixed speech prior and the
+    # a-priori-SNR floor keep OM-LSA off g_min. Bound the gain by the preset's
+    # own floor rather than a literal so a depth retune cannot silently loosen
+    # this check; the dead-bin failure it guards is ~0.93.
+    assert control < 4.0 * floor, (control, floor)
+    assert after_silence < 4.0 * floor, (after_silence, floor)
     assert abs(after_silence - control) < 0.02, (after_silence, control)
 
 

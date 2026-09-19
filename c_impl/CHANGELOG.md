@@ -2,6 +2,18 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [Unreleased] - 2026-09-19 · 共用低頻語音保護與 depth-only presets
+
+- `mild` / `moderate` / `balanced` / `aggressive` 共用同一套 DD、MCRA
+  tracker、gain dynamics 與低頻語音 guard；preset 只改
+  `g_min_db` / `q` / `xi_min_db` / noise over-subtraction。
+- 新增 frame-level 語音證據：強語音幀中，300 Hz 以下 MCRA 僅減慢向上更新，
+  並以 −15 dB floor 保護弱低頻諧波。證據掃描是獨立的窄頻 loop（80–4000 Hz），
+  floor 只修 300 Hz 以下的 bin，全頻 gain loop 不加 per-bin 條件。
+- 驗證：Python 70 tests；C config/reconfigure/noise-restart/config-parity；
+  16 kHz 與 48 kHz C/Python gain parity worst 分別 `3.079e-3`、
+  `3.195e-3`。Apple M4 spectral-core 計時約 +3% / +1%；A53/A73 未量。
+
 ## [v1.12.3] - 2026-09-12 · 共用 fast_math：`fast_log` 改 minimax、`fast_sqrt` 改 AArch64 硬體指令
 
 > 承 v1.12.2。改動全部在共用的 `audio_common/include/{fast_math.h,simd_kernels.h}`

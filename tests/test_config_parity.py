@@ -111,6 +111,22 @@ def _python_effective_config(sample_rate, fft_size, strength):
         "scene_change_min_frames": ne.scene_change_min_frames,
         "scene_change_blend": ne.scene_change_blend,
         "scene_change_flatness_threshold": ne.scene_change_flatness_threshold,
+        "noise_over_subtraction": p["noise_over_subtraction"],
+        "speech_protect_floor": p["speech_protect_floor_db"] is not None,
+        "speech_protect_floor_db": p["speech_protect_floor_db"],
+        "speech_protect_threshold": p["speech_protect_threshold"],
+        "speech_protect_frame_threshold": p["speech_protect_frame_threshold"],
+        "dd_from_gmmse": p["dd_from_gmmse"],
+        "speech_aware_noise_tracking": p["alpha_d_speech"] is not None,
+        "alpha_d_speech": p["alpha_d_speech"],
+        "noise_gate_xi_db": p["noise_gate_xi_db"],
+        "noise_gate_lf_bin": p["noise_gate_lf_bin"],
+        "noise_gate_frame_frac": p["noise_gate_frame_frac"],
+        "makeup_gain": p["makeup_gain"],
+        "makeup_prior_xi_db": p["makeup_prior_xi_db"],
+        "makeup_blim": p["makeup_blim"],
+        "makeup_up_slope": p["makeup_up_slope"],
+        "makeup_down_slope": p["makeup_down_slope"],
     }
 
 
@@ -124,6 +140,40 @@ def test_c_dump_covers_three_grids_and_four_strengths(c_rows):
     strengths = {r["strength"] for r in c_rows}
     assert grids == {(16000, 256), (16000, 512), (48000, 1024)}
     assert strengths == {"mild", "moderate", "balanced", "aggressive"}
+
+
+@pytest.mark.parametrize("sample_rate,fft_size", [
+    (16000, 256), (16000, 512), (48000, 1024),
+])
+def test_strength_presets_change_depth_only(sample_rate, fft_size):
+    """A strength preset must not select a different tracker or dynamics.
+
+    This is a product contract, not merely Python/C parity: two sides could
+    otherwise agree on the same bad preset overlay.  The ordered depth knobs
+    are tested separately below; every other effective field must be shared.
+    """
+    strengths = ("mild", "moderate", "balanced", "aggressive")
+    configs = {
+        strength: _python_effective_config(sample_rate, fft_size, strength)
+        for strength in strengths
+    }
+    depth_fields = {"g_min_db", "q", "xi_min_db", "noise_over_subtraction"}
+    shared_fields = set(configs["balanced"]) - depth_fields
+    for field in shared_fields:
+        values = [configs[strength][field] for strength in strengths]
+        assert values[1:] == values[:-1], (
+            f"strength preset changed shared field {field} at "
+            f"{sample_rate}Hz/fft={fft_size}: {dict(zip(strengths, values))}"
+        )
+
+    # Stronger modes monotonically deepen the gain/SNR floors, lower the
+    # speech-presence prior, and increase noise over-subtraction.
+    assert [configs[s]["g_min_db"] for s in strengths] == [-20, -23, -25, -28]
+    assert [configs[s]["q"] for s in strengths] == [0.58, 0.54, 0.52, 0.45]
+    assert [configs[s]["xi_min_db"] for s in strengths] == [-10, -10, -10, -12]
+    assert [configs[s]["noise_over_subtraction"] for s in strengths] == [
+        1.2, 1.3, 1.4, 1.5,
+    ]
 
 
 @pytest.mark.parametrize("sample_rate,fft_size", [
@@ -144,7 +194,12 @@ def test_python_c_effective_config_matches(c_rows, sample_rate, fft_size, streng
         "alpha_xi", "q", "xi_min_db", "g_min_db", "alpha_g", "alpha_attack",
         "alpha_decay", "alpha_s", "alpha_d", "alpha_p",
         "broadband_threshold", "scene_change_blend",
-        "scene_change_flatness_threshold",
+        "scene_change_flatness_threshold", "noise_over_subtraction",
+        "speech_protect_floor_db", "speech_protect_threshold",
+        "speech_protect_frame_threshold",
+        "alpha_d_speech", "noise_gate_xi_db", "noise_gate_frame_frac",
+        "makeup_prior_xi_db", "makeup_blim", "makeup_up_slope",
+        "makeup_down_slope",
     ):
         c_val = float(c_row[field])
         py_val = py[field]
@@ -152,6 +207,15 @@ def test_python_c_effective_config_matches(c_rows, sample_rate, fft_size, streng
             f"{field} mismatch at {sample_rate}Hz/fft={fft_size}/{strength}: "
             f"C={c_val!r} Python={py_val!r}"
         )
+
+    # The public config is authored in Hz, while Python stores the resolved
+    # ceil-to-bin boundary. Compare the actual protected bin count.
+    c_lf_bin = math.ceil(float(c_row["noise_gate_lf_hz"]) * fft_size / sample_rate)
+    assert c_lf_bin == py["noise_gate_lf_bin"], "noise_gate_lf_hz/resolved bin"
+
+    for field in ("speech_protect_floor", "dd_from_gmmse",
+                  "speech_aware_noise_tracking", "makeup_gain"):
+        assert bool(int(c_row[field])) == py[field], field
 
     for field in ("num_init_frames", "L", "scene_change_min_frames"):
         c_val = int(c_row[field])
