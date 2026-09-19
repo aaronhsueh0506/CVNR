@@ -98,6 +98,15 @@ struct McraNoiseEstimator {
  * ~0.1-0.2 for tonal/voiced content, ~0.5-0.7 for white noise. Mirrors Python
  * core/noise_estimators/mcra.py _spectral_flatness (same +1e-20 eps).
  *
+ * The result meets a hard threshold (scene_change_flatness_threshold), and
+ * the Python reference evaluates it in double precision, so the one scalar
+ * exp of the mean log is libm expf rather than fast_exp: the cubic Taylor
+ * approximation is up to 3.9e-3 low, which put DNS 2020 clip fileid_63
+ * (flatness 0.40061 in the reference, 0.39991 here) on the other side of the
+ * 0.4 threshold and left the two trackers resetting on different frames for
+ * ~120 frames. The per-bin logs keep sk_fast_log_f32: their errors cancel in
+ * the sum (about 5e-7 on the mean). This runs once per candidate frame only.
+ *
  * `scratch` must hold >= (end-start) floats (the caller's flatness_scratch,
  * sized n_freqs -- always enough). Split into three passes so the expensive
  * fast_log() call is a single vectorized sk_fast_log_f32() over the whole
@@ -121,7 +130,7 @@ static float spectral_flatness(const float* power, int start, int end, float* sc
     float log_sum = 0.0f;
     for (int k = 0; k < n; k++) log_sum += scratch[k];
     float inv_n = 1.0f / (float)n;
-    return fast_exp(log_sum * inv_n) / (arith_sum * inv_n);
+    return expf(log_sum * inv_n) / (arith_sum * inv_n);
 }
 
 /* Partial noise-floor reset on a confirmed scene change: blend the tracked noise

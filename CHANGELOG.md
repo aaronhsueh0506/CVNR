@@ -39,6 +39,10 @@
   C/Python gain parity worst `3.20e-3`（fast-math 預期範圍）。Apple M4 上
   spectral-core microbenchmark 約 +3%（16 kHz/FFT 512）、+1%（48 kHz/FFT
   1024）；A53/A73 尚待板端實測。
+- C scene-change 偵測的 flatness 幾何平均改用 libm `expf`：DNS 2020
+  `fileid_63` / `fileid_112` 的 C/Python 波形 parity 由 16 / 33 dB 回到
+  corpus 其餘檔案的水準；`tests/test_scene_change_flatness_margin.py` 與
+  `make test-scene-change` 在門檻 ±6e-4 釘住決策。
 
 ## [Unreleased] - 2026-09-03 · balanced noise tracking slowed; dead-bin restart
 

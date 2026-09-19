@@ -718,8 +718,8 @@ CFLAGS    += $(FP_POLICY)
 AC_FWD = BACKEND=$(BACKEND) SIMD=$(SIMD) WERROR=$(WERROR) CC='$(CC)' CXX='$(CXX)' EXTRA_CFLAGS='$(EXTRA_CFLAGS)' NO_STDIO=$(NO_STDIO) TOOLCHAIN_CHECK=$(TOOLCHAIN_CHECK)
 
 ifeq ($(AC_LIB),)
-.PHONY: all mem parity test-config test-config-parity test-reconfigure
-all mem parity test-config test-config-parity test-reconfigure test-noise-restart:
+.PHONY: all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-scene-change
+all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-scene-change:
 	+@ac="$$($(MAKE) -s --no-print-directory -C $(AC_DIR) $(AC_FWD) print-lib-path)"; \
 	 test -n "$$ac" || { echo "FATAL: could not resolve audio_common archive path (AC_DIR=$(AC_DIR) -- is audio_common present as a sibling of this repo?)" >&2; exit 1; }; \
 	 $(MAKE) --no-print-directory $@ AC_LIB="$$ac"
@@ -934,10 +934,11 @@ $(OBJ_DIR)/main_mem.o: $(EXAMPLE_DIR)/main_mem.c | _cfg_guard
 # against the same objects as denoise_wav and runs itself; a non-zero exit
 # (any failed check) fails the `make test-config` recipe.
 # =============================================================================
-.PHONY: test-config
+.PHONY: test-config test-reconfigure test-noise-restart test-scene-change
 TEST_TARGET = $(BIN_DIR)/test_config_validation
 TEST_RECFG_TARGET = $(BIN_DIR)/test_reconfigure
 TEST_RESTART_TARGET = $(BIN_DIR)/test_noise_restart
+TEST_SCENE_TARGET = $(BIN_DIR)/test_scene_change_margin
 test-config: $(TEST_TARGET)
 	"$(abspath $(TEST_TARGET))"
 
@@ -946,6 +947,9 @@ test-reconfigure: $(TEST_RECFG_TARGET)
 
 test-noise-restart: $(TEST_RESTART_TARGET)
 	"$(abspath $(TEST_RESTART_TARGET))"
+
+test-scene-change: $(TEST_SCENE_TARGET)
+	"$(abspath $(TEST_SCENE_TARGET))"
 
 $(TEST_TARGET): $(OBJS) $(OBJ_DIR)/test_config_validation.o $(AC_LIB) | _cfg_guard
 	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/test_config_validation.o $(AC_LIB) $(LDFLAGS)
@@ -968,6 +972,15 @@ $(TEST_RESTART_TARGET): $(OBJS) $(OBJ_DIR)/test_noise_restart.o $(AC_LIB) | _cfg
 	@echo "Build complete: $@"
 
 $(OBJ_DIR)/test_noise_restart.o: $(TEST_DIR)/test_noise_restart.c | _cfg_guard
+	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
+
+# Scene-change flatness decision at a threshold margin inside a cubic-exp
+# approximation's error (see test/test_scene_change_margin.c).
+$(TEST_SCENE_TARGET): $(OBJS) $(OBJ_DIR)/test_scene_change_margin.o $(AC_LIB) | _cfg_guard
+	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/test_scene_change_margin.o $(AC_LIB) $(LDFLAGS)
+	@echo "Build complete: $@"
+
+$(OBJ_DIR)/test_scene_change_margin.o: $(TEST_DIR)/test_scene_change_margin.c | _cfg_guard
 	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
 
 # =============================================================================

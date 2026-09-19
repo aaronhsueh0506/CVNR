@@ -13,6 +13,13 @@
 - 驗證：Python 70 tests；C config/reconfigure/noise-restart/config-parity；
   16 kHz 與 48 kHz C/Python gain parity worst 分別 `3.079e-3`、
   `3.195e-3`。Apple M4 spectral-core 計時約 +3% / +1%；A53/A73 未量。
+- scene-change 偵測的 spectral flatness：幾何平均那一次 scalar exp 改用 libm
+  `expf`（只在 hi-band gamma 通過門檻的候選幀執行）。flatness 直接與 0.4
+  硬門檻比較，Python reference 用 double；cubic Taylor `fast_exp` 最大
+  3.9e-3 的相對誤差曾讓 DNS 2020 `fileid_63`（reference 0.40061、C 0.39991）
+  在不同幀重設噪聲底，波形 parity 只剩 16 dB。`make test-scene-change` 與
+  `tests/test_scene_change_flatness_margin.py` 用門檻 ±6e-4 的合成頻譜釘住
+  兩端的決策。
 
 ## [v1.12.3] - 2026-09-12 · 共用 fast_math：`fast_log` 改 minimax、`fast_sqrt` 改 AArch64 硬體指令
 
