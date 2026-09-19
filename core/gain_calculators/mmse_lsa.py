@@ -84,6 +84,13 @@ class MmseLsaGainCalculator:
         stationary_floor: bool = False,
         stationary_floor_exponent: float = 1.0,   # p: 1.0 = pure Wiener (gentle); 0.5 = deeper
         stationary_floor_beta: float = 1.0,        # β: >1 removes slightly more; 1 = remove exactly N
+        # Domain of the G_H1 / g_min floor blend: 'log' (shipped OM-LSA,
+        # G = G_H1^spp * g_min^(1-spp)), 'sqrt' (amplitude domain as in the
+        # Speex preprocessor, G = (spp*sqrt(G_H1) + (1-spp)*sqrt(g_min))^2) or
+        # 'linear' (G = spp*G_H1 + (1-spp)*g_min). The two power-domain blends
+        # are bounded below by spp*G_H1 so a bin with real speech evidence is
+        # never pulled to the floor by (1-spp).
+        floor_blend: str = 'log',
     ):
         # Amplitude-dB convention (/20): the OM-LSA gain is applied directly to the
         # magnitude spectrum (enhanced = gain * magnitude, no sqrt), so g_min is an
@@ -100,6 +107,16 @@ class MmseLsaGainCalculator:
         self.alpha_decay = alpha_decay if alpha_decay is not None else alpha_g
 
         # SPP-protected floor
+        if (spp_protect_floor_db is not None
+                and (not np.isfinite(spp_protect_floor_db)
+                     or spp_protect_floor_db < g_min_db
+                     or spp_protect_floor_db > 0.0)):
+            raise ValueError(
+                "spp_protect_floor_db must be finite and in [g_min_db, 0]"
+            )
+        if (not np.isfinite(spp_protect_threshold)
+                or not 0.0 <= spp_protect_threshold <= 1.0):
+            raise ValueError("spp_protect_threshold must be finite and in [0, 1]")
         self.spp_protect_floor_db = spp_protect_floor_db
         self.spp_protect_floor = (10 ** (spp_protect_floor_db / 20)  # amplitude gain floor
                                   if spp_protect_floor_db is not None else None)
@@ -109,8 +126,12 @@ class MmseLsaGainCalculator:
         self.stationary_floor = stationary_floor
         self.stationary_floor_exponent = stationary_floor_exponent
         self.stationary_floor_beta = stationary_floor_beta
+        if floor_blend not in ('log', 'sqrt', 'linear'):
+            raise ValueError("floor_blend must be 'log', 'sqrt' or 'linear'")
+        self.floor_blend = floor_blend
 
         self.log_gain_prev = None
+        self.last_gain_mmse = None
 
     def calculate(
         self,
@@ -121,6 +142,8 @@ class MmseLsaGainCalculator:
         alpha_g_override: Optional[np.ndarray] = None,
         alpha_attack_override: Optional[np.ndarray] = None,
         alpha_decay_override: Optional[np.ndarray] = None,
+        spp_protect_enabled: bool = True,
+        spp_protect_mask: Optional[np.ndarray] = None,
     ) -> np.ndarray:
         """
         計算 SPP 加權的 MMSE-LSA / OMLSA 增益
@@ -133,6 +156,8 @@ class MmseLsaGainCalculator:
             alpha_g_override: 對稱平滑 alpha_g 的 per-bin 覆蓋值（可選；預設 None）
             alpha_attack_override: 非對稱 attack 的 per-bin 覆蓋值
             alpha_decay_override: 非對稱 decay 的 per-bin 覆蓋值
+            spp_protect_enabled: 是否啟用語音增益下限
+            spp_protect_mask: 可選的 per-bin 保護頻帶遮罩
 
         返回:
             gain: 增益 (n_freqs,)
@@ -148,10 +173,19 @@ class MmseLsaGainCalculator:
         # 基礎 MMSE 增益
         gain_mmse = self._mmse_gain_base(xi, gamma)
         gain_mmse = np.clip(gain_mmse, g_min_effective, 1.0)
+        # Exposed so a caller can feed the decision-directed a-priori SNR from
+        # the H1 gain (Cohen 2001 eq. 18) instead of the floor-mixed output.
+        self.last_gain_mmse = gain_mmse
 
         # 對數域加權 (OMLSA 核心)
-        log_gain_mmse = np.log(gain_mmse + 1e-10)
-        log_gain = spp * log_gain_mmse + (1 - spp) * log_g_min_effective
+        if self.floor_blend == 'linear':
+            log_gain = np.log(spp * gain_mmse + (1 - spp) * g_min_effective + 1e-10)
+        elif self.floor_blend == 'sqrt':
+            log_gain = 2.0 * np.log(spp * np.sqrt(gain_mmse)
+                                    + (1 - spp) * np.sqrt(g_min_effective) + 1e-10)
+        else:
+            log_gain_mmse = np.log(gain_mmse + 1e-10)
+            log_gain = spp * log_gain_mmse + (1 - spp) * log_g_min_effective
 
         # 對數域時間平滑
         if self.log_gain_prev is not None:
@@ -182,12 +216,13 @@ class MmseLsaGainCalculator:
 
         # SPP-protected floor：語音 bin（spp > threshold）強制 gain >= 保護下限，
         # 避免深 g_min 透過 (1−spp) 誤壓高信心語音（NR-review #1，預設關閉）。
-        if self.spp_protect_floor is not None:
-            gain = np.where(
-                spp > self.spp_protect_threshold,
-                np.maximum(gain, self.spp_protect_floor),
-                gain,
-            )
+        if self.spp_protect_floor is not None and spp_protect_enabled:
+            protect_bins = spp > self.spp_protect_threshold
+            if spp_protect_mask is not None:
+                protect_bins = protect_bins & spp_protect_mask
+            # gain is the fresh array np.clip returned above; raise only the
+            # protected bins in place.
+            np.maximum(gain, self.spp_protect_floor, out=gain, where=protect_bins)
 
         # Stationary-mode Wiener lower bound（`stationary` NR mode 的核心機制）。
         # gain 不得低於 Wiener 增益 (ξ/(β+ξ))^p。因 ξ/(1+ξ)=S/Y，此下界剛好只減掉估到的
@@ -233,6 +268,7 @@ class MmseLsaGainCalculator:
     def reset(self):
         """重置增益歷史"""
         self.log_gain_prev = None
+        self.last_gain_mmse = None
 
     def __repr__(self):
         return (f"MmseLsaGainCalculator("

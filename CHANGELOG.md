@@ -4,6 +4,42 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [Unreleased] - 2026-09-19 · standalone NR low-frequency speech preservation
+
+### 變更 (Changed)
+
+- 四個 strength preset 改為單純的抑噪深度軸：共用相同 DD、MCRA
+  tracker、gain attack/decay 與低頻語音保護，只由 `g_min_db`、語音存在
+  先驗 `q`、`xi_min_db`、`noise_over_subtraction` 形成
+  mild → moderate → balanced → aggressive 的單調階梯。這修正了 stronger
+  preset 因改動 tracker/dynamics，反而比 balanced 留下更多噪聲的問題。
+- standalone 預設加入低成本低頻語音 guard：當 80–4000 Hz 的跨頻帶證據
+  顯示該幀已有語音時，低於 300 Hz 的 MCRA 噪聲估計只減慢「向上污染」；
+  同時對低頻弱諧波使用 −15 dB gain floor。噪聲幀、下降中的 noise floor、
+  300 Hz 以上頻帶仍走原本路徑。
+- balanced 的深度 anchor 改為 `g_min=-25 dB`、`q=0.52`、
+  `xi_min=-10 dB`、noise over-subtraction `1.4`。−12 dB 低頻 floor 雖在板端
+  proxy 更飽滿，卻造成 VCTK 個案 PESQ 2.717 → 1.535，因此未採用。
+
+### 驗證 (Validation)
+
+- VCTK+DEMAND 824 筆相對 GitHub `cdf984c` balanced：PESQ +0.0368、
+  STOI −0.00094、SI-SDR +0.225 dB、segSNR −0.043 dB；未出現 −12 dB
+  floor 的 catastrophic regression。
+- DNS 2020 no-reverb 150 筆：PESQ +0.0193、STOI +0.0003、
+  SI-SDR −0.048 dB、segSNR −0.461 dB；證實語音品質方向改善，但壓噪量有
+  可量測的取捨，不能只看單一客觀分數放行。
+- 三筆板端錄音的 matched-attenuation WebRTC proxy（排除初始化 50 幀）顯示，
+  balanced 低頻語音差距在 0–100 / 100–200 / 200–300 Hz 由
+  −6.55 / −3.58 / −0.85 dB 改為 −4.18 / +0.74 / +0.00 dB；低頻
+  `gain < −20 dB` hole excess 由 +18.95 降至 −9.40 percentage points。
+  balanced 噪聲段總衰減由 −16.67 改為 −15.03 dB，少壓 1.65 dB；最終放行
+  仍需盲聽確認這個交換符合產品偏好。
+- Python 70 tests 與 C config/reconfigure/noise-restart/config-parity 全過；
+  C/Python gain parity worst `3.20e-3`（fast-math 預期範圍）。Apple M4 上
+  spectral-core microbenchmark 約 +3%（16 kHz/FFT 512）、+1%（48 kHz/FFT
+  1024）；A53/A73 尚待板端實測。
+
 ## [Unreleased] - 2026-09-03 · balanced noise tracking slowed; dead-bin restart
 
 ### 變更 (Changed)

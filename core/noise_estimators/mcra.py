@@ -96,9 +96,50 @@ class McraNoiseEstimator:
         scene_change_lo_flatness_max: float = 0.4,
         # IMCRA/MCRA mode switch
         accept_external_spp: bool = True,  # True=IMCRA, False=plain MCRA
+        # Direction-aware noise update. None keeps the symmetric recursion.
+        # When set, a bin whose power exceeds its current noise estimate (the
+        # rising direction) is blended with this slower base rate instead of
+        # alpha_d, so speech that the posterior only partly flags cannot
+        # ratchet the floor upward; the falling direction keeps alpha_d.
+        alpha_d_up: Optional[float] = None,
+        # Speech-gated slow update. In a bin whose gating probability exceeds
+        # speech_gate_p the base rate becomes alpha_d_speech and the estimate
+        # may only FALL at the ordinary rate, never rise faster than the slow
+        # one; bins below the gate keep the shipped symmetric update, so the
+        # noise-only steady state is unbiased. None keeps the shipped path.
+        alpha_d_speech: Optional[float] = None,
+        speech_gate_p: float = 0.2,
+        # Optional frame-level condition on the slow update: it engages only
+        # when the mean gating probability over [gate_bin_start, gate_bin_end)
+        # exceeds frame_gate_p, so bins in a noise-only frame keep the
+        # ordinary symmetric update whatever their individual probability.
+        frame_gate_p: Optional[float] = None,
+        gate_bin_start: int = 0,
+        gate_bin_end: Optional[int] = None,
+        # Broadband-onset escape: when more than this fraction of bins is
+        # gated in one frame the rise is a noise-scene change, not speech, and
+        # the ordinary update is kept so a level step is still tracked.
+        slow_mask_max_frac: Optional[float] = None,
     ):
         self.alpha_s = alpha_s
         self.alpha_d = alpha_d
+        if alpha_d_up is not None and not 0.0 <= alpha_d_up < 1.0:
+            raise ValueError("alpha_d_up must be None or in [0, 1)")
+        self.alpha_d_up = alpha_d_up
+        if alpha_d_speech is not None and not 0.0 <= alpha_d_speech < 1.0:
+            raise ValueError("alpha_d_speech must be None or in [0, 1)")
+        if not 0.0 <= speech_gate_p <= 1.0:
+            raise ValueError("speech_gate_p must be in [0, 1]")
+        self.alpha_d_speech = alpha_d_speech
+        self.speech_gate_p = speech_gate_p
+        if frame_gate_p is not None and not 0.0 <= frame_gate_p <= 1.0:
+            raise ValueError("frame_gate_p must be None or in [0, 1]")
+        self.frame_gate_p = frame_gate_p
+        self.gate_bin_start = int(gate_bin_start)
+        self.gate_bin_end = gate_bin_end
+        if slow_mask_max_frac is not None and not 0.0 < slow_mask_max_frac <= 1.0:
+            raise ValueError("slow_mask_max_frac must be None or in (0, 1]")
+        self.slow_mask_max_frac = slow_mask_max_frac
         self.alpha_p = alpha_p
         self.L = L
         self.delta = 10 ** (delta_db / 10)  # 線性域的 delta
@@ -178,6 +219,7 @@ class McraNoiseEstimator:
         magnitude: np.ndarray,
         is_speech: Optional[bool] = None,  # 保持接口兼容（MCRA 內部判斷，忽略此參數）
         spp: Optional[np.ndarray] = None,  # v2.0: 支持外部 SPP（軟判決）
+        slow_mask: Optional[np.ndarray] = None,  # per-bin override of the slow-update gate
     ) -> np.ndarray:
         """
         MCRA 噪聲估計更新
@@ -228,10 +270,15 @@ class McraNoiseEstimator:
         hi_power = power[hi_start:]
         hi_gamma = np.mean(hi_power) / (np.mean(self.noise_psd[hi_start:]) + 1e-10)
 
-        # Spectral flatness = geometric_mean / arithmetic_mean（高頻段）
-        hi_flatness = _spectral_flatness(hi_power)
+        # Flatness contains one log per high-band bin.  It cannot affect the
+        # decision unless the cheap energy-ratio gate passes, so defer it.
+        # This is decision-identical and avoids the log pass on ordinary
+        # frames (the common path on speech and stationary noise).
+        hi_energy_candidate = hi_gamma > self.scene_change_threshold
+        hi_flatness = (_spectral_flatness(hi_power)
+                       if hi_energy_candidate else 0.0)
 
-        if (hi_gamma > self.scene_change_threshold and
+        if (hi_energy_candidate and
                 hi_flatness > self.scene_change_flatness_threshold):
             self.scene_change_count += 1
             if self.scene_change_count >= self.scene_change_min_frames:
@@ -275,7 +322,37 @@ class McraNoiseEstimator:
         tilde_alpha_d = self.alpha_d + (1 - self.alpha_d) * spp_for_update
 
         # N(k,l) = α̃_d·N(k,l-1) + (1-α̃_d)·|Y(k,l)|²
-        self.noise_psd = tilde_alpha_d * self.noise_psd + (1 - tilde_alpha_d) * power
+        noise_new = tilde_alpha_d * self.noise_psd + (1 - tilde_alpha_d) * power
+        if self.alpha_d_up is not None:
+            # Both blends are convex, so the estimate rises exactly when the
+            # frame power exceeds it; only that direction takes the slow rate.
+            tilde_up = self.alpha_d_up + (1 - self.alpha_d_up) * spp_for_update
+            noise_up = tilde_up * self.noise_psd + (1 - tilde_up) * power
+            noise_new = np.where(power > self.noise_psd, noise_up, noise_new)
+        if self.alpha_d_speech is not None:
+            speechy = (spp_for_update > self.speech_gate_p if slow_mask is None
+                       else np.asarray(slow_mask, dtype=bool))
+            if self.frame_gate_p is not None:
+                gate_end = (len(spp_for_update) if self.gate_bin_end is None
+                            else self.gate_bin_end)
+                frame_mean = float(np.mean(
+                    spp_for_update[self.gate_bin_start:gate_end]))
+                if frame_mean <= self.frame_gate_p:
+                    speechy = np.zeros_like(speechy)
+            if (self.slow_mask_max_frac is not None
+                    and np.mean(speechy) > self.slow_mask_max_frac):
+                speechy = np.zeros_like(speechy)
+            # Gated bins take the lower of the slow and ordinary candidates:
+            # a fall keeps the ordinary rate, a rise is held to the slow one.
+            # Only those bins are computed (the product gate covers a few LF
+            # bins); noise_new is a fresh array here, so the write is in place.
+            if speechy.any():
+                tilde_sp = (self.alpha_d_speech
+                            + (1 - self.alpha_d_speech) * spp_for_update[speechy])
+                noise_slow = (tilde_sp * self.noise_psd[speechy]
+                              + (1 - tilde_sp) * power[speechy])
+                noise_new[speechy] = np.minimum(noise_slow, noise_new[speechy])
+        self.noise_psd = noise_new
 
         # Dead-bin restart. A bin whose N has decayed below NOISE_PSD_INERT
         # (digital silence for a few seconds: N shrinks by α̃_d every frame with
