@@ -76,27 +76,13 @@ struct MmseLsaDenoiser {
      * next to each kernel in simd_kernels.h (mirrors sk_capply_gain_f32's
      * pre-existing out==z contract) and exercised by simd_selftest.c's
      * test_exp_log_family_inplace(). gain_xi_ratio_scratch MUST stay a
-     * separate buffer: it is written at pass 1, consumed as xi_ratio at
-     * pass 5, then overwritten with the speech-present gain G_H1 and read
-     * again by the DD-state update in pass 7. Passes 2-4 overwrite
-     * gain_v_scratch in between. */
+     * separate buffer: it is written at pass 1 and read again at pass 5,
+     * with passes 2-4 overwriting gain_v_scratch in between. */
     float* gain_v_scratch;         /* v[k] -> exp1_approx(v[k]) -> 0.5x -> fast_exp(...) -> (+1e-10f) -> fast_log(...), all in place */
-    float* gain_xi_ratio_scratch;  /* xi_ratio[k] -> G_H1[k], consumed again at pass 7 */
+    float* gain_xi_ratio_scratch;  /* xi_ratio[k], needed again at pass 5 (kept separate: see above) */
 
     float* gain_prev;
     float* enhanced_psd_prev;
-
-    /* Frame-level speech evidence: scalar state only, no additional
-     * spectral array. */
-    float  cross_band_prior_state;
-    float  cross_band_prior_lift;
-    int    speech_bin_start;
-    int    speech_bin_end;
-    float  speech_band_inv_count;
-    int    noise_gate_lf_bin;
-    float  noise_gate_xi;
-    bool   slow_lf_rise;
-    float  makeup_prior_state;
 
     int    init_frame_count;
     float* init_power_sum;
@@ -107,9 +93,6 @@ struct MmseLsaDenoiser {
     float  alpha_g;
     float  alpha_attack;
     float  alpha_decay;
-    float  speech_protect_floor_gain;
-    float  log_speech_protect_floor_gain;
-    bool   speech_protect_frame_active;
     float* log_gain_prev;
     bool   gain_initialized;
 
@@ -140,194 +123,16 @@ static void apply_gain_config_scalars(MmseLsaDenoiser* self,
     self->alpha_g      = config->alpha_g;
     self->alpha_attack = config->alpha_attack;
     self->alpha_decay  = config->alpha_decay;
-    self->speech_protect_floor_gain =
-        powf(10.0f, config->speech_protect_floor_db / 20.0f);
-    self->log_speech_protect_floor_gain =
-        fast_log(self->speech_protect_floor_gain + 1e-10f);
-    self->noise_gate_xi = powf(10.0f, config->noise_gate_xi_db / 10.0f);
 
     self->stationary_floor          = config->stationary_floor;
     self->stationary_floor_exponent = config->stationary_floor_exponent;
     self->stationary_floor_beta     = config->stationary_floor_beta;
 }
 
-/* First bin at or above hz, and the bin count covering [0, hz] inclusive. */
-static int hz_to_bin_ceil(float hz, const MmseLsaConfig* config) {
-    return (int)ceilf(hz * (float)config->fft_size /
-                      (float)config->sample_rate);
-}
-
-static int hz_to_bin_floor_inclusive(float hz, const MmseLsaConfig* config) {
-    return (int)floorf(hz * (float)config->fft_size /
-                       (float)config->sample_rate) + 1;
-}
-
-static void update_noise_gate_geometry(MmseLsaDenoiser* self,
-                                       const MmseLsaConfig* config) {
-    self->noise_gate_lf_bin = hz_to_bin_ceil(config->noise_gate_lf_hz, config);
-    if (self->noise_gate_lf_bin < 1) self->noise_gate_lf_bin = 1;
-    if (self->noise_gate_lf_bin > self->n_freqs)
-        self->noise_gate_lf_bin = self->n_freqs;
-}
-
 static void reset_gain_state(MmseLsaDenoiser* self) {
     if (self->log_gain_prev)
         memset(self->log_gain_prev, 0, self->n_freqs * sizeof(float));
     self->gain_initialized = false;
-}
-
-static void reset_frame_evidence_state(MmseLsaDenoiser* self) {
-    self->cross_band_prior_state = 0.0f;
-    self->cross_band_prior_lift = 0.0f;
-    self->speech_protect_frame_active = false;
-    self->slow_lf_rise = false;
-    self->makeup_prior_state = 0.5f;
-}
-
-/* First-order logit lift of a posterior by the frame prior (research switch). */
-static inline float lift_spp(float spp_k, float lift) {
-    return spp_k + lift * spp_k * (1.0f - spp_k);
-}
-
-/* DD state feeding the next frame's spp_estimate: the emitted gain, its log
- * for the attack/decay smoothing, and the enhanced PSD built from dd_gain
- * (the emitted gain, or G_H1 under dd_from_gmmse). */
-static inline void store_gain_state(MmseLsaDenoiser* self, int k, float gain,
-                                    float log_gain, float dd_gain) {
-    self->log_gain_prev[k]     = log_gain;
-    self->gain_prev[k]         = gain;
-    self->enhanced_psd_prev[k] = dd_gain * dd_gain * self->power[k];
-}
-
-/* Reduce fixed-prior evidence to shared frame decisions. The product path
- * uses the SPP mean for the LF gain floor and the xi fraction for the LF
- * tracker guard. Optional research q lifting/make-up reuse the same scan.
- * With every consumer off the scan is skipped and the frame flags keep
- * their reset values, which those consumers then never read. */
-static void update_frame_speech_evidence(MmseLsaDenoiser* self) {
-    const MmseLsaConfig* cfg = &self->config;
-    if (!cfg->cross_band_speech_prior && !cfg->speech_protect_floor &&
-        !cfg->speech_aware_noise_tracking && !cfg->makeup_gain)
-        return;
-    float evidence_sum = 0.0f;
-    int xi_high = 0;
-    for (int k = self->speech_bin_start; k < self->speech_bin_end; k++) {
-        evidence_sum += self->spp[k];
-        if (self->xi[k] > self->noise_gate_xi) xi_high++;
-    }
-    float evidence = evidence_sum * self->speech_band_inv_count;
-    float xi_fraction = (float)xi_high * self->speech_band_inv_count;
-    self->speech_protect_frame_active =
-        evidence >= cfg->speech_protect_frame_threshold;
-    self->slow_lf_rise = self->config.speech_aware_noise_tracking &&
-                         xi_fraction > self->config.noise_gate_frame_frac;
-    if (self->config.makeup_gain) {
-        float target = xi_fraction / 0.15f;
-        if (target > 1.0f) target = 1.0f;
-        self->makeup_prior_state +=
-            0.1f * (target - self->makeup_prior_state);
-        if (self->makeup_prior_state < 0.01f)
-            self->makeup_prior_state = 0.01f;
-    }
-
-    if (!self->config.cross_band_speech_prior) return;
-
-    float target = (evidence - 0.50f) / (0.70f - 0.50f);
-    if (target < 0.0f) target = 0.0f;
-    if (target > 1.0f) target = 1.0f;
-    float a = self->config.cross_band_speech_prior_alpha;
-    self->cross_band_prior_state =
-        a * self->cross_band_prior_state + (1.0f - a) * target;
-
-    const float base_q = self->config.q;
-    const float max_q = self->config.cross_band_speech_prior_max_q;
-    float prior = base_q + self->cross_band_prior_state * (max_q - base_q);
-    /* First-order logit lift about balanced q=0.5. The experiment helper
-     * caps the lift at +0.04, keeping this close to exact Bayesian
-     * re-prioring without another divide per bin. */
-    self->cross_band_prior_lift = 4.0f * (prior - base_q);
-}
-
-/* Apply the broadband scalar after calculate_gain() has saved the unscaled
- * OM-LSA/DD state. The returned/applied gain includes this scalar, while the
- * next frame's DD recursion does not feed it back. The production config
- * disables this experiment, so its extra spectrum passes stay off the hot
- * path. */
-static void apply_frame_makeup(MmseLsaDenoiser* self) {
-    if (!self->config.makeup_gain) return;
-    float e_in = 0.0f;
-    float e_out = 0.0f;
-    for (int k = 0; k < self->n_freqs; k++) {
-        float g = self->gain[k];
-        e_in += self->power[k];
-        e_out += g * g * self->power[k];
-    }
-    float g_frame = sqrtf(e_out / (e_in + 1e-20f));
-    float scale_up = 1.0f;
-    if (g_frame > self->config.makeup_blim) {
-        scale_up = 1.0f + self->config.makeup_up_slope
-                             * (g_frame - self->config.makeup_blim);
-        if (g_frame * scale_up > 1.0f) scale_up = 1.0f / g_frame;
-    }
-    float scale_down = 1.0f;
-    if (g_frame < self->config.makeup_blim) {
-        float floored = g_frame > self->g_min ? g_frame : self->g_min;
-        scale_down = 1.0f - self->config.makeup_down_slope
-                              * (self->config.makeup_blim - floored);
-    }
-    float p = self->makeup_prior_state;
-    float scale = p * scale_up + (1.0f - p) * scale_down;
-    for (int k = 0; k < self->n_freqs; k++) self->gain[k] *= scale;
-}
-
-/* The product speech floor affects only a handful of bins below 300 Hz.
- * Keeping it out of the full gain loop avoids a per-bin condition over the
- * whole spectrum.  Repair the DD state only for bins whose final gain moves. */
-static void apply_low_band_speech_floor(MmseLsaDenoiser* self,
-                                        float* gain_out) {
-    if (!self->config.speech_protect_floor ||
-        !self->speech_protect_frame_active) return;
-
-    const bool  cross_band_prior = self->config.cross_band_speech_prior;
-    const bool  dd_from_gmmse    = self->config.dd_from_gmmse;
-    const float threshold        = self->config.speech_protect_threshold;
-    const float floor_gain       = self->speech_protect_floor_gain;
-    const int   end              = self->noise_gate_lf_bin;
-    for (int k = 1; k < end; k++) {
-        float spp_k = self->spp[k];
-        if (cross_band_prior)
-            spp_k = lift_spp(spp_k, self->cross_band_prior_lift);
-        if (spp_k <= threshold || gain_out[k] >= floor_gain) continue;
-
-        gain_out[k] = floor_gain;
-        /* gain_xi_ratio_scratch still holds this frame's G_H1 from pass 5. */
-        store_gain_state(self, k, floor_gain,
-                         self->log_speech_protect_floor_gain,
-                         dd_from_gmmse ? self->gain_xi_ratio_scratch[k]
-                                       : floor_gain);
-    }
-}
-
-static void update_noise_estimator(MmseLsaDenoiser* self) {
-    mcra_update_ex(self->noise_est, self->power, self->spp,
-                   self->slow_lf_rise, self->noise_gate_lf_bin,
-                   self->config.alpha_d_speech);
-}
-
-static const float* prepare_noise_for_spp(MmseLsaDenoiser* self,
-                                           const float* noise_psd,
-                                           const float* extra_noise_psd) {
-    const float scale = self->config.noise_over_subtraction;
-    const int   nf    = self->n_freqs;
-    if (!extra_noise_psd && scale == 1.0f) return noise_psd;
-    if (extra_noise_psd) {
-        for (int k = 0; k < nf; k++)
-            self->noise_aug[k] = scale * (noise_psd[k] + extra_noise_psd[k]);
-    } else {
-        for (int k = 0; k < nf; k++)
-            self->noise_aug[k] = scale * noise_psd[k];
-    }
-    return self->noise_aug;
 }
 
 static void calculate_gain(MmseLsaDenoiser* self,
@@ -341,9 +146,6 @@ static void calculate_gain(MmseLsaDenoiser* self,
     float log_g_min    = self->log_g_min;
     float alpha_attack = self->alpha_attack;
     float alpha_decay  = self->alpha_decay;
-    bool  cross_band_prior = self->config.cross_band_speech_prior;
-    float prior_lift = self->cross_band_prior_lift;
-    bool  dd_from_gmmse = self->config.dd_from_gmmse;
     /* Stationary-mode Wiener lower-bound (default off): gain >= (ξ/(β+ξ))^p. */
     bool  stat_floor   = self->stationary_floor;
     float stat_p       = self->stationary_floor_exponent;
@@ -409,13 +211,12 @@ static void calculate_gain(MmseLsaDenoiser* self,
     /* Pass 5 (scalar, branch-free): gain_mmse[k] = xi_ratio*fast_exp(...),
      * clamped to [g_min,1.0] -- unmodified formula/clamp, written in place
      * (+1e-10f folded in here too: the exact argument fast_log() takes
-     * next). The scratch slot is then repurposed to retain this G_H1 value
-     * for the pass-7 DD recursion. */
+     * next). This is gain_xi_ratio_scratch's LAST read (see the struct
+     * field comment above). */
     for (int k = 0; k < n_freqs; k++) {
         float gain_mmse = xi_ratio_scratch[k] * v_scratch[k];
         if (gain_mmse < g_min) gain_mmse = g_min;
         if (gain_mmse > 1.0f)  gain_mmse = 1.0f;
-        xi_ratio_scratch[k] = gain_mmse;
         v_scratch[k] = gain_mmse + 1e-10f;
     }
 
@@ -437,8 +238,6 @@ static void calculate_gain(MmseLsaDenoiser* self,
     for (int k = 0; k < n_freqs; k++) {
         float xi_k    = xi[k];
         float spp_k   = spp[k];
-
-        if (cross_band_prior) spp_k = lift_spp(spp_k, prior_lift);
 
         float log_gain_mmse = v_scratch[k];
         float log_gain      = spp_k * log_gain_mmse +
@@ -467,6 +266,7 @@ static void calculate_gain(MmseLsaDenoiser* self,
             if (g_floor > gain) { gain = g_floor; log_gain_save = fast_log(gain + 1e-10f); }
         }
         gain_out[k] = gain;
+        self->log_gain_prev[k] = log_gain_save;
 #else
         float gain = fast_exp(log_gain);
 #ifndef USE_SINGLE_CLAMP
@@ -479,7 +279,7 @@ static void calculate_gain(MmseLsaDenoiser* self,
             if (g_floor > gain) gain = g_floor;
         }
         gain_out[k] = gain;
-        float log_gain_save = fast_log(gain + 1e-10f);
+        self->log_gain_prev[k] = fast_log(gain + 1e-10f);
 #endif
 
         /* DD-state fold: gain_prev/enhanced_psd_prev feed next frame's
@@ -489,40 +289,11 @@ static void calculate_gain(MmseLsaDenoiser* self,
          * call and is untouched since) and `gain` above is the exact value
          * just written to gain_out[k], so this is bit-identical, just fused
          * into this loop instead of a second one over the same range. */
-        store_gain_state(self, k, gain, log_gain_save,
-                         dd_from_gmmse ? xi_ratio_scratch[k] : gain);
+        self->gain_prev[k]         = gain;
+        self->enhanced_psd_prev[k] = gain * gain * self->power[k];
     }
 
-    apply_low_band_speech_floor(self, gain_out);
-
     self->gain_initialized = true;
-}
-
-/* Everything between the noise floor handed to the SPP estimator and this
- * frame's gain, shared by mmse_lsa_process and mmse_lsa_process_gain:
- * SPP/DD, the frame speech evidence, the OM-LSA gain, the optional make-up,
- * then the tracker update from the clean power and SPP (the augmented floor
- * never reaches the tracker). The tracker update and calculate_gain touch
- * disjoint state, so it runs last on every configuration. */
-static void run_frame_gain_stage(MmseLsaDenoiser* self,
-                                 const float* noise_for_spp) {
-#ifdef USE_SHARED_XI_RATIO
-    spp_estimate_ex(self->spp_est, self->power, noise_for_spp,
-                    self->gain_prev, self->enhanced_psd_prev,
-                    self->spp, self->xi, self->gamma, self->v);
-    update_frame_speech_evidence(self);
-    calculate_gain(self, self->spp, self->xi, self->gamma,
-                   self->v, self->gain);
-#else
-    spp_estimate(self->spp_est, self->power, noise_for_spp,
-                 self->gain_prev, self->enhanced_psd_prev,
-                 self->spp, self->xi, self->gamma);
-    update_frame_speech_evidence(self);
-    calculate_gain(self, self->spp, self->xi, self->gamma,
-                   NULL, self->gain);
-#endif
-    apply_frame_makeup(self);
-    update_noise_estimator(self);
 }
 
 /* -------------------------------------------------------------------------
@@ -534,21 +305,8 @@ static void _setup(MmseLsaDenoiser* self, const MmseLsaConfig* config) {
     self->n_freqs          = config->fft_size / 2 + 1;
     self->init_frame_count = 0;
     self->is_initialized   = false;
-    self->speech_bin_start = hz_to_bin_ceil(80.0f, config);
-    self->speech_bin_end = hz_to_bin_floor_inclusive(4000.0f, config);
-    if (self->speech_bin_start < 1) self->speech_bin_start = 1;
-    if (self->speech_bin_end > self->n_freqs)
-        self->speech_bin_end = self->n_freqs;
-    if (self->speech_bin_end <= self->speech_bin_start) {
-        self->speech_bin_start = 0;
-        self->speech_bin_end = self->n_freqs;
-    }
-    self->speech_band_inv_count =
-        1.0f / (float)(self->speech_bin_end - self->speech_bin_start);
-    update_noise_gate_geometry(self, config);
     apply_gain_config_scalars(self, config);
     reset_gain_state(self);
-    reset_frame_evidence_state(self);
 }
 
 /* -------------------------------------------------------------------------
@@ -770,7 +528,24 @@ int mmse_lsa_process(MmseLsaDenoiser* self,
         }
     } else {
         const float* noise_psd = mcra_get_noise_psd(self->noise_est);
-        run_frame_gain_stage(self, prepare_noise_for_spp(self, noise_psd, NULL));
+
+#ifdef USE_SHARED_XI_RATIO
+        spp_estimate_ex(self->spp_est, self->power, noise_psd,
+                        self->gain_prev, self->enhanced_psd_prev,
+                        self->spp, self->xi, self->gamma, self->v);
+        calculate_gain(self, self->spp, self->xi, self->gamma,
+                       self->v, self->gain);
+#else
+        spp_estimate(self->spp_est, self->power, noise_psd,
+                     self->gain_prev, self->enhanced_psd_prev,
+                     self->spp, self->xi, self->gamma);
+        calculate_gain(self, self->spp, self->xi, self->gamma,
+                       NULL, self->gain);
+#endif
+        /* calculate_gain() folds the DD-state update (gain_prev /
+         * enhanced_psd_prev) into its own k-loop — see calculate_gain(). */
+
+        mcra_update(self->noise_est, self->power, self->spp);
     }
 
     /* 4+5. Copy-with-gain-applied (out-of-place) or apply gain in-place.
@@ -830,10 +605,33 @@ int mmse_lsa_process_gain(MmseLsaDenoiser* self,
 
         /* Unified gain: fold R² into the noise floor for the SPP / a-priori-SNR
          * estimate (ξ = S²/(N²+R²)) WITHOUT polluting the MCRA tracker — exactly
-         * the Python denoise_spectrum copy `noise_psd = noise_psd + extra[i]`.
-         * With extra==NULL this is the plain noise. */
-        run_frame_gain_stage(self,
-                             prepare_noise_for_spp(self, noise_psd, extra_noise_psd));
+         * the Python denoise_spectrum copy `noise_psd = noise_psd + extra[i]`
+         * (v3_2_mmse_lsa.py:268-269). With extra==NULL this is the plain noise. */
+        const float* noise_for_spp = noise_psd;
+        if (extra_noise_psd) {
+            for (int k = 0; k < nf; k++)
+                self->noise_aug[k] = noise_psd[k] + extra_noise_psd[k];
+            noise_for_spp = self->noise_aug;
+        }
+
+#ifdef USE_SHARED_XI_RATIO
+        spp_estimate_ex(self->spp_est, self->power, noise_for_spp,
+                        self->gain_prev, self->enhanced_psd_prev,
+                        self->spp, self->xi, self->gamma, self->v);
+        calculate_gain(self, self->spp, self->xi, self->gamma,
+                       self->v, self->gain);
+#else
+        spp_estimate(self->spp_est, self->power, noise_for_spp,
+                     self->gain_prev, self->enhanced_psd_prev,
+                     self->spp, self->xi, self->gamma);
+        calculate_gain(self, self->spp, self->xi, self->gamma,
+                       NULL, self->gain);
+#endif
+        /* calculate_gain() folds the DD-state update (gain_prev /
+         * enhanced_psd_prev) into its own k-loop — see calculate_gain(). */
+
+        /* MCRA updates from the clean power + SPP only (R² excluded). */
+        mcra_update(self->noise_est, self->power, self->spp);
     }
 
     /* Return the gain WITHOUT applying it (caller combines with res_gain).
@@ -849,8 +647,6 @@ int mmse_lsa_process_gain(MmseLsaDenoiser* self,
  * ---------------------------------------------------------------------- */
 
 int mmse_lsa_reconfigure(MmseLsaDenoiser* self, const MmseLsaConfig* target) {
-    bool reset_cross_band_prior;
-    bool reset_shared_frame_state;
     if (!self || !target) return -1;
     /* Full validation first, exactly as the construction paths do: only
      * comparing the geometry below would let a target through whose tuning
@@ -869,41 +665,14 @@ int mmse_lsa_reconfigure(MmseLsaDenoiser* self, const MmseLsaConfig* target) {
         return -1;
     }
 
-    reset_cross_band_prior =
-        target->cross_band_speech_prior != self->config.cross_band_speech_prior ||
-        target->cross_band_speech_prior_max_q !=
-            self->config.cross_band_speech_prior_max_q ||
-        target->cross_band_speech_prior_alpha !=
-            self->config.cross_band_speech_prior_alpha;
-    reset_shared_frame_state =
-        target->speech_aware_noise_tracking !=
-            self->config.speech_aware_noise_tracking ||
-        target->noise_gate_xi_db != self->config.noise_gate_xi_db ||
-        target->noise_gate_lf_hz != self->config.noise_gate_lf_hz ||
-        target->noise_gate_frame_frac != self->config.noise_gate_frame_frac ||
-        target->makeup_gain != self->config.makeup_gain ||
-        target->makeup_prior_xi_db != self->config.makeup_prior_xi_db;
-
     /* Parameters only. Deliberately NO mcra_reset / spp_reset /
      * reset_gain_state: a strength change is not a restart, and discarding the
      * tracked noise floor mid-stream would be a worse artefact than the one
-     * being tuned away. The experimental cross-band EMA is reset only when
-     * its own configuration changes; carrying that scalar between different
-     * priors would make runtime A/B order-dependent. */
+     * being tuned away. */
     apply_gain_config_scalars(self, target);
     mcra_apply_config_scalars(self->noise_est, target);
     spp_apply_config_scalars(self->spp_est, target);
     self->config = *target;
-    update_noise_gate_geometry(self, target);
-    if (reset_cross_band_prior) {
-        self->cross_band_prior_state = 0.0f;
-        self->cross_band_prior_lift = 0.0f;
-        self->speech_protect_frame_active = false;
-    }
-    if (reset_shared_frame_state) {
-        self->slow_lf_rise = false;
-        self->makeup_prior_state = 0.5f;
-    }
     return 0;
 }
 
@@ -933,7 +702,6 @@ void mmse_lsa_reset(MmseLsaDenoiser* self) {
     memset(self->init_power_sum,    0, self->n_freqs * sizeof(float));
     self->init_frame_count = 0;
     self->is_initialized   = false;
-    reset_frame_evidence_state(self);
 }
 
 /* -------------------------------------------------------------------------

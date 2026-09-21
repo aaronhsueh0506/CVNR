@@ -512,12 +512,7 @@ void mcra_init_noise(McraNoiseEstimator* self, const float* power_sum, int n_fra
     self->is_initialized = true;
 }
 
-void mcra_update_ex(McraNoiseEstimator* self,
-                    const float* power,
-                    const float* spp_ext,
-                    bool slow_lf_rise,
-                    int slow_lf_bins,
-                    float alpha_d_speech) {
+void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_ext) {
     if (!self || !power || !self->is_initialized) return;
 
     int n_freqs = self->n_freqs;
@@ -620,23 +615,34 @@ void mcra_update_ex(McraNoiseEstimator* self,
     // hi-freq gamma + spectral flatness
     {
         int hi_start = n_freqs / 2;  // Upper half (~4kHz for 16kHz/512FFT)
+        int hi_count = n_freqs - hi_start;
 
-        // Cheap energy-ratio gate first.  Spectral flatness contains a log
-        // for every high-band bin and cannot affect the decision when gamma
-        // is below threshold, so the common path must not pay for it.
+        // Merged hi-freq loop: power sum + noise sum + arith-sum-for-flatness,
+        // staging power+eps into flatness_scratch; the log itself is a single
+        // vectorized sk_fast_log_f32() call below (kernel 25) instead of one
+        // scalar fast_log() per bin -- see spectral_flatness()'s comment for
+        // why this three-pass split is bit-identical to the original.
         float hi_power_sum = 0.0f;
         float hi_noise_sum = 0.0f;
+        float arith_sum = 0.0f;
         for (int k = hi_start; k < n_freqs; k++) {
             hi_power_sum += power[k];
             hi_noise_sum += self->noise_psd[k];
+            float p = power[k] + 1e-20f;
+            self->flatness_scratch[k - hi_start] = p;
+            arith_sum += p;
         }
+        sk_fast_log_f32(self->flatness_scratch, self->flatness_scratch, hi_count);
+        float log_sum = 0.0f;
+        for (int k = 0; k < hi_count; k++) log_sum += self->flatness_scratch[k];
         float hi_gamma = hi_power_sum / (hi_noise_sum + 1e-10f);
-        bool hi_energy_candidate = hi_gamma > self->scene_change_threshold;
-        float hi_flatness = hi_energy_candidate
-            ? spectral_flatness(power, hi_start, n_freqs, self->flatness_scratch)
-            : 0.0f;
+        float inv_hi_count = 1.0f / (float)hi_count;
+        float geo_mean = fast_exp(log_sum * inv_hi_count);
+        float arith_mean = arith_sum * inv_hi_count;
+        float hi_flatness = geo_mean / arith_mean;
 
-        if (hi_energy_candidate && hi_flatness > self->scene_change_flatness_threshold) {
+        if (hi_gamma > self->scene_change_threshold &&
+            hi_flatness > self->scene_change_flatness_threshold) {
             // Ceilinged at scene_change_min_frames (UBSan-probed).
             // scene_change_min_frames is
             // user-configurable with NO upper bound in validate_config
@@ -701,26 +707,8 @@ void mcra_update_ex(McraNoiseEstimator* self,
     // sk_mcra_noise_update_f32 (simd_kernels.h kernel 28) is a verbatim,
     // non-fused match for this exact loop shape -- bit-identical by
     // construction (see that kernel's header comment).
-    int slow_end = slow_lf_rise ? slow_lf_bins : 0;
-    if (slow_end < 0) slow_end = 0;
-    if (slow_end > n_freqs) slow_end = n_freqs;
-    for (int k = 0; k < slow_end; k++) {
-        float p = spp_for_update[k] * bb_scale;
-        float alpha = alpha_d + (1.0f - alpha_d) * p;
-        float ordinary = alpha * self->noise_psd[k]
-                       + (1.0f - alpha) * power[k];
-        float alpha_speech = alpha_d_speech
-                           + (1.0f - alpha_d_speech) * p;
-        float held = alpha_speech * self->noise_psd[k]
-                   + (1.0f - alpha_speech) * power[k];
-        self->noise_psd[k] = held < ordinary ? held : ordinary;
-    }
-    if (slow_end < n_freqs) {
-        sk_mcra_noise_update_f32(self->noise_psd + slow_end,
-                                  spp_for_update + slow_end,
-                                  power + slow_end,
-                                  alpha_d, bb_scale, n_freqs - slow_end);
-    }
+    sk_mcra_noise_update_f32(self->noise_psd, spp_for_update, power,
+                              alpha_d, bb_scale, n_freqs);
 
     /* Dead-bin restart (Python mcra.py, same step). A bin whose N decayed
      * below MCRA_NOISE_PSD_INERT (a few seconds of digital silence) is
@@ -737,10 +725,6 @@ void mcra_update_ex(McraNoiseEstimator* self,
                                + (1.0f - alpha_d) * power[k];
         }
     }
-}
-
-void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_ext) {
-    mcra_update_ex(self, power, spp_ext, false, 0, 0.0f);
 }
 
 const float* mcra_get_noise_psd(const McraNoiseEstimator* self) {

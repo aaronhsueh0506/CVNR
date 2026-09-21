@@ -53,14 +53,8 @@ static void run_case(const char* label, MmseLsaConfig cfg, int sr) {
     printf("%-40s control %.4f (%.1f dB)  after 5 s silence %.4f (%.1f dB)\n", label,
            control, 20.0 * log10(control + 1e-12), after, 20.0 * log10(after + 1e-12));
     CHECK(control >= 0.0 && after >= 0.0, "%s: create failed", label);
-    /* The 1 kHz probe sits above the LF speech guard; a stationary tone
-     * settles a few dB above the preset floor because the fixed speech prior
-     * and the a-priori-SNR floor keep OM-LSA off g_min. Bound the gain by the
-     * preset's own floor rather than a literal, so a depth retune cannot
-     * silently loosen this check; the dead-bin failure it guards is ~0.93. */
-    double floor_gain = pow(10.0, cfg.g_min_db / 20.0);
-    CHECK(control < 4.0 * floor_gain, "%s: stationary tone is not sufficiently suppressed (control %.3f, floor %.3f)", label, control, floor_gain);
-    CHECK(after < 4.0 * floor_gain, "%s: tone after digital silence stays unsuppressed (%.3f, floor %.3f)", label, after, floor_gain);
+    CHECK(control < 0.1, "%s: a stationary tone must sit at the floor (control %.3f)", label, control);
+    CHECK(after < 0.1, "%s: tone after digital silence stays unsuppressed (%.3f)", label, after);
     CHECK(fabs(after - control) < 0.02, "%s: silence-first gain %.3f != control %.3f", label, after, control);
 }
 

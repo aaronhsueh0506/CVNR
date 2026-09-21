@@ -24,16 +24,6 @@ from core.signal_grid import (
 )
 
 
-def _hz_to_bin_ceil(hz, fft_size, sample_rate):
-    """First FFT bin at or above hz."""
-    return int(np.ceil(hz * fft_size / sample_rate))
-
-
-def _hz_to_bin_floor_inclusive(hz, fft_size, sample_rate):
-    """Number of FFT bins covering [0, hz] inclusive (a slice end)."""
-    return int(np.floor(hz * fft_size / sample_rate)) + 1
-
-
 class MmseLsaDenoiser(BaseDenoiser):
     """
     版本 3-2: MMSE-LSA 降噪器
@@ -103,119 +93,26 @@ class MmseLsaDenoiser(BaseDenoiser):
         # stationary-floor / scene-change params below carry the preset. Default 'full' +
         # all-off → byte-identical shipped V3-2.
         mode: str = 'full',
-        # NR strength selects suppression depth only. DD, tracker and gain
-        # time constants are shared by every preset.
+        # NR strength ('mild' | 'moderate' | 'balanced' | 'aggressive'). Set by
+        # nr_strength.apply_strength() upstream. 'balanced' is an EMPTY overlay
+        # (core/nr_strength.py) -- alpha_noise/alpha_g/alpha_decay at 'balanced'
+        # are always the untouched pre-16ms-grid base YAML values (git-dated:
+        # alpha_d/alpha_s/alpha_p 09e74d8 2026-01-08, alpha_g 02d7dc7/6bde3eb
+        # 2026-01-02/05 -- all predate the 16ms-hop grid switch, 04edc42,
+        # 2026-03-09); at any other strength they are always commit 6822129's
+        # (2026-07-10, post-16ms-grid) preset overlay. Unlike `mode`, `strength`
+        # alone disambiguates these three constants' provenance regardless of
+        # mode (mode's stationary overlay, when active, still wins over
+        # strength for alpha_noise -- see below). alpha_attack is NOT part of
+        # this group -- see its own dedicated comment below; it has a
+        # different provenance class (never YAML-sourced) and is unconditional.
         strength: str = 'balanced',
         stationary_floor: bool = False,
         stationary_floor_exponent: float = 1.0,
         stationary_floor_beta: float = 1.0,
         scene_change_tonal_veto: bool = False,
         scene_change_lo_flatness_max: float = 0.4,
-        # Experimental WebRTC-style frame/cross-band prior.  Defaults are a
-        # strict no-op; the research branch enables these explicitly in the
-        # ablation runner rather than changing any shipped preset.
-        cross_band_prior_strength: float = 0.0,
-        cross_band_prior_threshold: float = 0.50,
-        cross_band_prior_full_scale: float = 0.70,
-        cross_band_prior_max_q: float = 0.54,
-        cross_band_prior_alpha: float = 0.90,
-        noise_over_subtraction: float = 1.0,
-        speech_protect_floor_db: Optional[float] = None,
-        speech_protect_threshold: float = 0.5,
-        speech_protect_frame_threshold: Optional[float] = None,
-        # Direction-aware MCRA update: base rate for the RISING direction only
-        # (authored at the 16 ms hop, retimed to the running grid). None keeps
-        # the shipped symmetric recursion.
-        alpha_noise_up: Optional[float] = None,
-        # Speech-gated MCRA update: base rate used in bins whose gating
-        # probability exceeds noise_speech_gate_p, where the estimate may fall
-        # at the ordinary rate but rise no faster than this (authored at the
-        # 16 ms hop, retimed). None keeps the shipped path.
-        alpha_noise_speech: Optional[float] = None,
-        noise_speech_gate_p: float = 0.2,
-        # Frame-level condition for the speech-gated update: mean gating
-        # probability over the 80-4000 Hz band must exceed this. None = off.
-        noise_frame_gate_p: Optional[float] = None,
-        # Alternative per-bin condition for the speech-gated update: the
-        # decision-directed a-priori SNR must exceed this (dB). None = use the
-        # SPP gate. The DD SNR separates speech from noise bins far better
-        # than the fixed-prior posterior, which sits near 0.5 on both.
-        noise_gate_xi_db: Optional[float] = None,
-        # Broadband-onset escape for the speech-gated update: if more than this
-        # fraction of bins is gated in a frame, the frame is treated as a noise
-        # level change and updated at the ordinary rate. None = no escape.
-        noise_gate_max_frac: Optional[float] = None,
-        # Frame-level output energy make-up after the per-bin gain: the frame's
-        # amplitude ratio g = sqrt(E_out/E_in) is scaled back up by
-        # 1 + up_slope*(g - blim) when g > blim (never past unity) and eased
-        # down by 1 - down_slope*(blim - g) when g < blim, blended by the
-        # frame speech evidence (mean fixed-prior SPP over the speech band).
-        # The DD state and the noise tracker see the unscaled gain.
-        makeup_gain: bool = False,
-        makeup_blim: float = 0.5,
-        makeup_up_slope: float = 1.3,
-        makeup_down_slope: float = 0.3,
-        # Feed the decision-directed a-priori SNR from the clamped H1 gain
-        # (Cohen 2001 eq. 18) instead of the floor-mixed output gain.
-        dd_from_gmmse: bool = False,
-        # Frame-context speech prior on the gain-side SPP (see SppEstimator):
-        # the speech prior rises from q to frame_prior_q_max as the mean
-        # fixed-prior SPP over frame_prior_band_hz climbs from spp_lo to
-        # spp_hi. The noise tracker always sees the fixed-prior SPP.
-        frame_prior_q_max: Optional[float] = None,
-        frame_prior_spp_lo: float = 0.5,
-        frame_prior_spp_hi: float = 0.8,
-        frame_prior_band_hz: Tuple[float, float] = (300.0, 3400.0),
-        # Frame-gated gain floor: g_min rises by this many dB times the frame
-        # prior (0..1), so speech frames get a shallower floor while noise
-        # frames keep the preset floor. Uses the same frame evidence as the
-        # frame prior above; the SPP itself is unchanged unless
-        # frame_prior_q_max is also set.
-        frame_prior_gmin_lift_db: Optional[float] = None,
-        # Floor blend domain in the gain calculator: 'log' | 'sqrt' | 'linear'.
-        floor_blend: str = 'log',
-        # Restrict the xi-gated slow noise rise to bins below this frequency
-        # and switch it on for the whole band only when more than
-        # noise_gate_frame_frac of the speech-band bins carry speech evidence
-        # (DD xi above noise_gate_xi_db). None = per-bin xi gate.
-        noise_gate_lf_hz: Optional[float] = None,
-        noise_gate_frame_frac: float = 0.1,
-        # Frame speech evidence that blends the make-up: 'spp' = mean
-        # fixed-prior SPP over the speech band (shipped port), 'xi' = 0.1-EMA
-        # of min(1, frac(DD xi > makeup_prior_xi_db)/0.15) over the speech band.
-        makeup_prior: str = 'spp',
-        makeup_prior_xi_db: float = 3.0,
     ):
-        if alpha_noise_up is not None and not 0.0 <= alpha_noise_up < 1.0:
-            raise ValueError("alpha_noise_up must be None or in [0, 1)")
-        if alpha_noise_speech is not None and not 0.0 <= alpha_noise_speech < 1.0:
-            raise ValueError("alpha_noise_speech must be None or in [0, 1)")
-        if not (0.0 < makeup_blim < 1.0 and makeup_up_slope >= 0.0
-                and 0.0 <= makeup_down_slope <= 1.0):
-            raise ValueError(
-                "makeup_blim must be in (0, 1), makeup_up_slope >= 0, "
-                "and makeup_down_slope in [0, 1]"
-            )
-        self.noise_gate_xi = (10 ** (noise_gate_xi_db / 10)
-                              if noise_gate_xi_db is not None else None)
-        self.makeup_gain = bool(makeup_gain)
-        self.makeup_blim = float(makeup_blim)
-        self.makeup_up_slope = float(makeup_up_slope)
-        self.makeup_down_slope = float(makeup_down_slope)
-        self.dd_from_gmmse = bool(dd_from_gmmse)
-        if makeup_prior not in ('spp', 'xi'):
-            raise ValueError("makeup_prior must be 'spp' or 'xi'")
-        if not 0.0 <= noise_gate_frame_frac <= 1.0:
-            raise ValueError("noise_gate_frame_frac must be in [0, 1]")
-        if noise_gate_lf_hz is not None and noise_gate_xi_db is None:
-            raise ValueError("noise_gate_lf_hz requires noise_gate_xi_db")
-        if frame_prior_gmin_lift_db is not None and not 0.0 <= frame_prior_gmin_lift_db <= -g_min_db:
-            raise ValueError("frame_prior_gmin_lift_db must be in [0, -g_min_db]")
-        self.frame_prior_gmin_lift_db = frame_prior_gmin_lift_db
-        self.makeup_prior = makeup_prior
-        self.makeup_prior_xi = 10 ** (makeup_prior_xi_db / 10)
-        self.noise_gate_frame_frac = float(noise_gate_frame_frac)
-        self._makeup_prior_state = 0.5
         if frame_size is None and frame_shift is None:
             frame_size, frame_shift, fft_size = resolve_signal_grid(sample_rate, fft_size)
         elif None in (frame_size, frame_shift, fft_size):
@@ -226,23 +123,33 @@ class MmseLsaDenoiser(BaseDenoiser):
         self.noise_method = noise_method
         self.mode = mode
         self.strength = strength
-        if not np.isfinite(noise_over_subtraction) or noise_over_subtraction < 1.0:
-            raise ValueError("noise_over_subtraction must be finite and >= 1")
-        self.noise_over_subtraction = float(noise_over_subtraction)
-        if (speech_protect_frame_threshold is not None
-                and (not np.isfinite(speech_protect_frame_threshold)
-                     or not 0.0 <= speech_protect_frame_threshold <= 1.0)):
-            raise ValueError(
-                "speech_protect_frame_threshold must be None or in [0, 1]"
-            )
-        self.speech_protect_frame_threshold = speech_protect_frame_threshold
 
-        # Convert temporal coefficients once at the outer model boundary.
-        # Strength presets contain no temporal keys. The base full-mode
-        # alpha_d/alpha_g/alpha_decay values are authored at 10 ms; the
-        # stationary overlay and alpha_attack are authored at 16 ms.
+        # Presets are authored in the legacy 10-ms frame domain. Convert every
+        # temporal coefficient/count once at this outer model boundary so the
+        # underlying estimators remain generic frame-domain components.
+        # `strength != 'balanced'` (mild/moderate/aggressive) unambiguously
+        # marks alpha_noise/alpha_g/alpha_decay as commit 6822129's
+        # post-16ms-grid preset overlay (core/nr_strength.py's 'balanced'
+        # entry is an EMPTY overlay, so at 'balanced' these three are always
+        # the untouched pre-16ms-grid base YAML values -- see dated evidence
+        # in the `strength` parameter's own docstring above). Composition
+        # order is strength-then-mode (core/nr_modes.py docstring: "Applied
+        # FIRST so the content mode composes on top"), so stationary mode's
+        # own alpha_noise=0.95 overlay, when active, always wins last
+        # regardless of strength. alpha_attack is excluded from this group --
+        # see its own unconditional handling below.
+        _strength_is_post_16ms_preset = strength != 'balanced'
+
         alpha_d_effective = alpha_d if alpha_d is not None else alpha_noise
-        if mode == 'stationary':
+        # alpha_noise=0.95 for mode=='stationary' is set unconditionally by
+        # nr_modes.NR_MODE_PRESETS['stationary'], applied AFTER the strength
+        # preset, so whenever mode=='stationary' this value is always that
+        # 2026-07-05 stationary-mode commit's 16ms-grid-authored 0.95, never
+        # the pre-16ms base/strength value -- same 16ms basis as a non-
+        # 'balanced' strength preset (commit 6822129), so both conditions
+        # share one call. Mirrors the C side (mmse_lsa_apply_stationary() in
+        # mmse_lsa_types.h).
+        if mode == 'stationary' or _strength_is_post_16ms_preset:
             alpha_d_effective = retime_ema_alpha(
                 alpha_d_effective, sample_rate, frame_shift,
                 authored_hop_seconds=_SIXTEEN_MS_HOP_SECONDS,
@@ -264,13 +171,28 @@ class MmseLsaDenoiser(BaseDenoiser):
             alpha_xi, sample_rate, frame_shift,
             authored_hop_seconds=_SIXTEEN_MS_HOP_SECONDS,
         )
+        # alpha_g/alpha_decay: same dual-provenance class as alpha_noise/
+        # alpha_d above, disambiguated the same way via `strength` (untouched
+        # by the mode/stationary overlay, only by strength).
+        _preset_hop = (
+            _SIXTEEN_MS_HOP_SECONDS if _strength_is_post_16ms_preset
+            else _REFERENCE_HOP_SECONDS
+        )
         alpha_g = retime_ema_alpha(
-            alpha_g, sample_rate, frame_shift,
-            authored_hop_seconds=_REFERENCE_HOP_SECONDS,
+            alpha_g, sample_rate, frame_shift, authored_hop_seconds=_preset_hop
         )
         alpha_s = retime_ema_alpha(alpha_s, sample_rate, frame_shift)
         alpha_p = retime_ema_alpha(alpha_p, sample_rate, frame_shift)
-        # alpha_attack is authored directly at the 16-ms product grid.
+        # alpha_attack is UNCONDITIONALLY 16ms-authored, regardless of
+        # `strength` -- unlike alpha_g/alpha_decay/alpha_noise above, it is
+        # never YAML-sourced (config/v3_2_config.yaml explicitly documents
+        # "the fast attack (0.3) is fixed in code, not configurable here");
+        # its base 0.3 default was introduced by commit b913beb (2026-04-17),
+        # which already postdates the 16ms-hop grid switch (04edc42,
+        # 2026-03-09) by five weeks, so even the 'balanced' (non-overlaid)
+        # case is 16ms-authored, not 10ms. The strength-preset overlay values
+        # (0.4/0.4/0.15, commit 6822129, 2026-07-10) are likewise post-16ms.
+        # The previous strength-conditional treatment of this field was wrong.
         alpha_attack = retime_ema_alpha(
             alpha_attack, sample_rate, frame_shift,
             authored_hop_seconds=_SIXTEEN_MS_HOP_SECONDS,
@@ -278,7 +200,7 @@ class MmseLsaDenoiser(BaseDenoiser):
         if alpha_decay is not None:
             alpha_decay = retime_ema_alpha(
                 alpha_decay, sample_rate, frame_shift,
-                authored_hop_seconds=_REFERENCE_HOP_SECONDS,
+                authored_hop_seconds=_preset_hop,
             )
         # L=32 is documented in the YAML as authored directly against the
         # 16ms hop ("32 幀 × 16ms/hop = 512ms" -- config/v3_2_config.yaml's
@@ -323,39 +245,11 @@ class MmseLsaDenoiser(BaseDenoiser):
             window=self.processor.window
         )
 
-        n_freqs = fft_size // 2 + 1
-        # Frame speech-evidence band (80-4000 Hz): the SPP mean and the DD-xi
-        # fraction over these bins drive the LF gain floor, the tracker guard
-        # and the research priors below.
-        speech_bin_start = max(1, _hz_to_bin_ceil(80.0, fft_size, sample_rate))
-        speech_bin_end = min(
-            n_freqs,
-            _hz_to_bin_floor_inclusive(min(4000.0, sample_rate / 2.0),
-                                       fft_size, sample_rate),
-        )
-        self.speech_bin_start = speech_bin_start
-        self.speech_bin_end = speech_bin_end
-
         # 創建噪聲估計器（根據配置選擇）
         if noise_method == 'mcra':
-            alpha_d_up_effective = (
-                retime_ema_alpha(alpha_noise_up, sample_rate, frame_shift,
-                                 authored_hop_seconds=_SIXTEEN_MS_HOP_SECONDS)
-                if alpha_noise_up is not None else None)
-            alpha_d_speech_effective = (
-                retime_ema_alpha(alpha_noise_speech, sample_rate, frame_shift,
-                                 authored_hop_seconds=_SIXTEEN_MS_HOP_SECONDS)
-                if alpha_noise_speech is not None else None)
             self.noise_estimator = McraNoiseEstimator(
                 alpha_s=alpha_s,
                 alpha_d=alpha_d_effective,
-                alpha_d_up=alpha_d_up_effective,
-                alpha_d_speech=alpha_d_speech_effective,
-                speech_gate_p=noise_speech_gate_p,
-                frame_gate_p=noise_frame_gate_p,
-                gate_bin_start=speech_bin_start,
-                gate_bin_end=speech_bin_end,
-                slow_mask_max_frac=noise_gate_max_frac,
                 alpha_p=alpha_p,
                 L=L,
                 delta_db=delta_db,
@@ -377,44 +271,12 @@ class MmseLsaDenoiser(BaseDenoiser):
             )
 
         # 創建 SPP 估計器
-        self.noise_gate_lf_bin = (
-            None if noise_gate_lf_hz is None
-            else max(1, min(n_freqs, _hz_to_bin_ceil(noise_gate_lf_hz, fft_size, sample_rate)))
-        )
-        self.speech_protect_mask = np.zeros(n_freqs, dtype=bool)
-        # The product speech guard is deliberately low-band only.  Its frame
-        # evidence comes from the full speech band, but it must not lift
-        # broadband noise or make every preset sound equally shallow. Without
-        # noise_gate_lf_hz (a Python-only research configuration; the C port
-        # always resolves the LF band) the floor covers the whole speech band.
-        protect_end = (self.noise_gate_lf_bin
-                       if self.noise_gate_lf_bin is not None else speech_bin_end)
-        self.speech_protect_mask[1:protect_end] = True
-        frame_prior_bin_start = max(
-            1, _hz_to_bin_ceil(frame_prior_band_hz[0], fft_size, sample_rate))
-        frame_prior_bin_end = min(
-            n_freqs,
-            _hz_to_bin_floor_inclusive(min(frame_prior_band_hz[1], sample_rate / 2.0),
-                                       fft_size, sample_rate),
-        )
         self.spp_estimator = SppEstimator(
             alpha=alpha_xi,
             q=q,
             xi_min_db=xi_min_db,
-            cross_band_prior_strength=cross_band_prior_strength,
-            cross_band_prior_threshold=cross_band_prior_threshold,
-            cross_band_prior_full_scale=cross_band_prior_full_scale,
-            cross_band_prior_max_q=cross_band_prior_max_q,
-            cross_band_prior_alpha=cross_band_prior_alpha,
-            cross_band_prior_bin_start=speech_bin_start,
-            cross_band_prior_bin_end=speech_bin_end,
-            frame_prior_q_max=frame_prior_q_max,
-            frame_prior_spp_lo=frame_prior_spp_lo,
-            frame_prior_spp_hi=frame_prior_spp_hi,
-            frame_prior_bin_start=frame_prior_bin_start,
-            frame_prior_bin_end=frame_prior_bin_end,
-            frame_prior_track=frame_prior_gmin_lift_db is not None,
         )
+
         # 創建 MMSE-LSA / OMLSA 增益計算器
         self.gain_calculator = MmseLsaGainCalculator(
             g_min_db=g_min_db,
@@ -425,9 +287,6 @@ class MmseLsaDenoiser(BaseDenoiser):
             stationary_floor=stationary_floor,
             stationary_floor_exponent=stationary_floor_exponent,
             stationary_floor_beta=stationary_floor_beta,
-            spp_protect_floor_db=speech_protect_floor_db,
-            spp_protect_threshold=speech_protect_threshold,
-            floor_blend=floor_blend,
         )
 
         # 存儲上一幀的增益（Decision Directed）
@@ -557,112 +416,27 @@ class MmseLsaDenoiser(BaseDenoiser):
             # fresh array); update() below still tracks true noise.
             if extra_noise_psd is not None:
                 noise_psd = noise_psd + extra_noise_psd[i]
-            if self.noise_over_subtraction != 1.0:
-                noise_psd = self.noise_over_subtraction * noise_psd
             spp, xi, gamma = self.spp_estimator.estimate(
                 Y_psd,
                 noise_psd,
                 self.gain_prev,
                 enhanced_psd_prev
             )
-            # SppEstimator returns the gain-side, cross-band-adjusted SPP but
-            # retains the fixed-prior posterior separately.  MCRA must see the
-            # latter; feeding the lifted posterior back into the tracker forms
-            # a positive loop (lifted SPP freezes noise, which lifts later SPP
-            # again) and diverges from the C streaming implementation.
-            fixed_prior_spp = (
-                self.spp_estimator.last_fixed_prior_spp
-                if self.spp_estimator.last_fixed_prior_spp is not None
-                else spp
-            )
             if return_spp:
                 spp_history.append(spp.copy())
 
-            # Frame speech evidence: the mean SPP over the speech band (the
-            # estimator's own evidence mean when it computed one) gates the LF
-            # gain floor and blends the make-up; the fraction of speech-band
-            # bins whose DD xi clears the gate drives the LF tracker guard.
-            frame_spp_mean = self.spp_estimator.last_evidence_mean
-            if frame_spp_mean is None:
-                frame_spp_mean = self._speech_band_mean(fixed_prior_spp)
-            speech_xi_fraction = (
-                self._speech_band_mean(xi > self.noise_gate_xi)
-                if self.noise_gate_xi is not None else None)
-            protect_frame = (
-                self.speech_protect_frame_threshold is None
-                or frame_spp_mean >= self.speech_protect_frame_threshold
-            )
-            makeup_weight = frame_spp_mean
-            if self.makeup_gain and self.makeup_prior == 'xi':
-                indicator = min(
-                    1.0, self._speech_band_mean(xi > self.makeup_prior_xi) / 0.15)
-                self._makeup_prior_state += 0.1 * (indicator - self._makeup_prior_state)
-                self._makeup_prior_state = max(self._makeup_prior_state, 0.01)
-                makeup_weight = self._makeup_prior_state
-            g_min_frame = None
-            if self.frame_prior_gmin_lift_db is not None:
-                g_min_frame = self.gain_calculator.g_min * 10 ** (
-                    self.frame_prior_gmin_lift_db
-                    * self.spp_estimator.last_frame_prior / 20.0)
-            gain = self.gain_calculator.calculate(
-                spp, xi, gamma,
-                g_min=g_min_frame,
-                spp_protect_enabled=protect_frame,
-                spp_protect_mask=self.speech_protect_mask,
-            )
+            gain = self.gain_calculator.calculate(spp, xi, gamma)
+            if return_gain:
+                gain_history.append(gain.copy())
             if return_noise_psd:
                 # 估計器內部噪聲（尚未經 update()；即算此幀增益所用的噪聲底）
                 noise_psd_history.append(self.noise_estimator.noise_psd.copy())
 
             enhanced_magnitude[i] = gain * noisy_magnitude[i]
             self.gain_prev = gain.copy()
-            if self.dd_from_gmmse:
-                enhanced_psd_prev = (
-                    self.gain_calculator.last_gain_mmse * noisy_magnitude[i]) ** 2
-            else:
-                enhanced_psd_prev = enhanced_magnitude[i] ** 2
+            enhanced_psd_prev = enhanced_magnitude[i] ** 2
 
-            applied_scale = 1.0
-            if self.makeup_gain:
-                e_in = float(np.sum(Y_psd))
-                e_out = float(np.sum(enhanced_magnitude[i] ** 2))
-                g_frame = np.sqrt(e_out / (e_in + 1e-20))
-                scale_up = 1.0
-                if g_frame > self.makeup_blim:
-                    scale_up = 1.0 + self.makeup_up_slope * (g_frame - self.makeup_blim)
-                    if g_frame * scale_up > 1.0:
-                        scale_up = 1.0 / g_frame
-                scale_down = 1.0
-                if g_frame < self.makeup_blim:
-                    g_floored = max(g_frame, self.gain_calculator.g_min)
-                    scale_down = 1.0 - self.makeup_down_slope * (self.makeup_blim - g_floored)
-                applied_scale = (
-                    makeup_weight * scale_up
-                    + (1.0 - makeup_weight) * scale_down
-                )
-                enhanced_magnitude[i] *= applied_scale
-            if return_gain:
-                # Report the gain that was actually applied. DD state above
-                # intentionally retains the pre-makeup OM-LSA gain.
-                gain_history.append((gain * applied_scale).copy())
-
-            noise_update_spp = (fixed_prior_spp
-                                if (self.spp_estimator.cross_band_prior_strength > 0.0
-                                    or self.spp_estimator.frame_prior_q_max is not None)
-                                else spp)
-            if self.noise_gate_xi is None:
-                self.noise_estimator.update(noisy_magnitude[i], spp=noise_update_spp)
-            else:
-                if self.noise_gate_lf_bin is None:
-                    slow_mask = xi > self.noise_gate_xi
-                else:
-                    # One frame-level decision for every bin below the LF
-                    # boundary, as in the C port.
-                    slow_mask = np.zeros(xi.shape, dtype=bool)
-                    if speech_xi_fraction > self.noise_gate_frame_frac:
-                        slow_mask[:self.noise_gate_lf_bin] = True
-                self.noise_estimator.update(noisy_magnitude[i], spp=noise_update_spp,
-                                            slow_mask=slow_mask)
+            self.noise_estimator.update(noisy_magnitude[i], spp=spp)
 
         # 相位保持不變
         enhanced_phase = noisy_phase
@@ -678,17 +452,12 @@ class MmseLsaDenoiser(BaseDenoiser):
             outputs.append(np.array(noise_psd_history))
         return tuple(outputs)
 
-    def _speech_band_mean(self, x):
-        """Mean of x over the 80-4000 Hz speech-evidence band."""
-        return float(np.mean(x[self.speech_bin_start:self.speech_bin_end]))
-
     def reset(self):
         """重置降噪器狀態"""
         self.noise_estimator.reset()
         self.spp_estimator.reset()
         self.gain_calculator.reset()
         self.gain_prev = None
-        self._makeup_prior_state = 0.5
 
     def get_params(self) -> dict:
         """獲取參數"""
@@ -704,33 +473,6 @@ class MmseLsaDenoiser(BaseDenoiser):
             'noise_method': self.noise_method,
             'alpha_xi': self.spp_estimator.alpha,
             'q': self.spp_estimator.q,
-            'cross_band_prior_strength': self.spp_estimator.cross_band_prior_strength,
-            'cross_band_prior_threshold': self.spp_estimator.cross_band_prior_threshold,
-            'cross_band_prior_full_scale': self.spp_estimator.cross_band_prior_full_scale,
-            'cross_band_prior_max_q': self.spp_estimator.cross_band_prior_max_q,
-            'cross_band_prior_alpha': self.spp_estimator.cross_band_prior_alpha,
-            'noise_over_subtraction': self.noise_over_subtraction,
-            'speech_protect_floor_db': self.gain_calculator.spp_protect_floor_db,
-            'speech_protect_threshold': self.gain_calculator.spp_protect_threshold,
-            'speech_protect_frame_threshold': self.speech_protect_frame_threshold,
-            'frame_prior_q_max': self.spp_estimator.frame_prior_q_max,
-            'frame_prior_spp_lo': self.spp_estimator.frame_prior_spp_lo,
-            'frame_prior_spp_hi': self.spp_estimator.frame_prior_spp_hi,
-            'frame_prior_gmin_lift_db': self.frame_prior_gmin_lift_db,
-            'floor_blend': self.gain_calculator.floor_blend,
-            'noise_gate_lf_bin': self.noise_gate_lf_bin,
-            'noise_gate_frame_frac': self.noise_gate_frame_frac,
-            'noise_gate_xi_db': (None if self.noise_gate_xi is None
-                                 else 10 * np.log10(self.noise_gate_xi)),
-            'alpha_d_speech': (self.noise_estimator.alpha_d_speech
-                               if self.noise_method == 'mcra' else None),
-            'dd_from_gmmse': self.dd_from_gmmse,
-            'makeup_gain': self.makeup_gain,
-            'makeup_prior': self.makeup_prior,
-            'makeup_prior_xi_db': 10 * np.log10(self.makeup_prior_xi),
-            'makeup_blim': self.makeup_blim,
-            'makeup_up_slope': self.makeup_up_slope,
-            'makeup_down_slope': self.makeup_down_slope,
             'xi_min_db': 10 * np.log10(self.spp_estimator.xi_min),
             'g_min_db': 20 * np.log10(self.gain_calculator.g_min),
             'alpha_g': self.gain_calculator.alpha_g,

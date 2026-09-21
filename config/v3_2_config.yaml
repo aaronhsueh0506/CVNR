@@ -5,22 +5,12 @@ audio:
   sample_rate: 16000
   window_type: hanning
 gain_calculation:
-  # All strength presets share these temporal constants. Presets only change
-  # suppression depth (q / xi_min / g_min / over-subtraction), so choosing a
-  # stronger preset cannot silently switch to a faster noise tracker.
+  # NOTE: V3-2 runs ASYMMETRIC gain smoothing (attack=0.3 fast rise / decay=alpha_g slow fall)
+  # via MmseLsaGainCalculator defaults. process_audio's V3-2 branch does NOT read
+  # use_asymmetric_smoothing/alpha_attack/alpha_decay, so `alpha_g` below is the DECAY factor and
+  # the fast attack (0.3) is fixed in code (not configurable here). The C port mirrors this.
   alpha_g: 0.88
-  alpha_attack: 0.15           # authored and validated on the 16 ms product grid
-  g_min_db: -25.0
-  noise_over_subtraction: 1.4
-  # A frame-level speech decision protects weak LF harmonics that OM-LSA's
-  # independent-bin prior would otherwise pull toward g_min.  The protected
-  # band reuses noise_gate_lf_hz below; all strength presets share this guard.
-  speech_protect_floor_db: -15.0
-  speech_protect_threshold: 0.0
-  speech_protect_frame_threshold: 0.55
-  # The frame make-up experiment (makeup_gain / makeup_prior / makeup_blim /
-  # makeup_up_slope / makeup_down_slope) stays off and is driven from the
-  # research CLI (tools/run_vctk_benchmark.py), not from this file.
+  g_min_db: -30.0             # amplitude dB (/20); = old -15 @ /10 power-dB → same 0.0316 floor
   method: mmse_lsa
 name: MMSE-LSA
 noise_estimation:
@@ -40,13 +30,6 @@ noise_estimation:
   scene_change_min_frames: 5
   scene_change_blend: 0.5
   scene_change_flatness_threshold: 0.4  # 高頻段 spectral flatness 閾值，避免語音誤觸發
-  # When speech is established elsewhere in the frame, prevent speech energy
-  # below 300 Hz from ratcheting the MCRA floor upward. Only the rising
-  # direction is slowed; falling/noise-only updates retain the normal rate.
-  alpha_d_speech: 0.95
-  noise_gate_xi_db: 3.0
-  noise_gate_lf_hz: 300.0
-  noise_gate_frame_frac: 0.50
 noise_tracking:
   enable: true
 spp:
@@ -54,9 +37,6 @@ spp:
                                 # ξ jitter → SPP jitter → the isolated gain peaks = musical noise.
                                 # Shared across all strength presets (mild/balanced/aggressive) via
                                 # core/nr_strength.py; C default_config mirrors this for parity.
-  q: 0.52
-  xi_min_db: -10.0
-  # Optional Cohen eq.18 experiment. It is disabled in the product path: the
-  # corpus sweep did not justify changing the validated DD recursion.
-  dd_from_gmmse: false
+  q: 0.50
+  xi_min_db: -20.0
 version: 3-2

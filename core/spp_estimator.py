@@ -7,18 +7,6 @@ import numpy as np
 from typing import Tuple, Optional
 
 
-def _band_slice(n_freqs, start, end):
-    """Clamp an optional [start, end) bin range to the spectrum."""
-    start = 0 if start is None else max(0, min(int(start), n_freqs - 1))
-    end = n_freqs if end is None else max(start + 1, min(int(end), n_freqs))
-    return start, end
-
-
-def _ramp01(x, lo, hi):
-    """(x - lo) / (hi - lo) clipped to [0, 1]."""
-    return float(np.clip((x - lo) / (hi - lo), 0.0, 1.0))
-
-
 class SppEstimator:
     """
     估計語音存在機率 (Speech Presence Probability, SPP)
@@ -39,82 +27,13 @@ class SppEstimator:
         self,
         alpha: float = 0.98,
         q: float = 0.5,
-        xi_min_db: float = -25.0,
-        cross_band_prior_strength: float = 0.0,
-        cross_band_prior_threshold: float = 0.50,
-        cross_band_prior_full_scale: float = 0.70,
-        cross_band_prior_max_q: float = 0.54,
-        cross_band_prior_alpha: float = 0.90,
-        cross_band_prior_bin_start: Optional[int] = None,
-        cross_band_prior_bin_end: Optional[int] = None,
-        # Frame-context speech prior (gain side only). When set, the speech
-        # prior rises from q towards frame_prior_q_max as the mean fixed-prior
-        # SPP over [frame_prior_bin_start, frame_prior_bin_end) climbs from
-        # frame_prior_spp_lo to frame_prior_spp_hi. One scalar per frame; the
-        # per-bin likelihood is unchanged, so weak bins in a frame with strong
-        # speech evidence are released from the floor blend while noise-only
-        # frames keep the fixed prior. None = shipped fixed prior.
-        frame_prior_q_max: Optional[float] = None,
-        frame_prior_spp_lo: float = 0.5,
-        frame_prior_spp_hi: float = 0.8,
-        frame_prior_bin_start: Optional[int] = None,
-        frame_prior_bin_end: Optional[int] = None,
-        # Track the frame prior (last_frame_prior) without re-prioring the
-        # SPP, for consumers such as a frame-gated gain floor.
-        frame_prior_track: bool = False,
+        xi_min_db: float = -25.0
     ):
         self.alpha = alpha
         # Clip q 到 (eps, 1-eps) 避免先驗比率的相撞歸零
         _eps = 1e-6
         self.q = float(np.clip(q, _eps, 1.0 - _eps))
         self.xi_min = 10 ** (xi_min_db / 10)
-
-        # Experimental, low-cost frame/cross-band speech prior.  A zero
-        # strength is the shipped path and deliberately bypasses every extra
-        # reduction below.  The feature is computed from the fixed-prior SPP
-        # that is already available in this function, so it adds no extra
-        # exp/log; the embedded C implementation mirrors the same scalar path.
-        if not 0.0 <= cross_band_prior_strength <= 1.0:
-            raise ValueError("cross_band_prior_strength must be in [0, 1]")
-        if not 0.0 < cross_band_prior_threshold < cross_band_prior_full_scale <= 1.0:
-            raise ValueError(
-                "cross-band prior thresholds must satisfy "
-                "0 < threshold < full_scale <= 1"
-            )
-        if not 0.0 < cross_band_prior_max_q < 1.0:
-            raise ValueError("cross_band_prior_max_q must be in (0, 1)")
-        if (cross_band_prior_strength > 0.0
-                and cross_band_prior_max_q < self.q):
-            raise ValueError("enabled cross_band_prior_max_q must be >= q")
-        if not 0.0 <= cross_band_prior_alpha < 1.0:
-            raise ValueError("cross_band_prior_alpha must be in [0, 1)")
-        self.cross_band_prior_strength = float(cross_band_prior_strength)
-        self.cross_band_prior_threshold = float(cross_band_prior_threshold)
-        self.cross_band_prior_full_scale = float(cross_band_prior_full_scale)
-        self.cross_band_prior_max_q = float(cross_band_prior_max_q)
-        self.cross_band_prior_alpha = float(cross_band_prior_alpha)
-        self.cross_band_prior_bin_start = cross_band_prior_bin_start
-        self.cross_band_prior_bin_end = cross_band_prior_bin_end
-        self.cross_band_prior_state = 0.0
-        self.last_effective_q = self.q
-        self.last_fixed_prior_spp = None
-        # Mean over the evidence band of the SPP this estimator returns (after
-        # the frame prior, before the cross-band lift); None while the
-        # cross-band prior is off.
-        self.last_evidence_mean = None
-
-        if frame_prior_q_max is not None and not self.q < frame_prior_q_max < 1.0:
-            raise ValueError("frame_prior_q_max must be None or in (q, 1)")
-        if not 0.0 <= frame_prior_spp_lo < frame_prior_spp_hi <= 1.0:
-            raise ValueError("frame prior ramp must satisfy 0 <= lo < hi <= 1")
-        self.frame_prior_q_max = (float(frame_prior_q_max)
-                                  if frame_prior_q_max is not None else None)
-        self.frame_prior_spp_lo = float(frame_prior_spp_lo)
-        self.frame_prior_spp_hi = float(frame_prior_spp_hi)
-        self.frame_prior_bin_start = frame_prior_bin_start
-        self.frame_prior_bin_end = frame_prior_bin_end
-        self.frame_prior_track = bool(frame_prior_track)
-        self.last_frame_prior = 0.0
 
         # 狀態變量（用於 Decision Directed 方法）
         self.xi_prev = None         # 上一幀的先驗 SNR
@@ -196,58 +115,7 @@ class SppEstimator:
 
         # 組合公式: 1 / (1 + prior_ratio * (1+xi) * exp(-v))
         # 注意 log_likelihood 變數存的是 v (gamma * xi / (1+xi))
-        exp_neg_likelihood = np.exp(-log_likelihood)
-        spp = 1 / (1 + prior_ratio * term_xi * exp_neg_likelihood)
-        # Preserve the fixed-prior posterior for the noise tracker.  The
-        # cross-band prior is a gain-side speech-protection mechanism; feeding
-        # it back into the noise update creates a positive feedback loop
-        # (raised SPP freezes N, which raises later SPP again).
-        self.last_fixed_prior_spp = spp
-
-        if self.frame_prior_q_max is not None or self.frame_prior_track:
-            start, end = _band_slice(spp.shape[0], self.frame_prior_bin_start,
-                                     self.frame_prior_bin_end)
-            frame_prior = _ramp01(float(np.mean(spp[start:end])),
-                                  self.frame_prior_spp_lo, self.frame_prior_spp_hi)
-            self.last_frame_prior = frame_prior
-            if self.frame_prior_q_max is not None:
-                q_frame = self.q + (self.frame_prior_q_max - self.q) * frame_prior
-                spp = 1 / (1 + (1 - q_frame) / q_frame * term_xi * exp_neg_likelihood)
-
-        # Cross-band protection: if speech evidence is coherent across the
-        # configured speech band, lift the prior for weak bins in this same
-        # frame.  This is intentionally protection-only: effective_q never
-        # falls below the preset q, so a false negative cannot become worse
-        # than the shipped fixed-prior path.  Strong bins are already near
-        # SPP=1 and therefore barely change; the lift mostly helps weak
-        # harmonics whose local likelihood alone is ambiguous.
-        if self.cross_band_prior_strength > 0.0:
-            start, end = _band_slice(spp.shape[0], self.cross_band_prior_bin_start,
-                                     self.cross_band_prior_bin_end)
-            evidence_mean = float(np.mean(spp[start:end]))
-            self.last_evidence_mean = evidence_mean
-            target = _ramp01(evidence_mean, self.cross_band_prior_threshold,
-                             self.cross_band_prior_full_scale)
-            a = self.cross_band_prior_alpha
-            self.cross_band_prior_state = (
-                a * self.cross_band_prior_state + (1.0 - a) * target
-            )
-            effective_q = self.q + (
-                self.cross_band_prior_strength
-                * self.cross_band_prior_state
-                * (self.cross_band_prior_max_q - self.q)
-            )
-            effective_q = float(np.clip(effective_q, self.q,
-                                        self.cross_band_prior_max_q))
-            # First-order logit lift around the balanced q=0.5 point. It
-            # matches exact re-prioring at SPP=0.5 and avoids a second vector
-            # divide; q_max=0.54 keeps this approximation deliberately small.
-            lift = 4.0 * (effective_q - self.q)
-            spp = spp + lift * spp * (1.0 - spp)
-            self.last_effective_q = effective_q
-        else:
-            self.last_effective_q = self.q
-            self.last_evidence_mean = None
+        spp = 1 / (1 + prior_ratio * term_xi * np.exp(-log_likelihood))
 
         # 保存當前值供下一幀使用
         self.xi_prev = xi
@@ -263,11 +131,6 @@ class SppEstimator:
         self.gamma_prev = None
         self.noise_psd_prev = None
         self.frame_count = 0
-        self.cross_band_prior_state = 0.0
-        self.last_effective_q = self.q
-        self.last_fixed_prior_spp = None
-        self.last_evidence_mean = None
-        self.last_frame_prior = 0.0
 
     def __repr__(self):
         return (f"SppEstimator(alpha={self.alpha}, q={self.q}, "

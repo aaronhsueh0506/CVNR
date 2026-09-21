@@ -171,24 +171,6 @@ int main(void) {
         cfg = mmse_lsa_default_config(16000); cfg.xi_min_db = -INFINITY;
         expect_config_rejected(&cfg, "xi_min_db = -Inf", big_buf, BIG_BUF);
 
-        cfg = mmse_lsa_default_config(16000); cfg.cross_band_speech_prior_max_q = NAN;
-        expect_config_rejected(&cfg, "cross_band_speech_prior_max_q = NaN", big_buf, BIG_BUF);
-
-        cfg = mmse_lsa_default_config(16000); cfg.cross_band_speech_prior_alpha = INFINITY;
-        expect_config_rejected(&cfg, "cross_band_speech_prior_alpha = +Inf", big_buf, BIG_BUF);
-
-        cfg = mmse_lsa_default_config(16000); cfg.noise_over_subtraction = NAN;
-        expect_config_rejected(&cfg, "noise_over_subtraction = NaN", big_buf, BIG_BUF);
-
-        cfg = mmse_lsa_default_config(16000); cfg.speech_protect_floor_db = NAN;
-        expect_config_rejected(&cfg, "speech_protect_floor_db = NaN", big_buf, BIG_BUF);
-
-        cfg = mmse_lsa_default_config(16000); cfg.speech_protect_threshold = INFINITY;
-        expect_config_rejected(&cfg, "speech_protect_threshold = +Inf", big_buf, BIG_BUF);
-
-        cfg = mmse_lsa_default_config(16000); cfg.speech_protect_frame_threshold = NAN;
-        expect_config_rejected(&cfg, "speech_protect_frame_threshold = NaN", big_buf, BIG_BUF);
-
         cfg = mmse_lsa_default_config(16000); cfg.alpha_d = NAN;
         expect_config_rejected(&cfg, "alpha_d (MCRA) = NaN", big_buf, BIG_BUF);
 
@@ -219,28 +201,6 @@ int main(void) {
 
         cfg = mmse_lsa_default_config(16000); cfg.alpha_xi = 1.5f;
         expect_config_rejected(&cfg, "alpha_xi = 1.5 (> 1)", big_buf, BIG_BUF);
-
-        cfg = mmse_lsa_default_config(16000);
-        cfg.cross_band_speech_prior = true;
-        cfg.cross_band_speech_prior_max_q = cfg.q - 0.01f;
-        expect_config_rejected(&cfg, "enabled cross-band max_q below q", big_buf, BIG_BUF);
-
-        cfg = mmse_lsa_default_config(16000); cfg.cross_band_speech_prior_alpha = 1.0f;
-        expect_config_rejected(&cfg, "cross_band_speech_prior_alpha = 1", big_buf, BIG_BUF);
-
-        cfg = mmse_lsa_default_config(16000); cfg.noise_over_subtraction = 0.99f;
-        expect_config_rejected(&cfg, "noise_over_subtraction below 1", big_buf, BIG_BUF);
-
-        cfg = mmse_lsa_default_config(16000);
-        cfg.speech_protect_floor = true;
-        cfg.speech_protect_floor_db = cfg.g_min_db - 1.0f;
-        expect_config_rejected(&cfg, "enabled speech floor below g_min", big_buf, BIG_BUF);
-
-        cfg = mmse_lsa_default_config(16000); cfg.speech_protect_threshold = 1.1f;
-        expect_config_rejected(&cfg, "speech_protect_threshold above 1", big_buf, BIG_BUF);
-
-        cfg = mmse_lsa_default_config(16000); cfg.speech_protect_frame_threshold = -0.1f;
-        expect_config_rejected(&cfg, "speech_protect_frame_threshold below 0", big_buf, BIG_BUF);
 
         cfg = mmse_lsa_default_config(16000); cfg.g_min_db = -200.0f;
         expect_config_rejected(&cfg, "g_min_db = -200 (out of range)", big_buf, BIG_BUF);
@@ -277,18 +237,6 @@ int main(void) {
             MmseLsaConfig def = mmse_lsa_default_config(sample_rates[r]);
             char msg[64];
             snprintf(msg, sizeof msg, "default @ %dHz: validate_config() accepts", sample_rates[r]);
-            CHECK(mmse_lsa_validate_config(&def), msg);
-
-            mmse_lsa_apply_speech_protection_experiment(&def);
-            snprintf(msg, sizeof msg,
-                     "speech-protection experiment @ %dHz: validate_config() accepts",
-                     sample_rates[r]);
-            CHECK(mmse_lsa_validate_config(&def), msg);
-
-            mmse_lsa_apply_cross_band_speech_experiment(&def);
-            snprintf(msg, sizeof msg,
-                     "cross-band experiment @ %dHz: validate_config() accepts",
-                     sample_rates[r]);
             CHECK(mmse_lsa_validate_config(&def), msg);
         }
 

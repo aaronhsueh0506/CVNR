@@ -125,17 +125,8 @@ def build_v3_2_base_params(config, sample_rate, frame_size, frame_shift, fft_siz
         'alpha_xi': spp_config.get('alpha_xi', 0.98),
         'q': spp_config.get('q', 0.5),
         'xi_min_db': spp_config.get('xi_min_db', -25.0),
-        'dd_from_gmmse': spp_config.get('dd_from_gmmse', False),
         'g_min_db': gain_config.get('g_min_db', -40.0),
         'alpha_g': gain_config.get('alpha_g', 0.7),
-        'alpha_attack': gain_config.get('alpha_attack', 0.3),
-        'noise_over_subtraction': gain_config.get('noise_over_subtraction', 1.0),
-        'speech_protect_floor_db': gain_config.get('speech_protect_floor_db'),
-        'speech_protect_threshold': gain_config.get('speech_protect_threshold', 0.5),
-        'speech_protect_frame_threshold': gain_config.get(
-            'speech_protect_frame_threshold'),
-        'makeup_gain': gain_config.get('makeup_gain', False),
-        'makeup_prior': gain_config.get('makeup_prior', 'spp'),
         'num_init_frames': noise_config.get('num_init_frames', 20),
     }
 
@@ -154,10 +145,6 @@ def build_v3_2_base_params(config, sample_rate, frame_size, frame_shift, fft_siz
             'scene_change_blend': noise_config.get('scene_change_blend', 0.5),
             'scene_change_flatness_threshold': noise_config.get('scene_change_flatness_threshold', 0.4),
             'mcra_accept_external_spp': noise_config.get('mcra_accept_external_spp', True),
-            'alpha_noise_speech': noise_config.get('alpha_d_speech'),
-            'noise_gate_xi_db': noise_config.get('noise_gate_xi_db'),
-            'noise_gate_lf_hz': noise_config.get('noise_gate_lf_hz'),
-            'noise_gate_frame_frac': noise_config.get('noise_gate_frame_frac', 0.1),
         })
     else:
         params.update({
