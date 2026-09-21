@@ -435,7 +435,7 @@ Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差
 ### 不適用情境（C 端與 Python 完全一致）
 - 迴響 / 回聲 → 另配 AEC（`SE/AEC/`）或 dereverb 模組
 - 風聲 / 麥克風 buffeting → 統計型單麥 NR 無法處理；建議硬體風罩
-- 衝擊 / transient（敲擊、關門、碗盤碰撞）→ MCRA 320 ms tracking window 追不上
+- 衝擊 / transient（敲擊、關門、碗盤碰撞）→ MCRA 約 512 ms 的 tracking window 追不上
 - 與目標語音頻譜重疊的干擾（其他人語音、音樂、電視）→ SPP 二元假設不適用
 
 ## 調參指引 (Quick Tuning)
@@ -443,22 +443,27 @@ Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差
 > **優先使用 strength mode**：呼叫 `mmse_lsa_config_for_mode(sample_rate, MMSE_LSA_NR_MILD | MODERATE | BALANCED | AGGRESSIVE)`，多數情境足矣。
 
 > **⚠ g_min_db 為 audio 振幅 dB（/20 換算 `10^(db/20)`）** — gain 直接乘幅度譜（無 sqrt），故 floor 是
-> 振幅量。越負壓越深（-40 ≈ 0.01、-30 ≈ 0.032、-20 ≈ 0.1）。（xi_min_db / delta_db / scene_change 是
+> 振幅量。越負壓越深（-28 ≈ 0.04、-25 ≈ 0.056、-20 ≈ 0.1）。（xi_min_db / delta_db / scene_change 是
 > 功率/SNR dB，維持 /10。）
+
+> 四級 strength preset 只是「抑噪深度」的四個點：`g_min_db / q / xi_min_db / noise_over_subtraction`
+> 分別為 mild −20/0.58/−10/1.2、moderate −23/0.54/−10/1.3、balanced −25/0.52/−10/1.4、
+> aggressive −28/0.45/−12/1.3；DD、MCRA tracker、attack/decay 與 300 Hz 以下的語音 guard 四級共用，
+> 換 preset 不會換到不同的時間常數。
 
 | Symptom | 建議動作 |
 |---|---|
-| 殘留底噪吵 | 換 AGGRESSIVE 模式，或手動 `config.g_min_db = -40.0f`（壓更深） |
-| 語音變悶 / 細節掉 | 換 MILD 模式，或 `config.g_min_db = -20.0f`、`config.alpha_g = 0.92f` |
+| 殘留底噪吵 | 換 AGGRESSIVE 模式，或沿深度軸手動：`config.q = 0.45f`、`config.noise_over_subtraction = 1.3f`、`config.g_min_db = -28.0f` |
+| 語音變悶 / 細節掉 | 換 MILD 模式，或 `config.q = 0.58f`、`config.g_min_db = -20.0f`、`config.noise_over_subtraction = 1.2f` |
 | 音樂 / 非穩態內容被吃掉 | 改用 `--stationary`（只移除穩態底噪，保留音樂／瞬態） |
-| Musical noise | `config.alpha_g = 0.92f`、`config.xi_min_db = -25.0f` |
+| Musical noise | 提高 `config.alpha_decay`（必要時連同 `alpha_attack`）；`alpha_g` 目前不參與 C 輸出。`xi_min_db` 調高（如 -10 → -8）而非調低 |
 | 場景切換慢（開冷氣、進車廂） | `config.scene_change_threshold_db = 7.0f` |
 | 場景偵測誤觸發 | `config.scene_change_threshold_db = 12.0f`、`config.scene_change_min_frames = 8` |
 | 語音初期被吃掉 | 確認首 200 ms 為純噪聲；若使用場景無法保證，考慮在 caller 端做 VAD gating |
 
 ### 不建議在 release 動
 - `alpha_xi` / `alpha_s` / `alpha_d` / `L` / `alpha_p` — 內部穩定性依賴這些預設
-- `num_init_frames` — 固定 20，改短會讓底噪估計 under-fit
+- `num_init_frames` — 依 grid 換算為約 200 ms（例如 16 kHz/256 為 25 frames），改短會讓底噪估計 under-fit
 - 編譯開關：v4.2 recommended configuration 即 `make`（已啟用 6 個公式等價／回歸驗證過的優化；其中 fast gain smoothing 在近似數學下不宣稱 bit-exact）
 
 ### 當這些都不夠
@@ -481,19 +486,19 @@ Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差
 | `hop_size` | `frame_size / 2` | 固定 50% overlap |
 | `fft_size` | 依 rate/grid 選擇 | 嚴格等於 frame，不再採「20 ms frame 補到下一個 2 次方」 |
 | `alpha_xi` | 0.92 | 先驗 SNR (ξ) DD 平滑；2026-07 musical-noise fix（was 0.88） |
-| `q` | 0.5 | 語音先驗機率 |
-| `xi_min_db` | -20 | 先驗 SNR 下限 (dB) |
+| `q` | 0.52 | balanced 語音先驗機率 |
+| `xi_min_db` | -10 | balanced 先驗 SNR 下限 (dB) |
 | `alpha_s` | 0.95 | MCRA 時間平滑 |
-| `alpha_d` | 0.7 | MCRA 噪聲更新率 |
-| `L` | 32（10 ms 參考值） | 建構時依 hop retime，使 MCRA window 維持約 320 ms |
+| `alpha_d` | 0.85（16 ms 錨點） | MCRA 噪聲更新率；建構時依 grid retime |
+| `L` | 32（16 ms 參考值） | 建構時依 hop retime，使 MCRA window 維持約 512 ms |
 | `num_init_frames` | 20（10 ms 參考值） | 建構時依 hop retime，使初始化至少涵蓋 200 ms |
 | `scene_change_threshold_db` | 10.0 | 場景轉換高頻 gamma 閾值 (dB) |
 | `scene_change_min_frames` | 5 | 場景轉換需連續幀數 |
 | `scene_change_blend` | 0.5 | 場景轉換噪聲重置混合比 |
 | `scene_change_flatness_threshold` | 0.4 | 場景轉換高頻 spectral flatness 閾值 (Fix #6 v4.2 新增) |
-| `g_min_db` | -30.0 | 最小增益（**audio 振幅 dB，/20**；= 0.032 floor） |
+| `g_min_db` | -25.0 | balanced 最小增益（**audio 振幅 dB，/20**；約 0.056 floor） |
 | `alpha_g` | 0.88 | 增益平滑因子 |
-| `alpha_attack` | 0.3 | 非對稱平滑 Attack |
+| `alpha_attack` | 0.15（16 ms 錨點） | 非對稱平滑 Attack；建構時依 grid retime |
 | `alpha_decay` | 0.88 | 非對稱平滑 Decay (= alpha_g) |
 | `stationary_floor` | false | Wiener 增益下界 `(ξ/(β+ξ))^p`；**僅 `--stationary` 開啟**，full 不受影響 |
 | `scene_change_tonal_veto` | false | tonal 低頻（音樂）跳過噪聲底噪重置；僅 stationary |

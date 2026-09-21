@@ -129,51 +129,45 @@ if (mmse_lsa_process_gain(nr, error_spec, extra_noise_psd, gain) != 0) { /* erro
 <tr><td>buffer 長度</td><td>全部 <code>n_freqs = fft_size/2+1</code>;函式<b>沒有長度參數</b>,傳錯不會替你報錯</td></tr>
 <tr><td>FFT 誰做</td><td>呼叫端。NR 不碰時域</td></tr>
 <tr><td>Aliasing</td><td><code>spectrum_out == spectrum_in</code>(<b>完全同一指標</b>)支援;完全不相交也支援;<b>部分重疊不支援</b>(<code>mmse_lsa_denoiser.c:557-565</code>)</td></tr>
-<tr><td><code>extra_noise_psd</code></td><td>長度 <code>n_freqs</code>,可為 <code>NULL</code>。非 NULL 時做 echo-as-extra-noise:<code>ξ=S²/(N²+R²)</code>,<b>只餵進 SPP／先驗 SNR</b>,MCRA 噪聲估計仍只用乾淨功率更新(<code>:606-634</code>)</td></tr>
+<tr><td><code>extra_noise_psd</code></td><td>長度 <code>n_freqs</code>,可為 <code>NULL</code>。非 NULL 時做 echo-as-extra-noise:<code>ξ=S²/(N²+R²)</code>,只餵進 SPP／先驗 SNR；MCRA 噪聲估計仍只用輸入功率更新</td></tr>
 <tr><td><code>gain_out</code></td><td>可傳 <code>NULL</code> 省一次 memcpy,之後用 <code>mmse_lsa_get_gain()</code> 讀同一份</td></tr>
-<tr><td>回傳值</td><td><code>0</code> 成功;<code>-1</code> 只在 <code>self</code>／<code>spectrum_in</code>(<code>process</code> 另加 <code>spectrum_out</code>)為 NULL 時。<code>extra_noise_psd</code>／<code>gain_out</code> 傳 NULL <b>是合法用法</b></td></tr>
+<tr><td>回傳值</td><td><code>0</code> 成功;<code>-1</code> 表示必要的 <code>self</code>／<code>spectrum_in</code> 為 NULL。<code>extra_noise_psd</code>／<code>gain_out</code> 傳 NULL <b>是合法用法</b></td></tr>
 <tr><td>初始化期</td><td>前 <code>num_init_frames</code> 個 frame 是 pass-through(gain 全 1.0),同時累積噪聲統計(<code>:505-528,583-602</code>)</td></tr>
 </table></div>
 <div class="warn"><b>Aliasing 規則與 FFT 層相反。</b><code>fft_forward()</code>／<code>fft_inverse()</code> 用 <code>restrict</code>,<b>任何</b>重疊(含完全相同指標)都是 UB;NR 這裡卻明確支援完全同一指標。兩層不要套用同一條直覺。</div>
 <div class="note"><b>接 AEC 的 <code>r2</code> 時要先換算尺度。</b><code>AecResContext.r2</code> 是 int16-square scale,直接當 <code>extra_noise_psd</code> 前必須除以 <code>32768²</code>。現有 pipeline 已經處理好,application 不要再複製一份。</div>
 
 <h2>5. 參數設定與效果</h2>
-<p>設定強度的正規做法是選一個 mode,不要逐欄位手調。<code>mmse_lsa_config_for_mode_grid()</code> 在 balanced 基礎上覆寫<b>七個</b>欄位:三個強度欄位 + 四個平滑係數。</p>
+<p>設定強度的正規做法是選一個 mode,不要逐欄位手調。<code>mmse_lsa_config_for_mode_grid()</code> 的四級只改 <code>g_min_db</code>、<code>q</code>、<code>xi_min_db</code>、<code>noise_over_subtraction</code>;DD、tracker、gain dynamics 與低頻語音 guard 的<b>組態欄位</b>共用。例外是幀級語音閘 <code>speech_protect_frame_threshold</code>:設定值著作於 balanced 的 <code>q = 0.52</code>,生效值為 <code>value + (q − 0.52)</code>,因此隨 preset 自動位移(mild 0.61 / moderate 0.57 / balanced 0.55 / aggressive 0.48;可用 <code>mmse_lsa_get_speech_protect_frame_threshold()</code> 讀回)。</p>
 <div class="tblwrap"><table>
-<tr><th>MmseLsaNrMode</th><th><code>g_min_db</code></th><th><code>q</code></th><th><code>xi_min_db</code></th><th><code>alpha_d</code></th><th><code>alpha_g</code></th><th><code>alpha_attack</code></th><th><code>alpha_decay</code></th><th>聽感</th></tr>
-<tr><td><code>MILD</code></td><td>-20.0</td><td>0.60</td><td>-15.0</td><td>0.85</td><td>0.92</td><td>0.40</td><td>0.92</td><td>最保守,優先保留語音細節,殘留底噪最多</td></tr>
-<tr><td><code>MODERATE</code></td><td>-25.0</td><td>0.55</td><td>-18.0</td><td>0.85</td><td>0.92</td><td>0.40</td><td>0.92</td><td>mild 與 balanced 之間</td></tr>
-<tr><td><code>BALANCED</code></td><td>-30.0</td><td>0.50</td><td>-20.0</td><td colspan="4" style="text-align:center">(空 overlay,沿用 base)</td><td><b>預設</b>,<code>switch</code> 的 <code>default:</code> 分支</td></tr>
-<tr><td><code>AGGRESSIVE</code></td><td>-40.0</td><td>0.35</td><td>-25.0</td><td>0.50</td><td>0.85</td><td>0.15</td><td>0.88</td><td>抑噪最深,較可能犧牲語音細節、出現處理痕跡</td></tr>
+<tr><th>MmseLsaNrMode</th><th><code>g_min_db</code></th><th><code>q</code></th><th><code>xi_min_db</code></th><th><code>noise_over_subtraction</code></th><th>聽感</th></tr>
+<tr><td><code>MILD</code></td><td>-20.0</td><td>0.58</td><td>-10.0</td><td>1.2</td><td>最保守,優先保留語音細節</td></tr>
+<tr><td><code>MODERATE</code></td><td>-23.0</td><td>0.54</td><td>-10.0</td><td>1.3</td><td>mild 與 balanced 之間</td></tr>
+<tr><td><code>BALANCED</code></td><td>-25.0</td><td>0.52</td><td>-10.0</td><td>1.4</td><td><b>預設</b>,語音品質與抑噪平衡</td></tr>
+<tr><td><code>AGGRESSIVE</code></td><td>-28.0</td><td>0.45</td><td>-12.0</td><td>1.3</td><td>抑噪最深,較可能犧牲語音細節</td></tr>
 </table></div>
-<p class="small">四個平滑係數欄位填的是<b>錨點值</b>(grid 無關);實際存進 config 的是 <code>mmse_lsa_retime_alpha_ref(anchor, sr, hop, <b>0.016</b>)</code> 的結果。<b>注意錨點是 16 ms、不是 retime 系列預設的 10 ms</b>——這幾個 overlay 當初就是對著 16 ms hop 調的,用 10 ms 去 retime 會靜默地二次修正。</p>
+<p class="small">四級共用時間常數。16 kHz/256 實際值如下；其他 grid 請由 config API 讀回。</p>
 <div class="tblwrap"><table>
 <tr><th>16k/256(hop 128)實際值</th><th><code>alpha_d</code></th><th><code>alpha_g</code></th><th><code>alpha_attack</code></th><th><code>alpha_decay</code></th></tr>
-<tr><td>MILD / MODERATE</td><td>0.921954</td><td>0.959166</td><td>0.632456</td><td>0.959166</td></tr>
-<tr><td>BALANCED</td><td>0.751759</td><td>0.902789</td><td>0.547723</td><td>0.902789</td></tr>
-<tr><td>AGGRESSIVE</td><td>0.707107</td><td>0.921954</td><td>0.387298</td><td>0.938083</td></tr>
+<tr><td>全部四級</td><td>0.921954</td><td>0.902789</td><td>0.387298</td><td>0.902789</td></tr>
 </table></div>
-<div class="note"><b>兩個容易誤解的地方:</b>
-<ul>
-<li><b>MILD 與 MODERATE 的四個平滑係數完全相同</b>——這兩級只差 <code>g_min_db</code>／<code>q</code>／<code>xi_min_db</code>。</li>
-<li><b><code>alpha_g</code> 雖然逐 mode 不同,但它是死旗鈕</b>(見下方逐欄位表),所以 mode 之間真正生效的平滑差異來自 <code>alpha_d</code>／<code>alpha_attack</code>／<code>alpha_decay</code>。</li>
-</ul></div>
+<div class="note"><code>alpha_g</code> 仍不直接參與 C gain 運算;產品預設令 <code>alpha_decay=alpha_g</code>。要調實際平滑請改 <code>alpha_decay</code>。</div>
 
 <h3>逐欄位效果(預設值為 16k/256 實測)</h3>
 <div class="tblwrap"><table>
 <tr><th>欄位</th><th>預設</th><th>合法範圍</th><th>調了會怎樣</th></tr>
 <tr><td colspan="4" style="background:#eef5f0"><b>增益(強度主軸)</b></td></tr>
-<tr><td><code>g_min_db</code></td><td>-30.0</td><td><code>[-80,80]</code> finite</td><td><b>振幅</b> dB(<code>/20</code>)增益下限,四級 preset 的核心差異。調低 → 更乾淨,但處理痕跡與傷語音風險上升</td></tr>
-<tr><td><code>alpha_attack</code></td><td>0.547723</td><td><code>[0,1]</code></td><td>增益「上升」方向平滑。調小 → 起音更清楚,但噪聲易短暫漏出</td></tr>
+<tr><td><code>g_min_db</code></td><td>-25.0</td><td><code>[-80,80]</code> finite</td><td><b>振幅</b> dB(<code>/20</code>)增益下限,四級 preset 的核心差異。調低 → 更乾淨,但處理痕跡與傷語音風險上升</td></tr>
+<tr><td><code>alpha_attack</code></td><td>0.387298</td><td><code>[0,1]</code></td><td>增益「上升」方向平滑。調小 → 起音更清楚,但噪聲易短暫漏出</td></tr>
 <tr><td><code>alpha_decay</code></td><td>0.902789</td><td><code>[0,1]</code></td><td>增益「下降」方向平滑。調大 → musical noise 明顯減少,但尾音拖長。<b>這才是真正生效的增益平滑旋鈕</b></td></tr>
 <tr><td><code class="dead">alpha_g</code></td><td>0.902789</td><td><code>[0,1]</code></td><td class="dead"><b>死旋鈕</b>——會被複製進 instance、會通過驗證,但 <code>calculate_gain()</code> 從不讀它(<code>mmse_lsa_denoiser.c</code> 內只有 :93 宣告與 :123 賦值兩處)。四級 preset 剛好把它設成與 <code>alpha_decay</code> 同值,造成「調它好像有效」的錯覺。要調平滑請改 <code>alpha_decay</code></td></tr>
 <tr><td colspan="4" style="background:#eef5f0"><b>SPP(語音存在機率)</b></td></tr>
-<tr><td><code>q</code></td><td>0.5</td><td>finite,<b>開區間 (0,1)</b>;0 與 1 都被拒</td><td>語音先驗機率,經 <code>prior_ratio=(1-q)/q</code> 進 SPP sigmoid。調大(趨近 1)→ 偏 mild、更保語音;調小 → 偏 aggressive、抑噪更深</td></tr>
+<tr><td><code>q</code></td><td>0.52</td><td>finite,<b>開區間 (0,1)</b>;0 與 1 都被拒</td><td>語音先驗機率,經 <code>prior_ratio=(1-q)/q</code> 進 SPP sigmoid。調大 → 偏 mild、更保語音;調小 → 偏 aggressive、抑噪更深</td></tr>
 <tr><td><code>alpha_xi</code></td><td>0.959166</td><td><code>[0,1]</code></td><td>DD 先驗 SNR 平滑。調大 → 更平滑、musical noise 更少,但起音較鈍</td></tr>
-<tr><td><code>xi_min_db</code></td><td>-20.0</td><td><code>[-80,80]</code></td><td>先驗 SNR 下限(<b>功率</b> dB,<code>/10</code>)。調低 → 殘留底噪更少但處理痕跡更明顯。stationary 模式下是控制殘留噪聲深度的主要旋鈕</td></tr>
+<tr><td><code>xi_min_db</code></td><td>-10.0</td><td><code>[-80,80]</code></td><td>先驗 SNR 下限(<b>功率</b> dB,<code>/10</code>)。調低 → 殘留底噪更少但處理痕跡更明顯。stationary 模式下是控制殘留噪聲深度的主要旋鈕</td></tr>
 <tr><td colspan="4" style="background:#eef5f0"><b>MCRA 噪聲估計</b></td></tr>
 <tr><td><code>alpha_s</code></td><td>0.959796</td><td><code>[0,1]</code></td><td>功率譜時間平滑。調大 → 噪聲追蹤更穩、對瞬態不敏感。一般不動</td></tr>
-<tr><td><code>alpha_d</code></td><td>0.751759</td><td><code>[0,1]</code></td><td>噪聲估計更新慣性。調大 → 更新更慢、更不易把語音吸收進噪聲底(stationary 走這個方向);調小 → 追噪聲底快但易吃掉語音</td></tr>
+<tr><td><code>alpha_d</code></td><td>0.921954</td><td><code>[0,1]</code></td><td>噪聲估計更新慣性。調大 → 更新更慢、更不易把語音吸收進噪聲底(stationary 走這個方向);調小 → 追噪聲底快但易吃掉語音</td></tr>
 <tr><td><code>alpha_p</code></td><td>0.275946</td><td><code>[0,1]</code></td><td>語音存在指示平滑。一般不動</td></tr>
 <tr><td><code>L</code></td><td>64</td><td><code>1..320</code></td><td>MCRA 最小值追蹤視窗(frame 數,≈512 ms)。調大 → 不易把持續語音誤判為噪聲,但噪聲底上升時追得慢。<b>會改變記憶體需求</b></td></tr>
 <tr><td><code>delta_db</code></td><td>10.0</td><td><code>[-80,80]</code></td><td>語音判定門檻(功率 dB)。調高 → 更難判為語音,噪聲估計更易吸收訊號 → 抑噪深但傷語音風險高</td></tr>
@@ -191,12 +185,12 @@ if (mmse_lsa_process_gain(nr, error_spec, extra_noise_psd, gain) != 0) { /* erro
 <tr><td><code>scene_change_tonal_veto</code></td><td>false</td><td>bool,不做範圍檢查</td><td>低頻呈音調性(音樂)時否決場景重置</td></tr>
 <tr><td><code>scene_change_lo_flatness_max</code></td><td>0.4</td><td><code>[0,1]</code></td><td>低頻「算不算音調性」門檻,只在 <code>tonal_veto=true</code> 時生效</td></tr>
 </table></div>
-<div class="note"><code>q=0.5</code> 是 balanced preset 的作者設定,不是把輸出 SPP 固定為 0.5。頻譜沒有偏向語音或非語音的證據時,Bayesian posterior 會自然回到約 <code>q</code>(套用 <code>xi_min_db=-20</code> 後約 0.498),所以 debug 的 <code>mean_spp≈0.50</code> 是預期的中性狀態。MCRA broadband gate 內部的 <code>spp &gt; 0.5</code> 是另一個分類門檻。</div>
+<div class="note"><code>q=0.52</code> 是 balanced preset 的作者設定,不是把輸出 SPP 固定為 0.52。頻譜沒有偏向語音或非語音的證據時,Bayesian posterior 會自然回到約 <code>q</code>;MCRA broadband gate 內部的 <code>spp &gt; 0.5</code> 是另一個分類門檻。</div>
 <p class="small">全部範圍取自 <code>mmse_lsa_validate_config()</code>(<code>mmse_lsa_types.h:364-525</code>),它是 <code>get_mem_size()</code>／<code>create()</code>／<code>init()</code>／<code>reconfigure()</code> 共用的唯一閘門。</p>
 
 <h3>stationary 疊加層的陷阱</h3>
 <p><code>mmse_lsa_apply_stationary(&amp;cfg)</code>(<code>mmse_lsa_types.h:309-331</code>)是<b>就地</b>疊加,且<b>無 NULL 檢查</b>(傳 NULL 直接當機)。呼叫順序固定:<code>config_for_mode()</code> → <code>apply_stationary()</code> → <code>validate_config()</code>。</p>
-<div class="warn">它<b>無條件覆寫</b> <code>g_min_db</code>(→ -30.0)與 <code>xi_min_db</code>(→ -22.0)。所以 <code>mild+stationary</code>／<code>moderate+stationary</code>／<code>aggressive+stationary</code> 的這兩個欄位<b>會變成完全一樣</b>,疊完之後只剩 <code>q</code> 與平滑係數還有差異。若要「mild 的增益下限 + stationary 行為」,必須在 <code>apply_stationary()</code> <b>之後</b>手動把 <code>g_min_db</code> 改回去,再重跑一次 <code>validate_config()</code>。</div>
+<div class="warn">它<b>無條件覆寫</b> <code>g_min_db</code>(→ -30.0)與 <code>xi_min_db</code>(→ -22.0)。所以各 strength 的這兩個欄位會變成一樣,只剩 <code>q</code> 與 <code>noise_over_subtraction</code> 保有差異;時間常數原本就共用。若要「mild 的增益下限 + stationary 行為」,必須在 <code>apply_stationary()</code> <b>之後</b>手動改回並重跑 <code>validate_config()</code>。</div>
 
 <h3>為什麼有 retime 系列函式</h3>
 <p>EMA 係數與 frame 計數多半是在某個參考 hop(10 ms 或 16 ms)下調出來的錨點值;不同 grid 的實際 hop 不同(8／16／10.667 ms),原封套用會讓真實時間常數跑掉。<code>mmse_lsa_retime_alpha()</code>／<code>_retime_frames()</code>(及帶 <code>_ref</code> 的顯式版本)把「錨點值 + 錨點 hop」換算成當前 grid 的等效值。</p>
