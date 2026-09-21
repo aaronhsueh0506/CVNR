@@ -95,7 +95,6 @@ struct MmseLsaDenoiser {
     float  speech_band_inv_count;
     int    noise_gate_lf_bin;
     float  noise_gate_xi;
-    float  speech_protect_frame_threshold;   /* config value + (q - anchor q) */
     bool   slow_lf_rise;
     float  makeup_prior_state;
 
@@ -146,10 +145,6 @@ static void apply_gain_config_scalars(MmseLsaDenoiser* self,
     self->log_speech_protect_floor_gain =
         fast_log(self->speech_protect_floor_gain + 1e-10f);
     self->noise_gate_xi = powf(10.0f, config->noise_gate_xi_db / 10.0f);
-    /* See MMSE_LSA_SPEECH_PROTECT_ANCHOR_Q (mmse_lsa_types.h). */
-    self->speech_protect_frame_threshold =
-        config->speech_protect_frame_threshold +
-        (config->q - MMSE_LSA_SPEECH_PROTECT_ANCHOR_Q);
 
     self->stationary_floor          = config->stationary_floor;
     self->stationary_floor_exponent = config->stationary_floor_exponent;
@@ -223,7 +218,7 @@ static void update_frame_speech_evidence(MmseLsaDenoiser* self) {
     float evidence = evidence_sum * self->speech_band_inv_count;
     float xi_fraction = (float)xi_high * self->speech_band_inv_count;
     self->speech_protect_frame_active =
-        evidence >= self->speech_protect_frame_threshold;
+        evidence >= cfg->speech_protect_frame_threshold;
     self->slow_lf_rise = self->config.speech_aware_noise_tracking &&
                          xi_fraction > self->config.noise_gate_frame_frac;
     if (self->config.makeup_gain) {
@@ -802,6 +797,7 @@ int mmse_lsa_process_gain(MmseLsaDenoiser* self,
                           const float*     extra_noise_psd,
                           float*           gain_out) {
     if (!self || !spectrum_in) return -1;
+
     int nf = self->n_freqs;
 
     /* 1. Power from input spectrum */
@@ -977,10 +973,6 @@ const float* mmse_lsa_get_noise_psd(const MmseLsaDenoiser* self, int* n_freqs) {
     if (!self || !self->noise_est) { if (n_freqs) *n_freqs = 0; return NULL; }
     if (n_freqs) *n_freqs = self->n_freqs;
     return mcra_get_noise_psd(self->noise_est);
-}
-
-float mmse_lsa_get_speech_protect_frame_threshold(const MmseLsaDenoiser* self) {
-    return self ? self->speech_protect_frame_threshold : 0.0f;
 }
 
 const float* mmse_lsa_get_gain(const MmseLsaDenoiser* self, int* n_freqs) {

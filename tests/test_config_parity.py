@@ -166,14 +166,13 @@ def test_strength_presets_change_depth_only(sample_rate, fft_size):
             f"{sample_rate}Hz/fft={fft_size}: {dict(zip(strengths, values))}"
         )
 
-    # Stronger modes monotonically deepen the gain/SNR floors and lower the
-    # speech-presence prior; over-subtraction rises to balanced and stays at
-    # 1.3 for aggressive (1.5 over-subtracted high-SNR speech).
+    # Stronger modes monotonically deepen the gain/SNR floors, lower the
+    # speech-presence prior, and increase noise over-subtraction.
     assert [configs[s]["g_min_db"] for s in strengths] == [-20, -23, -25, -28]
     assert [configs[s]["q"] for s in strengths] == [0.58, 0.54, 0.52, 0.45]
     assert [configs[s]["xi_min_db"] for s in strengths] == [-10, -10, -10, -12]
     assert [configs[s]["noise_over_subtraction"] for s in strengths] == [
-        1.2, 1.3, 1.4, 1.3,
+        1.2, 1.3, 1.4, 1.5,
     ]
 
 

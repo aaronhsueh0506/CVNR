@@ -24,10 +24,6 @@ from core.signal_grid import (
 )
 
 
-# Frame speech gate anchor; mirrors C MMSE_LSA_SPEECH_PROTECT_ANCHOR_Q
-# (mmse_lsa_types.h holds the rationale).
-SPEECH_PROTECT_ANCHOR_Q = 0.52
-
 def _hz_to_bin_ceil(hz, fft_size, sample_rate):
     """First FFT bin at or above hz."""
     return int(np.ceil(hz * fft_size / sample_rate))
@@ -240,12 +236,6 @@ class MmseLsaDenoiser(BaseDenoiser):
                 "speech_protect_frame_threshold must be None or in [0, 1]"
             )
         self.speech_protect_frame_threshold = speech_protect_frame_threshold
-        # Applied gate = authored value + (q - anchor), in float32 like the C
-        # port (exactly the authored value at the anchor).
-        self.speech_protect_frame_threshold_effective = (
-            None if speech_protect_frame_threshold is None else
-            float(np.float32(speech_protect_frame_threshold)
-                  + (np.float32(q) - np.float32(SPEECH_PROTECT_ANCHOR_Q))))
 
         # Convert temporal coefficients once at the outer model boundary.
         # Strength presets contain no temporal keys. The base full-mode
@@ -599,8 +589,8 @@ class MmseLsaDenoiser(BaseDenoiser):
                 self._speech_band_mean(xi > self.noise_gate_xi)
                 if self.noise_gate_xi is not None else None)
             protect_frame = (
-                self.speech_protect_frame_threshold_effective is None
-                or frame_spp_mean >= self.speech_protect_frame_threshold_effective
+                self.speech_protect_frame_threshold is None
+                or frame_spp_mean >= self.speech_protect_frame_threshold
             )
             makeup_weight = frame_spp_mean
             if self.makeup_gain and self.makeup_prior == 'xi':
@@ -723,8 +713,6 @@ class MmseLsaDenoiser(BaseDenoiser):
             'speech_protect_floor_db': self.gain_calculator.spp_protect_floor_db,
             'speech_protect_threshold': self.gain_calculator.spp_protect_threshold,
             'speech_protect_frame_threshold': self.speech_protect_frame_threshold,
-            'speech_protect_frame_threshold_effective':
-                self.speech_protect_frame_threshold_effective,
             'frame_prior_q_max': self.spp_estimator.frame_prior_q_max,
             'frame_prior_spp_lo': self.spp_estimator.frame_prior_spp_lo,
             'frame_prior_spp_hi': self.spp_estimator.frame_prior_spp_hi,

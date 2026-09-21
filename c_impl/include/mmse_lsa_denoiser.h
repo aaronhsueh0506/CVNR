@@ -173,10 +173,6 @@ const float* mmse_lsa_get_spp(const MmseLsaDenoiser* self, int* n_freqs);
 /** Current noise PSD estimate (power units) [n_freqs]. */
 const float* mmse_lsa_get_noise_psd(const MmseLsaDenoiser* self, int* n_freqs);
 
-/** The frame speech gate as applied (see MMSE_LSA_SPEECH_PROTECT_ANCHOR_Q);
- * tracks mmse_lsa_reconfigure(). */
-float mmse_lsa_get_speech_protect_frame_threshold(const MmseLsaDenoiser* self);
-
 /**
  * Most recent per-bin MMSE-LSA gain (linear, [g_min, 1]) [n_freqs].
  * Valid after at least one frame has been processed.

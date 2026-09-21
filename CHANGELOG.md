@@ -20,12 +20,6 @@
 - balanced 的深度 anchor 改為 `g_min=-25 dB`、`q=0.52`、
   `xi_min=-10 dB`、noise over-subtraction `1.4`。−12 dB 低頻 floor 雖在板端
   proxy 更飽滿，卻造成 VCTK 個案 PESQ 2.717 → 1.535，因此未採用。
-- 幀級語音保護門檻 `0.55` 以 balanced 的 `q=0.52` 為錨，實際套用
-  `0.55 + (q - 0.52)`；四級有效門檻為 0.61／0.57／0.55／0.48，避免
-  固定門檻在 mild 幾乎常開、在 aggressive 又漏掉語音。
-- aggressive 的 noise over-subtraction 由 1.5 降到 1.3；DNS 2020
-  no-reverb 的 SI-SDR 退步由 −0.78 dB 收斂到 −0.11 dB，板端穩態抑噪
-  只少約 0.3 dB，四級深度仍單調。
 
 ### 驗證 (Validation)
 

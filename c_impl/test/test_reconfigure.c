@@ -414,32 +414,6 @@ static void check_pool_size_is_unchanged(void) {
     }
 }
 
-/* The frame speech gate follows q: config value + (q - anchor). Balanced is
- * the anchor and must reproduce the authored value bit for bit; the other
- * presets and a runtime reconfigure land on the same float32 sum. */
-static void check_frame_gate_follows_q(void) {
-    MmseLsaConfig bal = mmse_lsa_config_for_mode_grid(16000, 512, MMSE_LSA_NR_BALANCED);
-    MmseLsaConfig mild = mmse_lsa_config_for_mode_grid(16000, 512, MMSE_LSA_NR_MILD);
-    MmseLsaConfig aggr = mmse_lsa_config_for_mode_grid(16000, 512, MMSE_LSA_NR_AGGRESSIVE);
-    MmseLsaDenoiser* d = mmse_lsa_create(&bal);
-    MmseLsaDenoiser* m = mmse_lsa_create(&mild);
-    float want_mild = mild.speech_protect_frame_threshold + (mild.q - MMSE_LSA_SPEECH_PROTECT_ANCHOR_Q);
-    float want_aggr = aggr.speech_protect_frame_threshold + (aggr.q - MMSE_LSA_SPEECH_PROTECT_ANCHOR_Q);
-    if (!d || !m) { CHECK(0, "frame gate: allocation"); goto out; }
-    CHECK(bal.q == MMSE_LSA_SPEECH_PROTECT_ANCHOR_Q, "balanced q is the gate anchor");
-    CHECK(mmse_lsa_get_speech_protect_frame_threshold(d) == bal.speech_protect_frame_threshold,
-          "balanced: effective gate == authored value bit for bit");
-    CHECK(mmse_lsa_get_speech_protect_frame_threshold(m) == want_mild &&
-          want_mild > bal.speech_protect_frame_threshold,
-          "mild: gate = value + (q - anchor), above balanced");
-    CHECK(mmse_lsa_reconfigure(d, &aggr) == 0 &&
-          mmse_lsa_get_speech_protect_frame_threshold(d) == want_aggr &&
-          want_aggr < bal.speech_protect_frame_threshold,
-          "reconfigure to aggressive moves the gate with q, below balanced");
-out:
-    mmse_lsa_destroy(d); mmse_lsa_destroy(m);
-}
-
 int main(void) {
     check_self_reconfigure_is_noop();
     check_state_is_preserved();
@@ -448,7 +422,6 @@ int main(void) {
     check_pipeline_overrides_survive();
     check_stationary_overlay_survives();
     check_pool_size_is_unchanged();
-    check_frame_gate_follows_q();
 
     if (g_failures == 0) printf("\nALL CHECKS PASSED\n");
     else fprintf(stderr, "\n%d CHECK(S) FAILED\n", g_failures);
