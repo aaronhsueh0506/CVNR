@@ -615,37 +615,23 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
     // hi-freq gamma + spectral flatness
     {
         int hi_start = n_freqs / 2;  // Upper half (~4kHz for 16kHz/512FFT)
-        int hi_count = n_freqs - hi_start;
 
-        // Merged hi-freq loop: power sum + noise sum + arith-sum-for-flatness,
-        // staging power+eps into flatness_scratch; the log itself is a single
-        // vectorized sk_fast_log_f32() call below (kernel 25) instead of one
-        // scalar fast_log() per bin -- see spectral_flatness()'s comment for
-        // why this three-pass split is bit-identical to the original.
+        /* Apply the cheap energy gate before the log/exp flatness pass.  The
+         * latter cannot change the decision when gamma is below threshold. */
         float hi_power_sum = 0.0f;
         float hi_noise_sum = 0.0f;
-        float arith_sum = 0.0f;
         for (int k = hi_start; k < n_freqs; k++) {
             hi_power_sum += power[k];
             hi_noise_sum += self->noise_psd[k];
-            float p = power[k] + 1e-20f;
-            self->flatness_scratch[k - hi_start] = p;
-            arith_sum += p;
         }
-        sk_fast_log_f32(self->flatness_scratch, self->flatness_scratch, hi_count);
-        float log_sum = 0.0f;
-        for (int k = 0; k < hi_count; k++) log_sum += self->flatness_scratch[k];
         float hi_gamma = hi_power_sum / (hi_noise_sum + 1e-10f);
-        float inv_hi_count = 1.0f / (float)hi_count;
-        /* This value is compared directly with the hard scene-change
-         * threshold.  Keep it on the same libm path as spectral_flatness()
-         * above so the C and Python trackers do not choose different reset
-         * frames near 0.4. */
-        float geo_mean = expf(log_sum * inv_hi_count);
-        float arith_mean = arith_sum * inv_hi_count;
-        float hi_flatness = geo_mean / arith_mean;
+        bool hi_energy_candidate = hi_gamma > self->scene_change_threshold;
+        float hi_flatness = hi_energy_candidate
+            ? spectral_flatness(power, hi_start, n_freqs,
+                                self->flatness_scratch)
+            : 0.0f;
 
-        if (hi_gamma > self->scene_change_threshold &&
+        if (hi_energy_candidate &&
             hi_flatness > self->scene_change_flatness_threshold) {
             // Ceilinged at scene_change_min_frames (UBSan-probed).
             // scene_change_min_frames is
