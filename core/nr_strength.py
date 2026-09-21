@@ -40,7 +40,7 @@ NR_STRENGTH_PRESETS = {
         'g_min_db': -28.0,
         'q': 0.45,
         'xi_min_db': -12.0,
-        'noise_over_subtraction': 1.5,
+        'noise_over_subtraction': 1.3,
     },
 }
 

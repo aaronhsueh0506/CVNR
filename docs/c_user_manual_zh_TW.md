@@ -476,7 +476,10 @@ cc -std=gnu99 app.c \
 
 ## 4. Config 欄位參考
 
-`MmseLsaConfig`（`c_impl/include/mmse_lsa_types.h`）共 27 個可設定欄位，以下全部列出。
+`MmseLsaConfig`（`c_impl/include/mmse_lsa_types.h`）目前有 46 個欄位。以下完整說明
+產品整合會直接調整的 grid、SPP、MCRA、gain 與 stationary 欄位；低頻語音 guard
+及預設關閉的研究欄位則在 4.2 的預設摘要與 header 中列出，避免把實驗開關誤當成
+一般調參介面。
 「預設值」欄若標示為**依 grid 而定**，代表 constructor 會依實際 hop 換算，實測值見 4.2 節。
 
 **通則**：instance 建立後，改動你手上那份 `MmseLsaConfig` 不會有任何效果（內部已經複製並
@@ -516,7 +519,8 @@ cc -std=gnu99 app.c \
 | `alpha_d` | 0.921954 | 0.850000 | 0.921954 | 0.850000 | 0.897317 |
 | `alpha_p` | 0.275946 | 0.076146 | 0.275946 | 0.076146 | 0.179652 |
 | `alpha_g` | 0.902789 | 0.815028 | 0.902789 | 0.815028 | 0.872532 |
-| `alpha_attack` | 0.547723 | 0.300000 | 0.547723 | 0.300000 | 0.448140 |
+| `alpha_attack` | 0.387298 | 0.150000 | 0.387298 | 0.150000 | 0.282311 |
+| `alpha_d_speech` | 0.974679 | 0.950000 | 0.974679 | 0.950000 | 0.966383 |
 | `alpha_decay` | 0.902789 | 0.815028 | 0.902789 | 0.815028 | 0.872532 |
 | `L` | 64 | 32 | 64 | 32 | 48 |
 | `num_init_frames` | 25 | 13 | 25 | 13 | 19 |
@@ -526,21 +530,31 @@ cc -std=gnu99 app.c \
 `scene_change_min_frames` 為 53–64 ms。**不要把上表任何一個數字寫死在你的程式裡**，
 需要時從 config 讀。
 
-與 grid 無關的預設值（`balanced`）：`q = 0.5`、`xi_min_db = -20.0`、`delta_db = 10.0`、
-`scene_change_threshold_db = 10.0`、`scene_change_blend = 0.5`、
-`scene_change_flatness_threshold = 0.4`、`broadband_threshold = 1.0`、`g_min_db = -30.0`、
-`stationary_floor = false`、`stationary_floor_exponent = 1.0`、`stationary_floor_beta = 1.0`、
-`scene_change_tonal_veto = false`、`scene_change_lo_flatness_max = 0.4`。
+與 grid 無關的預設值（`balanced`）：`q = 0.52`、`xi_min_db = -10.0`、`g_min_db = -25.0`、
+`noise_over_subtraction = 1.4`、`delta_db = 10.0`、`scene_change_threshold_db = 10.0`、
+`scene_change_blend = 0.5`、`scene_change_flatness_threshold = 0.4`、`broadband_threshold = 1.0`、
+`speech_protect_floor = true`（`speech_protect_floor_db = -15.0`、`speech_protect_threshold = 0.0`、
+`speech_protect_frame_threshold = 0.55`）、`speech_aware_noise_tracking = true`（驗證範圍：DNS／VCTK／板端無明顯 regression；尚未以長時間低 F0 有聲語音證明它實際改善 50–300 Hz 噪聲底的漂移）（`noise_gate_xi_db = 3.0`、
+`noise_gate_lf_hz = 300.0`、`noise_gate_frame_frac = 0.5`）、`stationary_floor = false`、
+`stationary_floor_exponent = 1.0`、`stationary_floor_beta = 1.0`、`scene_change_tonal_veto = false`、
+`scene_change_lo_flatness_max = 0.4`。四級 strength preset 只改 `g_min_db / q / xi_min_db /
+noise_over_subtraction`（mild −20/0.58/−10/1.2、moderate −23/0.54/−10/1.3、balanced −25/0.52/−10/1.4、
+aggressive −28/0.45/−12/1.3）；上表的時間常數與低頻語音 guard 的**設定值**四級共用，
+但 `speech_protect_frame_threshold` 的**生效值**為 `value + (q − 0.52)`，隨 preset 的 `q`
+逐級位移（mild 0.61、moderate 0.57、balanced 0.55、aggressive 0.48）。
 
 記憶體需求（KISS backend，預設建置參數，實測 byte 數）：
 
 | grid | `mmse_lsa_get_mem_size()` | 加上 `-DUSE_FAST_PERCENTILE` | `fft_get_mem_size()` |
 |---|---:|---:|---:|
-| 8k/128 | 29 760 | 23 104 | 4 688 |
-| 8k/256 | 35 424 | 28 608 | 8 784 |
-| 16k/256 | 58 176 | 45 120 | 8 784 |
-| 16k/512 | 69 728 | 56 256 | 16 976 |
-| 48k/1024 | 183 488 | 144 384 | 33 360 |
+| 8k/128 | 29 888 | 23 232 | 4 688 |
+| 8k/256 | 35 552 | 28 736 | 8 784 |
+| 16k/256 | 58 304 | 45 248 | 8 784 |
+| 16k/512 | 69 856 | 56 384 | 16 976 |
+| 48k/1024 | 183 616 | 144 512 | 33 360 |
+
+（低頻語音 guard 的 frame 純量狀態讓每個 grid 的 `mmse_lsa_get_mem_size()` 各多 112 B，
+`fft_get_mem_size()` 不變。）
 
 需求量同時受 `fft_size`、`L`、`num_init_frames` 與建置參數影響，上表僅供規劃 pool 大小時
 估算；**正式程式一律以執行時的 `_get_mem_size()` 回傳值為準**。
@@ -550,12 +564,12 @@ cc -std=gnu99 app.c \
 | 欄位 | 意義 | 合法範圍 | 預設 | 何時調、往哪個方向 |
 |---|---|---|---|---|
 | `alpha_xi` | 訊噪比估計的時間平滑係數 | 有限值，`[0, 1]` | 依 grid | **調大**：輸出更平滑，musical noise 更少，但語音起音較鈍。**調小**：反應更快，容易出現孤立的增益跳動。聽到零星「水聲／音樂噪聲」時先往上調 |
-| `q` | 語音先驗機率 | 有限值，**開區間 `(0, 1)`**（`0` 與 `1` 都會被拒） | 0.5 | **調大**（趨近 mild）：更保守、更保語音。**調小**（趨近 aggressive）：抑噪更深、較容易傷語音 |
-| `xi_min_db` | 訊噪比下限（dB） | 有限值，`[-80, 80]` | -20.0 | **調低**：殘留底噪更低（更安靜、更容易聽出處理痕跡）。**調高**：保留較多自然底噪。這是 stationary 模式下控制殘留噪聲深度的主要旋鈕 |
+| `q` | 語音先驗機率 | 有限值，**開區間 `(0, 1)`**（`0` 與 `1` 都會被拒） | 0.52 | **調大**（趨近 mild 0.58）：更保守、更保語音。**調小**（趨近 aggressive 0.45）：抑噪更深、較容易傷語音 |
+| `xi_min_db` | 訊噪比下限（dB） | 有限值，`[-80, 80]` | -10.0（aggressive -12.0） | **調低**：殘留底噪更低（更安靜、更容易聽出處理痕跡）。**調高**：保留較多自然底噪。這是 stationary 模式下控制殘留噪聲深度的主要旋鈕 |
 
-`q=0.5` 是 balanced preset 的作者設定，不是把輸出的 SPP 固定成 0.5。當頻譜沒有提供
-偏向語音或非語音的證據時，Bayesian posterior 會自然回到約 `q`（套用
-`xi_min_db=-20` 後約 0.498），所以 debug 的 `mean_spp≈0.50` 是預期的中性狀態。
+`q=0.52` 是 balanced preset 的作者設定，不是把輸出的 SPP 固定成 0.52。當頻譜沒有提供
+偏向語音或非語音的證據時，Bayesian posterior 會自然回到約 `q`，所以 debug 的
+`mean_spp≈0.5` 是預期的中性狀態。
 MCRA broadband gate 內部用來計數的 `spp > 0.5` 則是另一個分類門檻，與 `q` 不同。
 
 ### 4.4 MCRA 噪聲估計參數（6 個）
@@ -583,7 +597,7 @@ MCRA broadband gate 內部用來計數的 `spp > 0.5` 則是另一個分類門�
 
 | 欄位 | 意義 | 合法範圍 | 預設 | 何時調、往哪個方向 |
 |---|---|---|---|---|
-| `g_min_db` | 增益下限（**振幅** dB，`/20` 換算） | 有限值，`[-80, 80]` | -30.0 | **調低**：殘留噪聲更少、聽感更「乾淨」，但處理痕跡與語音損傷風險增加。**調高**：留更多底噪、語音更自然。這是控制抑噪深度最直接的旋鈕，也是四個 strength preset 的主要差異 |
+| `g_min_db` | 增益下限（**振幅** dB，`/20` 換算） | 有限值，`[-80, 80]` | -25.0 | **調低**：殘留噪聲更少、聽感更「乾淨」，但處理痕跡與語音損傷風險增加。**調高**：留更多底噪、語音更自然。這是控制抑噪深度最直接的旋鈕，也是四個 strength preset 的主要差異 |
 | `alpha_g` | 增益平滑係數 | 有限值，`[0, 1]` | 依 grid | **在目前的 C 實作中這個欄位不影響輸出**（詳見下方註記）。要改變增益平滑請改 `alpha_attack` / `alpha_decay` |
 | `alpha_attack` | 增益「上升」方向的平滑係數 | 有限值，`[0, 1]` | 依 grid | **調小**：增益回升快，語音起音更清楚，但較容易讓噪聲短暫漏出。**調大**：起音較鈍但更平順 |
 | `alpha_decay` | 增益「下降」方向的平滑係數 | 有限值，`[0, 1]` | 依 grid | **調大**：增益下降慢，musical noise 明顯減少，語音尾音拖長。**調小**：噪聲收得快但容易產生抖動 |
@@ -622,24 +636,22 @@ MCRA broadband gate 內部用來計數的 `spp > 0.5` 則是另一個分類門�
 
 用 `mmse_lsa_config_for_mode(sample_rate, mode)` 取得。與 grid 無關的差異：
 
-| Preset | `g_min_db` | `q` | `xi_min_db` | 適用方向 |
-|---|---:|---:|---:|---|
-| `MMSE_LSA_NR_MILD` | -20.0 | 0.60 | -15.0 | 最保守，優先保留語音細節 |
-| `MMSE_LSA_NR_MODERATE` | -25.0 | 0.55 | -18.0 | mild 與 balanced 之間 |
-| `MMSE_LSA_NR_BALANCED` | -30.0 | 0.50 | -20.0 | 預設，語音品質與抑噪平衡 |
-| `MMSE_LSA_NR_AGGRESSIVE` | -40.0 | 0.35 | -25.0 | 抑噪最深，較可能犧牲語音細節 |
+| Preset | `g_min_db` | `q` | `xi_min_db` | `noise_over_subtraction` | 適用方向 |
+|---|---:|---:|---:|---:|---|
+| `MMSE_LSA_NR_MILD` | -20.0 | 0.58 | -10.0 | 1.2 | 最保守，優先保留語音細節 |
+| `MMSE_LSA_NR_MODERATE` | -23.0 | 0.54 | -10.0 | 1.3 | mild 與 balanced 之間 |
+| `MMSE_LSA_NR_BALANCED` | -25.0 | 0.52 | -10.0 | 1.4 | 預設，語音品質與抑噪平衡 |
+| `MMSE_LSA_NR_AGGRESSIVE` | -28.0 | 0.45 | -12.0 | 1.3 | 抑噪最深，較可能犧牲語音細節 |
 
-各 preset 另外會覆寫 `alpha_d` / `alpha_g` / `alpha_attack` / `alpha_decay`，實際值依 grid
-換算。以預設的 16 kHz / 256 grid 為例（實測）：
+四個 preset 只覆寫上面四個深度欄位。DD、MCRA tracker、gain attack/decay 與低頻語音
+guard 的**設定值**完全共用；以預設 16 kHz / 256 grid 為例，`alpha_d=0.921954`、
+`alpha_g=alpha_decay=0.902789`、`alpha_attack=0.387298`。
 
-| Preset | `alpha_d` | `alpha_g` | `alpha_attack` | `alpha_decay` |
-|---|---:|---:|---:|---:|
-| `mild` | 0.921954 | 0.959166 | 0.632456 | 0.959166 |
-| `moderate` | 0.921954 | 0.959166 | 0.632456 | 0.959166 |
-| `balanced` | 0.751759 | 0.902789 | 0.547723 | 0.902789 |
-| `aggressive` | 0.707107 | 0.921954 | 0.387298 | 0.938083 |
-
-（`mild` 與 `moderate` 只在 `g_min_db` / `q` / `xi_min_db` 上不同，平滑係數相同。）
+唯一的例外是幀級語音閘 `speech_protect_frame_threshold`：設定值 `0.55` 著作於 balanced 的
+`q = 0.52`，生效值為 `value + (q − 0.52)`，所以隨 preset 的 `q` 自動位移（mild 0.61、
+moderate 0.57、balanced 0.55、aggressive 0.48）。理由是純噪聲幀的語音帶 SPP 平均值本來就
+落在 `q`；若固定用 0.55，這道閘在 mild 會永遠開著、在 aggressive 會關掉一半。生效值可用
+`mmse_lsa_get_speech_protect_frame_threshold()` 讀回。
 
 ### 5.2 stationary 內容保留模式
 
@@ -664,8 +676,9 @@ MCRA broadband gate 內部用來計數的 `spp > 0.5` 則是另一個分類門�
 
 > **注意（實測）**：`mmse_lsa_apply_stationary()` **會無條件覆寫 `g_min_db` 與 `xi_min_db`**。
 > 因此 `mild + stationary`、`moderate + stationary`、`aggressive + stationary` 的
-> `g_min_db` 全部都是 -30.0、`xi_min_db` 全部都是 -22.0；strength preset 只有在
-> `q` 與四個平滑係數上還保有差異。若你要的是「mild 的增益下限 + stationary 行為」，
+> `g_min_db` 全部都是 -30.0、`xi_min_db` 全部都是 -22.0；strength preset 只剩
+> `q` 與 `noise_over_subtraction` 保有差異，時間常數原本就共用。若你要的是
+> 「mild 的增益下限 + stationary 行為」，
 > 必須在呼叫 `mmse_lsa_apply_stationary()` **之後**自己把 `g_min_db` 改回去，
 > 並重新跑一次 `mmse_lsa_validate_config()`。
 
