@@ -17,6 +17,8 @@ gain_calculation:
   # band reuses noise_gate_lf_hz below; all strength presets share this guard.
   speech_protect_floor_db: -15.0
   speech_protect_threshold: 0.0
+  # Authored at the balanced prior q=0.52; applied as value + (q - 0.52)
+  # (C: MMSE_LSA_SPEECH_PROTECT_ANCHOR_Q).
   speech_protect_frame_threshold: 0.55
   # The frame make-up experiment (makeup_gain / makeup_prior / makeup_blim /
   # makeup_up_slope / makeup_down_slope) stays off and is driven from the

@@ -159,3 +159,30 @@ def test_speech_floor_rejects_invalid_controls(floor, threshold):
             spp_protect_floor_db=floor,
             spp_protect_threshold=threshold,
         )
+
+
+# ---------------------------------------------------------------------------
+# The frame speech gate follows the prior: authored at q = 0.52 (balanced), it
+# is applied as value + (q - 0.52) so every preset keeps the same margin above
+# the noise-only evidence mean (which sits at q). Balanced reproduces the
+# authored value bit for bit; float32 arithmetic mirrors the C port.
+# ---------------------------------------------------------------------------
+def test_frame_gate_is_anchored_at_the_balanced_prior():
+    import os as _os
+    import numpy as _np
+    from process_audio import create_denoiser_from_config
+    from denoisers.v3_2_mmse_lsa import SPEECH_PROTECT_ANCHOR_Q
+    CONFIG_DIR = _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), 'config')
+    from core.nr_strength import NR_STRENGTH_PRESETS
+    gates = {}
+    for strength in ('mild', 'moderate', 'balanced', 'aggressive'):
+        d = create_denoiser_from_config('V3-2', CONFIG_DIR, 16000, mode='full',
+                                        strength=strength)
+        p = d.get_params()
+        q = NR_STRENGTH_PRESETS[strength].get('q', p['q'])
+        want = float(_np.float32(p['speech_protect_frame_threshold'])
+                     + (_np.float32(q) - _np.float32(SPEECH_PROTECT_ANCHOR_Q)))
+        assert p['speech_protect_frame_threshold_effective'] == want, strength
+        gates[strength] = want
+    assert gates['balanced'] == float(_np.float32(0.55))          # exactly the authored value
+    assert gates['aggressive'] < gates['balanced'] < gates['moderate'] < gates['mild']

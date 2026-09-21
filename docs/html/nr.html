@@ -30,19 +30,20 @@ pre code{background:none;padding:0}
 <p>mono pipeline(<code>pipelines/mono_aec_nr_res/audio_pipeline.c</code>)實際使用的 seam 是 <b><code>mmse_lsa_process_gain()</code> + <code>mmse_lsa_get_gain()</code></b>:算出每 bin 增益但不套用,並可把外部殘留回音 PSD R² 折進噪聲底(unified gain,ξ = S²/(N²+R²));MCRA 追蹤器只吃乾淨功率,R² 不污染噪聲估計。下游再取 <code>g_total = min(G_nr, G_res)</code>。</p>
 <div class="tblwrap"><table>
 <tr><th>sr</th><th>fft_size(白名單)</th><th>hop</th><th>n_freqs</th><th>L(balanced 實測)</th><th>num_init_frames</th><th>mmse_lsa_get_mem_size(balanced 實測)</th></tr>
-<tr><td>8000</td><td>128(預設)/ 256</td><td>64 / 128</td><td>65 / 129</td><td>64 / 32</td><td>25 / 13</td><td>29,760 / 35,424 B</td></tr>
-<tr><td>16000</td><td>256(預設)/ 512</td><td>128 / 256</td><td>129 / 257</td><td>64 / 32</td><td>25 / 13</td><td>58,176 / 69,728 B</td></tr>
-<tr><td>48000</td><td>1024</td><td>512</td><td>513</td><td>48</td><td>19</td><td>183,488 B</td></tr>
+<tr><td>8000</td><td>128(預設)/ 256</td><td>64 / 128</td><td>65 / 129</td><td>64 / 32</td><td>25 / 13</td><td>29,888 / 35,552 B</td></tr>
+<tr><td>16000</td><td>256(預設)/ 512</td><td>128 / 256</td><td>129 / 257</td><td>64 / 32</td><td>25 / 13</td><td>58,304 / 69,856 B</td></tr>
+<tr><td>48000</td><td>1024</td><td>512</td><td>513</td><td>48</td><td>19</td><td>183,616 B</td></tr>
 </table></div>
-<p class="small">格點規則:frame = fft、hop = frame/2、無 zero-padding(<code>mmse_lsa_validate_config()</code> 強制)。常數重定時:大多數係數以 10 ms hop 為著作基準(<code>mmse_lsa_retime_alpha/_frames</code>),少數(<code>alpha_xi</code>、<code>alpha_attack</code>、<code>L=32</code> 與各 strength overlay)以 16 ms 為基準(<code>*_ref(..., 0.016)</code>)——兩個著作格點並存是刻意的,詳見 <code>mmse_lsa_types.h</code> 各欄註解。</p>
+<p class="small">格點規則:frame = fft、hop = frame/2、無 zero-padding(<code>mmse_lsa_validate_config()</code> 強制)。常數重定時:大多數係數以 10 ms hop 為著作基準(<code>mmse_lsa_retime_alpha/_frames</code>),少數(<code>alpha_xi</code>、<code>alpha_attack</code>、<code>L=32</code>)以 16 ms 為基準(<code>*_ref(..., 0.016)</code>)——兩個著作格點並存是刻意的,詳見 <code>mmse_lsa_types.h</code> 各欄註解。</p>
 <p><b>Strength modes</b>(<code>MmseLsaNrMode</code>;g_min 為振幅 dB,/20 慣例):</p>
 <div class="tblwrap"><table>
-<tr><th>mode</th><th>g_min_db</th><th>q</th><th>xi_min_db</th><th>備註</th></tr>
-<tr><td><code>MMSE_LSA_NR_MILD</code></td><td>−20</td><td>0.6</td><td>−15</td><td>最溫和,保語音細節</td></tr>
-<tr><td><code>MMSE_LSA_NR_MODERATE</code></td><td>−25</td><td>0.55</td><td>−18</td><td>mild ↔ balanced 之間</td></tr>
-<tr><td><code>MMSE_LSA_NR_BALANCED</code></td><td>−30</td><td>0.5</td><td>−20</td><td>預設(= <code>mmse_lsa_default_config</code>)</td></tr>
-<tr><td><code>MMSE_LSA_NR_AGGRESSIVE</code></td><td>−40</td><td>0.35</td><td>−25</td><td>最深抑制、較快噪聲追蹤</td></tr>
+<tr><th>mode</th><th>g_min_db</th><th>q</th><th>xi_min_db</th><th>over-subtraction</th><th>備註</th></tr>
+<tr><td><code>MMSE_LSA_NR_MILD</code></td><td>−20</td><td>0.58</td><td>−10</td><td>1.2</td><td>最溫和,保語音細節</td></tr>
+<tr><td><code>MMSE_LSA_NR_MODERATE</code></td><td>−23</td><td>0.54</td><td>−10</td><td>1.3</td><td>mild ↔ balanced 之間</td></tr>
+<tr><td><code>MMSE_LSA_NR_BALANCED</code></td><td>−25</td><td>0.52</td><td>−10</td><td>1.4</td><td>預設(= <code>mmse_lsa_default_config</code>)</td></tr>
+<tr><td><code>MMSE_LSA_NR_AGGRESSIVE</code></td><td>−28</td><td>0.45</td><td>−12</td><td>1.3</td><td>最深抑制</td></tr>
 </table></div>
+<p class="small">幀級語音保護門檻 0.55 著作於 balanced 的 q=0.52，生效值為 <code>0.55+(q−0.52)</code>；四級依序為 0.61／0.57／0.55／0.48。</p>
 <p class="small">另有正交的內容保留 overlay <code>mmse_lsa_apply_stationary()</code>(Wiener 下界 (ξ/(β+ξ))^p,p=2;只移除穩態噪聲底,保音樂/瞬態)。</p>
 
 <h2>API 用法</h2>

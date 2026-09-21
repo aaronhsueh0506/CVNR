@@ -61,6 +61,15 @@ static inline const char *mmse_lsa_nr_mode_name(MmseLsaNrMode mode) {
     }
 }
 
+/* The frame speech gate (speech_protect_frame_threshold) is authored at the
+ * balanced prior. In a noise-only frame the speech-band SPP mean sits at q
+ * (gamma ~ 1, xi ~ xi_min), so the denoiser applies
+ *   threshold + (q - MMSE_LSA_SPEECH_PROTECT_ANCHOR_Q)
+ * and keeps the same margin above that floor in every preset; at the anchor
+ * the difference is exactly 0 and the authored value is used bit for bit.
+ * Python mirror: denoisers/v3_2_mmse_lsa.py SPEECH_PROTECT_ANCHOR_Q. */
+#define MMSE_LSA_SPEECH_PROTECT_ANCHOR_Q 0.52f
+
 /**
  * Configuration structure for MMSE-LSA denoiser
  */
@@ -72,7 +81,7 @@ typedef struct {
 
     // SPP parameters
     float alpha_xi;         // A priori SNR smoothing; 0.92 at the 16 ms tuning anchor
-    float q;                // Speech prior probability (0.5)
+    float q;                // Speech prior probability (0.52 in balanced)
     float xi_min_db;        // A priori SNR floor in dB (-10 in balanced)
 
     // Suppression / gain-side speech controls. The scalar cross-band prior
@@ -85,7 +94,7 @@ typedef struct {
     bool  speech_protect_floor;
     float speech_protect_floor_db;
     float speech_protect_threshold;
-    float speech_protect_frame_threshold;
+    float speech_protect_frame_threshold;   // Frame gate authored at MMSE_LSA_SPEECH_PROTECT_ANCHOR_Q
 
     // Speech-preservation controls. The LF tracker guard is shared and on in
     // the product path. DD-from-G_H1 and frame make-up remain disabled
@@ -105,9 +114,10 @@ typedef struct {
 
     // MCRA parameters
     float alpha_s;          // Time smoothing (0.95)
-    float alpha_d;          // Noise update (0.7)
+    float alpha_d;          // Noise update (0.85 at the 16-ms tuning anchor)
     float alpha_p;          // SPP smoothing (0.2)
-    int L;                  // Minimum tracking window (~320 ms, grid-retimed)
+    int L;                  // Minimum tracking window: 32 frames at the 16-ms
+                            // anchor (~512 ms), grid-retimed
     float delta_db;         // Bias compensation in dB (10.0)
     int num_init_frames;    // Noise initialization (~200 ms, grid-retimed)
 
@@ -278,7 +288,7 @@ static inline MmseLsaConfig mmse_lsa_default_config_for_grid(
     config.scene_change_flatness_threshold = 0.4f;
     config.broadband_threshold = 1.0f;   // <1.0 enables broadband scene reset; 1.0 == disabled.
                                           // Matches Python's own config/v3_2_config.yaml default
-                                          // (320-ms L tracks fast enough). The Audio_ALG AEC-residual
+                                          // (512-ms L tracks fast enough). The Audio_ALG AEC-residual
                                           // pipeline wants 0.8 for faster post-echo-burst adaptation --
                                           // that is an explicit pipeline-layer overlay (see
                                           // aec_nr_pipeline.py:_build_denoiser / audio_pipeline.c /
@@ -337,7 +347,9 @@ static inline MmseLsaConfig mmse_lsa_config_for_mode_grid(
         config.g_min_db = -28.0f;
         config.q = 0.45f;
         config.xi_min_db = -12.0f;
-        config.noise_over_subtraction = 1.5f;
+        /* 1.5 over-subtracted high-SNR speech (DNS SI-SDR -0.78 dB vs the
+         * previous aggressive); 1.3 keeps the depth within 0.3 dB of it. */
+        config.noise_over_subtraction = 1.3f;
         break;
 
     case MMSE_LSA_NR_BALANCED:
