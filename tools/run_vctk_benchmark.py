@@ -259,6 +259,75 @@ def build_arg_parser() -> argparse.ArgumentParser:
                    help="Pipeline sample rate the denoiser runs at (default: 16000).")
     p.add_argument("--fft-size", type=int, default=None,
                    help="FFT size override. Default: None (library default grid for --sample-rate).")
+    p.add_argument("--cross-band-prior-strength", type=float, default=0.0,
+                   help="Experimental cross-band prior strength [0,1]; 0 is shipped behavior.")
+    p.add_argument("--cross-band-prior-threshold", type=float, default=0.50)
+    p.add_argument("--cross-band-prior-full-scale", type=float, default=0.70)
+    p.add_argument("--cross-band-prior-max-q", type=float, default=0.54)
+    p.add_argument("--cross-band-prior-alpha", type=float, default=0.90)
+    p.add_argument("--noise-over-subtraction", type=float, default=None,
+                   help="Override the configured value; omitted keeps the preset/config value.")
+    p.add_argument("--speech-protect-floor-db", type=float, default=None)
+    p.add_argument("--speech-protect-threshold", type=float, default=None)
+    p.add_argument("--speech-protect-frame-threshold", type=float, default=None)
+    p.add_argument("--experimental-g-min-db", type=float, default=None,
+                   help="Override the preset gain floor for controlled experiments.")
+    p.add_argument("--experimental-q", type=float, default=None,
+                   help="Override the preset fixed speech prior for controlled experiments.")
+    p.add_argument("--alpha-noise-up", type=float, default=None,
+                   help="Direction-aware MCRA update: base rate for the rising direction "
+                        "(authored at the 16 ms hop). None = shipped symmetric update.")
+    p.add_argument("--alpha-noise-speech", type=float, default=None,
+                   help="Speech-gated MCRA update: base rate in bins whose gating probability "
+                        "exceeds --noise-speech-gate-p (rise held to it, fall at the ordinary "
+                        "rate; authored at the 16 ms hop). None = shipped update.")
+    p.add_argument("--disable-speech-aware-tracking", action="store_true",
+                   help="Disable configured speech-aware MCRA tracking for an ablation run.")
+    p.add_argument("--noise-speech-gate-p", type=float, default=0.2)
+    p.add_argument("--noise-gate-xi-db", type=float, default=None,
+                   help="Per-bin condition for --alpha-noise-speech: DD a-priori SNR above this "
+                        "(dB) marks the bin as speech. None = SPP gate.")
+    p.add_argument("--noise-gate-max-frac", type=float, default=None,
+                   help="Broadband-onset escape for --alpha-noise-speech: if more than this "
+                        "fraction of bins is gated, keep the ordinary update. None = off.")
+    p.add_argument("--noise-frame-gate-p", type=float, default=None,
+                   help="Frame-level condition for --alpha-noise-speech: mean SPP over "
+                        "80-4000 Hz must exceed this. None = per-bin gate only.")
+    p.add_argument("--makeup-gain", action=argparse.BooleanOptionalAction,
+                   default=None,
+                   help="Enable/disable frame-level output energy make-up; omitted keeps config.")
+    p.add_argument("--dd-from-gmmse", action=argparse.BooleanOptionalAction,
+                   default=None,
+                   help="Enable/disable H1 decision-directed feedback; omitted keeps config.")
+    p.add_argument("--stationary-floor-p", type=float, default=None,
+                   help="Enable the Wiener lower bound (xi/(1+xi))^p with this exponent "
+                        "on top of the selected mode. None = off.")
+    p.add_argument("--frame-prior-q-max", type=float, default=None,
+                   help="Frame-context speech prior on the gain-side SPP: the speech prior "
+                        "rises from q to this value as the mean fixed-prior SPP over "
+                        "--frame-prior-band climbs from --frame-prior-spp-lo to -hi. None = off.")
+    p.add_argument("--frame-prior-spp-lo", type=float, default=0.5)
+    p.add_argument("--frame-prior-spp-hi", type=float, default=0.8)
+    p.add_argument("--frame-prior-band", type=float, nargs=2, default=(300.0, 3400.0),
+                   metavar=("LO_HZ", "HI_HZ"))
+    p.add_argument("--frame-prior-gmin-lift-db", type=float, default=None,
+                   help="Frame-gated gain floor: g_min rises by this many dB times the frame "
+                        "prior built from --frame-prior-band / -spp-lo / -spp-hi. None = off.")
+    p.add_argument("--floor-blend", choices=("log", "sqrt", "linear"), default="log",
+                   help="Domain of the G_H1/g_min floor blend (log = shipped).")
+    p.add_argument("--noise-gate-lf-hz", type=float, default=None,
+                   help="With --alpha-noise-speech/--noise-gate-xi-db: hold the slow rise to "
+                        "bins below this frequency, switched on for the whole band when more "
+                        "than --noise-gate-frame-frac of speech-band bins carry speech evidence.")
+    p.add_argument("--noise-gate-frame-frac", type=float, default=None)
+    p.add_argument("--makeup-prior", choices=("spp", "xi"), default=None,
+                   help="Frame speech evidence used to blend --makeup-gain.")
+    p.add_argument("--xi-min-db", type=float, default=None,
+                   help="Override the a-priori SNR floor (dB) for controlled experiments.")
+    p.add_argument("--alpha-attack", type=float, default=None,
+                   help="Override the log-gain attack coefficient (authored at 16 ms).")
+    p.add_argument("--alpha-decay", type=float, default=None,
+                   help="Override the log-gain decay coefficient (authored at 10 ms, retimed).")
     p.add_argument("--cases", default=None,
                    help="Optional path to a text file of case stems/filenames, one per line "
                         "(# comments and blank lines ignored). Default: every matched "
@@ -314,6 +383,55 @@ def main(argv=None):
     _mode = args.mode or _config.get('mode', 'full')
     _params = process_audio.apply_mode(_params, _mode)
     _params['mode'] = _mode
+    _params.update({
+        'cross_band_prior_strength': args.cross_band_prior_strength,
+        'cross_band_prior_threshold': args.cross_band_prior_threshold,
+        'cross_band_prior_full_scale': args.cross_band_prior_full_scale,
+        'cross_band_prior_max_q': args.cross_band_prior_max_q,
+        'cross_band_prior_alpha': args.cross_band_prior_alpha,
+    })
+    # Every entry overrides the preset/config value only when given (None
+    # keeps the config); the two entries after this block are always set.
+    _optional_overrides = {
+        'g_min_db': args.experimental_g_min_db,
+        'q': args.experimental_q,
+        'xi_min_db': args.xi_min_db,
+        'alpha_attack': args.alpha_attack,
+        'alpha_decay': args.alpha_decay,
+        'noise_over_subtraction': args.noise_over_subtraction,
+        'speech_protect_floor_db': args.speech_protect_floor_db,
+        'speech_protect_threshold': args.speech_protect_threshold,
+        'speech_protect_frame_threshold': args.speech_protect_frame_threshold,
+        'alpha_noise_up': args.alpha_noise_up,
+        'alpha_noise_speech': args.alpha_noise_speech,
+        'noise_frame_gate_p': args.noise_frame_gate_p,
+        'noise_gate_xi_db': args.noise_gate_xi_db,
+        'noise_gate_max_frac': args.noise_gate_max_frac,
+        'makeup_gain': args.makeup_gain,
+        'dd_from_gmmse': args.dd_from_gmmse,
+        'frame_prior_q_max': args.frame_prior_q_max,
+        'frame_prior_spp_lo': args.frame_prior_spp_lo,
+        'frame_prior_spp_hi': args.frame_prior_spp_hi,
+        'frame_prior_band_hz': tuple(args.frame_prior_band),
+        'frame_prior_gmin_lift_db': args.frame_prior_gmin_lift_db,
+        'noise_gate_lf_hz': args.noise_gate_lf_hz,
+        'noise_gate_frame_frac': args.noise_gate_frame_frac,
+        'makeup_prior': args.makeup_prior,
+    }
+    _params.update({key: value for key, value in _optional_overrides.items()
+                    if value is not None})
+    if args.disable_speech_aware_tracking:
+        _params['alpha_noise_speech'] = None
+        _params['noise_gate_xi_db'] = None
+        _params['noise_gate_lf_hz'] = None
+    _params['noise_speech_gate_p'] = args.noise_speech_gate_p
+    _params['floor_blend'] = args.floor_blend
+    if args.stationary_floor_p is not None:
+        _params.update({
+            'stationary_floor': True,
+            'stationary_floor_exponent': args.stationary_floor_p,
+            'stationary_floor_beta': 1.0,
+        })
 
     script_path = Path(__file__).resolve()
     script_sha256 = sha256_file(script_path)
@@ -356,6 +474,15 @@ def main(argv=None):
     print(f"  strength     : {args.strength}")
     print(f"  sample_rate  : {args.sample_rate}")
     print(f"  fft_size arg : {args.fft_size} (None = library default)")
+    print(f"  cross-band prior: strength={args.cross_band_prior_strength}, "
+          f"threshold={args.cross_band_prior_threshold}, "
+          f"full_scale={args.cross_band_prior_full_scale}, "
+          f"max_q={args.cross_band_prior_max_q}, alpha={args.cross_band_prior_alpha}")
+    print(f"  experimental suppression: over_subtraction={_params['noise_over_subtraction']}, "
+          f"g_min_db={args.experimental_g_min_db}, "
+          f"speech_floor={_params.get('speech_protect_floor_db')}@"
+          f"{_params.get('speech_protect_threshold')}, "
+          f"frame_gate={_params.get('speech_protect_frame_threshold')}")
     print(f"  cases        : {len(stems)}"
           + (f" (from {args.cases})" if args.cases else " (all matched pairs)"))
     print(f"  script_sha256 : {script_sha256}")
@@ -458,6 +585,40 @@ def main(argv=None):
             "fft_size_arg": args.fft_size,
             "fft_size": fft_size_used,
             "hop_size": hop_size_used,
+            "cross_band_prior_strength": args.cross_band_prior_strength,
+            "cross_band_prior_threshold": args.cross_band_prior_threshold,
+            "cross_band_prior_full_scale": args.cross_band_prior_full_scale,
+            "cross_band_prior_max_q": args.cross_band_prior_max_q,
+            "cross_band_prior_alpha": args.cross_band_prior_alpha,
+            "noise_over_subtraction": _params.get("noise_over_subtraction"),
+            "speech_protect_floor_db": _params.get("speech_protect_floor_db"),
+            "speech_protect_threshold": _params.get("speech_protect_threshold"),
+            "speech_protect_frame_threshold": _params.get(
+                "speech_protect_frame_threshold"),
+            "experimental_g_min_db": args.experimental_g_min_db,
+            "experimental_q": args.experimental_q,
+            "alpha_noise_up": args.alpha_noise_up,
+            "alpha_noise_speech": _params.get("alpha_noise_speech"),
+            "disable_speech_aware_tracking": args.disable_speech_aware_tracking,
+            "noise_speech_gate_p": args.noise_speech_gate_p,
+            "noise_frame_gate_p": args.noise_frame_gate_p,
+            "noise_gate_xi_db": _params.get("noise_gate_xi_db"),
+            "noise_gate_max_frac": args.noise_gate_max_frac,
+            "makeup_gain": _params.get("makeup_gain"),
+            "dd_from_gmmse": _params.get("dd_from_gmmse"),
+            "stationary_floor_p": args.stationary_floor_p,
+            "frame_prior_q_max": args.frame_prior_q_max,
+            "frame_prior_spp_lo": args.frame_prior_spp_lo,
+            "frame_prior_spp_hi": args.frame_prior_spp_hi,
+            "frame_prior_band": list(args.frame_prior_band),
+            "frame_prior_gmin_lift_db": args.frame_prior_gmin_lift_db,
+            "floor_blend": args.floor_blend,
+            "noise_gate_lf_hz": _params.get("noise_gate_lf_hz"),
+            "noise_gate_frame_frac": _params.get("noise_gate_frame_frac"),
+            "makeup_prior": _params.get("makeup_prior"),
+            "xi_min_db": args.xi_min_db,
+            "alpha_attack": args.alpha_attack,
+            "alpha_decay": args.alpha_decay,
             "n_cases": len(stems),
             "n_ok": n_ok,
             "n_err": n_err,

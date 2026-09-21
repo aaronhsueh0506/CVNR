@@ -120,6 +120,35 @@ static void inst_run(Inst* in, int n_frames, unsigned seed) {
     free(x); free(y);
 }
 
+/* inst_run() plus the mean gain (dB) averaged over the run's last 20 frames,
+ * so a strength switch can be judged by its effect on the same input. */
+static float inst_run_mean_gain_db(Inst* in, int n_frames, unsigned seed) {
+    int nf = mmse_lsa_get_n_freqs(in->d);
+    Complex* x = (Complex*)calloc((size_t)nf, sizeof(Complex));
+    Complex* y = (Complex*)calloc((size_t)nf, sizeof(Complex));
+    MmseLsaDebugStatus st;
+    float acc = 0.0f;
+    int f, k, tail = n_frames < 20 ? n_frames : 20;
+    for (f = 0; f < n_frames; ++f) {
+        for (k = 0; k < nf; ++k) {
+            seed = seed * 1664525u + 1013904223u;
+            {
+                float n = ((float)(seed >> 8) / (float)(1u << 24)) - 0.5f;
+                float tone = (k == 12 || k == 25) ? 4.0f : 0.0f;
+                x[k].r = 0.4f * n + tone;
+                x[k].i = 0.4f * n;
+            }
+        }
+        mmse_lsa_process(in->d, x, y);
+        if (f >= n_frames - tail) {
+            mmse_lsa_debug_status(in->d, &st);
+            acc += st.mean_gain_db;
+        }
+    }
+    free(x); free(y);
+    return acc / (float)tail;
+}
+
 /* ── 1: reconfiguring to the current config is a total no-op ───────────── */
 
 static void check_self_reconfigure_is_noop(void) {
@@ -169,10 +198,12 @@ static void check_state_is_preserved(void) {
     Inst in;
     const float* noise_before;
     float* noise_copy;
+    void* pool_copy;
+    float gain_before, gain_after;
     int nf;
     printf("-- a strength change preserves noise floor / SPP / gain history --\n");
     if (inst_open(&in, &cfg) != 0) { CHECK(0, "instance created"); return; }
-    inst_run(&in, 80, 0xBEEFu);
+    gain_before = inst_run_mean_gain_db(&in, 80, 0xBEEFu);
 
     nf = mmse_lsa_get_n_freqs(in.d);
     CHECK(mmse_lsa_is_initialized(in.d),
@@ -180,6 +211,8 @@ static void check_state_is_preserved(void) {
     noise_before = mmse_lsa_get_noise_psd(in.d, NULL);
     noise_copy = (float*)malloc((size_t)nf * sizeof(float));
     memcpy(noise_copy, noise_before, (size_t)nf * sizeof(float));
+    pool_copy = malloc(in.bytes);
+    memcpy(pool_copy, in.pool, in.bytes);
 
     CHECK(mmse_lsa_set_mode(in.d, MMSE_LSA_NR_AGGRESSIVE) == 0,
           "switch balanced -> aggressive accepted");
@@ -188,29 +221,19 @@ static void check_state_is_preserved(void) {
           "the tracked noise PSD is untouched by the switch");
     CHECK(mmse_lsa_is_initialized(in.d),
           "the noise-floor initialisation flag survives the switch");
+    CHECK(memcmp(pool_copy, in.pool, in.bytes) != 0,
+          "the strength switch changed configuration scalars (not a no-op)");
 
     /* The switch must actually have DONE something, or the assertions above
-     * are vacuous. Aggressive drops g_min_db from -30 to -40, which shows up
-     * as a lower minimum gain once a frame has been processed. */
-    {
-        MmseLsaDebugStatus st_before, st_after;
-        Inst ref;
-        MmseLsaConfig agg = mmse_lsa_config_for_mode_grid(
-            16000, 512, MMSE_LSA_NR_AGGRESSIVE);
-        inst_run(&in, 20, 0xC0DEu);
-        mmse_lsa_debug_status(in.d, &st_after);
-        if (inst_open(&ref, &agg) == 0) {
-            inst_run(&ref, 100, 0xBEEFu);
-            mmse_lsa_debug_status(ref.d, &st_before);
-            CHECK(st_after.min_gain_db < -30.5f,
-                  "the switch really installed the aggressive gain floor "
-                  "(min gain went below the balanced -30 dB bound)");
-            inst_close(&ref);
-        } else {
-            CHECK(0, "aggressive reference instance created");
-        }
-    }
+     * are vacuous: the deeper preset has to lower the mean gain on the same
+     * stationary input once its history has been re-driven. */
+    gain_after = inst_run_mean_gain_db(&in, 100, 0xC0DEu);
+    printf("   mean gain over the last 20 frames: balanced %.2f dB -> aggressive %.2f dB\n",
+           gain_before, gain_after);
+    CHECK(gain_after < gain_before - 0.5f,
+          "the switch really installed the deeper preset (mean gain fell by > 0.5 dB)");
 
+    free(pool_copy);
     free(noise_copy);
     inst_close(&in);
 }

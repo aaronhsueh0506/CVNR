@@ -512,7 +512,12 @@ void mcra_init_noise(McraNoiseEstimator* self, const float* power_sum, int n_fra
     self->is_initialized = true;
 }
 
-void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_ext) {
+void mcra_update_ex(McraNoiseEstimator* self,
+                    const float* power,
+                    const float* spp_ext,
+                    bool slow_lf_rise,
+                    int slow_lf_bins,
+                    float alpha_d_speech) {
     if (!self || !power || !self->is_initialized) return;
 
     int n_freqs = self->n_freqs;
@@ -697,8 +702,26 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
     // sk_mcra_noise_update_f32 (simd_kernels.h kernel 28) is a verbatim,
     // non-fused match for this exact loop shape -- bit-identical by
     // construction (see that kernel's header comment).
-    sk_mcra_noise_update_f32(self->noise_psd, spp_for_update, power,
-                              alpha_d, bb_scale, n_freqs);
+    int slow_end = slow_lf_rise ? slow_lf_bins : 0;
+    if (slow_end < 0) slow_end = 0;
+    if (slow_end > n_freqs) slow_end = n_freqs;
+    for (int k = 0; k < slow_end; k++) {
+        float p = spp_for_update[k] * bb_scale;
+        float alpha = alpha_d + (1.0f - alpha_d) * p;
+        float ordinary = alpha * self->noise_psd[k]
+                       + (1.0f - alpha) * power[k];
+        float alpha_speech = alpha_d_speech
+                           + (1.0f - alpha_d_speech) * p;
+        float held = alpha_speech * self->noise_psd[k]
+                   + (1.0f - alpha_speech) * power[k];
+        self->noise_psd[k] = held < ordinary ? held : ordinary;
+    }
+    if (slow_end < n_freqs) {
+        sk_mcra_noise_update_f32(self->noise_psd + slow_end,
+                                  spp_for_update + slow_end,
+                                  power + slow_end,
+                                  alpha_d, bb_scale, n_freqs - slow_end);
+    }
 
     /* Dead-bin restart (Python mcra.py, same step). A bin whose N decayed
      * below MCRA_NOISE_PSD_INERT (a few seconds of digital silence) is
@@ -715,6 +738,10 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
                                + (1.0f - alpha_d) * power[k];
         }
     }
+}
+
+void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_ext) {
+    mcra_update_ex(self, power, spp_ext, false, 0, 0.0f);
 }
 
 const float* mcra_get_noise_psd(const McraNoiseEstimator* self) {

@@ -2,8 +2,17 @@
 
 所有重要的改動都會記錄在此文件中。
 
-## [Unreleased] - 2026-09-19 · scene-change C/Python parity
+## [Unreleased] - 2026-09-19 · 共用低頻語音保護與 depth-only presets
 
+- `mild` / `moderate` / `balanced` / `aggressive` 共用同一套 DD、MCRA
+  tracker、gain dynamics 與低頻語音 guard；preset 只改
+  `g_min_db` / `q` / `xi_min_db` / noise over-subtraction。
+- 新增 frame-level 語音證據：強語音幀中，300 Hz 以下 MCRA 僅減慢向上更新，
+  並以 −15 dB floor 保護弱低頻諧波。證據掃描是獨立的窄頻 loop（80–4000 Hz），
+  floor 只修 300 Hz 以下的 bin，全頻 gain loop 不加 per-bin 條件。
+- 驗證：Python 70 tests；C config/reconfigure/noise-restart/config-parity；
+  16 kHz 與 48 kHz C/Python gain parity worst 分別 `3.079e-3`、
+  `3.195e-3`。Apple M4 spectral-core 計時約 +3% / +1%；A53/A73 未量。
 - scene-change 偵測的 spectral flatness：幾何平均那一次 scalar exp 改用 libm
   `expf`（只在 hi-band gamma 通過門檻的候選幀執行）。flatness 直接與 0.4
   硬門檻比較，Python reference 用 double；cubic Taylor `fast_exp` 最大

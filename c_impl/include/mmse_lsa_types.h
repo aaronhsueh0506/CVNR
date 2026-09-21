@@ -23,9 +23,9 @@ extern "C" {
  */
 typedef enum {
     MMSE_LSA_NR_MILD       = 0,   // Gentlest, preserve speech detail (g_min -20)
-    MMSE_LSA_NR_MODERATE   = 1,   // Between mild and balanced (g_min -25)
-    MMSE_LSA_NR_BALANCED   = 2,   // Default (g_min -30)
-    MMSE_LSA_NR_AGGRESSIVE = 3    // Deepest noise removal (g_min -40)
+    MMSE_LSA_NR_MODERATE   = 1,   // Between mild and balanced (g_min -23)
+    MMSE_LSA_NR_BALANCED   = 2,   // Default (g_min -25)
+    MMSE_LSA_NR_AGGRESSIVE = 3    // Deepest noise removal (g_min -28)
 } MmseLsaNrMode;
 
 /* The mode whitelist, in one place. Every runtime entry point that accepts a
@@ -73,7 +73,35 @@ typedef struct {
     // SPP parameters
     float alpha_xi;         // A priori SNR smoothing; 0.92 at the 16 ms tuning anchor
     float q;                // Speech prior probability (0.5)
-    float xi_min_db;        // A priori SNR floor in dB (-20)
+    float xi_min_db;        // A priori SNR floor in dB (-10 in balanced)
+
+    // Suppression / gain-side speech controls. The scalar cross-band prior
+    // is research-only and disabled; over-subtraction and the LF gain floor
+    // are shared product controls used by every strength preset.
+    bool  cross_band_speech_prior;
+    float cross_band_speech_prior_max_q;
+    float cross_band_speech_prior_alpha;
+    float noise_over_subtraction;
+    bool  speech_protect_floor;
+    float speech_protect_floor_db;
+    float speech_protect_threshold;
+    float speech_protect_frame_threshold;
+
+    // Speech-preservation controls. The LF tracker guard is shared and on in
+    // the product path. DD-from-G_H1 and frame make-up remain disabled
+    // research switches; no strength preset changes any field in this block.
+    bool  dd_from_gmmse;              // Research: Cohen eq.18 DD from G_H1
+    bool  speech_aware_noise_tracking;
+    float alpha_d_speech;             // Slow rising LF noise update
+    float noise_gate_xi_db;            // Frame speech-evidence threshold
+    float noise_gate_lf_hz;            // Protected low-frequency range
+    float noise_gate_frame_frac;       // Required fraction of speech bins
+    bool  makeup_gain;                 // Research: post-OM-LSA frame scalar
+    float makeup_prior_xi_db;         // Python reference only: the C make-up
+                                      // blends on the noise_gate_xi_db fraction
+    float makeup_blim;
+    float makeup_up_slope;
+    float makeup_down_slope;
 
     // MCRA parameters
     float alpha_s;          // Time smoothing (0.95)
@@ -91,7 +119,7 @@ typedef struct {
     float broadband_threshold;           // Broadband scene-reset gate; 1.0 disables it
 
     // Gain parameters
-    float g_min_db;         // Minimum gain in amplitude dB, /20 (-30.0)
+    float g_min_db;         // Minimum gain in amplitude dB, /20 (-25.0)
     float alpha_g;          // Symmetric log-gain smoothing of the Python
                             // reference's use_asymmetric_smoothing=False mode
                             // (0.88). The C port implements only the
@@ -100,7 +128,7 @@ typedef struct {
                             // because every preset derives alpha_decay from
                             // it (alpha_decay = alpha_g) and the config-parity
                             // test compares it. Tune alpha_decay, not this.
-    float alpha_attack;     // Asymmetric attack (0.3)
+    float alpha_attack;     // Asymmetric attack (0.15 at the 16-ms anchor)
     float alpha_decay;      // Asymmetric decay (0.88 = alpha_g)
 
     // Content-preservation mode (full | stationary) — orthogonal to the strength axis.
@@ -206,8 +234,28 @@ static inline MmseLsaConfig mmse_lsa_default_config_for_grid(
     // 16kHz/512).
     config.alpha_xi = mmse_lsa_retime_alpha_ref(0.92f, sample_rate, config.hop_size, 0.016);
                                  // DD ξ smoothing shared by all strengths.
-    config.q = 0.5f;
-    config.xi_min_db = -20.0f;
+    config.q = 0.52f;
+    config.xi_min_db = -10.0f;
+    config.cross_band_speech_prior = false;
+    config.cross_band_speech_prior_max_q = 0.54f;
+    config.cross_band_speech_prior_alpha = 0.90f;
+    config.noise_over_subtraction = 1.4f;
+    config.speech_protect_floor = true;
+    config.speech_protect_floor_db = -15.0f;
+    config.speech_protect_threshold = 0.0f;
+    config.speech_protect_frame_threshold = 0.55f;
+    config.dd_from_gmmse = false;
+    config.speech_aware_noise_tracking = true;
+    config.alpha_d_speech = mmse_lsa_retime_alpha_ref(
+        0.95f, sample_rate, config.hop_size, 0.016);
+    config.noise_gate_xi_db = 3.0f;
+    config.noise_gate_lf_hz = 300.0f;
+    config.noise_gate_frame_frac = 0.50f;
+    config.makeup_gain = false;
+    config.makeup_prior_xi_db = 3.0f;
+    config.makeup_blim = 0.5f;
+    config.makeup_up_slope = 1.3f;
+    config.makeup_down_slope = 0.3f;
 
     // MCRA parameters (sync with Python v3_2_config.yaml)
     config.alpha_s = mmse_lsa_retime_alpha(0.95f, sample_rate, config.hop_size);
@@ -239,11 +287,11 @@ static inline MmseLsaConfig mmse_lsa_default_config_for_grid(
                                           // 4aec_nr_res.c), not this standalone default.
 
     // Gain parameters (sync with Python v3_2_config.yaml)
-    config.g_min_db = -30.0f;   /* amplitude dB (/20); = old -15 @ /10 → same 0.0316 floor */
+    config.g_min_db = -25.0f;
     config.alpha_g = mmse_lsa_retime_alpha(0.88f, sample_rate, config.hop_size);
     // alpha_attack is authored at a 16-ms hop and is fixed in code rather
     // than loaded from YAML. alpha_g/alpha_decay use the 10-ms reference.
-    config.alpha_attack = mmse_lsa_retime_alpha_ref(0.3f, sample_rate, config.hop_size, 0.016);
+    config.alpha_attack = mmse_lsa_retime_alpha_ref(0.15f, sample_rate, config.hop_size, 0.016);
     config.alpha_decay = mmse_lsa_retime_alpha(0.88f, sample_rate, config.hop_size);
 
     // Content-preservation mode: default = full (all overlay levers off).
@@ -265,63 +313,38 @@ static inline MmseLsaConfig mmse_lsa_default_config(int sample_rate) {
  * Create configuration for given NR strength mode
  *
  * (g_min in amplitude dB, /20 convention; mirrors Python core/nr_strength.py)
- * MILD:       g_min=-20dB, gentlest, preserve speech, slower noise tracking
- * MODERATE:   g_min=-25dB, between mild and balanced
- * BALANCED:   g_min=-30dB, default (same as mmse_lsa_default_config)
- * AGGRESSIVE: g_min=-40dB, deepest suppression, faster noise tracking, extra gain smoothing
+ * Tracker/DD/gain dynamics are shared. The presets below change only the
+ * four suppression-depth controls.
  */
 static inline MmseLsaConfig mmse_lsa_config_for_mode_grid(
         int sample_rate, int fft_size, MmseLsaNrMode mode) {
     MmseLsaConfig config = mmse_lsa_default_config_for_grid(sample_rate, fft_size);
 
-    // MILD/MODERATE/AGGRESSIVE's alpha_d/alpha_g/alpha_attack/alpha_decay
-    // overlay values were authored directly against a 16-ms hop, not the
-    // 10-ms reference mmse_lsa_retime_alpha() assumes. Retiming them from
-    // 10 ms silently double-corrects (e.g. mild's alpha_g=0.92
-    // becomes ~0.875 at the default 16kHz/512 grid, the exact pre-fix
-    // value). BALANCED is an empty overlay (falls through to `default`
-    // below) so its inherited alpha_d/alpha_g/alpha_decay stay on
-    // mmse_lsa_default_config_for_grid()'s genuinely-10ms-authored base
-    // values, correctly left on the 10ms reference -- alpha_attack is the
-    // one exception: its base 0.3 default is ALSO 16ms-authored (see the
-    // dedicated comment on mmse_lsa_default_config_for_grid()'s alpha_attack
-    // line), so it is unconditionally 16ms in every mode including BALANCED.
-    // This must mirror Python's core/nr_strength.py and
-    // denoisers/v3_2_mmse_lsa.py.
     switch (mode) {
     case MMSE_LSA_NR_MILD:
-        config.g_min_db      = -20.0f;   /* amplitude dB (/20) → 0.10 floor */
-        config.q             = 0.6f;
-        config.xi_min_db     = -15.0f;
-        config.alpha_d       = mmse_lsa_retime_alpha_ref(0.85f, sample_rate, config.hop_size, 0.016);
-        config.alpha_g       = mmse_lsa_retime_alpha_ref(0.92f, sample_rate, config.hop_size, 0.016);
-        config.alpha_attack  = mmse_lsa_retime_alpha_ref(0.4f, sample_rate, config.hop_size, 0.016);
-        config.alpha_decay   = mmse_lsa_retime_alpha_ref(0.92f, sample_rate, config.hop_size, 0.016);
+        config.g_min_db = -20.0f;
+        config.q = 0.58f;
+        config.xi_min_db = -10.0f;
+        config.noise_over_subtraction = 1.2f;
         break;
 
     case MMSE_LSA_NR_MODERATE:
-        config.g_min_db      = -25.0f;   /* amplitude dB (/20) → 0.056 floor (mild ↔ balanced) */
-        config.q             = 0.55f;
-        config.xi_min_db     = -18.0f;
-        config.alpha_d       = mmse_lsa_retime_alpha_ref(0.85f, sample_rate, config.hop_size, 0.016);
-        config.alpha_g       = mmse_lsa_retime_alpha_ref(0.92f, sample_rate, config.hop_size, 0.016);
-        config.alpha_attack  = mmse_lsa_retime_alpha_ref(0.4f, sample_rate, config.hop_size, 0.016);
-        config.alpha_decay   = mmse_lsa_retime_alpha_ref(0.92f, sample_rate, config.hop_size, 0.016);
+        config.g_min_db = -23.0f;
+        config.q = 0.54f;
+        config.xi_min_db = -10.0f;
+        config.noise_over_subtraction = 1.3f;
         break;
 
     case MMSE_LSA_NR_AGGRESSIVE:
-        config.g_min_db      = -40.0f;   /* amplitude dB (/20) → 0.01 floor */
-        config.q             = 0.35f;
-        config.xi_min_db     = -25.0f;
-        config.alpha_d       = mmse_lsa_retime_alpha_ref(0.5f, sample_rate, config.hop_size, 0.016);
-        config.alpha_g       = mmse_lsa_retime_alpha_ref(0.85f, sample_rate, config.hop_size, 0.016);
-        config.alpha_attack  = mmse_lsa_retime_alpha_ref(0.15f, sample_rate, config.hop_size, 0.016);
-        config.alpha_decay   = mmse_lsa_retime_alpha_ref(0.88f, sample_rate, config.hop_size, 0.016);
+        config.g_min_db = -28.0f;
+        config.q = 0.45f;
+        config.xi_min_db = -12.0f;
+        config.noise_over_subtraction = 1.5f;
         break;
 
     case MMSE_LSA_NR_BALANCED:
     default:
-        break;  // == the base config above (its alpha_d carries the 2026-09-03 retune)
+        break;
     }
 
     return config;
@@ -331,6 +354,29 @@ static inline MmseLsaConfig mmse_lsa_config_for_mode(
         int sample_rate, MmseLsaNrMode mode) {
     return mmse_lsa_config_for_mode_grid(
         sample_rate, mmse_lsa_default_fft_size(sample_rate), mode);
+}
+
+/* Research-only gain-floor overlays retained for reproducible A/B runs. */
+static inline void mmse_lsa_apply_speech_protection_experiment(
+        MmseLsaConfig* config) {
+    if (!config) return;
+    config->noise_over_subtraction = 1.0f;
+    config->speech_protect_floor = true;
+    config->speech_protect_floor_db = -20.0f;
+    config->speech_protect_threshold = 0.50f;
+    config->speech_protect_frame_threshold = 0.55f;
+}
+
+/* Optional second-stage A/B. This is deliberately separate because its
+ * objective gain is small while the speech-evidence reduction adds work. */
+static inline void mmse_lsa_apply_cross_band_speech_experiment(
+        MmseLsaConfig* config) {
+    if (!config) return;
+    mmse_lsa_apply_speech_protection_experiment(config);
+    config->cross_band_speech_prior = true;
+    config->cross_band_speech_prior_max_q =
+        config->q < 0.95f ? config->q + 0.04f : 0.99f;
+    config->cross_band_speech_prior_alpha = 0.90f;
 }
 
 /**
@@ -400,6 +446,10 @@ static inline void mmse_lsa_apply_stationary(MmseLsaConfig* config) {
  * @return true iff config is safe to pass to mmse_lsa_get_mem_size(),
  *         mmse_lsa_create(), or mmse_lsa_init().
  */
+static inline bool mmse_lsa_finite_in_range(float v, float lo, float hi) {
+    return isfinite(v) && v >= lo && v <= hi;
+}
+
 static inline bool mmse_lsa_validate_config(const MmseLsaConfig* config) {
     if (!config) return false;
 
@@ -478,6 +528,56 @@ static inline bool mmse_lsa_validate_config(const MmseLsaConfig* config) {
     }
     if (!isfinite(config->xi_min_db) ||
         config->xi_min_db < -80.0f || config->xi_min_db > 80.0f) {
+        return false;
+    }
+    if (!isfinite(config->cross_band_speech_prior_max_q) ||
+        config->cross_band_speech_prior_max_q <= 0.0f ||
+        config->cross_band_speech_prior_max_q >= 1.0f ||
+        (config->cross_band_speech_prior &&
+         config->cross_band_speech_prior_max_q < config->q)) {
+        return false;
+    }
+    if (!isfinite(config->cross_band_speech_prior_alpha) ||
+        config->cross_band_speech_prior_alpha < 0.0f ||
+        config->cross_band_speech_prior_alpha >= 1.0f) {
+        return false;
+    }
+    if (!mmse_lsa_finite_in_range(config->noise_over_subtraction, 1.0f, 4.0f)) {
+        return false;
+    }
+    if (!isfinite(config->speech_protect_floor_db) ||
+        config->speech_protect_floor_db < -80.0f ||
+        config->speech_protect_floor_db > 0.0f ||
+        (config->speech_protect_floor &&
+         config->speech_protect_floor_db < config->g_min_db)) {
+        return false;
+    }
+    if (!mmse_lsa_finite_in_range(config->speech_protect_threshold, 0.0f, 1.0f) ||
+        !mmse_lsa_finite_in_range(config->speech_protect_frame_threshold,
+                                  0.0f, 1.0f)) {
+        return false;
+    }
+    if (!isfinite(config->alpha_d_speech) ||
+        config->alpha_d_speech < 0.0f || config->alpha_d_speech >= 1.0f) {
+        return false;
+    }
+    if (!mmse_lsa_finite_in_range(config->noise_gate_xi_db, -80.0f, 80.0f)) {
+        return false;
+    }
+    if (!isfinite(config->noise_gate_lf_hz) ||
+        config->noise_gate_lf_hz <= 0.0f ||
+        config->noise_gate_lf_hz > 0.5f * (float)config->sample_rate) {
+        return false;
+    }
+    if (!mmse_lsa_finite_in_range(config->noise_gate_frame_frac, 0.0f, 1.0f) ||
+        !mmse_lsa_finite_in_range(config->makeup_prior_xi_db, -80.0f, 80.0f)) {
+        return false;
+    }
+    if (!isfinite(config->makeup_blim) ||
+        config->makeup_blim <= 0.0f || config->makeup_blim >= 1.0f ||
+        !isfinite(config->makeup_up_slope) || config->makeup_up_slope < 0.0f ||
+        !isfinite(config->makeup_down_slope) ||
+        config->makeup_down_slope < 0.0f || config->makeup_down_slope > 1.0f) {
         return false;
     }
 

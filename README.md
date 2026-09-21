@@ -37,7 +37,12 @@ python process_audio.py input.wav --versions V3-2 \
 ```
 
 `--nr-mode` selects suppression depth (`mild`, `moderate`, `balanced`, or
-`aggressive`). `--mode stationary` enables the content-preserving stationary
+`aggressive`). All four strengths share the same DD recursion, MCRA tracker,
+gain dynamics, and low-frequency speech guard; a preset changes only `g_min`,
+the speech-presence prior `q`, the a-priori-SNR floor, and noise
+over-subtraction. This keeps the noise-reduction ladder monotonic instead of
+making a stronger preset accidentally track speech as noise. `--mode
+stationary` enables the content-preserving stationary
 noise preset. Missing, malformed, or unreadable YAML configuration is fatal;
 the CLI never silently falls back to unrelated defaults.
 
