@@ -637,7 +637,11 @@ void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_
         for (int k = 0; k < hi_count; k++) log_sum += self->flatness_scratch[k];
         float hi_gamma = hi_power_sum / (hi_noise_sum + 1e-10f);
         float inv_hi_count = 1.0f / (float)hi_count;
-        float geo_mean = fast_exp(log_sum * inv_hi_count);
+        /* This value is compared directly with the hard scene-change
+         * threshold.  Keep it on the same libm path as spectral_flatness()
+         * above so the C and Python trackers do not choose different reset
+         * frames near 0.4. */
+        float geo_mean = expf(log_sum * inv_hi_count);
         float arith_mean = arith_sum * inv_hi_count;
         float hi_flatness = geo_mean / arith_mean;
 

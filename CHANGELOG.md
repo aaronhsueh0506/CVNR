@@ -12,6 +12,8 @@
   `fileid_63` / `fileid_112` 的 C/Python 波形 parity 由 16 / 33 dB 回到
   corpus 其餘檔案的水準；`tests/test_scene_change_flatness_margin.py` 與
   `make test-scene-change` 在門檻 ±6e-4 釘住決策。
+- C config builder 會清零整個 structure，避免未定義的 padding 讓相同
+  preset 的 runtime reconfigure 偶發失去 byte-identical no-op 性質。
 
 ## [Unreleased] - 2026-09-03 · balanced noise tracking slowed; dead-bin restart
 
