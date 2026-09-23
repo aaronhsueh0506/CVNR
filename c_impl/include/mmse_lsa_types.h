@@ -222,8 +222,10 @@ static inline int mmse_lsa_retime_frames(int frames_10ms,
 /** Build the default preset directly on one whitelisted no-padding grid. */
 static inline MmseLsaConfig mmse_lsa_default_config_for_grid(
         int sample_rate, int fft_size) {
-    /* Zero the padding too: configs are copied into the static instance and
-     * reconfigure's byte-identical no-op contract compares the whole pool. */
+    /* Keep padding deterministic as well as the named fields.  The config is
+     * copied into the static pool and the documented same-mode reconfigure
+     * path is byte-identical; leaving padding indeterminate made that
+     * guarantee compiler/stack-layout dependent. */
     MmseLsaConfig config = {0};
 
     config.sample_rate = sample_rate;

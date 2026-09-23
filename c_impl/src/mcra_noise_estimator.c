@@ -621,9 +621,8 @@ void mcra_update_ex(McraNoiseEstimator* self,
     {
         int hi_start = n_freqs / 2;  // Upper half (~4kHz for 16kHz/512FFT)
 
-        // Cheap energy-ratio gate first.  Spectral flatness contains a log
-        // for every high-band bin and cannot affect the decision when gamma
-        // is below threshold, so the common path must not pay for it.
+        /* Apply the cheap energy gate before the log/exp flatness pass.  The
+         * latter cannot change the decision when gamma is below threshold. */
         float hi_power_sum = 0.0f;
         float hi_noise_sum = 0.0f;
         for (int k = hi_start; k < n_freqs; k++) {
@@ -633,10 +632,12 @@ void mcra_update_ex(McraNoiseEstimator* self,
         float hi_gamma = hi_power_sum / (hi_noise_sum + 1e-10f);
         bool hi_energy_candidate = hi_gamma > self->scene_change_threshold;
         float hi_flatness = hi_energy_candidate
-            ? spectral_flatness(power, hi_start, n_freqs, self->flatness_scratch)
+            ? spectral_flatness(power, hi_start, n_freqs,
+                                self->flatness_scratch)
             : 0.0f;
 
-        if (hi_energy_candidate && hi_flatness > self->scene_change_flatness_threshold) {
+        if (hi_energy_candidate &&
+            hi_flatness > self->scene_change_flatness_threshold) {
             // Ceilinged at scene_change_min_frames (UBSan-probed).
             // scene_change_min_frames is
             // user-configurable with NO upper bound in validate_config

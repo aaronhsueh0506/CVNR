@@ -20,6 +20,9 @@
   在不同幀重設噪聲底，波形 parity 只剩 16 dB。`make test-scene-change` 與
   `tests/test_scene_change_flatness_margin.py` 用門檻 ±6e-4 的合成頻譜釘住
   兩端的決策。
+- `MmseLsaConfig` builder 改為整體零初始化；數值欄位不變，但 struct padding
+  也固定為零，`set_mode(current_mode)` 因此在不同 compiler/stack layout 下
+  都維持整個 static pool byte-identical。
 
 ## [v1.12.3] - 2026-09-12 · 共用 fast_math：`fast_log` 改 minimax、`fast_sqrt` 改 AArch64 硬體指令
 
