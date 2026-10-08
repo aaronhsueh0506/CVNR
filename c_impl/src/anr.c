@@ -467,10 +467,12 @@ static void calculate_gain(AnrDenoiser* self,
 }
 
 /* Shared frame stage: SPP/DD -> speech evidence -> gain/floors -> optional make-up -> noise
- * update. Tracker receives clean input power, never the augmented extra-noise floor.
+ * update. Tracker receives clean input power, never the augmented extra-noise floor, and is
+ * not advanced on digital-silence frames.
  */
 static void run_frame_gain_stage(AnrDenoiser* self,
-                                 const float* noise_for_spp) {
+                                 const float* noise_for_spp,
+                                 bool track_noise) {
 #ifdef USE_SHARED_XI_RATIO
     spp_estimate_ex(self->spp_est, self->power, noise_for_spp,
                     self->gain_prev, self->enhanced_psd_prev,
@@ -487,7 +489,7 @@ static void run_frame_gain_stage(AnrDenoiser* self,
                    NULL, self->gain);
 #endif
     apply_frame_makeup(self);
-    update_noise_estimator(self);
+    if (track_noise) update_noise_estimator(self);
 }
 
 /* Shared initialization. */
@@ -677,6 +679,16 @@ void anr_destroy(AnrDenoiser* self) {
 
 /* Spectrum processing. */
 
+/* Digital silence: every bin power is exactly zero. Such a frame carries no noise statistics, so
+ * it neither counts toward initialization nor advances the tracker (a floor seeded from zeros
+ * would leave a returning stationary tone unsuppressed).
+ */
+static bool frame_is_silent(const float* power, int n_freqs) {
+    for (int k = 0; k < n_freqs; k++)
+        if (power[k] != 0.0f) return false;
+    return true;
+}
+
 int anr_process(AnrDenoiser* self,
                      const Complex*   spectrum_in,
                      Complex*         spectrum_out) {
@@ -686,20 +698,23 @@ int anr_process(AnrDenoiser* self,
 
     /* 1. Power from input spectrum */
     fft_power(spectrum_in, self->power, nf);
+    const bool silent = frame_is_silent(self->power, nf);
 
     /* 2. Noise init or normal processing */
     if (!self->is_initialized) {
-        for (int k = 0; k < nf; k++)
-            self->init_power_sum[k] += self->power[k];
+        if (!silent) {
+            for (int k = 0; k < nf; k++)
+                self->init_power_sum[k] += self->power[k];
 
-        mcra_accumulate_init_power(self->noise_est, self->power,
-                                   self->init_frame_count);
-        self->init_frame_count++;
+            mcra_accumulate_init_power(self->noise_est, self->power,
+                                       self->init_frame_count);
+            self->init_frame_count++;
 
-        if (self->init_frame_count >= self->config.num_init_frames) {
-            mcra_init_noise(self->noise_est, self->init_power_sum,
-                            self->init_frame_count);
-            self->is_initialized = true;
+            if (self->init_frame_count >= self->config.num_init_frames) {
+                mcra_init_noise(self->noise_est, self->init_power_sum,
+                                self->init_frame_count);
+                self->is_initialized = true;
+            }
         }
 
         /* Initialization bypass: gain = 1 and next-hop enhanced power = input power. */
@@ -710,7 +725,7 @@ int anr_process(AnrDenoiser* self,
         }
     } else {
         const float* noise_psd = mcra_get_noise_psd(self->noise_est);
-        run_frame_gain_stage(self, prepare_noise_for_spp(self, noise_psd, NULL));
+        run_frame_gain_stage(self, prepare_noise_for_spp(self, noise_psd, NULL), !silent);
     }
 
     /* Apply gain once for exact in-place or disjoint spectra; partial overlap is unsupported.
@@ -738,20 +753,23 @@ int anr_process_gain(AnrDenoiser* self,
 
     /* 1. Power from input spectrum */
     fft_power(spectrum_in, self->power, nf);
+    const bool silent = frame_is_silent(self->power, nf);
 
     /* Noise initialization is independent of extra noise. */
     if (!self->is_initialized) {
-        for (int k = 0; k < nf; k++)
-            self->init_power_sum[k] += self->power[k];
+        if (!silent) {
+            for (int k = 0; k < nf; k++)
+                self->init_power_sum[k] += self->power[k];
 
-        mcra_accumulate_init_power(self->noise_est, self->power,
-                                   self->init_frame_count);
-        self->init_frame_count++;
+            mcra_accumulate_init_power(self->noise_est, self->power,
+                                       self->init_frame_count);
+            self->init_frame_count++;
 
-        if (self->init_frame_count >= self->config.num_init_frames) {
-            mcra_init_noise(self->noise_est, self->init_power_sum,
-                            self->init_frame_count);
-            self->is_initialized = true;
+            if (self->init_frame_count >= self->config.num_init_frames) {
+                mcra_init_noise(self->noise_est, self->init_power_sum,
+                                self->init_frame_count);
+                self->is_initialized = true;
+            }
         }
 
         /* Initialization bypass and DD state update. */
@@ -765,7 +783,8 @@ int anr_process_gain(AnrDenoiser* self,
 
         /* Extra PSD augments SPP/SNR noise; MCRA observes raw power, with SPP-gated updates. */
         run_frame_gain_stage(self,
-                             prepare_noise_for_spp(self, noise_psd, extra_noise_psd));
+                             prepare_noise_for_spp(self, noise_psd, extra_noise_psd),
+                             !silent);
     }
 
     /* Optional gain copy; borrowed state is available through anr_get_gain(). */

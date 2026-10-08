@@ -46,10 +46,11 @@ contract. The test script uses the production optimization definitions and an
 independent scalar final-gain/minimum reference. Its current target does not
 forward arbitrary DEBUG or EXTRA_CFLAGS into the reference test build.
 
-The historical silence-restart defect was already fixed by BASE ancestor
-`8086ae5`. Current C regression reports identical steady tone gain (0.1246)
-with and without five seconds of leading digital silence at 16k/48k. Streaming
-reset remains caller-controlled at a new stream or discontinuity. Existing
-scene-change adaptation is retained; no current evidence connects the recent
-naturalness observations to a reset defect. A recorded counterexample is needed
-before changing that behavior.
+Digital silence. A frame whose bins are all exactly zero carries no noise
+statistics: it does not count toward noise initialization and does not advance
+the noise tracker. A stream that starts with silence therefore initializes on
+the signal that follows, and a converged noise floor is kept across a silent
+stretch. `make test-noise-restart` covers both, and a stationary tone whose
+first frame is a reduced-power waveform onset after five seconds of silence.
+Streaming reset remains caller-controlled at a new stream or discontinuity.
+Existing scene-change adaptation is retained.

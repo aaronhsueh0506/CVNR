@@ -2,6 +2,15 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [Unreleased] · 數位靜音幀不計入噪聲初始化與追蹤
+
+- 所有 bin 功率皆為精確 0 的幀不計入 `num_init_frames`，也不推進 MCRA tracker
+  （`anr_process` / `anr_process_gain`）。以靜音開頭的串流改在其後的訊號上初始化，
+  已收斂的噪聲底在靜音段中保持不變。修正：一段數位靜音後出現的穩態單音（第一幀為
+  部分功率的波形起點）原本永不被抑制。沒有全零幀的串流輸出逐位元不變。
+- Python reference 同步；`make test-noise-restart` 與 `python/tests/test_noise_tracker_restart.py`
+  涵蓋初始化略過、追蹤略過與起點幀為部分功率的單音。
+
 ## [Unreleased] - 2026-09-19 · 共用低頻語音保護與 depth-only presets
 
 - `mild` / `moderate` / `balanced` / `aggressive` 共用同一套 DD、MCRA

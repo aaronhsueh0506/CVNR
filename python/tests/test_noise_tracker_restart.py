@@ -1,18 +1,18 @@
-"""The MCRA noise tracker must recover after digital silence.
+"""Digital silence and the MCRA noise tracker.
 
-A bin whose noise estimate has decayed below McraNoiseEstimator.NOISE_PSD_INERT
-(a few seconds of exact-zero input) used to be stuck for good: the 1e-10
-epsilons in every consumer hide such a tiny N, so when a signal returns the
-posterior saturates at exactly 1.0, the SPP-gated update coefficient becomes
-exactly 1.0 and the estimate never moves again -- the bin's gain stays near
-unity instead of falling to the noise floor. The dead-bin restart in
-McraNoiseEstimator.update() re-seeds such bins with the ungated blend.
+Frames whose bins are all exactly zero carry no noise statistics: they neither
+count toward initialization nor advance the tracker. A floor seeded from zeros
+(or decayed to the inert level during silence) is hidden by the 1e-10 epsilons
+in every consumer, so when a stationary signal returns the posterior saturates
+at exactly 1.0, the SPP-gated update coefficient becomes exactly 1.0 and the
+estimate never moves. The dead-bin restart in McraNoiseEstimator.update()
+re-seeds such bins with the ungated blend.
 
-The test drives the production V3-2 denoiser on a magnitude spectrogram of
+The tests drive the production V3-2 denoiser on a magnitude spectrogram of
 5 s of exact zeros followed by 10 s of a stationary single-bin tone, and
-requires the tone bin to be suppressed like the same tone without the leading
-silence. Reverting the restart makes the silence-first gain sit at ~0.93
-(-0.6 dB) for the whole 10 s while the control reaches ~0.05 (-26 dB).
+require the tone bin to be suppressed like the same tone without the leading
+silence, also when the first tone frame is a reduced-power waveform onset, and
+require silence to leave a converged noise floor unchanged.
 """
 import os
 import sys
@@ -30,10 +30,11 @@ SR = 16000
 CONFIG_DIR = os.path.join(ROOT, 'config')
 
 
-def _tone_gain(silence_s, tone_s, strength='balanced'):
+def _tone_gain(silence_s, tone_s, strength='balanced', onset=1.0):
     """Gain of the tone bin over the last second of the tone, given
     `silence_s` seconds of exact-zero frames before it, and the preset's
-    linear gain floor."""
+    linear gain floor. The first tone frame has `onset` times the steady
+    amplitude (a frame straddling the waveform onset)."""
     d = create_denoiser_from_config('V3-2', CONFIG_DIR, SR, mode='full',
                                     strength=strength)
     p = d.get_params()
@@ -44,6 +45,7 @@ def _tone_gain(silence_s, tone_s, strength='balanced'):
     k = int(round(1000.0 * p['fft_size'] / SR))
     mag = np.zeros((n_sil + n_tone, n_freqs))
     mag[n_sil:, k] = 0.03 * 32768.0 * (p['fft_size'] / 2)   # -30 dBFS tone
+    mag[n_sil, k] *= onset
     phase = np.zeros_like(mag)
     enhanced, _ = d.denoise_spectrum(mag, phase)
     last = slice(n_sil + n_tone - int(SR / hop), n_sil + n_tone)
@@ -80,3 +82,30 @@ def test_restart_only_touches_numerically_dead_bins(monkeypatch):
     without_restart = twin.update(frame, spp).copy()
     assert np.array_equal(with_restart, without_restart)
     assert np.all(with_restart > 0.0)
+
+
+def test_tone_with_waveform_onset_after_digital_silence_is_suppressed():
+    """A frame straddling the onset carries reduced power. Zero frames must not count toward
+    initialization, otherwise the floor is seeded from that partial frame and the tracker
+    never moves it."""
+    control, floor = _tone_gain(0.0, 10.0, onset=0.25)
+    after_silence, _ = _tone_gain(5.0, 10.0, onset=0.25)
+    assert control < 4.0 * floor, (control, floor)
+    assert after_silence < 4.0 * floor, (after_silence, floor)
+    assert abs(after_silence - control) < 0.02, (after_silence, control)
+
+
+def test_digital_silence_does_not_move_converged_noise_floor():
+    d = create_denoiser_from_config('V3-2', CONFIG_DIR, SR, mode='full',
+                                    strength='balanced')
+    p = d.get_params()
+    n_freqs = p['fft_size'] // 2 + 1
+    hop = p['frame_shift']
+    n_noise = 4 * p['num_init_frames']
+    n_sil = int(5.0 * SR / hop)
+    rng = np.random.default_rng(1)
+    mag = np.zeros((n_noise + n_sil, n_freqs))
+    mag[:n_noise] = rng.uniform(300.0, 500.0, size=(n_noise, n_freqs))
+    phase = np.zeros_like(mag)
+    _, _, noise_psd = d.denoise_spectrum(mag, phase, return_noise_psd=True)
+    assert np.array_equal(noise_psd[n_noise], noise_psd[-1])

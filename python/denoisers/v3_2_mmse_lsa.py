@@ -519,9 +519,17 @@ class MmseLsaDenoiser(BaseDenoiser):
 
         n_frames = noisy_magnitude.shape[0]
 
-        # 使用前 num_init 幀建立初始噪聲 PSD
-        self.noise_estimator.estimate(noisy_magnitude)
+        # Digital-silence frames (every bin exactly zero) carry no noise statistics: they do not
+        # count toward initialization and do not advance the tracker (mirrors the C library).
+        silent = ~np.any(noisy_magnitude, axis=1)
         num_init = self.noise_estimator.num_init_frames
+        init_idx = np.flatnonzero(~silent)[:num_init]
+
+        # 使用前 num_init 個非靜音幀建立初始噪聲 PSD
+        self.noise_estimator.estimate(
+            noisy_magnitude[init_idx] if init_idx.size else noisy_magnitude)
+        # Frames up to and including the num_init-th non-silent frame are passthrough.
+        init_end = int(init_idx[-1]) + 1 if init_idx.size == num_init else n_frames
 
         # 初始化輸出
         enhanced_magnitude = np.zeros_like(noisy_magnitude)
@@ -543,7 +551,7 @@ class MmseLsaDenoiser(BaseDenoiser):
         for i in range(n_frames):
             Y_psd = noisy_magnitude[i] ** 2
 
-            if i < num_init:
+            if i < init_end:
                 # Init 階段：passthrough，不呼叫 SPP / gain 計算（避免狀態污染）
                 gain = np.ones(n_freqs)
                 if return_spp:
@@ -660,7 +668,9 @@ class MmseLsaDenoiser(BaseDenoiser):
                                 if (self.spp_estimator.cross_band_prior_strength > 0.0
                                     or self.spp_estimator.frame_prior_q_max is not None)
                                 else spp)
-            if self.noise_gate_xi is None:
+            if silent[i]:
+                pass
+            elif self.noise_gate_xi is None:
                 self.noise_estimator.update(noisy_magnitude[i], spp=noise_update_spp)
             else:
                 if self.noise_gate_lf_bin is None:
