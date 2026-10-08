@@ -1,56 +1,9 @@
-/**
- * test_reconfigure.c - Runtime tuning swap on a RUNNING denoiser
- * (mmse_lsa_reconfigure / mmse_lsa_set_mode).
- *
- * Why the seam exists: strength is four canned points on one axis, and every
- * field they differ in is a plain scalar coefficient. Changing them never
- * needed a rebuild -- but the only way to get one was to construct a fresh
- * instance, discarding the tracked noise floor, the MCRA min-tracking ring,
- * the SPP a-priori-SNR history and the gain smoothing history. An integrator
- * exposing a strength control had no honest option.
- *
- * Two properties are easy to get wrong and are the reason this file exists:
- *
- *   A. THE SHIPPED PIPELINES DO NOT RUN CANONICAL CONFIGS. Both compose a
- *      preset and then override L, broadband_threshold and alpha_decay. A
- *      reconfiguration entry point that composed the canonical preset itself
- *      would either refuse (canonical L != instance L) or silently revert
- *      those overrides. So mmse_lsa_reconfigure() takes the target VERBATIM
- *      and leaves composition to the caller; mmse_lsa_set_mode() is only the
- *      standalone convenience over it. Section 4 pins that a
- *      pipeline-shaped config survives a reconfiguration intact.
- *
- *   B. CONTENT MODE IS ORTHOGONAL TO STRENGTH. mmse_lsa_apply_stationary()
- *      overwrites xi_min_db / alpha_xi / alpha_d / g_min_db and the
- *      scene-change group. Recomposing a strength preset without re-applying
- *      it turns a stationary instance into a hybrid that is neither mode.
- *      Section 5 pins that it survives.
- *
- * Also asserted:
- *   1. Reconfiguring to the CURRENT config is a complete no-op -- the whole
- *      instance, both sub-modules included, is byte-identical afterwards.
- *   2. State is preserved across a real strength change: noise floor, ring
- *      position, scene-change run length, initialisation flags and the gain
- *      smoothing history all carry on. This is the property the split of
- *      init_gain_params/mcra_init_scalars/spp_init_scalars into
- *      "apply parameters" and "clear state" halves exists to make possible.
- *   3. Refusal is TOTAL: a mismatched grid, a mismatched pool-sizing field,
- *      or a target that fails full validation are each rejected with the
- *      instance left byte-identical.
- *   6. All five legal (rate, fft) grids behave identically.
- *   7. The pool byte count is unchanged by a reconfiguration.
- *
- * Mutation coverage: check_state_clearing_is_observable() clears the same
- * fields a naive implementation would clear and confirms the section-2
- * comparison actually notices -- so that assertion is shown to be capable of
- * failing.
- *
- * Standalone runner, same convention as test_config_validation.c: main()
- * returns the failure count.
- */
+/* Runtime reconfiguration must retain state and caller-composed tunables.
+ * Reject invalid or resized configs without writes; preserve stationary mode.
+ * Checks heap/static paths and unchanged pool sizes. Returns failure count. */
 
-#include "mmse_lsa_denoiser.h"
-#include "mmse_lsa_types.h"
+#include "anr.h"
+#include "anr_types.h"
 #include "mcra_noise_estimator.h"
 #include "spp_estimator.h"
 #include "fft_wrapper.h"
@@ -84,16 +37,16 @@ static const struct { int sr; int fft; } GRIDS[] = {
 typedef struct {
     void*  pool;
     size_t bytes;
-    MmseLsaDenoiser* d;
+    AnrDenoiser* d;
 } Inst;
 
-static int inst_open(Inst* in, const MmseLsaConfig* cfg) {
+static int inst_open(Inst* in, const AnrConfig* cfg) {
     memset(in, 0, sizeof(*in));
-    in->bytes = mmse_lsa_get_mem_size(cfg);
+    in->bytes = anr_get_mem_size(cfg);
     if (in->bytes == 0) return -1;
     if (posix_memalign(&in->pool, 16, in->bytes) != 0) return -1;
     memset(in->pool, 0, in->bytes);      /* deterministic padding for memcmp */
-    in->d = mmse_lsa_init(in->pool, in->bytes, cfg);
+    in->d = anr_init(in->pool, in->bytes, cfg);
     return in->d ? 0 : -1;
 }
 
@@ -101,7 +54,7 @@ static void inst_close(Inst* in) { free(in->pool); }
 
 /* Drive enough frames that every history is genuinely populated. */
 static void inst_run(Inst* in, int n_frames, unsigned seed) {
-    int nf = mmse_lsa_get_n_freqs(in->d);
+    int nf = anr_get_n_freqs(in->d);
     Complex* x = (Complex*)calloc((size_t)nf, sizeof(Complex));
     Complex* y = (Complex*)calloc((size_t)nf, sizeof(Complex));
     int f, k;
@@ -115,7 +68,7 @@ static void inst_run(Inst* in, int n_frames, unsigned seed) {
                 x[k].i = 0.4f * n;
             }
         }
-        mmse_lsa_process(in->d, x, y);
+        anr_process(in->d, x, y);
     }
     free(x); free(y);
 }
@@ -123,10 +76,10 @@ static void inst_run(Inst* in, int n_frames, unsigned seed) {
 /* inst_run() plus the mean gain (dB) averaged over the run's last 20 frames,
  * so a strength switch can be judged by its effect on the same input. */
 static float inst_run_mean_gain_db(Inst* in, int n_frames, unsigned seed) {
-    int nf = mmse_lsa_get_n_freqs(in->d);
+    int nf = anr_get_n_freqs(in->d);
     Complex* x = (Complex*)calloc((size_t)nf, sizeof(Complex));
     Complex* y = (Complex*)calloc((size_t)nf, sizeof(Complex));
-    MmseLsaDebugStatus st;
+    AnrDebugStatus st;
     float acc = 0.0f;
     int f, k, tail = n_frames < 20 ? n_frames : 20;
     for (f = 0; f < n_frames; ++f) {
@@ -139,9 +92,9 @@ static float inst_run_mean_gain_db(Inst* in, int n_frames, unsigned seed) {
                 x[k].i = 0.4f * n;
             }
         }
-        mmse_lsa_process(in->d, x, y);
+        anr_process(in->d, x, y);
         if (f >= n_frames - tail) {
-            mmse_lsa_debug_status(in->d, &st);
+            anr_debug_status(in->d, &st);
             acc += st.mean_gain_db;
         }
     }
@@ -155,8 +108,8 @@ static void check_self_reconfigure_is_noop(void) {
     int g;
     printf("-- reconfigure to the CURRENT config is a complete no-op --\n");
     for (g = 0; g < N_GRIDS; ++g) {
-        MmseLsaConfig cfg = mmse_lsa_config_for_mode_grid(
-            GRIDS[g].sr, GRIDS[g].fft, MMSE_LSA_NR_BALANCED);
+        AnrConfig cfg = anr_config_for_mode_grid(
+            GRIDS[g].sr, GRIDS[g].fft, ANR_MODE_BALANCED);
         Inst in;
         void* snapshot;
         char msg[160];
@@ -173,7 +126,7 @@ static void check_self_reconfigure_is_noop(void) {
         snprintf(msg, sizeof(msg),
                  "grid %d/%d: reconfigure to the same config accepted",
                  GRIDS[g].sr, GRIDS[g].fft);
-        CHECK(mmse_lsa_reconfigure(in.d, &cfg) == 0, msg);
+        CHECK(anr_reconfigure(in.d, &cfg) == 0, msg);
         snprintf(msg, sizeof(msg),
                  "grid %d/%d: the whole pool is byte-identical afterwards",
                  GRIDS[g].sr, GRIDS[g].fft);
@@ -182,7 +135,7 @@ static void check_self_reconfigure_is_noop(void) {
         snprintf(msg, sizeof(msg),
                  "grid %d/%d: set_mode to the CURRENT mode is also a no-op",
                  GRIDS[g].sr, GRIDS[g].fft);
-        CHECK(mmse_lsa_set_mode(in.d, MMSE_LSA_NR_BALANCED) == 0 &&
+        CHECK(anr_set_mode(in.d, ANR_MODE_BALANCED) == 0 &&
                   memcmp(snapshot, in.pool, in.bytes) == 0, msg);
 
         free(snapshot);
@@ -193,8 +146,8 @@ static void check_self_reconfigure_is_noop(void) {
 /* ── 2: a real strength change preserves every history ─────────────────── */
 
 static void check_state_is_preserved(void) {
-    MmseLsaConfig cfg = mmse_lsa_config_for_mode_grid(16000, 512,
-                                                      MMSE_LSA_NR_BALANCED);
+    AnrConfig cfg = anr_config_for_mode_grid(16000, 512,
+                                                      ANR_MODE_BALANCED);
     Inst in;
     const float* noise_before;
     float* noise_copy;
@@ -205,21 +158,21 @@ static void check_state_is_preserved(void) {
     if (inst_open(&in, &cfg) != 0) { CHECK(0, "instance created"); return; }
     gain_before = inst_run_mean_gain_db(&in, 80, 0xBEEFu);
 
-    nf = mmse_lsa_get_n_freqs(in.d);
-    CHECK(mmse_lsa_is_initialized(in.d),
+    nf = anr_get_n_freqs(in.d);
+    CHECK(anr_is_initialized(in.d),
           "the instance really finished its noise-floor init before the switch");
-    noise_before = mmse_lsa_get_noise_psd(in.d, NULL);
+    noise_before = anr_get_noise_psd(in.d, NULL);
     noise_copy = (float*)malloc((size_t)nf * sizeof(float));
     memcpy(noise_copy, noise_before, (size_t)nf * sizeof(float));
     pool_copy = malloc(in.bytes);
     memcpy(pool_copy, in.pool, in.bytes);
 
-    CHECK(mmse_lsa_set_mode(in.d, MMSE_LSA_NR_AGGRESSIVE) == 0,
+    CHECK(anr_set_mode(in.d, ANR_MODE_AGGRESSIVE) == 0,
           "switch balanced -> aggressive accepted");
-    CHECK(memcmp(noise_copy, mmse_lsa_get_noise_psd(in.d, NULL),
+    CHECK(memcmp(noise_copy, anr_get_noise_psd(in.d, NULL),
                  (size_t)nf * sizeof(float)) == 0,
           "the tracked noise PSD is untouched by the switch");
-    CHECK(mmse_lsa_is_initialized(in.d),
+    CHECK(anr_is_initialized(in.d),
           "the noise-floor initialisation flag survives the switch");
     CHECK(memcmp(pool_copy, in.pool, in.bytes) != 0,
           "the strength switch changed configuration scalars (not a no-op)");
@@ -242,29 +195,29 @@ static void check_state_is_preserved(void) {
  *
  * A naive reconfiguration -- one that reused the construction-time helpers
  * instead of the parameters-only halves -- would clear exactly what
- * mmse_lsa_reset() clears. Doing that by hand here and confirming the same
+ * anr_reset() clears. Doing that by hand here and confirming the same
  * comparison notices is what makes "the noise PSD is untouched" evidence
  * rather than a tautology. */
 static void check_state_clearing_is_observable(void) {
-    MmseLsaConfig cfg = mmse_lsa_config_for_mode_grid(16000, 512,
-                                                      MMSE_LSA_NR_BALANCED);
+    AnrConfig cfg = anr_config_for_mode_grid(16000, 512,
+                                                      ANR_MODE_BALANCED);
     Inst in;
     int nf;
     float* noise_copy;
     printf("-- mutation: a state-clearing reconfiguration WOULD be caught --\n");
     if (inst_open(&in, &cfg) != 0) { CHECK(0, "mutation instance created"); return; }
     inst_run(&in, 80, 0xBEEFu);
-    nf = mmse_lsa_get_n_freqs(in.d);
+    nf = anr_get_n_freqs(in.d);
     noise_copy = (float*)malloc((size_t)nf * sizeof(float));
-    memcpy(noise_copy, mmse_lsa_get_noise_psd(in.d, NULL),
+    memcpy(noise_copy, anr_get_noise_psd(in.d, NULL),
            (size_t)nf * sizeof(float));
-    CHECK(mmse_lsa_is_initialized(in.d),
+    CHECK(anr_is_initialized(in.d),
           "mutation: the instance has real state to lose");
 
-    mmse_lsa_reset(in.d);
-    CHECK(memcmp(noise_copy, mmse_lsa_get_noise_psd(in.d, NULL),
+    anr_reset(in.d);
+    CHECK(memcmp(noise_copy, anr_get_noise_psd(in.d, NULL),
                  (size_t)nf * sizeof(float)) != 0 ||
-              !mmse_lsa_is_initialized(in.d),
+              !anr_is_initialized(in.d),
           "mutation: clearing the state DOES move what section 2 compares, so "
           "its assertions are not vacuous");
 
@@ -275,8 +228,8 @@ static void check_state_clearing_is_observable(void) {
 /* ── 3: refusal is total ───────────────────────────────────────────────── */
 
 static void check_refusal_is_total(void) {
-    MmseLsaConfig cfg = mmse_lsa_config_for_mode_grid(16000, 512,
-                                                      MMSE_LSA_NR_BALANCED);
+    AnrConfig cfg = anr_config_for_mode_grid(16000, 512,
+                                                      ANR_MODE_BALANCED);
     Inst in;
     void* snapshot;
     printf("-- refusal writes nothing --\n");
@@ -287,11 +240,11 @@ static void check_refusal_is_total(void) {
 
 #define REFUSE(mutate, what)                                                 \
     do {                                                                     \
-        MmseLsaConfig bad = cfg;                                             \
+        AnrConfig bad = cfg;                                             \
         char m[160];                                                         \
         mutate;                                                              \
         snprintf(m, sizeof(m), "refused and untouched: %s", what);           \
-        CHECK(mmse_lsa_reconfigure(in.d, &bad) == -1 &&                      \
+        CHECK(anr_reconfigure(in.d, &bad) == -1 &&                      \
                   memcmp(snapshot, in.pool, in.bytes) == 0, m);              \
     } while (0)
 
@@ -307,11 +260,11 @@ static void check_refusal_is_total(void) {
     REFUSE(bad.alpha_d = (float)NAN, "alpha_d NaN (full validation)");
 #undef REFUSE
 
-    CHECK(mmse_lsa_reconfigure(NULL, &cfg) == -1, "NULL instance refused");
-    CHECK(mmse_lsa_reconfigure(in.d, NULL) == -1, "NULL target refused");
-    CHECK(mmse_lsa_set_mode(NULL, MMSE_LSA_NR_MILD) == -1,
+    CHECK(anr_reconfigure(NULL, &cfg) == -1, "NULL instance refused");
+    CHECK(anr_reconfigure(in.d, NULL) == -1, "NULL target refused");
+    CHECK(anr_set_mode(NULL, ANR_MODE_MILD) == -1,
           "set_mode: NULL instance refused");
-    CHECK(mmse_lsa_set_mode(in.d, (MmseLsaNrMode)42) == -1 &&
+    CHECK(anr_set_mode(in.d, (AnrMode)42) == -1 &&
               memcmp(snapshot, in.pool, in.bytes) == 0,
           "set_mode: out-of-enum mode refused and untouched");
 
@@ -324,31 +277,31 @@ static void check_refusal_is_total(void) {
 static void check_pipeline_overrides_survive(void) {
     /* Exactly what both shipped pipelines compose: preset, then three
      * overrides on top. */
-    MmseLsaConfig cfg = mmse_lsa_config_for_mode_grid(16000, 512,
-                                                      MMSE_LSA_NR_BALANCED);
-    MmseLsaConfig target;
+    AnrConfig cfg = anr_config_for_mode_grid(16000, 512,
+                                                      ANR_MODE_BALANCED);
+    AnrConfig target;
     Inst in;
     printf("-- pipeline overrides survive a reconfiguration --\n");
     cfg.broadband_threshold = 0.8f;
-    cfg.L = mmse_lsa_retime_frames(150, 16000, 256);
+    cfg.L = anr_retime_frames(150, 16000, 256);
     cfg.alpha_decay = cfg.alpha_g;
     if (inst_open(&in, &cfg) != 0) { CHECK(0, "pipeline instance created"); return; }
     inst_run(&in, 40, 0x99u);
 
     /* The WRONG way: the canonical convenience wrapper. Its L is the preset's,
      * not the pipeline's, so it must refuse rather than silently revert. */
-    CHECK(mmse_lsa_set_mode(in.d, MMSE_LSA_NR_AGGRESSIVE) == -1,
+    CHECK(anr_set_mode(in.d, ANR_MODE_AGGRESSIVE) == -1,
           "set_mode REFUSES a pipeline-shaped instance instead of silently "
           "reverting its overrides");
 
     /* The right way: rebuild the pipeline's own composition. */
-    target = mmse_lsa_config_for_mode_grid(16000, 512, MMSE_LSA_NR_AGGRESSIVE);
+    target = anr_config_for_mode_grid(16000, 512, ANR_MODE_AGGRESSIVE);
     target.broadband_threshold = 0.8f;
     target.L = cfg.L;
     target.alpha_decay = target.alpha_g;
-    CHECK(mmse_lsa_reconfigure(in.d, &target) == 0,
+    CHECK(anr_reconfigure(in.d, &target) == 0,
           "reconfigure accepts the pipeline's own recomposed target");
-    CHECK(mmse_lsa_get_hop_size(in.d) == cfg.hop_size,
+    CHECK(anr_get_hop_size(in.d) == cfg.hop_size,
           "the grid is unchanged by the switch");
     inst_close(&in);
 }
@@ -356,26 +309,26 @@ static void check_pipeline_overrides_survive(void) {
 /* ── 5: the stationary overlay is orthogonal and survives ──────────────── */
 
 static void check_stationary_overlay_survives(void) {
-    MmseLsaConfig cfg = mmse_lsa_config_for_mode_grid(16000, 512,
-                                                      MMSE_LSA_NR_BALANCED);
-    MmseLsaConfig canonical;
+    AnrConfig cfg = anr_config_for_mode_grid(16000, 512,
+                                                      ANR_MODE_BALANCED);
+    AnrConfig canonical;
     Inst in;
     printf("-- the stationary content overlay survives a strength change --\n");
-    mmse_lsa_apply_stationary(&cfg);
+    anr_apply_stationary(&cfg);
     if (inst_open(&in, &cfg) != 0) { CHECK(0, "stationary instance created"); return; }
     inst_run(&in, 40, 0x55u);
 
-    CHECK(mmse_lsa_set_mode(in.d, MMSE_LSA_NR_AGGRESSIVE) == 0,
+    CHECK(anr_set_mode(in.d, ANR_MODE_AGGRESSIVE) == 0,
           "stationary instance accepts a strength change");
 
     /* What a naive recomposition would have installed. Every field the
      * overlay owns must differ from it -- otherwise the instance silently
      * became a hybrid that is neither full nor stationary. */
-    canonical = mmse_lsa_config_for_mode_grid(16000, 512,
-                                              MMSE_LSA_NR_AGGRESSIVE);
+    canonical = anr_config_for_mode_grid(16000, 512,
+                                              ANR_MODE_AGGRESSIVE);
     {
-        MmseLsaConfig want = canonical;
-        mmse_lsa_apply_stationary(&want);
+        AnrConfig want = canonical;
+        anr_apply_stationary(&want);
         CHECK(want.xi_min_db != canonical.xi_min_db ||
                   want.alpha_xi != canonical.alpha_xi ||
                   want.alpha_d != canonical.alpha_d,
@@ -389,18 +342,18 @@ static void check_stationary_overlay_survives(void) {
 
 static void check_pool_size_is_unchanged(void) {
     int g, m;
-    static const MmseLsaNrMode MODES[] = {
-        MMSE_LSA_NR_MILD, MMSE_LSA_NR_MODERATE,
-        MMSE_LSA_NR_BALANCED, MMSE_LSA_NR_AGGRESSIVE,
+    static const AnrMode MODES[] = {
+        ANR_MODE_MILD, ANR_MODE_MODERATE,
+        ANR_MODE_BALANCED, ANR_MODE_AGGRESSIVE,
     };
     printf("-- pool size is identical across all four strengths --\n");
     for (g = 0; g < N_GRIDS; ++g) {
         size_t first = 0;
         int same = 1;
         for (m = 0; m < 4; ++m) {
-            MmseLsaConfig cfg = mmse_lsa_config_for_mode_grid(
+            AnrConfig cfg = anr_config_for_mode_grid(
                 GRIDS[g].sr, GRIDS[g].fft, MODES[m]);
-            size_t n = mmse_lsa_get_mem_size(&cfg);
+            size_t n = anr_get_mem_size(&cfg);
             if (m == 0) first = n;
             else if (n != first) same = 0;
         }
@@ -418,26 +371,26 @@ static void check_pool_size_is_unchanged(void) {
  * the anchor and must reproduce the authored value bit for bit; the other
  * presets and a runtime reconfigure land on the same float32 sum. */
 static void check_frame_gate_follows_q(void) {
-    MmseLsaConfig bal = mmse_lsa_config_for_mode_grid(16000, 512, MMSE_LSA_NR_BALANCED);
-    MmseLsaConfig mild = mmse_lsa_config_for_mode_grid(16000, 512, MMSE_LSA_NR_MILD);
-    MmseLsaConfig aggr = mmse_lsa_config_for_mode_grid(16000, 512, MMSE_LSA_NR_AGGRESSIVE);
-    MmseLsaDenoiser* d = mmse_lsa_create(&bal);
-    MmseLsaDenoiser* m = mmse_lsa_create(&mild);
-    float want_mild = mild.speech_protect_frame_threshold + (mild.q - MMSE_LSA_SPEECH_PROTECT_ANCHOR_Q);
-    float want_aggr = aggr.speech_protect_frame_threshold + (aggr.q - MMSE_LSA_SPEECH_PROTECT_ANCHOR_Q);
+    AnrConfig bal = anr_config_for_mode_grid(16000, 512, ANR_MODE_BALANCED);
+    AnrConfig mild = anr_config_for_mode_grid(16000, 512, ANR_MODE_MILD);
+    AnrConfig aggr = anr_config_for_mode_grid(16000, 512, ANR_MODE_AGGRESSIVE);
+    AnrDenoiser* d = anr_create(&bal);
+    AnrDenoiser* m = anr_create(&mild);
+    float want_mild = mild.speech_protect_frame_threshold + (mild.q - ANR_SPEECH_PROTECT_ANCHOR_Q);
+    float want_aggr = aggr.speech_protect_frame_threshold + (aggr.q - ANR_SPEECH_PROTECT_ANCHOR_Q);
     if (!d || !m) { CHECK(0, "frame gate: allocation"); goto out; }
-    CHECK(bal.q == MMSE_LSA_SPEECH_PROTECT_ANCHOR_Q, "balanced q is the gate anchor");
-    CHECK(mmse_lsa_get_speech_protect_frame_threshold(d) == bal.speech_protect_frame_threshold,
+    CHECK(bal.q == ANR_SPEECH_PROTECT_ANCHOR_Q, "balanced q is the gate anchor");
+    CHECK(anr_get_speech_protect_frame_threshold(d) == bal.speech_protect_frame_threshold,
           "balanced: effective gate == authored value bit for bit");
-    CHECK(mmse_lsa_get_speech_protect_frame_threshold(m) == want_mild &&
+    CHECK(anr_get_speech_protect_frame_threshold(m) == want_mild &&
           want_mild > bal.speech_protect_frame_threshold,
           "mild: gate = value + (q - anchor), above balanced");
-    CHECK(mmse_lsa_reconfigure(d, &aggr) == 0 &&
-          mmse_lsa_get_speech_protect_frame_threshold(d) == want_aggr &&
+    CHECK(anr_reconfigure(d, &aggr) == 0 &&
+          anr_get_speech_protect_frame_threshold(d) == want_aggr &&
           want_aggr < bal.speech_protect_frame_threshold,
           "reconfigure to aggressive moves the gate with q, below balanced");
 out:
-    mmse_lsa_destroy(d); mmse_lsa_destroy(m);
+    anr_destroy(d); anr_destroy(m);
 }
 
 int main(void) {

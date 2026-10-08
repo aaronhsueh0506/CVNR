@@ -1,13 +1,13 @@
 /**
  * parity_runner.c — C side of the Python<->C NR parity harness.
  *
- * Reads the per-frame complex input spectra dumped by tools/parity_nr.py,
- * drives the C lib mmse_lsa_process_gain() frame-by-frame (computing the per-bin
+ * Reads the per-frame complex input spectra dumped by python/tools/parity_nr.py,
+ * drives the C lib anr_process_gain() frame-by-frame (computing the per-bin
  * gain WITHOUT applying it), and writes the C gains to a file. Because both
  * Python and C consume byte-identical input spectra, any gain delta is purely
  * the ported gain / SPP / MCRA arithmetic — FFT differences are excluded.
  *
- * The denoiser is created with the Python V3-2 standalone config (mmse_lsa
+ * The denoiser is created with the Python V3-2 standalone config (ANR
  * default/balanced) on the sample-rate/grid carried by the NRP2 dump; fft_size
  * is derived from n_freqs (n_freqs = fft_size/2 + 1).
  *
@@ -30,8 +30,8 @@
 #include <string.h>
 #include <stdint.h>
 
-#include "mmse_lsa_denoiser.h"
-#include "mmse_lsa_types.h"
+#include "anr.h"
+#include "anr_types.h"
 #include "fft_wrapper.h"
 
 #define PARITY_MAGIC_V1 0x4E525031  /* 'NRP1': legacy, implicit 16 kHz */
@@ -44,12 +44,12 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     int stationary = (argc >= 4 && strcmp(argv[3], "stationary") == 0);
-    MmseLsaNrMode nr_mode = MMSE_LSA_NR_BALANCED;
+    AnrMode nr_mode = ANR_MODE_BALANCED;
     if (argc >= 5) {
-        if (strcmp(argv[4], "mild") == 0)            nr_mode = MMSE_LSA_NR_MILD;
-        else if (strcmp(argv[4], "moderate") == 0)   nr_mode = MMSE_LSA_NR_MODERATE;
-        else if (strcmp(argv[4], "aggressive") == 0) nr_mode = MMSE_LSA_NR_AGGRESSIVE;
-        else                                         nr_mode = MMSE_LSA_NR_BALANCED;
+        if (strcmp(argv[4], "mild") == 0)            nr_mode = ANR_MODE_MILD;
+        else if (strcmp(argv[4], "moderate") == 0)   nr_mode = ANR_MODE_MODERATE;
+        else if (strcmp(argv[4], "aggressive") == 0) nr_mode = ANR_MODE_AGGRESSIVE;
+        else                                         nr_mode = ANR_MODE_BALANCED;
     }
 
     FILE* fin = fopen(argv[1], "rb");
@@ -93,21 +93,21 @@ int main(int argc, char* argv[]) {
     /* Build the production V3-2 config on the exact Python signal grid.  Sample
      * rate controls retimed EMA/count parameters even though spectra are supplied
      * directly, so it is part of the parity contract. */
-    MmseLsaConfig config = mmse_lsa_config_for_mode_grid(
+    AnrConfig config = anr_config_for_mode_grid(
         sample_rate, fft_size, nr_mode);
-    if (stationary) mmse_lsa_apply_stationary(&config);
+    if (stationary) anr_apply_stationary(&config);
 
-    MmseLsaDenoiser* denoiser = mmse_lsa_create(&config);
+    AnrDenoiser* denoiser = anr_create(&config);
     if (!denoiser) {
-        fprintf(stderr, "Error: mmse_lsa_create failed\n");
+        fprintf(stderr, "Error: anr_create failed\n");
         fclose(fin);
         return 1;
     }
-    int nf_check = mmse_lsa_get_n_freqs(denoiser);
+    int nf_check = anr_get_n_freqs(denoiser);
     if (nf_check != n_freqs) {
         fprintf(stderr, "Error: denoiser n_freqs=%d != file n_freqs=%d\n",
                 nf_check, n_freqs);
-        mmse_lsa_destroy(denoiser);
+        anr_destroy(denoiser);
         fclose(fin);
         return 1;
     }
@@ -120,7 +120,7 @@ int main(int argc, char* argv[]) {
     if (!spec_in || !re || !im || !gain || !all_gains) {
         fprintf(stderr, "Error: malloc failed\n");
         free(spec_in); free(re); free(im); free(gain); free(all_gains);
-        mmse_lsa_destroy(denoiser);
+        anr_destroy(denoiser);
         fclose(fin);
         return 1;
     }
@@ -136,8 +136,8 @@ int main(int argc, char* argv[]) {
             spec_in[k].r = re[k];
             spec_in[k].i = im[k];
         }
-        if (mmse_lsa_process_gain(denoiser, spec_in, NULL, gain) < 0) {
-            fprintf(stderr, "Error: mmse_lsa_process_gain failed at frame %d\n", f);
+        if (anr_process_gain(denoiser, spec_in, NULL, gain) < 0) {
+            fprintf(stderr, "Error: anr_process_gain failed at frame %d\n", f);
             break;
         }
         memcpy(all_gains + (size_t)f * n_freqs, gain, n_freqs * sizeof(float));
@@ -149,7 +149,7 @@ int main(int argc, char* argv[]) {
     if (!fout) {
         fprintf(stderr, "Error: cannot open output %s\n", argv[2]);
         free(spec_in); free(re); free(im); free(gain); free(all_gains);
-        mmse_lsa_destroy(denoiser);
+        anr_destroy(denoiser);
         return 1;
     }
     int32_t out_header[2] = { n_frames, n_freqs };
@@ -161,6 +161,6 @@ int main(int argc, char* argv[]) {
            n_frames, n_freqs, sample_rate, fft_size, argv[2]);
 
     free(spec_in); free(re); free(im); free(gain); free(all_gains);
-    mmse_lsa_destroy(denoiser);
+    anr_destroy(denoiser);
     return 0;
 }

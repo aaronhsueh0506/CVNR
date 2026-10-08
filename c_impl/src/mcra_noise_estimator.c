@@ -1,37 +1,22 @@
-/**
- * mcra_noise_estimator.c - MCRA Noise Estimator Implementation
- *
- * Cohen & Berdugo (2002) - Minima Controlled Recursive Averaging
- *
- * Algorithm:
- * 1. Time smoothing: S(k,l) = α_s·S(k,l-1) + (1-α_s)·|Y(k,l)|²
- * 2. Min tracking: S_min(k,l) = min{S(k,τ): l-L+1 ≤ τ ≤ l}
- * 3. Speech indicator: I(k,l) = 1 if S(k,l)/(S_min(k,l)·δ) > 1 else 0
- * 4. SPP smoothing: p(k,l) = α_p·p(k,l-1) + (1-α_p)·I(k,l)
- * 5. Noise update: α̃_d = α_d + (1-α_d)·p(k,l)
- *                  N(k,l) = α̃_d·N(k,l-1) + (1-α̃_d)·|Y(k,l)|²
+/* MCRA noise tracking (Cohen and Berdugo): S = α_s*S_prev + (1-α_s)*power; S_min is the
+ * L-frame minimum; I = [S/(δ*S_min) > 1]; p = α_p*p_prev + (1-α_p)*I; α̃_d = α_d + (1-α_d)*p;
+ * N = α̃_d*N_prev + (1-α̃_d)*power.
  */
 
 #include "mcra_noise_estimator.h"
 #include "fast_math.h"
 #include "fft_wrapper.h"   /* ALIGN16 */
-#include "simd_kernels.h"  /* sk_ema_f32 (kernel 4), sk_mcra_noise_update_f32 (kernel 28) --
-                             * both are provably scalar-reference-bit-exact by construction
-                             * (non-fused, verbatim op-sequence match -- see that header's
-                             * top-of-file contract), gated by this TU's mandatory
-                             * -ffp-contract=off same as every other caller. */
+#include "simd_kernels.h"  /* Non-fused, bit-exact SIMD EMA/noise kernels; requires -ffp-contract=off. */
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
 #include <float.h>
-#include "mmse_lsa_internal.h"
+#include "anr_internal.h"
 
-/* Below this the 1e-10f epsilons in every consumer of noise_psd dominate it
- * (float32: 1e-10f + N == 1e-10f for N < ~6e-18), so the estimate can neither
- * influence anything nor, once a signal returns, be updated (see the dead-bin
- * restart in mcra_update). Any real signal scale sits >30 orders above it.
- * Mirrors McraNoiseEstimator.NOISE_PSD_INERT in the Python reference. */
+/* Below this floor, consumer epsilons dominate the PSD and posterior gating can prevent
+ * recovery. Such bins restart with an ungated update.
+ */
 #define MCRA_NOISE_PSD_INERT 1e-20f
 
 // Internal structure
@@ -52,10 +37,10 @@ struct McraNoiseEstimator {
 
     // Minimum tracking buffer [L * n_freqs]
 #ifdef USE_OPTIMIZED_MIN_BUFFER
-    // Optimized layout: min_buffer[freq_idx * L + frame_idx]
+    // Frequency-major layout: min_buffer[freq_idx * L + frame_idx]
     // All L values for the same frequency are contiguous (better cache locality)
 #else
-    // Original layout: min_buffer[frame_idx * n_freqs + freq_idx]
+    // Frame-major layout: min_buffer[frame_idx * n_freqs + freq_idx]
 #endif
     float* min_buffer;
     int ring_idx;       // Current write position in ring buffer
@@ -94,30 +79,10 @@ struct McraNoiseEstimator {
                          // 0 == heap instance from mcra_create() (owns its mallocs)
 };
 
-/* Geometric-mean / arithmetic-mean spectral flatness of power[start:end] (∈ (0,1]).
- * ~0.1-0.2 for tonal/voiced content, ~0.5-0.7 for white noise. Mirrors Python
- * core/noise_estimators/mcra.py _spectral_flatness (same +1e-20 eps).
- *
- * The result meets a hard threshold (scene_change_flatness_threshold), and
- * the Python reference evaluates it in double precision, so the one scalar
- * exp of the mean log is libm expf rather than fast_exp: the cubic Taylor
- * approximation is up to 3.9e-3 low, which put DNS 2020 clip fileid_63
- * (flatness 0.40061 in the reference, 0.39991 here) on the other side of the
- * 0.4 threshold and left the two trackers resetting on different frames for
- * ~120 frames. The per-bin logs keep sk_fast_log_f32: their errors cancel in
- * the sum (about 5e-7 on the mean). This runs once per candidate frame only.
- *
- * `scratch` must hold >= (end-start) floats (the caller's flatness_scratch,
- * sized n_freqs -- always enough). Split into three passes so the expensive
- * fast_log() call is a single vectorized sk_fast_log_f32() over the whole
- * range instead of one scalar call per bin (kernel 25, the same kernel
- * calculate_gain() already uses -- see mmse_lsa_denoiser.c): (1) scalar
- * arith_sum accumulation while staging power+eps into scratch, in the
- * ORIGINAL k=start..end-1 order; (2) one vectorized log over scratch,
- * in-place (sk_fast_log_f32 is documented out==x safe and bit-exact to the
- * scalar fast_log() per-element); (3) scalar log_sum reduction over scratch
- * in the same 0..n-1 order. Every individual addend is bit-identical to the
- * original single-pass loop, so log_sum/arith_sum are bit-identical too. */
+/* Geometric/arithmetic mean flatness of power[start:end], with +1e-20. Use standard expf at
+ * the hard decision threshold. scratch holds end-start floats; SIMD log runs in-place. Both
+ * reductions retain increasing-bin scalar order for bit-exactness.
+ */
 static float spectral_flatness(const float* power, int start, int end, float* scratch) {
     int n = end - start;
     float arith_sum = 0.0f;
@@ -133,8 +98,7 @@ static float spectral_flatness(const float* power, int start, int end, float* sc
     return expf(log_sum * inv_n) / (arith_sum * inv_n);
 }
 
-/* Partial noise-floor reset on a confirmed scene change: blend the tracked noise
- * toward the observed power and re-seed the min tracker to the current S. */
+/* On confirmed scene change, blend noise toward current power and reseed minima from S. */
 static void mcra_reset_noise_floor(McraNoiseEstimator* self, const float* power) {
     int n_freqs = self->n_freqs;
     int L = self->L;
@@ -156,18 +120,12 @@ static void mcra_reset_noise_floor(McraNoiseEstimator* self, const float* power)
 #endif
 }
 
-/* Shared scalar/config initialisation — identical for both malloc and ext-mem
- * builds (arrays are zeroed separately: calloc in the malloc path, memset of the
- * whole block in the ext-mem path). */
-/* Tuning scalars ONLY -- no geometry, no state. Split out from
- * mcra_init_scalars so a runtime reconfiguration can swap the coefficients
- * without discarding the tracked noise floor, the min-tracking ring position
- * or the scene-change run length. `L` and `num_init_frames` size caller-owned
- * buffers, so a reconfiguration path must have already established that they
- * are unchanged before calling this; they are re-applied here anyway so the
- * function is a complete statement of what the config controls. */
+/* Shared scalar initialization; caller zeroes arrays. */
+/* Update only tuning scalars; preserve tracker state. L and num_init_frames must already match
+ * allocated geometry.
+ */
 void mcra_apply_config_scalars(McraNoiseEstimator* self,
-                               const MmseLsaConfig* config) {
+                               const AnrConfig* config) {
     self->L = config->L;
     self->alpha_s = config->alpha_s;
     self->alpha_d = config->alpha_d;
@@ -188,8 +146,44 @@ void mcra_apply_config_scalars(McraNoiseEstimator* self,
 #endif
 }
 
+#ifdef USE_OPTIMIZED_MIN_BUFFER
+/* Preserve first-on-tie selection and scalar NaN handling. */
+static float mcra_min_ordered(const float* values, int n) {
+    float minimum = values[0];
+    int i = 1;
+#if SK_HAVE_NEON
+    for (; i + 4 <= n; i += 4) {
+        float32x4_t v = vld1q_f32(values + i);
+        uint32x4_t valid = vceqq_f32(v, v);
+#if defined(__aarch64__)
+        bool has_nan = vminvq_u32(valid) == 0;
+#else
+        uint32x2_t valid_pair = vand_u32(vget_low_u32(valid),
+                                        vget_high_u32(valid));
+        bool has_nan = (vget_lane_u32(valid_pair, 0) &
+                        vget_lane_u32(valid_pair, 1)) == 0;
+#endif
+        if (has_nan) {
+            for (int j = 0; j < 4; ++j)
+                if (values[i + j] < minimum) minimum = values[i + j];
+            continue;
+        }
+        float32x4_t next = vextq_f32(v, v, 1);
+        v = vbslq_f32(vcltq_f32(next, v), next, v);
+        next = vextq_f32(v, v, 2);
+        v = vbslq_f32(vcltq_f32(next, v), next, v);
+        float group_minimum = vgetq_lane_f32(v, 0);
+        if (group_minimum < minimum) minimum = group_minimum;
+    }
+#endif
+    for (; i < n; ++i)
+        if (values[i] < minimum) minimum = values[i];
+    return minimum;
+}
+#endif
+
 static void mcra_init_scalars(McraNoiseEstimator* self, int n_freqs,
-                              const MmseLsaConfig* config) {
+                              const AnrConfig* config) {
     self->n_freqs = n_freqs;
     mcra_apply_config_scalars(self, config);
 
@@ -198,16 +192,10 @@ static void mcra_init_scalars(McraNoiseEstimator* self, int n_freqs,
     self->scene_change_count = 0;
 }
 
-/* ---- Static-memory (no malloc) variant ------------------------------------ */
+/* Static allocation. */
 
-size_t mcra_get_mem_size(int n_freqs, const MmseLsaConfig* config) {
-    /* F05: explicit sign/bound guards — n_freqs/L/num_init_frames are plain
-     * `int`s from the caller; a negative value cast to size_t below would
-     * become a huge allocation request instead of an error, and an extreme
-     * positive value could overflow the size_t multiplication silently. The
-     * ck_* helpers additionally saturate any overflow that slips past these
-     * guards (e.g. n_freqs itself still huge-but-positive) to SIZE_MAX, which
-     * MEM_SIZE_INVALID() below turns into a `return 0` failure. */
+size_t mcra_get_mem_size(int n_freqs, const AnrConfig* config) {
+    /* Check dimensions and saturating size arithmetic before allocation. */
     if (n_freqs <= 0 || !config) return 0;
     if (config->L <= 0) return 0;
 #ifndef USE_FAST_PERCENTILE
@@ -231,12 +219,9 @@ size_t mcra_get_mem_size(int n_freqs, const MmseLsaConfig* config) {
 }
 
 McraNoiseEstimator* mcra_init(void* mem, size_t mem_size,
-                              int n_freqs, const MmseLsaConfig* config) {
+                              int n_freqs, const AnrConfig* config) {
     if (n_freqs <= 0 || !config || !mem) return NULL;
-    /* F07: reject a misaligned pool base before any write into it. mcra_init
-     * is a public entry point (declared in mcra_noise_estimator.h) — it is
-     * normally only reached via mmse_lsa_init()'s own aligned sub-carve, but
-     * guard it directly too in case it is ever called standalone. */
+    /* Reject unaligned memory before writing. */
     if (!MEM_IS_ALIGNED16(mem)) return NULL;
     size_t need = mcra_get_mem_size(n_freqs, config);
     if (need == 0 || mem_size < need) return NULL;
@@ -263,19 +248,15 @@ McraNoiseEstimator* mcra_init(void* mem, size_t mem_size,
     cursor += ALIGN16((size_t)self->num_init_frames * sizeof(float));
 #endif
 
-    /* Lockstep guard: mcra_get_mem_size() and the carve sequence above are
-     * two independently-maintained additions that must total identically --
-     * a field added/removed from one but not the other would otherwise only
-     * surface as a silent over/under-carve, not a build or test failure.
-     * cursor is expected to land exactly at mem + need. */
+    /* Size query and carve must end at the same byte offset. */
     if ((size_t)(cursor - (uint8_t*)mem) != need) return NULL;
 
     return self;
 }
 
-/* ---- Heap (malloc) variant ------------------------------------------------ */
+/* Heap allocation. */
 
-McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config) {
+McraNoiseEstimator* mcra_create(int n_freqs, const AnrConfig* config) {
     if (n_freqs <= 0 || !config) return NULL;
 
     McraNoiseEstimator* self = (McraNoiseEstimator*)calloc(1, sizeof(McraNoiseEstimator));
@@ -332,10 +313,7 @@ void mcra_destroy(McraNoiseEstimator* self) {
 }
 
 #ifndef USE_FAST_PERCENTILE
-/**
- * Accumulate power spectrum for exact percentile calculation
- * Call this for each frame during initialization phase
- */
+/* Save initialization power for exact percentile selection. */
 void mcra_accumulate_init_power(McraNoiseEstimator* self, const float* power, int frame_idx) {
     if (!self || !power || !self->init_power_buffer) return;
     if (frame_idx < 0 || frame_idx >= self->num_init_frames) return;
@@ -345,12 +323,9 @@ void mcra_accumulate_init_power(McraNoiseEstimator* self, const float* power, in
     memcpy(self->init_power_buffer + offset, power, n_freqs * sizeof(float));
 }
 
-/**
- * Quickselect partition function
- * Returns the index of the pivot after partitioning
- */
+/* Partition around the midpoint pivot; returns its final index. */
 static int quickselect_partition(float* arr, int left, int right) {
-    // Use middle element as pivot (median-of-three would be better for large arrays)
+    // Midpoint pivot.
     int mid = left + (right - left) / 2;
     float pivot = arr[mid];
 
@@ -377,10 +352,7 @@ static int quickselect_partition(float* arr, int left, int right) {
     return store_idx;
 }
 
-/**
- * Quickselect algorithm - finds k-th smallest element in O(n) average
- * Note: This modifies the input array!
- */
+/* Select the kth smallest value in-place; O(n) average complexity. */
 static float quickselect(float* arr, int n, int k) {
     if (n == 1) return arr[0];
     if (k < 0) k = 0;
@@ -404,15 +376,7 @@ static float quickselect(float* arr, int n, int k) {
     return arr[left];
 }
 
-/**
- * Calculate p-th percentile using quickselect, IN PLACE.
- * @param data Scratch data — REORDERED by quickselect (caller passes a disposable
- *             buffer, so no temporary allocation is needed). Result is unchanged
- *             vs the previous copy-then-select version (same k-th smallest value).
- * @param n Number of elements
- * @param p Percentile (0-100)
- * @return The p-th percentile value
- */
+/* In-place percentile selection over disposable data[n]; p is in [0,100]. */
 static float calculate_percentile(float* data, int n, int p) {
     if (n <= 0) return 0.0f;
     if (n == 1) return data[0];
@@ -423,9 +387,7 @@ static float calculate_percentile(float* data, int n, int p) {
     return quickselect(data, n, k);
 }
 #else
-/**
- * Stub function when USE_FAST_PERCENTILE is defined
- */
+/* No accumulation needed for the fast-percentile path. */
 void mcra_accumulate_init_power(McraNoiseEstimator* self, const float* power, int frame_idx) {
     (void)self;
     (void)power;
@@ -453,7 +415,7 @@ void mcra_init_noise(McraNoiseEstimator* self, const float* power_sum, int n_fra
         self->spp[k] = 0.0f;
     }
 #else
-    // Exact 30th percentile using quickselect (v4.0 optimized)
+    // Exact 30th percentile using quickselect
     // Requires init_power_buffer to be filled via mcra_accumulate_init_power()
 
     // Per-bin gather + quickselect scratch — pre-allocated, no malloc.
@@ -462,7 +424,7 @@ void mcra_init_noise(McraNoiseEstimator* self, const float* power_sum, int n_fra
         // Fallback to approximation if the scratch is unavailable
         for (int k = 0; k < n_freqs; k++) {
             float avg_power = power_sum[k] / (float)n_frames;
-            float init_psd = avg_power * 0.23f;  // v4.0: 30th percentile
+            float init_psd = avg_power * 0.23f;  // Approximate 30th percentile
             if (init_psd < 1e-10f) init_psd = 1e-10f;
             self->noise_psd[k] = init_psd;
             self->S[k] = init_psd;
@@ -476,7 +438,7 @@ void mcra_init_noise(McraNoiseEstimator* self, const float* power_sum, int n_fra
                 freq_powers[f] = self->init_power_buffer[f * n_freqs + k];
             }
 
-            // Calculate exact 30th percentile (v4.0 optimized)
+            // Exact 30th percentile
             float init_psd = calculate_percentile(freq_powers, n_frames, 30);
 
             if (init_psd < 1e-10f) init_psd = 1e-10f;
@@ -492,7 +454,7 @@ void mcra_init_noise(McraNoiseEstimator* self, const float* power_sum, int n_fra
 
     // Fill min_buffer with initial noise estimate
 #ifdef USE_OPTIMIZED_MIN_BUFFER
-    // Optimized layout: [freq_idx * L + frame_idx]
+    // Frequency-major layout: [freq_idx * L + frame_idx]
     for (int k = 0; k < n_freqs; k++) {
         float* freq_buf = &self->min_buffer[k * self->L];
         for (int l = 0; l < self->L; l++) {
@@ -500,7 +462,7 @@ void mcra_init_noise(McraNoiseEstimator* self, const float* power_sum, int n_fra
         }
     }
 #else
-    // Original layout: [frame_idx * n_freqs + freq_idx]
+    // Frame-major layout: [frame_idx * n_freqs + freq_idx]
     for (int l = 0; l < self->L; l++) {
         for (int k = 0; k < n_freqs; k++) {
             self->min_buffer[l * n_freqs + k] = self->noise_psd[k];
@@ -527,17 +489,10 @@ void mcra_update_ex(McraNoiseEstimator* self,
     float alpha_p = self->alpha_p;
     float delta = self->delta;
 
-    // Loop A0: S(k,l) = α_s·S(k,l-1) + (1-α_s)·|Y(k,l)|² -- hoisted into its
-    // own pass via sk_ema_f32 (simd_kernels.h kernel 4), a verbatim
-    // non-fused match for this exact expression shape (bit-identical by
-    // construction: same op sequence/order as the plain scalar loop it
-    // replaces, see that kernel's header comment). Loop B below reads back
-    // self->S[k] (already updated here) wherever it used to read the local
-    // `new_S`.
+    // Time EMA; preserve non-fused scalar operation order.
     sk_ema_f32(self->S, power, alpha_s, 1.0f - alpha_s, n_freqs);
 
-    // Loop B: min buffer write + incremental min tracking
-    // v4.1: Eta energy accumulation removed
+    // Ring update and incremental minima.
     int ring_pos = self->ring_idx;
     for (int k = 0; k < n_freqs; k++) {
         float new_S = self->S[k];
@@ -562,10 +517,7 @@ void mcra_update_ex(McraNoiseEstimator* self,
             // Evicted value was (approximately) the minimum — must rescan
 #ifdef USE_OPTIMIZED_MIN_BUFFER
             float* freq_buf = &self->min_buffer[k * L];
-            float min_val = freq_buf[0];
-            for (int l = 1; l < L; l++) {
-                if (freq_buf[l] < min_val) min_val = freq_buf[l];
-            }
+            float min_val = mcra_min_ordered(freq_buf, L);
 #else
             float min_val = FLT_MAX;
             for (int l = 0; l < L; l++) {
@@ -581,10 +533,7 @@ void mcra_update_ex(McraNoiseEstimator* self,
 #ifdef USE_OPTIMIZED_MIN_BUFFER
         {
             float* freq_buf = &self->min_buffer[k * L];
-            float min_val = freq_buf[0];
-            for (int l = 1; l < L; l++) {
-                if (freq_buf[l] < min_val) min_val = freq_buf[l];
-            }
+            float min_val = mcra_min_ordered(freq_buf, L);
             self->S_min[k] = min_val;
         }
 #else
@@ -603,10 +552,7 @@ void mcra_update_ex(McraNoiseEstimator* self,
     // Advance ring index
     self->ring_idx = (self->ring_idx + 1) % L;
 
-    // Loop C1: speech indicator + SPP smoothing only (Python mcra.py step 5).
-    // The noise update is deferred to AFTER the scene-change reset + broadband
-    // gate, matching the Python ordering exactly (steps 7-8 run before step 8b's
-    // SPP-gated update).
+    // Speech-indicator smoothing precedes scene resets and the noise update.
     for (int k = 0; k < n_freqs; k++) {
         // Speech indicator: I(k,l) = 1 if S(k,l)/(S_min(k,l)·δ) > 1
         float ratio = self->S[k] / (self->S_min[k] * delta + 1e-10f);
@@ -616,13 +562,11 @@ void mcra_update_ex(McraNoiseEstimator* self,
         self->spp[k] = alpha_p * self->spp[k] + (1.0f - alpha_p) * indicator;
     }
 
-    // Scene change detection (Python step 7, on the PRE-update noise_psd):
-    // hi-freq gamma + spectral flatness
+    // Scene detection uses the pre-update noise floor.
     {
         int hi_start = n_freqs / 2;  // Upper half (~4kHz for 16kHz/512FFT)
 
-        /* Apply the cheap energy gate before the log/exp flatness pass.  The
-         * latter cannot change the decision when gamma is below threshold. */
+        /* Check the energy gate before the more expensive flatness calculation. */
         float hi_power_sum = 0.0f;
         float hi_noise_sum = 0.0f;
         for (int k = hi_start; k < n_freqs; k++) {
@@ -638,34 +582,11 @@ void mcra_update_ex(McraNoiseEstimator* self,
 
         if (hi_energy_candidate &&
             hi_flatness > self->scene_change_flatness_threshold) {
-            // Ceilinged at scene_change_min_frames (UBSan-probed).
-            // scene_change_min_frames is
-            // user-configurable with NO upper bound in validate_config
-            // (unlike num_init_frames's <=200 cap), so a caller can legally
-            // set it arbitrarily high. The ONLY consumer of this field is
-            // the `>= scene_change_min_frames` check immediately below,
-            // which -- on every reachable call sequence -- resets the
-            // counter back to 0 in the SAME call that first satisfies it,
-            // so on paper the bare `++` never actually walks past
-            // scene_change_min_frames <= INT_MAX (an ad hoc UBSan probe
-            // confirms: seeding the field one step from the boundary at a
-            // reachable state produces a clean same-call reset, no trap --
-            // this repo's `delay_aec3.c consistent_estimate_counter` has the
-            // identical increment-then-immediate-check-and-reset shape and
-            // was correspondingly left unguarded). This guard hardens the
-            // bare statement itself against that invariant ever being
-            // broken by a future edit to the reset logic below (the same
-            // probe shows the UNGUARDED `++` alone traps immediately if the
-            // field is ever left sitting at INT_MAX by such a future bug) --
-            // observationally identical for every state real execution can
-            // reach, so behaviour-preserving.
+            // Saturate the run counter at its configured limit to avoid signed overflow.
             if (self->scene_change_count < self->scene_change_min_frames)
                 self->scene_change_count++;
             if (self->scene_change_count >= self->scene_change_min_frames) {
-                // Music-safe tonal veto (stationary mode): if the LOW band is tonal
-                // (peaky, low flatness) treat it as music and skip the noise-floor reset;
-                // only a genuine noise-scene change (flat low band) is let through.
-                // Matches Python mcra.py:230-236 (lo_flatness via _spectral_flatness).
+                // Tonal low-band content vetoes stationary-mode scene resets.
                 bool blocked = self->scene_change_tonal_veto &&
                                spectral_flatness(power, 0, hi_start,
                                                   self->flatness_scratch) <
@@ -678,11 +599,8 @@ void mcra_update_ex(McraNoiseEstimator* self,
         }
     }
 
-    // Broadband scene-reset gate (Python step 8a, mcra.py:229-235): when most
-    // bins are active (fraction with internal spp>0.5 exceeds broadband_threshold),
-    // scale the noise-update SPP toward 0 so the floor catches a broadband onset
-    // fast. Uses the INTERNAL smoothed spp for the ratio; the per-bin update uses
-    // the external SPP if the denoiser supplied one. Disabled when >= 1.0.
+    // Broadband onset: internal-SPP active fraction controls the gate; the noise update may
+    // use external SPP. Disabled at threshold >= 1.
     const float* spp_for_update = spp_ext ? spp_ext : self->spp;
     float bb_scale = 1.0f;
     if (self->broadband_threshold < 1.0f) {
@@ -697,11 +615,8 @@ void mcra_update_ex(McraNoiseEstimator* self,
         }
     }
 
-    // Noise update with SPP gating (Python step 8b), AFTER the scene resets:
-    // α̃_d = α_d + (1-α_d)·(spp·bb_scale);  N = α̃_d·N + (1-α̃_d)·|Y|²
-    // sk_mcra_noise_update_f32 (simd_kernels.h kernel 28) is a verbatim,
-    // non-fused match for this exact loop shape -- bit-identical by
-    // construction (see that kernel's header comment).
+    // After scene resets: alpha_tilde = alpha_d + (1-alpha_d)*(spp*bb_scale); apply the
+    // non-fused noise EMA.
     int slow_end = slow_lf_rise ? slow_lf_bins : 0;
     if (slow_end < 0) slow_end = 0;
     if (slow_end > n_freqs) slow_end = n_freqs;
@@ -723,15 +638,9 @@ void mcra_update_ex(McraNoiseEstimator* self,
                                   alpha_d, bb_scale, n_freqs - slow_end);
     }
 
-    /* Dead-bin restart (Python mcra.py, same step). A bin whose N decayed
-     * below MCRA_NOISE_PSD_INERT (a few seconds of digital silence) is
-     * numerically inert: every consumer adds 1e-10f, so gamma and the
-     * min-statistics ratio no longer see it, and once signal returns
-     * gamma = |Y|^2/1e-10 saturates the posterior at exactly 1.0f, which makes
-     * tilde_alpha_d exactly 1.0f and the kernel above a fixed point -- the bin
-     * never tracks again. Restart such bins with the ungated blend (p = 0),
-     * written as the kernel writes it (alpha_d*N + (1-alpha_d)*power, no
-     * fusion) so Python and C stay bit-identical; no other bin is touched. */
+    /* Restart inert bins with p=0 so a returning signal can update the floor. Preserve the
+     * non-fused update order: alpha_d*N + (1-alpha_d)*power.
+     */
     for (int k = 0; k < n_freqs; k++) {
         if (self->noise_psd[k] < MCRA_NOISE_PSD_INERT) {
             self->noise_psd[k] = alpha_d * self->noise_psd[k]

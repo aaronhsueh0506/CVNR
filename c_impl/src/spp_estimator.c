@@ -1,26 +1,13 @@
-/**
- * spp_estimator.c - Speech Presence Probability Estimator
- *
- * Decision Directed method for SPP estimation
- * Based on Cohen & Berdugo (2001)
- *
- * SPP is a soft decision measure indicating the probability of
- * speech presence at each time-frequency bin.
- */
+/* Decision-directed per-bin speech-presence probability (Cohen and Berdugo). */
 
 #include "spp_estimator.h"
 #include "fft_wrapper.h"   /* ALIGN16 */
-#include "simd_kernels.h"  /* sk_fast_exp_neg_f32 (kernel 24) -- provably
-                             * scalar-reference-bit-exact by construction
-                             * (verbatim op-sequence match -- see that
-                             * header's top-of-file contract), gated by this
-                             * TU's mandatory -ffp-contract=off same as every
-                             * other caller. */
+#include "simd_kernels.h"  /* Bit-exact SIMD exp(-v); requires -ffp-contract=off. */
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
-#include "mmse_lsa_internal.h"
+#include "anr_internal.h"
 
 // Internal structure
 struct SppEstimator {
@@ -35,28 +22,8 @@ struct SppEstimator {
     float* gamma_prev;  // Previous frame a posteriori SNR
     float* noise_psd_prev;  // Previous frame noise PSD (for DD xi_dd_term1)
 
-    // Per-call scratch [n_freqs] -- transient (fully overwritten every call,
-    // nothing persisted across hops), pre-allocated here so the vectorized
-    // exp_neg_v pass in spp_estimate()/spp_estimate_ex() can batch over the
-    // whole bin range via sk_fast_exp_neg_f32 instead of a per-bin scalar
-    // fast_exp_neg() call, with zero malloc on the hot path either way.
-    // Shared by both functions (only one of the two runs per hop).
-    //
-    // v_scratch does double duty:
-    // nothing downstream reads the original v[k] this array holds once
-    // pass 2 (sk_fast_exp_neg_f32) consumes it (confirmed by inspection of
-    // both spp_estimate() and spp_estimate_ex() below -- pass 3 only reads
-    // term_xi_scratch and the exp_neg_v result), so fast_exp_neg's own
-    // output is written back into this SAME buffer in place
-    // (sk_fast_exp_neg_f32(v_scratch, v_scratch, n_freqs)) instead of a
-    // separate exp_neg_v_scratch array -- safe because sk_fast_exp_neg_f32
-    // fully loads each 4-lane block into registers before storing that same
-    // block back (no cross-lane/cross-block dependency), a contract now
-    // recorded next to the kernel in simd_kernels.h (mirrors
-    // sk_capply_gain_f32's pre-existing out==z contract) and exercised by
-    // simd_selftest.c's test_exp_log_family_inplace(). term_xi_scratch MUST
-    // stay separate: it is read at pass 3, after v_scratch has already been
-    // overwritten in place by pass 2.
+    // Preallocated transient scratch[n_freqs]. v is replaced in-place by exp(-v); term_xi
+    // stays separate until the final SPP pass.
     float* v_scratch;         // v[k] = ξ/(1+ξ)·γ -> fast_exp_neg(v[k]), in place
     float* term_xi_scratch;   // term_xi[k] = 1+ξ[k]
 
@@ -66,13 +33,11 @@ struct SppEstimator {
                          // 0 == heap instance from spp_create() (owns its mallocs)
 };
 
-/* Tuning scalars ONLY -- no geometry, no state. Split out from
- * spp_init_scalars so a runtime reconfiguration can swap the coefficients
- * without discarding the a-priori-SNR history they smooth. */
+/* Update tuning scalars without clearing SNR history. */
 void spp_apply_config_scalars(SppEstimator* self,
-                              const MmseLsaConfig* config) {
+                              const AnrConfig* config) {
     self->alpha = config->alpha_xi;
-    // Fix #9: clip q to (eps, 1-eps) so prior_ratio is well defined
+    // Clip q to (eps, 1-eps) so prior_ratio is well defined
     {
         const float _eps = 1e-6f;
         float q_clipped = config->q;
@@ -84,21 +49,18 @@ void spp_apply_config_scalars(SppEstimator* self,
     self->xi_min = powf(10.0f, config->xi_min_db / 10.0f);
 }
 
-/* Shared scalar/config initialisation — identical for both malloc and ext-mem
- * builds (state arrays are zeroed separately: calloc / block memset). */
+/* Shared scalar initialization; caller zeroes arrays. */
 static void spp_init_scalars(SppEstimator* self, int n_freqs,
-                             const MmseLsaConfig* config) {
+                             const AnrConfig* config) {
     self->n_freqs = n_freqs;
     spp_apply_config_scalars(self, config);
     self->is_initialized = false;
 }
 
-/* ---- Static-memory (no malloc) variant ------------------------------------ */
+/* Static allocation. */
 
 size_t spp_get_mem_size(int n_freqs) {
-    /* F05: explicit sign guard (see mcra_get_mem_size for the rationale) plus
-     * checked arithmetic — MEM_SIZE_INVALID() below turns any overflow into
-     * a `return 0` failure instead of a wrapped byte count. */
+    /* Checked dimensions and saturating size arithmetic; invalid totals return 0. */
     if (n_freqs <= 0) return 0;
     size_t total = ALIGN16(sizeof(SppEstimator));
     total = ck_field_size(total, (size_t)n_freqs, sizeof(float));  /* gamma_prev        */
@@ -109,12 +71,9 @@ size_t spp_get_mem_size(int n_freqs) {
 }
 
 SppEstimator* spp_init(void* mem, size_t mem_size,
-                       int n_freqs, const MmseLsaConfig* config) {
+                       int n_freqs, const AnrConfig* config) {
     if (n_freqs <= 0 || !config || !mem) return NULL;
-    /* F07: reject a misaligned pool base before any write into it. spp_init
-     * is a public entry point (declared in spp_estimator.h) — normally only
-     * reached via mmse_lsa_init()'s own aligned sub-carve, but guard it
-     * directly too in case it is ever called standalone. */
+    /* Reject unaligned memory before writing. */
     if (!MEM_IS_ALIGNED16(mem)) return NULL;
     size_t need = spp_get_mem_size(n_freqs);
     if (need == 0 || mem_size < need) return NULL;
@@ -134,19 +93,15 @@ SppEstimator* spp_init(void* mem, size_t mem_size,
     self->v_scratch         = (float*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(float));
     self->term_xi_scratch   = (float*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(float));
 
-    /* Lockstep guard: spp_get_mem_size() and the carve sequence above are two
-     * independently-maintained additions that must total identically -- a
-     * field added/removed from one but not the other would otherwise only
-     * surface as a silent over/under-carve, not a build or test failure.
-     * cursor is expected to land exactly at mem + need. */
+    /* Size query and carve must end at the same byte offset. */
     if ((size_t)(cursor - (uint8_t*)mem) != need) return NULL;
 
     return self;
 }
 
-/* ---- Heap (malloc) variant ------------------------------------------------ */
+/* Heap allocation. */
 
-SppEstimator* spp_create(int n_freqs, const MmseLsaConfig* config) {
+SppEstimator* spp_create(int n_freqs, const AnrConfig* config) {
     if (n_freqs <= 0 || !config) return NULL;
 
     SppEstimator* self = (SppEstimator*)calloc(1, sizeof(SppEstimator));
@@ -203,22 +158,16 @@ void spp_estimate(
     float* v_scratch = self->v_scratch;
     float* term_xi_scratch = self->term_xi_scratch;
 
-    // Fix #3: DD xi_dd_term1 should use previous frame's noise_psd.
-    // On the first DD call (after one estimate()), noise_psd_prev already holds
-    // the prior frame's noise; if not yet populated, fall back to current noise.
+    // DD uses previous-hop noise; before initialization, use current noise.
     const float* noise_for_dd = self->is_initialized ? self->noise_psd_prev : noise_psd;
 
-    // Pass 1 (scalar): gamma/xi (Decision Directed method, unmodified) +
-    // v/term_xi scratch writes. exp_neg_v/spp_out are deferred to the
-    // vectorized passes below so fast_exp_neg can batch over the whole bin
-    // range via sk_fast_exp_neg_f32 instead of a per-bin scalar call.
+    // Compute gamma/xi and stage v, term_xi for the SIMD pass.
     for (int k = 0; k < n_freqs; k++) {
-        // 1. Calculate a posteriori SNR
-        // γ = |Y|² / λ_n
+        // Posterior SNR: gamma = power / noise.
         float gamma = Y_psd[k] / (noise_psd[k] + 1e-10f);
         gamma_out[k] = gamma;
 
-        // 2. Estimate a priori SNR using Decision Directed method
+        // Decision-directed a-priori SNR.
         float xi;
         if (!self->is_initialized || gain_prev == NULL) {
             // First frame: direct estimate
@@ -243,9 +192,7 @@ void spp_estimate(
         }
         xi_out[k] = xi;
 
-        // 3. Calculate log-likelihood ratio: v = ξ/(1+ξ)·γ -- scratched for
-        // the vectorized exp_neg pass below (term_xi scratched too since the
-        // final SPP formula in pass 3 needs both alongside exp_neg_v).
+        // v = xi/(1+xi) * gamma; retain term_xi for SPP.
         float term_xi = 1.0f + xi;
         float v = xi / term_xi * gamma;
         term_xi_scratch[k] = term_xi;
@@ -255,13 +202,7 @@ void spp_estimate(
         self->gamma_prev[k] = gamma;
     }
 
-    // Pass 2 (vectorized, in place): exp_neg_v[k] = fast_exp_neg(v[k]) over
-    // the whole bin range via sk_fast_exp_neg_f32 (simd_kernels.h kernel 24)
-    // -- bit-exact by construction (see that header's contract). Written
-    // back into v_scratch itself: nothing downstream reads the original
-    // v[k] again (see the struct field comment above), and
-    // sk_fast_exp_neg_f32 documents out==x as safe (per-4-lane-block
-    // load-then-store, no cross-block state).
+    // exp(-v) in-place; the kernel supports exact aliasing.
     sk_fast_exp_neg_f32(v_scratch, v_scratch, n_freqs);
 
     // Pass 3 (scalar): SPP = 1 / (1 + prior_ratio × (1+ξ) × exp(-v)).
@@ -269,7 +210,7 @@ void spp_estimate(
         spp_out[k] = 1.0f / (1.0f + prior_ratio * term_xi_scratch[k] * v_scratch[k]);
     }
 
-    // Fix #3: save current noise_psd for next frame's DD term
+    // Save current noise for next-hop DD.
     memcpy(self->noise_psd_prev, noise_psd, n_freqs * sizeof(float));
 
     self->is_initialized = true;
@@ -309,19 +250,16 @@ void spp_estimate_ex(
     float* v_scratch = self->v_scratch;
     float* term_xi_scratch = self->term_xi_scratch;
 
-    // Fix #3: DD xi_dd_term1 uses previous frame's noise_psd
+    // DD uses previous-hop noise.
     const float* noise_for_dd = self->is_initialized ? self->noise_psd_prev : noise_psd;
 
-    // Pass 1 (scalar): gamma/xi/v/term_xi (unmodified) + v/term_xi scratch
-    // writes. exp_neg_v/spp_out are deferred to the vectorized passes below
-    // so fast_exp_neg can batch over the whole bin range via
-    // sk_fast_exp_neg_f32 instead of a per-bin scalar call.
+    // Compute gamma/xi and stage v, term_xi for the SIMD pass.
     for (int k = 0; k < n_freqs; k++) {
-        // 1. Calculate a posteriori SNR
+        // Posterior SNR: gamma = power / noise.
         float gamma = Y_psd[k] / (noise_psd[k] + 1e-10f);
         gamma_out[k] = gamma;
 
-        // 2. Estimate a priori SNR using Decision Directed method
+        // Decision-directed a-priori SNR.
         float xi;
         if (!self->is_initialized || gain_prev == NULL) {
             xi = gamma > 1.0f ? gamma - 1.0f : 0.0f;
@@ -349,8 +287,7 @@ void spp_estimate_ex(
             v_out[k] = v;
         }
 
-        // Scratch v/term_xi for the vectorized exp_neg pass below (pass 3
-        // needs both alongside exp_neg_v to finish the SPP formula).
+        // Stage v and term_xi for the final SPP pass.
         term_xi_scratch[k] = term_xi;
         v_scratch[k] = v;
 
@@ -358,13 +295,7 @@ void spp_estimate_ex(
         self->gamma_prev[k] = gamma;
     }
 
-    // Pass 2 (vectorized, in place): exp_neg_v[k] = fast_exp_neg(v[k]) over
-    // the whole bin range via sk_fast_exp_neg_f32 (simd_kernels.h kernel 24)
-    // -- bit-exact by construction (see that header's contract). Written
-    // back into v_scratch itself: nothing downstream reads the original
-    // v[k] again (see the struct field comment above), and
-    // sk_fast_exp_neg_f32 documents out==x as safe (per-4-lane-block
-    // load-then-store, no cross-block state).
+    // exp(-v) in-place; the kernel supports exact aliasing.
     sk_fast_exp_neg_f32(v_scratch, v_scratch, n_freqs);
 
     // Pass 3 (scalar): SPP = 1 / (1 + prior_ratio × term_xi × exp_neg_v).
@@ -372,7 +303,7 @@ void spp_estimate_ex(
         spp_out[k] = 1.0f / (1.0f + prior_ratio * term_xi_scratch[k] * v_scratch[k]);
     }
 
-    // Fix #3: save current noise_psd for next frame's DD term
+    // Save current noise for next-hop DD.
     memcpy(self->noise_psd_prev, noise_psd, n_freqs * sizeof(float));
 
     self->is_initialized = true;

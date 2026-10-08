@@ -9,8 +9,8 @@
 ## 🪜 先試 Strength Mode（Python + C 都有）
 
 > **命名好的 4 級 strength mode 兩端都有**（2026-07）：
-> - **Python**：`core/nr_strength.py`（`create_denoiser_from_config(..., strength=...)`）或 CLI `process_audio.py --nr-mode {mild,moderate,balanced,aggressive}`。
-> - **C**：`mmse_lsa_config_for_mode(sample_rate, MMSE_LSA_NR_MILD|MODERATE|BALANCED|AGGRESSIVE)`（`c_impl/include/mmse_lsa_types.h`）或 `denoise_wav --nr-mode`。
+> - **Python**：`python/core/nr_strength.py`（`create_denoiser_from_config(..., strength=...)`）或 CLI `python/process_audio.py --nr-mode {mild,moderate,balanced,aggressive}`。
+> - **C**：`anr_config_for_mode(sample_rate, ANR_MODE_MILD|MODERATE|BALANCED|AGGRESSIVE)`（`c_impl/include/anr_types.h`）或 `denoise_wav --nr-mode`。
 > 兩端 4 級 std-math **bit-exact**。g_min_db 為 **audio 振幅 dB（/20）**。
 > 四級共用同一套 DD、MCRA tracker、gain attack/decay 與低頻語音保護；
 > preset 只改下表四個「抑噪深度」旋鈕。
@@ -169,7 +169,7 @@ IMCRA/MCRA 的 scene change detector 用「高頻 gamma + spectral flatness」�
 下列情境屬於 OMLSA **本質限制**，無論怎麼調都無法解決——參見 [README limitations](../README.md#limitations)：
 
 - **風聲 / buffeting**（強風直吹、車窗漏風）— 需硬體風罩或 NN 模型
-- **衝擊噪聲**（關門、敲擊、碗盤）— 預設管線無啟用的脈衝偵測（`core/transient_suppressor.py` 存在但 `v4_config.yaml` 預設 `enable: false`）
+- **衝擊噪聲**（關門、敲擊、碗盤）— 預設管線無啟用的脈衝偵測（`python/core/transient_suppressor.py` 存在但 `v4_config.yaml` 預設 `enable: false`）
 - **類語音干擾**（其他人語音、電視、音樂）— 需 speech separation
 - **迴響 / 回聲**— 需 dereverb / AEC
 
@@ -182,7 +182,7 @@ IMCRA/MCRA 的 scene change detector 用「高頻 gamma + spectral flatness」�
 3. 遇到場景切換問題調 `scene_change_*`
 4. 每次只動一個參數，用同一批測試音檔 A/B 比對
 5. 拿去 VCTK regression（若有批次測試 pipeline）確認沒變差
-6. 記錄到 `config/*.yaml` 或 C 端 custom config
+6. 記錄到 `python/config/*.yaml` 或 C 端 custom config
 
 ---
 
@@ -206,4 +206,4 @@ IMCRA/MCRA 的 scene change detector 用「高頻 gamma + spectral flatness」�
 - [README.md](../README.md) — 項目總覽與現行 release contract
 - [歷史演算法說明](archive/algorithm_history.md) — 只供理解早期版本
 - [C 使用說明](../c_impl/README.md) — C 實作使用方法與同等調參指引
-- [config/](../config/) — 各版本配置文件
+- [python/config/](../python/config/) — 各版本配置文件

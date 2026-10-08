@@ -1,35 +1,18 @@
-/* The MCRA scene-change detector must take the same branch as the Python
- * reference (tests/test_scene_change_flatness_margin.py) on frames whose
- * high-band spectral flatness lies within a few 1e-4 of
- * scene_change_flatness_threshold.
- *
- * The detector fires after scene_change_min_frames consecutive frames with a
- * high-band energy ratio above scene_change_threshold_db AND a high-band
- * flatness above the threshold, then blends the noise floor toward the frame
- * power. The reference evaluates the geometric mean in double precision; a
- * cubic exp approximation (1.7e-3 relative) in this port once put DNS 2020
- * clip fileid_63 on the other side of the threshold (0.39991 vs 0.40061), so
- * the two trackers reset on different frames and the outputs diverged for
- * ~120 frames (16 dB waveform parity). Two synthetic bursts pin the decision
- * at +6e-4 and -6e-4 from the threshold with the same numbers as the Python
- * test: the first must fire, the second must not. Standalone runner, exit != 0
- * on any failure. */
+/* Pin scene-change decisions near the high-band flatness threshold.
+ * Synthetic bursts at +6e-4 and -6e-4 must fire and hold, respectively. */
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "mcra_noise_estimator.h"
-#include "mmse_lsa_types.h"
+#include "anr_types.h"
 
 static int g_fail = 0;
 #define CHECK(cond, ...) do { if (!(cond)) { printf("FAIL: "); printf(__VA_ARGS__); printf("\n"); g_fail = 1; } } while (0)
 
 #define N_FREQS    257        /* 16 kHz / FFT 512 */
 #define HI_START   128        /* the detector's high band is the upper half */
-/* 64 bins at HI_A, 65 at hi_b. Flatness is scale-free; the level puts the
- * mean log power at 5.52, whose fractional part (0.52, folded to -0.48) is
- * where a cubic Taylor exp over [-0.5, 0.5) is 0.33% low -- five times the
- * margins below (it computed 0.39928 for the frame that must fire). */
+/* 64 bins at HI_A and 65 at hi_b set flatness close to the threshold. */
 #define HI_A       1200.0f
 #define HI_B_FIRE  53.02f     /* flatness 0.400612: +6.1e-4 above the 0.4 threshold */
 #define HI_B_HOLD  52.68f     /* flatness 0.399426: -5.7e-4 below it */
@@ -40,7 +23,7 @@ static int g_fail = 0;
 
 /* Min and max of the high-band noise PSD after MIN_FRAMES burst frames. */
 static void hi_noise_after_burst(float hi_b, float* min_out, float* max_out) {
-    MmseLsaConfig cfg = mmse_lsa_default_config_for_grid(16000, 512);
+    AnrConfig cfg = anr_default_config_for_grid(16000, 512);
     McraNoiseEstimator* est;
     float power[N_FREQS], sum[N_FREQS];
     const float* noise;

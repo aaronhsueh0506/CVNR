@@ -1,14 +1,9 @@
-/**
- * mcra_noise_estimator.h - MCRA Noise Estimator
- *
- * Minima Controlled Recursive Averaging (MCRA)
- * Based on Cohen & Berdugo (2001)
- */
+/* MCRA noise estimator: minima-controlled recursive averaging (Cohen and Berdugo). */
 
 #ifndef MCRA_NOISE_ESTIMATOR_H
 #define MCRA_NOISE_ESTIMATOR_H
 
-#include "mmse_lsa_types.h"
+#include "anr_types.h"
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -18,71 +13,36 @@ extern "C" {
 // Opaque structure
 typedef struct McraNoiseEstimator McraNoiseEstimator;
 
-/**
- * Create MCRA noise estimator (malloc version)
- *
- * @param n_freqs Number of frequency bins
- * @param config Configuration parameters
- * @return Estimator instance, or NULL on error
+/* Create heap state for n_freqs bins; returns NULL on invalid dimensions or allocation
+ * failure.
  */
-McraNoiseEstimator* mcra_create(int n_freqs, const MmseLsaConfig* config);
+McraNoiseEstimator* mcra_create(int n_freqs, const AnrConfig* config);
 
-/**
- * Static-memory companions to mcra_create (no internal malloc).
- *
- *     size_t bytes = mcra_get_mem_size(n_freqs, config);
- *     void*  buf   = ... a caller-provided memory block (>= bytes) ...
- *     McraNoiseEstimator* e = mcra_init(buf, bytes, n_freqs, config);
- *
- * @param mem      Caller-provided buffer, 16-byte aligned
- * @param mem_size Size of buffer (>= mcra_get_mem_size(n_freqs, config))
+/* Query size, then initialize in caller-owned memory. Buffer must be 16-byte aligned and at
+ * least mcra_get_mem_size() bytes; no internal allocation.
  */
-size_t mcra_get_mem_size(int n_freqs, const MmseLsaConfig* config);
+size_t mcra_get_mem_size(int n_freqs, const AnrConfig* config);
 McraNoiseEstimator* mcra_init(void* mem, size_t mem_size,
-                              int n_freqs, const MmseLsaConfig* config);
+                              int n_freqs, const AnrConfig* config);
 
-/**
- * Destroy MCRA estimator. No-op for an instance created via mcra_init()
- * (static memory) — the caller owns and releases the block.
- */
+/* Free heap state; static memory remains caller-owned. */
 void mcra_destroy(McraNoiseEstimator* self);
 
-/**
- * Accumulate power spectrum for exact percentile calculation
- * Only available when USE_FAST_PERCENTILE is NOT defined.
- *
- * @param self Estimator instance
- * @param power Current power spectrum [n_freqs]
- * @param frame_idx Frame index (0 to num_init_frames-1)
+/* Accumulate power[n_freqs] at frame_idx in [0, num_init_frames). Used for exact
+ * initialization unless USE_FAST_PERCENTILE is defined.
  */
 void mcra_accumulate_init_power(McraNoiseEstimator* self, const float* power, int frame_idx);
 
-/**
- * Initialize noise estimate from accumulated power
- *
- * When USE_FAST_PERCENTILE is defined: Uses mean × 0.23 approximation
- * When USE_FAST_PERCENTILE is NOT defined: Uses exact 30th percentile via Quickselect
- *
- * @param self Estimator instance
- * @param power_sum Accumulated power spectrum [n_freqs]
- * @param n_frames Number of frames accumulated
+/* Initialize from power_sum[n_freqs] and n_frames. Exact path uses the accumulated 30th
+ * percentile; USE_FAST_PERCENTILE uses mean * 0.23.
  */
 void mcra_init_noise(McraNoiseEstimator* self, const float* power_sum, int n_frames);
 
-/**
- * Update noise estimate with new frame
- *
- * @param self Estimator instance
- * @param power Current power spectrum [n_freqs]
- * @param spp Speech presence probability [n_freqs] (can be NULL)
- */
+/* Update with power[n_freqs] and optional external SPP[n_freqs] (NULL selects internal SPP). */
 void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp);
 
-/** Update with an optional frame-level low-frequency speech hold.
- *
- * When slow_lf_rise is true, bins [0, slow_lf_bins) may fall at the normal
- * rate but may rise no faster than alpha_d_speech. This protects weak LF
- * speech without allocating a per-bin mask.
+/* When slow_lf_rise is true, bins [0, slow_lf_bins) fall normally but rise no faster than
+ * alpha_d_speech, protecting weak low-frequency speech.
  */
 void mcra_update_ex(McraNoiseEstimator* self,
                     const float* power,
@@ -91,35 +51,19 @@ void mcra_update_ex(McraNoiseEstimator* self,
                     int slow_lf_bins,
                     float alpha_d_speech);
 
-/**
- * Get current noise PSD estimate
- *
- * @param self Estimator instance
- * @return Pointer to noise PSD array [n_freqs]
- */
+/* Borrowed noise PSD[n_freqs] in power units. */
 const float* mcra_get_noise_psd(const McraNoiseEstimator* self);
 
-/**
- * Get internal SPP from MCRA (speech indicator smoothed)
- *
- * @param self Estimator instance
- * @return Pointer to internal SPP array [n_freqs]
- */
+/* Borrowed smoothed internal speech indicator[n_freqs]. */
 const float* mcra_get_spp(const McraNoiseEstimator* self);
 
-/**
- * Check if MCRA is initialized
- */
+/* True after noise initialization. */
 bool mcra_is_initialized(const McraNoiseEstimator* self);
 
-/**
- * Reset estimator state
- */
+/* Clear tracking state. */
 void mcra_reset(McraNoiseEstimator* self);
 
-/**
- * Get number of frequency bins
- */
+/* Frequency-bin count. */
 int mcra_get_n_freqs(const McraNoiseEstimator* self);
 
 #ifdef __cplusplus

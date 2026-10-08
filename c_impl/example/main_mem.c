@@ -1,31 +1,6 @@
-/**
- * main_mem.c - MMSE-LSA Denoiser runner, STATIC-MEMORY build
- *
- * Same freq-domain NR core and framing as main.c, but demonstrates the
- * embedded "no malloc" contract: the NR engine, its MCRA/SPP sub-modules, the
- * FFT, and every per-frame scratch buffer live in STATIC memory that is sized
- * ONCE up front. After start-up there is not a single malloc/free on the audio
- * path — exactly what an embedded target needs (the static pools below would
- * instead be a caller-provided platform memory block on the device, e.g. a
- * DMA-capable region handed down from the platform's memory manager).
- *
- * The pattern is:
- *     size_t need = mmse_lsa_get_mem_size(&config);   // how much do I need?
- *     ... ensure a pre-allocated block is >= need ...
- *     MmseLsaDenoiser* d = mmse_lsa_init(pool, sizeof pool, &config); // no malloc
- *     ... process ...                                                  // no malloc
- *     mmse_lsa_destroy(d);   // no-op for a static-memory instance (caller owns pool)
- *
- * Build:  make mem            (links this file against the same objects as
- *                              denoise_wav — the malloc and static-memory paths
- *                              are both always compiled now, see
- *                              mmse_lsa_get_mem_size()/mmse_lsa_init())
- * Framing is identical to main.c / the Python V3-2 reference, so the output is
- * byte-for-byte identical to `denoise_wav` — that IS the correctness check:
- * static-memory allocation changes nothing numerically.
- *
- * Usage: denoise_mem <input.wav> <output.wav> [options]   (same options as main.c)
- */
+/* Static-memory ANR WAV runner with the same framing as main.c.
+ * Size aligned pools with anr_get_mem_size(), then call anr_init().
+ * anr_destroy() leaves caller-owned pools intact. */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,8 +8,8 @@
 #include <string.h>
 #include <math.h>
 
-#include "mmse_lsa_denoiser.h"
-#include "mmse_lsa_types.h"
+#include "anr.h"
+#include "anr_types.h"
 #include "fft_wrapper.h"
 #include "wav_io.h"
 
@@ -46,18 +21,7 @@
 #define MAX_FRAME_SIZE 1024
 #define MAX_N_FREQS    (MAX_FRAME_SIZE / 2 + 1)
 
-/* ---- Static memory pools — sized ONCE, never malloc'd -------------------- *
- * On an embedded target these would be caller-provided platform memory blocks;
- * here they are plain static arrays. Sized to a measured figure + modest
- * headroom for the fixed framing above and checked at run-time against the
- * exact get_mem_size() figure:
- *   - denoiser+MCRA+SPP measured 72,736 bytes (fft_size=512, all 4 nr-mode
- *     presets + stationary — identical struct layout, only scalars differ)
- *     -> 96 KB pool.
- *   - FFT measured 16,976 bytes (KISS backend) / ~4.2 KB (NE10 backend)
- *     -> 24 KB pool (covers either backend with headroom).
- * The runtime `need > sizeof(pool)` guards below are the real safety net if
- * a config change ever grows past these figures. */
+/* Aligned pools cover all project grids; runtime size checks guard capacity. */
 #define DENOISER_POOL_BYTES (256 * 1024)   /* covers 513-bin 48 kHz config      */
 #define FFT_POOL_BYTES      ( 48 * 1024)   /* covers 1024-point KISS / NE10     */
 
@@ -82,13 +46,13 @@ static float   g_signal[MAX_SAMPLES];
 static float   g_out_ola[MAX_SAMPLES + MAX_FRAME_SIZE];
 
 void print_usage(const char* prog) {
-    printf("MMSE-LSA Speech Denoiser (V3-2 C, STATIC-MEMORY build)\n\n");
+    printf("ANR (C implementation, static-memory runner)\n\n");
     printf("Usage: %s <input.wav> <output.wav> [options]\n\n", prog);
     printf("Options:\n");
     printf("  --bypass       Bypass mode (copy input to output)\n");
     printf("  --nr-mode <m>  NR strength: mild|moderate|balanced|aggressive (default: balanced)\n");
     printf("  --stationary   Content-preservation mode (layered on --nr-mode)\n");
-    printf("  --debug        Print one mmse_lsa_debug_status() line per second of audio\n\n");
+    printf("  --debug        Print one anr_debug_status() line per second of audio\n\n");
     printf("  --fft-size <n> Select project grid (256/512 @16k; 1024 @48k)\n\n");
     printf("All state is pre-allocated in static memory; no malloc on the audio path.\n");
     printf("Output is byte-identical to denoise_wav (framing 512/256/512, sqrt-Hann).\n");
@@ -114,7 +78,7 @@ int main(int argc, char* argv[]) {
     int stationary = 0;
     int debug = 0;
     int fft_size_override = 0;
-    MmseLsaNrMode nr_mode = MMSE_LSA_NR_BALANCED;
+    AnrMode nr_mode = ANR_MODE_BALANCED;
 
     for (int i = 3; i < argc; i++) {
         if (strcmp(argv[i], "--bypass") == 0) {
@@ -127,10 +91,10 @@ int main(int argc, char* argv[]) {
             fft_size_override = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--nr-mode") == 0 && i + 1 < argc) {
             const char* m = argv[++i];
-            if (strcmp(m, "mild") == 0)             nr_mode = MMSE_LSA_NR_MILD;
-            else if (strcmp(m, "moderate") == 0)    nr_mode = MMSE_LSA_NR_MODERATE;
-            else if (strcmp(m, "aggressive") == 0)  nr_mode = MMSE_LSA_NR_AGGRESSIVE;
-            else                                    nr_mode = MMSE_LSA_NR_BALANCED;
+            if (strcmp(m, "mild") == 0)             nr_mode = ANR_MODE_MILD;
+            else if (strcmp(m, "moderate") == 0)    nr_mode = ANR_MODE_MODERATE;
+            else if (strcmp(m, "aggressive") == 0)  nr_mode = ANR_MODE_AGGRESSIVE;
+            else                                    nr_mode = ANR_MODE_BALANCED;
         }
     }
 
@@ -190,16 +154,16 @@ int main(int argc, char* argv[]) {
 
     /* 3. Config — no-padding project grid. */
     int selected_fft = fft_size_override > 0
-                     ? fft_size_override : mmse_lsa_default_fft_size(sample_rate);
-    MmseLsaConfig config = mmse_lsa_config_for_mode_grid(
+                     ? fft_size_override : anr_default_fft_size(sample_rate);
+    AnrConfig config = anr_config_for_mode_grid(
         sample_rate, selected_fft, nr_mode);
-    if (stationary) mmse_lsa_apply_stationary(&config);
+    if (stationary) anr_apply_stationary(&config);
 
     /* F05: reject a sample rate / framing this port has never been verified
      * against, with a clear message (same whitelist as main.c / see there for
-     * rationale — mmse_lsa_get_mem_size/init would also reject it internally,
+     * rationale — anr_get_mem_size/init would also reject it internally,
      * but with a generic pool-size error rather than naming the problem). */
-    if (!mmse_lsa_validate_config(&config)) {
+    if (!anr_validate_config(&config)) {
         fprintf(stderr,
                 "Error: unsupported sample rate %d Hz for NR processing "
                 "(supported: 8000, 16000, 48000 Hz)\n", sample_rate);
@@ -208,7 +172,7 @@ int main(int argc, char* argv[]) {
     }
 
     /* 4. Size the static pools against the exact requirement (the no-malloc step). */
-    size_t need_denoiser = mmse_lsa_get_mem_size(&config);
+    size_t need_denoiser = anr_get_mem_size(&config);
     const int frame_size = config.frame_size;
     const int hop = config.hop_size;
     const int fft_size = config.fft_size;
@@ -230,7 +194,7 @@ int main(int argc, char* argv[]) {
     }
 
     /* 5. Create the engine IN the static pools — zero malloc. */
-    MmseLsaDenoiser* denoiser = mmse_lsa_init(g_denoiser_pool, sizeof(g_denoiser_pool), &config);
+    AnrDenoiser* denoiser = anr_init(g_denoiser_pool, sizeof(g_denoiser_pool), &config);
     FftHandle*       fft      = fft_init(g_fft_pool, sizeof(g_fft_pool), fft_size);
     if (!denoiser || !fft) {
         fprintf(stderr, "Error: Failed to create denoiser/FFT in static memory\n");
@@ -275,8 +239,8 @@ int main(int argc, char* argv[]) {
 
         fft_forward(fft, g_frame_buf, g_spec_in);
 
-        if (mmse_lsa_process(denoiser, g_spec_in, g_spec_out) < 0) {
-            fprintf(stderr, "Error: mmse_lsa_process failed at frame %d\n", f);
+        if (anr_process(denoiser, g_spec_in, g_spec_out) < 0) {
+            fprintf(stderr, "Error: anr_process failed at frame %d\n", f);
             break;
         }
 
@@ -290,8 +254,8 @@ int main(int argc, char* argv[]) {
             int cur_sec = start / sample_rate;
             if (cur_sec != debug_last_sec) {
                 debug_last_sec = cur_sec;
-                MmseLsaDebugStatus st;
-                mmse_lsa_debug_status(denoiser, &st);
+                AnrDebugStatus st;
+                anr_debug_status(denoiser, &st);
                 fprintf(stderr,
                     "[dbg %d.0s] init=%d gain(mean/min)=%.1f/%.1fdB spp=%.2f noise=%.1fdB\n",
                     cur_sec, st.initialized, st.mean_gain_db, st.min_gain_db,
@@ -308,7 +272,7 @@ int main(int argc, char* argv[]) {
     printf("Output: %s\n", output_path);
 
     /* 8. Cleanup — no-op for static-memory instances (caller owns the pools). */
-    mmse_lsa_destroy(denoiser);
+    anr_destroy(denoiser);
     fft_destroy(fft);
     wav_close_write(wav_out);
     return 0;

@@ -1,7 +1,9 @@
-# OMLSA Speech Denoiser — C Implementation (V3-2 主線)
+# ANR — C Implementation (V3-2 主線)
 
-> **Release**: v1.12.3（c_impl）· 共用 `audio_common/fast_math.h`：`fast_log` 改 degree-4 minimax（worst 誤差 0.11 → <1e-4，production C 回到 Python 參考）、`fast_sqrt` 在 AArch64 改用硬體 `FSQRT`；本 repo 的 C 原始碼只更新註解與文件
-> **對應 Python**: `denoisers/v3_2_mmse_lsa.py`
+> **基準版本**: v1.12.3（c_impl）。本輪採用 ANR 完整改名與 bit-exact NEON 加速；[量測與驗證紀錄](../docs/anr_optimization.md)。共用數學函式仍由 `audio_common/fast_math.h` 提供。
+> **對應 Python**: `python/denoisers/v3_2_mmse_lsa.py`
+
+C 介面、檔名與 archive 已統一為 ANR；[完整改名對照](../docs/anr_migration.md)。
 
 基於 Ephraim-Malah 1985 的 MMSE-LSA (Minimum Mean Square Error Log-Spectral Amplitude) 語音降噪演算法 C 實現，搭配 Cohen & Berdugo (2002) MCRA 噪聲估計與 Cohen & Berdugo (2001) Bayesian SPP 軟判決。整體通稱 **OMLSA**。
 
@@ -129,14 +131,14 @@ runtime 選擇（每個 handle 內部有一個 `is_static` flag：`_create()` �
 （static 陣列，或呼叫端自己的 platform 記憶體 block），交給 `_init(mem, size, ...)`：
 
 ```c
-static uint8_t pool[/* >= mmse_lsa_get_mem_size(&cfg) */] __attribute__((aligned(16)));
-size_t need = mmse_lsa_get_mem_size(&cfg);              // 先問大小
-MmseLsaDenoiser* d = mmse_lsa_init(pool, sizeof pool, &cfg);  // 零 malloc
-/* ... 每幀 mmse_lsa_process()，音訊路徑無任何配置 ... */
-mmse_lsa_destroy(d);                                     // no-op（記憶體由呼叫端持有）
+static uint8_t pool[/* >= anr_get_mem_size(&cfg) */] __attribute__((aligned(16)));
+size_t need = anr_get_mem_size(&cfg);              // 先問大小
+AnrDenoiser* d = anr_init(pool, sizeof pool, &cfg);  // 零 malloc
+/* ... 每幀 anr_process()，音訊路徑無任何配置 ... */
+anr_destroy(d);                                     // no-op（記憶體由呼叫端持有）
 ```
 
-`mmse_lsa_destroy()` 在這裡是**真正**的 no-op：`MmseLsaDenoiser` 本身不持有 FFT 或任何
+`anr_destroy()` 在這裡是**真正**的 no-op：`AnrDenoiser` 本身不持有 FFT 或任何
 backend heap 資源（頻域 I/O 由呼叫端自己的 `FftHandle` 負責，見下方完整範例），所以
 static instance 的 destroy 沒有東西要釋放。呼叫端另外持有的 `FftHandle`（`fft_init`）
 現在也是**真正**的 no-op：KISS backend 本來就是零 malloc/no-op，NE10 backend 自
@@ -188,7 +190,7 @@ Makefile:179: *** FP policy conflict: CFLAGS/EXTRA_CFLAGS contains -ffast-math; 
 ```
 
 `../audio_common/scripts/audit_fp_contract.sh` 是 disassembly 等級的驗證：反組譯
-本 repo 的 `mmse_lsa_denoiser.o`/`mcra_noise_estimator.o`/`spp_estimator.o`（皆只
+本 repo 的 `anr_denoiser.o`/`mcra_noise_estimator.o`/`spp_estimator.o`（皆只
 `#include fast_math.h`/`fft_wrapper.h`，沒有 NEON intrinsics，也沒有顯式
 `fmaf()`/`fma()` 呼叫，屬於 genuinely scalar），若出現任何
 fmadd/fmsub/fnmadd/fnmsub/fmla/fmls 指令即判定失敗——那正是編譯器「自行」融合
@@ -272,7 +274,7 @@ MCRA 噪聲估計的瓶頸是每幀掃描 ring buffer（L=32 幀）找最小值�
 - Loop C: SPP indicator + 噪聲更新
 - 場景轉換偵測：高頻 gamma + spectral flatness（迴圈後純量判斷）
 
-**mmse_lsa_denoiser.c** — gain_prev save + enhanced_psd_prev save
+**anr.c** — gain_prev save + enhanced_psd_prev save
 
 純結構重排，改善 cache locality，bit-exact。
 
@@ -301,112 +303,119 @@ MCRA 噪聲估計的瓶頸是每幀掃描 ring buffer（L=32 幀）找最小值�
 ```
 
 **兩條正交的模式軸：**
-- **強度軸** `--nr-mode {mild|moderate|balanced|aggressive}`（`mmse_lsa_config_for_mode`）：全消，越強壓越深。
+- **強度軸** `--nr-mode {mild|moderate|balanced|aggressive}`（`anr_config_for_mode`）：全消，越強壓越深。
   4 級深度階梯 g_min = −20 / −25 / −30 / −40 dB（振幅 /20）。所有預設共用 `alpha_xi=0.92`
   （2026-07 musical-noise fix：DD ξ 平滑，壓掉 SPP 抖動＝musical noise；對語音幾乎零成本）。
-- **內容軸** `--stationary`（`mmse_lsa_apply_stationary`，疊在強度 base 上）：ReSpeaker-like，**只**移除穩態
+- **內容軸** `--stationary`（`anr_apply_stationary`，疊在強度 base 上）：ReSpeaker-like，**只**移除穩態
   噪聲底噪，保留非穩態內容（語音／音樂／瞬態）。機制 = Wiener 增益下界 `gain ≥ (ξ/(β+ξ))^p`（p=2）
   + music-aware tonal-veto scene-change。此下界**只在 stationary 生效**（`stationary_floor` 預設 false，
-  full 模式完全略過 → 與原 V3-2 byte-identical）。鏡像 Python `core/nr_modes.py` 的 `apply_mode`。
+  full 模式完全略過 → 與原 V3-2 byte-identical）。鏡像 Python `python/core/nr_modes.py` 的 `apply_mode`。
 
 ### 程式碼整合（freq-domain：caller 自備 FFT / 窗 / OLA）
 
-lib 核心 `mmse_lsa_process()` 是**頻域 API**：吃 `Complex[n_freqs]` 頻譜、吐
+lib 核心 `anr_process()` 是**頻域 API**：吃 `Complex[n_freqs]` 頻譜、吐
 `Complex[n_freqs]`（套用 per-bin gain、相位不變）。窗 / rFFT / iFFT / OLA 由
 caller 負責（見 `example/main.c` 的完整 freq-domain runner）。
 
 ```c
-#include "mmse_lsa_denoiser.h"
+#include "anr.h"
 #include "fft_wrapper.h"
 
 // 1. 創建配置 + 降噪器 + FFT handle
-MmseLsaConfig config = mmse_lsa_default_config(16000);
-MmseLsaDenoiser* denoiser = mmse_lsa_create(&config);
+AnrConfig config = anr_default_config(16000);
+AnrDenoiser* denoiser = anr_create(&config);
 FftHandle* fft = fft_create(config.fft_size);
-int n_freqs = mmse_lsa_get_n_freqs(denoiser);   // fft_size/2 + 1
+int n_freqs = anr_get_n_freqs(denoiser);   // fft_size/2 + 1
 
-// 2. 每幀：窗 -> rFFT -> mmse_lsa_process -> iFFT -> 窗 -> OLA
+// 2. 每幀：窗 -> rFFT -> anr_process -> iFFT -> 窗 -> OLA
 //    （窗 = sqrt(periodic Hann)，50% overlap 即 COLA，無需額外歸一化）
 Complex spec_in[n_freqs], spec_out[n_freqs];
 fft_forward(fft, windowed_frame /*[fft_size]*/, spec_in);
-mmse_lsa_process(denoiser, spec_in, spec_out);  // gain 套到複數頻譜
+anr_process(denoiser, spec_in, spec_out);  // gain 套到複數頻譜
 fft_inverse(fft, spec_out, time_out /*[fft_size]*/);
 // out[start..] += time_out * window;  (overlap-add)
 
 // 3. 清理
-mmse_lsa_destroy(denoiser);
+anr_destroy(denoiser);
 fft_destroy(fft);
 ```
 
 ### 執行期重設定（running instance 上換 tuning）
 
 ```c
-int mmse_lsa_reconfigure(MmseLsaDenoiser* self, const MmseLsaConfig* target);
-int mmse_lsa_set_mode(MmseLsaDenoiser* self, MmseLsaNrMode mode);
+int anr_reconfigure(AnrDenoiser* self, const AnrConfig* target);
+int anr_set_mode(AnrDenoiser* self, AnrMode mode);
 ```
 
 兩者都不重新配置任何記憶體，所以格點（`sample_rate` / `frame_size` / `hop_size` /
 `fft_size`）與兩個決定 pool 大小的欄位（`L`、`num_init_frames`）**必須等於實例當下的
-值**，`target` 另外還要完整通過 `mmse_lsa_validate_config()`。回 `0`，或 `-1`
+值**，`target` 另外還要完整通過 `anr_validate_config()`。回 `0`，或 `-1`
 （NULL、target 無效、幾何不符）；`-1` 時**什麼都不寫**。在兩個 hop 之間呼叫、與
-`mmse_lsa_process()` 序列化；**非 thread-safe**。
+`anr_process()` 序列化；**非 thread-safe**。
 
 **狀態是刻意保留的**：追蹤中的噪聲底、MCRA 最小值追蹤環與它的 scene-change run
 length、SPP 的 a-priori-SNR 歷史、增益平滑歷史，全部繼續跑。換強度不是重啟——
 把噪聲估計在串流中途丟掉，造成的 artefact 比原本想調掉的東西更糟。真的要重啟請用
-`mmse_lsa_reset()`。
+`anr_reset()`。
 
-**`mmse_lsa_reconfigure()` 逐字採用 `target`**：不做 preset 查表、不做 overlay 疊加。
+**`anr_reconfigure()` 逐字採用 `target`**：不做 preset 查表、不做 overlay 疊加。
 這是刻意的——組態是「preset 加上自己的覆寫」的呼叫端，必須自己重建整份組合再傳進來，
 否則那些覆寫會被悄悄還原回 canonical preset 的值。
 
-**`mmse_lsa_set_mode()` 只給 standalone 情境**：它替該 mode 組出 canonical 組態、
-交給 `mmse_lsa_reconfigure()`。內容軸與強度軸正交，所以經 `mmse_lsa_apply_stationary()`
+**`anr_set_mode()` 只給 standalone 情境**：它替該 mode 組出 canonical 組態、
+交給 `anr_reconfigure()`。內容軸與強度軸正交，所以經 `anr_apply_stationary()`
 建立的實例會**重新套上**該 overlay——換強度不該讓一個 stationary 實例悄悄變成 hybrid。
 回 `0`，或 `-1`（NULL、超出 enum 的 mode、target 被拒）。
 
-> **不要在 pipeline 實例上用 `mmse_lsa_set_mode()`。** 兩條出貨 pipeline（mono 與
+> **不要在 pipeline 實例上用 `anr_set_mode()`。** 兩條出貨 pipeline（mono 與
 > 四麥克風核心）的 NR 組態都是「canonical preset **加上**自己的覆寫」
 > （`L`、`alpha_decay`；`broadband_threshold` 保留 canonical `1.0`）。把裸的
 > canonical preset 交給
-> `mmse_lsa_set_mode()`，在這種實例上會被**拒絕**（它的 `L` 不同）——這正是兩條
+> `anr_set_mode()`，在這種實例上會被**拒絕**（它的 `L` 不同）——這正是兩條
 > pipeline 各自提供 setter（`audio_pipeline_set_nr_mode()` /
-> `four_aec_nr_res_set_nr_mode()`）重組完整組態再呼叫 `mmse_lsa_reconfigure()` 的原因。
+> `four_aec_nr_res_set_nr_mode()`）重組完整組態再呼叫 `anr_reconfigure()` 的原因。
 
 ```c
 /* standalone：直接換強度，噪聲底與平滑歷史保留 */
-if (mmse_lsa_set_mode(denoiser, MMSE_LSA_NR_AGGRESSIVE) != 0) { /* 引數不合法 */ }
+if (anr_set_mode(denoiser, ANR_MODE_AGGRESSIVE) != 0) { /* 引數不合法 */ }
 
 /* 自己疊了覆寫的呼叫端：重組整份組態再交出去 */
-MmseLsaConfig target = mmse_lsa_config_for_mode_grid(
-    sr, fft_size, MMSE_LSA_NR_AGGRESSIVE);
-target.L = mmse_lsa_retime_frames(150, sr, target.hop_size);
+AnrConfig target = anr_config_for_mode_grid(
+    sr, fft_size, ANR_MODE_AGGRESSIVE);
+target.L = anr_retime_frames(150, sr, target.hop_size);
 target.alpha_decay = target.alpha_g;
-if (mmse_lsa_reconfigure(denoiser, &target) != 0) { /* 幾何不符或 target 無效 */ }
+if (anr_reconfigure(denoiser, &target) != 0) { /* 幾何不符或 target 無效 */ }
 ```
 
 回歸測試：`make test-reconfigure`（`test/test_reconfigure.c`）。
 
 ### Python↔C 數值對齊驗證 (parity harness)
 
-`tools/parity_nr.py` + `example/parity_runner.c` 提供可重現的埠正確性驗證，
+`python/tools/parity_nr.py` + `example/parity_runner.c` 提供可重現的埠正確性驗證，
 **隔離 FFT 差異**：兩端餵入 byte-identical 的逐幀複數頻譜，只比 gain/SPP/MCRA 運算。
+
+Python dump 可用 `--fft-size` 明確選 grid：A＝16k/256/128、
+B＝16k/512/256、C＝48k/1024/512。NRP2 header 記錄輸入 sample rate，
+`n_freqs` 決定 FFT size；C runner 從這兩者重建相同 grid。
+`compare` 回報絕對 gain 差異的 worst／median／mean；Python/C 比較是
+float64／float32 與數學近似的數值容差檢查，不宣稱 bit-exact。
 
 ```bash
 # 1. Python 端 dump 參考頻譜 + gain
-python3 ../tools/parity_nr.py dump --wav ../test_wav/wav/babble_10dB.wav --out /tmp/parity_in.bin
+python3 ../python/tools/parity_nr.py dump --wav ../test_wav/wav/babble_10dB.wav --out /tmp/parity_in.bin
 
 # 2a. C 端 fast-math（bin 目錄依 build flags 雜湊）
-make DEBUG=0 parity
-bin_dir=$(make -s DEBUG=0 print-bin-dir)
+ac=$(make -s --no-print-directory -C ../../audio_common BACKEND=kiss print-lib-path)
+make DEBUG=0 BACKEND=kiss AC_LIB="$ac" parity
+bin_dir=$(make -s DEBUG=0 BACKEND=kiss AC_LIB="$ac" print-bin-dir)
 "$bin_dir/parity_runner" /tmp/parity_in.bin /tmp/g_fast.bin
-python3 ../tools/parity_nr.py compare --ref /tmp/parity_in.bin --c-gains /tmp/g_fast.bin
+python3 ../python/tools/parity_nr.py compare --ref /tmp/parity_in.bin --c-gains /tmp/g_fast.bin
 
-# 2b. C 端 standard-math → 近 bit-exact
-make DEBUG=0 BACKEND=kiss EXTRA_CFLAGS="-DUSE_STANDARD_MATH" parity
-bin_dir=$(make -s DEBUG=0 BACKEND=kiss EXTRA_CFLAGS="-DUSE_STANDARD_MATH" print-bin-dir)
+# 2b. C 端 standard-math（檢查 float32/float64 殘差）
+make DEBUG=1 BACKEND=kiss AC_LIB="$ac" parity
+bin_dir=$(make -s DEBUG=1 BACKEND=kiss AC_LIB="$ac" print-bin-dir)
 "$bin_dir/parity_runner" /tmp/parity_in.bin /tmp/g_debug.bin
-python3 ../tools/parity_nr.py compare --ref /tmp/parity_in.bin --c-gains /tmp/g_debug.bin
+python3 ../python/tools/parity_nr.py compare --ref /tmp/parity_in.bin --c-gains /tmp/g_debug.bin
 ```
 
 NRP2 dump header 會攜帶 `sample_rate`；C 端據此建立完全相同的 signal grid
@@ -418,7 +427,10 @@ NRP2 dump header 會攜帶 `sample_rate`；C 端據此建立完全相同的 sign
 | standard-math (`-DUSE_STANDARD_MATH`) | 7.212e-6 | 2.235e-8 | 5.028e-8 |
 | fast-math (預設) | 3.176e-3 | 7.829e-5 | 1.635e-4 |
 
-standard-math 近 bit-exact ⇒ 埠邏輯正確。fast-math 的殘差來自 `fast_exp`（LUT +
+上表的 standard-math 使用 `DEBUG=0 EXTRA_CFLAGS=-DUSE_STANDARD_MATH`，
+與上方 `DEBUG=1` 指令不同；DEBUG=1 同時關閉六個 production 優化開關。
+上表是該素材的實測殘差，不是所有輸入的通用容差上限。standard-math 仍有
+float32/float64 誤差；fast-math 另外包含 `fast_exp`（LUT +
 Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差 < 1e-4），兩者都是
 有界的近似（NR 不呼叫 `fast_sqrt`）。
 
@@ -426,8 +438,8 @@ Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差
 
 - **輸入格式**：單聲道（多聲道自動取第一聲道）、8 / 16 / 48 kHz PCM16 或 32-bit float
 - **首 200 ms 需為純噪聲（或無語音）**：用於初始化 MCRA 噪聲底噪，前 `num_init_frames * hop_size` 樣本為 passthrough
-- **Frame / hop 於建立後固定**：`frame_size == fft_size`、`hop_size == frame_size/2`，因此不做 zero-padding。`mmse_lsa_default_config(sample_rate)` 選 8k:128/64、16k:256/128、48k:1024/512；8 kHz 與 16 kHz 分別可用 `mmse_lsa_default_config_for_grid(8000, 256)`／`mmse_lsa_default_config_for_grid(16000, 512)` 選較高延遲的 256/128 或 512/256。example runners 也直接使用輸入 rate 對應的 grid；instance 建立後不可中途切換。
-- **Streaming 語義**：`mmse_lsa_process()` 是**頻域 API**——每次呼叫吃 `Complex[n_freqs]` 複數頻譜、
+- **Frame / hop 於建立後固定**：`frame_size == fft_size`、`hop_size == frame_size/2`，因此不做 zero-padding。`anr_default_config(sample_rate)` 選 8k:128/64、16k:256/128、48k:1024/512；8 kHz 與 16 kHz 分別可用 `anr_default_config_for_grid(8000, 256)`／`anr_default_config_for_grid(16000, 512)` 選較高延遲的 256/128 或 512/256。example runners 也直接使用輸入 rate 對應的 grid；instance 建立後不可中途切換。
+- **Streaming 語義**：`anr_process()` 是**頻域 API**——每次呼叫吃 `Complex[n_freqs]` 複數頻譜、
   吐 `Complex[n_freqs]`（套用 per-bin gain、相位不變），lib 核心本身**沒有**內部時域緩衝或 OLA；
   窗函數、rFFT、iFFT、50% overlap-add 全部由 caller 負責（見 `example/main.c` 的完整 freq-domain
   runner，或本文件「程式碼整合」一節）
@@ -440,7 +452,7 @@ Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差
 
 ## 調參指引 (Quick Tuning)
 
-> **優先使用 strength mode**：呼叫 `mmse_lsa_config_for_mode(sample_rate, MMSE_LSA_NR_MILD | MODERATE | BALANCED | AGGRESSIVE)`，多數情境足矣。
+> **優先使用 strength mode**：呼叫 `anr_config_for_mode(sample_rate, ANR_MODE_MILD | MODERATE | BALANCED | AGGRESSIVE)`，多數情境足矣。
 
 > **⚠ g_min_db 為 audio 振幅 dB（/20 換算 `10^(db/20)`）** — gain 直接乘幅度譜（無 sqrt），故 floor 是
 > 振幅量。越負壓越深（-28 ≈ 0.04、-25 ≈ 0.056、-20 ≈ 0.1）。（xi_min_db / delta_db / scene_change 是
@@ -477,7 +489,7 @@ Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差
 > **數值以 [`docs/c_user_manual_zh_TW.md`](../docs/c_user_manual_zh_TW.md) §4 為準。**
 > 下表只列欄位與用途。多數 EMA 係數與幀數（`alpha_*`、`L`、`num_init_frames`）
 > 在建構時會**依實際 hop retime**，所以這裡標的是「調校時的錨點值」，不是
-> `mmse_lsa_default_config_for_grid()` 實際填進 struct 的值——兩者在 16 kHz/256
+> `anr_default_config_for_grid()` 實際填進 struct 的值——兩者在 16 kHz/256
 > 就已經不同。要看實際生效的值，讀該節，或直接印出 config。
 
 | 參數 | 調校錨點 | 說明 |
@@ -522,12 +534,12 @@ Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差
 ```
 c_impl/
 ├── include/
-│   ├── mmse_lsa_denoiser.h    # 主要 API（malloc + 靜態記憶體 create/get_mem_size/init）
-│   ├── mmse_lsa_types.h       # 配置結構和預設值
+│   ├── anr.h    # 主要 API（malloc + 靜態記憶體 create/get_mem_size/init）
+│   ├── anr_types.h       # 配置結構和預設值
 │   ├── mcra_noise_estimator.h # MCRA 噪聲估計
 │   └── spp_estimator.h        # SPP 估計
 ├── src/
-│   ├── mmse_lsa_denoiser.c    # 主模組（含 MMSE-LSA 增益計算）
+│   ├── anr.c    # 主模組（含 MMSE-LSA 增益計算）
 │   ├── mcra_noise_estimator.c
 │   └── spp_estimator.c
 ├── example/

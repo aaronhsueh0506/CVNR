@@ -1,5 +1,7 @@
 # V3 MMSE 變體詳細對比
 
+> Python 範例請在 repository 根目錄設定 `PYTHONPATH=python`；程式碼與 YAML 位於 `python/`。
+
 > ⚠️ **g_min_db 單位變更（2026-07-05）**：本文件多數 g_min_db 為當時的功率 dB (/10)；現行改為 audio 振幅 dB (/20)，數值需 ×2 換算。現行 shipped：V3 = −39、V3-2 = −30、V3-3 = −28。alpha_xi / xi_min_db 不受影響。
 
 ## 目錄
@@ -370,7 +372,7 @@ p(X) ∝ exp(-β|X|)
 ### V3 (MMSE-STSA)
 
 ```yaml
-# config/v3_config.yaml - Optuna 500-trial 最佳參數 (2026-01-12)
+# python/config/v3_config.yaml - Optuna 500-trial 最佳參數 (2026-01-12)
 spp:
   alpha_xi: 0.90
   q: 0.40
@@ -389,7 +391,7 @@ gain_calculation:
 ### V3-2 (MMSE-LSA)
 
 ```yaml
-# config/v3_2_config.yaml - Optuna 500-trial 最佳參數 (2026-01-12)
+# python/config/v3_2_config.yaml - Optuna 500-trial 最佳參數 (2026-01-12)
 spp:
   alpha_xi: 0.92
   q: 0.50
@@ -407,7 +409,7 @@ gain_calculation:
 ### V3-3 (PMMSE)
 
 ```yaml
-# config/v3_3_config.yaml - Optuna 500-trial 最佳參數 (2026-01-12)
+# python/config/v3_3_config.yaml - Optuna 500-trial 最佳參數 (2026-01-12)
 spp:
   alpha_xi: 0.90
   q: 0.45
@@ -425,7 +427,7 @@ gain_calculation:
 ### V3-4 (Laplacian-MMSE)
 
 ```yaml
-# config/v3_4_config.yaml - Optuna 500-trial 最佳參數 (2026-01-12)
+# python/config/v3_4_config.yaml - Optuna 500-trial 最佳參數 (2026-01-12)
 spp:
   alpha_xi: 0.90
   q: 0.30

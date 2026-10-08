@@ -2,9 +2,9 @@
 
 這份手冊寫給**使用這個 library 的整合者**：什麼時候呼叫哪個函式、每個參數怎麼設。
 不談演算法推導、不談內部實作。所有數值都直接讀自現行原始碼（header 預設值、
-`mmse_lsa_validate_config()` 的檢查、config constructor），或由實際建置後執行程式量得。
+`anr_validate_config()` 的檢查、config constructor），或由實際建置後執行程式量得。
 
-原始碼位置一律以 repository 相對路徑表示（例如 `c_impl/include/mmse_lsa_denoiser.h`）。
+原始碼位置一律以 repository 相對路徑表示（例如 `c_impl/include/anr.h`）。
 
 ---
 
@@ -24,12 +24,12 @@
 
 - **不做** acoustic echo cancellation、dereverb、AGC、風切抑制、beamforming、多聲道處理。
 - **不做**取樣率轉換、不讀寫檔案、不配置也不管理 PCM ring / window / OLA buffer。
-- Python tree 裡的其他 variant（`denoisers/v1_spectral_subtraction.py`、
-  `denoisers/v2_wiener.py`、`denoisers/v3_spp_mmse.py`、`denoisers/v3_3_pmmse.py`）
+- Python tree 裡的其他 variant（`python/denoisers/v1_spectral_subtraction.py`、
+  `python/denoisers/v2_wiener.py`、`python/denoisers/v3_spp_mmse.py`、`python/denoisers/v3_3_pmmse.py`）
   **是研究用程式碼，C 端沒有任何對應實作**。不要以為 C library 可以切到那些模式。
-- `config/*.yaml`（`v1_config.yaml`、`v2_config.yaml`、`v3_2_config.yaml`、
+- `python/config/*.yaml`（`v1_config.yaml`、`v2_config.yaml`、`v3_2_config.yaml`、
   `v3_3_config.yaml`、`v3_config.yaml`）**只給 Python 用**。C library 不讀任何設定檔，
-  它唯一的參數入口就是 `MmseLsaConfig` 這個 struct。
+  它唯一的參數入口就是 `AnrConfig` 這個 struct。
 
 ### 0.3 交付檔案
 
@@ -37,19 +37,19 @@
 
 | 檔案 | 內容 | 是否要直接 include |
 |---|---|---|
-| `c_impl/include/mmse_lsa_denoiser.h` | 建構／處理／reset／查詢 API、`MmseLsaDebugStatus` | 是 |
-| `c_impl/include/mmse_lsa_types.h` | `MmseLsaConfig`、`MmseLsaNrMode`、config constructor、`mmse_lsa_validate_config()` | 是（`mmse_lsa_denoiser.h` 已自動含入） |
-| `../audio_common/include/fft_wrapper.h` | `Complex`、`FftHandle`、`fft_*` | 是（`mmse_lsa_denoiser.h` 已自動含入，見第 6 節） |
+| `c_impl/include/anr.h` | 建構／處理／reset／查詢 API、`AnrDebugStatus` | 是 |
+| `c_impl/include/anr_types.h` | `AnrConfig`、`AnrMode`、config constructor、`anr_validate_config()` | 是（`anr.h` 已自動含入） |
+| `../audio_common/include/fft_wrapper.h` | `Complex`、`FftHandle`、`fft_*` | 是（`anr.h` 已自動含入，見第 6 節） |
 | `../audio_common/include/mem_align.h` | `ALIGN16` 等對齊巨集 | 否（由 `fft_wrapper.h` 帶入） |
 
 連結需要的 archive：
 
 | 檔案 | 內容 |
 |---|---|
-| `libmmse_lsa.a` | denoiser + MCRA + SPP core（本 repo 建置產生） |
+| `libanr.a` | denoiser + MCRA + SPP core（本 repo 建置產生） |
 | `libaudio_common.a` | FFT backend 與 fast math（`../audio_common` 建置產生） |
 
-`libmmse_lsa.a` **不含** FFT，兩個 archive 必須一起連結。
+`libanr.a` **不含** FFT，兩個 archive 必須一起連結。
 
 隨附的執行檔（皆為示範／驗證用途，不是 library 的一部分）：
 
@@ -60,7 +60,7 @@
 | `test_config_validation` | config 驗證與對齊防護的回歸測試 |
 | `test_config_parity` | 印出各 grid × strength 的正規 config |
 
-`make publish` 產出的 release 內容為 `libmmse_lsa.a` 與 `denoise_wav`；header 請直接從
+`make publish` 產出的 release 內容為 `libanr.a` 與 `denoise_wav`；header 請直接從
 source tree 取用。
 
 ### 0.4 內部子模組
@@ -86,16 +86,16 @@ source tree 取用。
 #include <string.h>
 
 #include "fft_wrapper.h"          /* audio_common: Complex, FftHandle, fft_*  */
-#include "mmse_lsa_denoiser.h"
-#include "mmse_lsa_types.h"
+#include "anr.h"
+#include "anr_types.h"
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif
 
 typedef struct {
-    MmseLsaConfig    cfg;
-    MmseLsaDenoiser *nr;
+    AnrConfig    cfg;
+    AnrDenoiser *nr;
     FftHandle       *fft;
     float           *window;    /* [frame_size] sqrt(periodic Hann)          */
     float           *analysis;  /* [frame_size] rolling analysis frame       */
@@ -108,7 +108,7 @@ void nr_stream_destroy(NrStream *s);
 
 /* Returns 0 on success, -1 on failure (nothing is left allocated on -1). */
 int nr_stream_init(NrStream *s, int sample_rate,
-                   MmseLsaNrMode mode, int stationary)
+                   AnrMode mode, int stationary)
 {
     int n, n_freqs;
 
@@ -116,11 +116,11 @@ int nr_stream_init(NrStream *s, int sample_rate,
     memset(s, 0, sizeof(*s));
 
     /* 1. config: preset on the default grid for this sample rate. */
-    s->cfg = mmse_lsa_config_for_mode(sample_rate, mode);
-    if (stationary) mmse_lsa_apply_stationary(&s->cfg);
+    s->cfg = anr_config_for_mode(sample_rate, mode);
+    if (stationary) anr_apply_stationary(&s->cfg);
 
     /* 2. validate before create (tells you the config itself was rejected). */
-    if (!mmse_lsa_validate_config(&s->cfg)) return -1;
+    if (!anr_validate_config(&s->cfg)) return -1;
 
     n_freqs     = s->cfg.fft_size / 2 + 1;
     s->window   = (float *)malloc((size_t)s->cfg.frame_size * sizeof(float));
@@ -130,7 +130,7 @@ int nr_stream_init(NrStream *s, int sample_rate,
     s->spectrum = (Complex *)malloc((size_t)n_freqs * sizeof(Complex));
 
     /* 3. create denoiser + FFT. */
-    s->nr  = mmse_lsa_create(&s->cfg);
+    s->nr  = anr_create(&s->cfg);
     s->fft = fft_create(s->cfg.fft_size);
 
     if (!s->window || !s->analysis || !s->ola || !s->time_buf ||
@@ -166,7 +166,7 @@ int nr_stream_process(NrStream *s, const float *input, float *output)
         s->time_buf[n] = s->analysis[n] * s->window[n];
 
     fft_forward(s->fft, s->time_buf, s->spectrum);   /* distinct buffers */
-    if (mmse_lsa_process(s->nr, s->spectrum, s->spectrum) != 0)  /* in place */
+    if (anr_process(s->nr, s->spectrum, s->spectrum) != 0)  /* in place */
         return -1;
     fft_inverse(s->fft, s->spectrum, s->time_buf);   /* distinct buffers */
 
@@ -184,7 +184,7 @@ int nr_stream_process(NrStream *s, const float *input, float *output)
 void nr_stream_reset(NrStream *s)
 {
     if (!s || !s->nr) return;
-    mmse_lsa_reset(s->nr);
+    anr_reset(s->nr);
     memset(s->analysis, 0, (size_t)s->cfg.frame_size * sizeof(float));
     memset(s->ola,      0, (size_t)s->cfg.frame_size * sizeof(float));
 }
@@ -192,7 +192,7 @@ void nr_stream_reset(NrStream *s)
 void nr_stream_destroy(NrStream *s)
 {
     if (!s) return;
-    mmse_lsa_destroy(s->nr);
+    anr_destroy(s->nr);
     fft_destroy(s->fft);
     free(s->window);
     free(s->analysis);
@@ -208,7 +208,7 @@ int nr_stream_demo(const float *pcm, int n_samples, float *out)
     NrStream s;
     int i, hop;
 
-    if (nr_stream_init(&s, 16000, MMSE_LSA_NR_BALANCED, 0) != 0)
+    if (nr_stream_init(&s, 16000, ANR_MODE_BALANCED, 0) != 0)
         return -1;
 
     hop = s.cfg.hop_size;                  /* never hard-code the hop */
@@ -226,18 +226,18 @@ int nr_stream_demo(const float *pcm, int n_samples, float *out)
 
 ### 1.2 呼叫順序
 
-1. **建 config**：`mmse_lsa_config_for_mode()`（預設 grid）或
-   `mmse_lsa_config_for_mode_grid()`（指定 grid）。要 stationary 就再套
-   `mmse_lsa_apply_stationary()`。
-2. **驗證**：`mmse_lsa_validate_config()`。這是唯一能在建構前知道 config 被拒絕的方式。
-3. **建構**：`mmse_lsa_create()`（heap）或 `mmse_lsa_get_mem_size()` + `mmse_lsa_init()`
+1. **建 config**：`anr_config_for_mode()`（預設 grid）或
+   `anr_config_for_mode_grid()`（指定 grid）。要 stationary 就再套
+   `anr_apply_stationary()`。
+2. **驗證**：`anr_validate_config()`。這是唯一能在建構前知道 config 被拒絕的方式。
+3. **建構**：`anr_create()`（heap）或 `anr_get_mem_size()` + `anr_init()`
    （caller-owned memory）。同時自備 `FftHandle`。
-4. **每個 hop**：analysis window → `fft_forward()` → `mmse_lsa_process()` →
+4. **每個 hop**：analysis window → `fft_forward()` → `anr_process()` →
    `fft_inverse()` → synthesis window → overlap-add。
-5. **串流邊界**：`mmse_lsa_reset()`，並自行清掉呼叫端的 analysis / OLA buffer。
-6. **結束**：`mmse_lsa_destroy()` + `fft_destroy()`。
+5. **串流邊界**：`anr_reset()`，並自行清掉呼叫端的 analysis / OLA buffer。
+6. **結束**：`anr_destroy()` + `fft_destroy()`。
 
-尺寸一律從 config 或 query API 取得（`cfg.hop_size`、`mmse_lsa_get_n_freqs()`…），
+尺寸一律從 config 或 query API 取得（`cfg.hop_size`、`anr_get_n_freqs()`…），
 **不要硬編任何 hop / n_freqs 常數**。
 
 ### 1.3 兩個永久行為契約
@@ -255,22 +255,22 @@ C library 只能往前走。初始化期間它會**直接 pass-through**（每�
 - 消費端必須預期開頭這段音訊實質上是未處理的；不要把它當成 bug，也不要用縮短
   `num_init_frames` 以外的方式去「修」它。
 - 開頭這段最好是**只有背景噪聲、沒有目標語音**，否則初始噪聲估計會被語音污染。
-- `mmse_lsa_is_initialized()` 會在初始化完成後回傳 `true`；在那之前輸出等同 bypass。
+- `anr_is_initialized()` 會在初始化完成後回傳 `true`；在那之前輸出等同 bypass。
 
 **契約 B — library 永遠不會自動 reset。**
 
-每一次 `mmse_lsa_process()` / `mmse_lsa_process_gain()` 都是**接續既有狀態**繼續跑。
-沒有任何輸入條件會讓它自己清空狀態。`mmse_lsa_reset()` 的所有權在呼叫端：
+每一次 `anr_process()` / `anr_process_gain()` 都是**接續既有狀態**繼續跑。
+沒有任何輸入條件會讓它自己清空狀態。`anr_reset()` 的所有權在呼叫端：
 
 - 換一條新的音訊串流、換檔案、換裝置、場景切換、串流中斷後重連 —— 呼叫端**必須**自己呼叫
-  `mmse_lsa_reset()`，否則新串流會沿用上一條串流的噪聲模型。
+  `anr_reset()`，否則新串流會沿用上一條串流的噪聲模型。
 - reset 之後狀態回到全新的初始化階段：**接下來的 `num_init_frames` 個 frame 會再次
   pass-through**（契約 A 重新套用一次）。
 - reset 只清 library 內部狀態，**不會**清呼叫端的 analysis frame 與 OLA buffer，那兩塊要自己清。
 
 ### 1.4 in-place 與 aliasing 規則
 
-`mmse_lsa_process(self, spectrum_in, spectrum_out)`：
+`anr_process(self, spectrum_in, spectrum_out)`：
 
 - `spectrum_out == spectrum_in`（**完全同一個指標**）是明確支援的 in-place 用法。
 - `spectrum_out` 與 `spectrum_in` **完全不相交**也支援。
@@ -288,28 +288,28 @@ C library 只能往前走。初始化期間它會**直接 pass-through**（每�
 ```c
 #include <stdint.h>
 #include "fft_wrapper.h"
-#include "mmse_lsa_denoiser.h"
-#include "mmse_lsa_types.h"
+#include "anr.h"
+#include "anr_types.h"
 
 /* 實務上可換成 linker section 或平台自有的 memory pool；起始位址必須 16-byte 對齊。 */
 static uint8_t nr_pool[64 * 1024]  __attribute__((aligned(16)));
 static uint8_t fft_pool[16 * 1024] __attribute__((aligned(16)));
 
-int create_static_nr(MmseLsaConfig *cfg,
-                     MmseLsaDenoiser **nr, FftHandle **fft)
+int create_static_nr(AnrConfig *cfg,
+                     AnrDenoiser **nr, FftHandle **fft)
 {
     size_t nr_need, fft_need;
 
     if (!cfg || !nr || !fft) return -1;
-    *cfg = mmse_lsa_config_for_mode(16000, MMSE_LSA_NR_BALANCED);
-    if (!mmse_lsa_validate_config(cfg)) return -1;
+    *cfg = anr_config_for_mode(16000, ANR_MODE_BALANCED);
+    if (!anr_validate_config(cfg)) return -1;
 
-    nr_need  = mmse_lsa_get_mem_size(cfg);      /* 0 == config 被拒絕 */
+    nr_need  = anr_get_mem_size(cfg);      /* 0 == config 被拒絕 */
     fft_need = fft_get_mem_size(cfg->fft_size); /* 0 == fft_size 被拒絕 */
     if (nr_need == 0 || fft_need == 0) return -1;
     if (nr_need > sizeof(nr_pool) || fft_need > sizeof(fft_pool)) return -1;
 
-    *nr  = mmse_lsa_init(nr_pool,  sizeof(nr_pool),  cfg);
+    *nr  = anr_init(nr_pool,  sizeof(nr_pool),  cfg);
     *fft = fft_init(fft_pool, sizeof(fft_pool), cfg->fft_size);
     if (!*nr || !*fft) return -1;
     return 0;
@@ -318,37 +318,37 @@ int create_static_nr(MmseLsaConfig *cfg,
 
 規則：
 
-- pool 起始位址**必須 16-byte 對齊**；未對齊時 `mmse_lsa_init()` / `fft_init()` 回傳 `NULL`
+- pool 起始位址**必須 16-byte 對齊**；未對齊時 `anr_init()` / `fft_init()` 回傳 `NULL`
   （不會寫入你的 buffer）。
 - `mem_size` 小於 `_get_mem_size()` 的需求時回傳 `NULL`。
 - 需求量只跟 config 有關，可在啟動時算一次；**config 改了就要重新查詢**。
-- 對 static instance 呼叫 `mmse_lsa_destroy()` 是真正的 no-op，呼叫幾次都安全；pool 的生命
+- 對 static instance 呼叫 `anr_destroy()` 是真正的 no-op，呼叫幾次都安全；pool 的生命
   週期完全由呼叫端管理。
-- window、OLA、PCM ring、application scratch **不包含**在 `mmse_lsa_get_mem_size()` 裡，要自己算。
+- window、OLA、PCM ring、application scratch **不包含**在 `anr_get_mem_size()` 裡，要自己算。
 - 上例中 pool 的大小是示範值。實際需求請用 4.2 節的量測表對照，並**在程式裡用
   `_get_mem_size()` 的回傳值檢查**，不要把數字寫死。
 
-### 1.6 只要 gain、不要套用：`mmse_lsa_process_gain()`
+### 1.6 只要 gain、不要套用：`anr_process_gain()`
 
 當 NR 是串接鏈的一環（例如上游有其他抑制模組、下游還要再合併一次增益）時，用這支 API：
 它照常更新內部狀態並算出 per-bin gain，但**不會**把 gain 套到頻譜上。
 
 ```c
 #include "fft_wrapper.h"
-#include "mmse_lsa_denoiser.h"
-#include "mmse_lsa_types.h"
+#include "anr.h"
+#include "anr_types.h"
 
-/* gain_out 長度必須是 mmse_lsa_get_n_freqs(nr)；extra_noise_psd 可為 NULL。 */
-int nr_gain_only(MmseLsaDenoiser *nr, const Complex *spectrum_in,
+/* gain_out 長度必須是 anr_get_n_freqs(nr)；extra_noise_psd 可為 NULL。 */
+int nr_gain_only(AnrDenoiser *nr, const Complex *spectrum_in,
                  const float *extra_noise_psd, float *gain_out)
 {
-    return mmse_lsa_process_gain(nr, spectrum_in, extra_noise_psd, gain_out);
+    return anr_process_gain(nr, spectrum_in, extra_noise_psd, gain_out);
 }
 ```
 
 - `extra_noise_psd`：長度 `n_freqs` 的額外噪聲 PSD，**必須與 `|spectrum_in|²` 同一個線性尺度**。
   傳 `NULL` 時行為與純噪聲版本完全相同。
-- `gain_out`：可傳 `NULL` 省掉一次複製，之後用 `mmse_lsa_get_gain()` 讀同一份結果。
+- `gain_out`：可傳 `NULL` 省掉一次複製，之後用 `anr_get_gain()` 讀同一份結果。
 - 回傳的 gain 是線性值，範圍 `[g_min, 1]`（`g_min` 由 `g_min_db` 決定）。
 - 契約 A／B 同樣適用：初始化期間這支 API 一樣回傳全 `1.0` 的 gain，而且一樣不會自動 reset。
 
@@ -356,13 +356,13 @@ int nr_gain_only(MmseLsaDenoiser *nr, const Complex *spectrum_in,
 
 | 函式 | 用途 | 什麼時候呼叫 |
 |---|---|---|
-| `mmse_lsa_get_hop_size()` / `mmse_lsa_get_frame_size()` / `mmse_lsa_get_n_freqs()` | 取得實際尺寸 | 配置 buffer 時；避免硬編 |
-| `mmse_lsa_get_latency()` | 頻域 core 本身的延遲 | 一律回 `0`；**不含**呼叫端 framing／OLA 的延遲，整體延遲要自己算 |
-| `mmse_lsa_is_initialized()` | 初始化 pass-through 是否結束 | 想知道輸出何時開始真的有降噪時 |
-| `mmse_lsa_get_spp()` / `mmse_lsa_get_noise_psd()` / `mmse_lsa_get_gain()` | 讀最近一個 frame 的 per-bin 陣列 | 除錯／視覺化 |
-| `mmse_lsa_debug_status()` | 一次取得聚合狀態（見下） | 板上監看，建議每秒一次 |
+| `anr_get_hop_size()` / `anr_get_frame_size()` / `anr_get_n_freqs()` | 取得實際尺寸 | 配置 buffer 時；避免硬編 |
+| `anr_get_latency()` | 頻域 core 本身的延遲 | 一律回 `0`；**不含**呼叫端 framing／OLA 的延遲，整體延遲要自己算 |
+| `anr_is_initialized()` | 初始化 pass-through 是否結束 | 想知道輸出何時開始真的有降噪時 |
+| `anr_get_spp()` / `anr_get_noise_psd()` / `anr_get_gain()` | 讀最近一個 frame 的 per-bin 陣列 | 除錯／視覺化 |
+| `anr_debug_status()` | 一次取得聚合狀態（見下） | 板上監看，建議每秒一次 |
 
-`mmse_lsa_debug_status()` 填入 `MmseLsaDebugStatus`：`initialized`、`mean_gain_db`、
+`anr_debug_status()` 填入 `AnrDebugStatus`：`initialized`、`mean_gain_db`、
 `min_gain_db`、`mean_spp`、`noise_floor_db`。它是唯讀的，不會擾動任何處理狀態；不呼叫就
 完全沒有成本。
 
@@ -392,7 +392,7 @@ make -C c_impl clean
 取得產出路徑：
 
 ```bash
-make -s -C c_impl print-lib-path   # libmmse_lsa.a 的絕對路徑
+make -s -C c_impl print-lib-path   # libanr.a 的絕對路徑
 make -s -C c_impl print-bin-dir    # 執行檔所在目錄
 make -C c_impl publish             # 穩定的 dist/<backend>/current/ 交付路徑
 ```
@@ -444,28 +444,28 @@ cc -std=gnu99 app.c \
 
 | 函式 | 成功時 | 失敗／邊界時 |
 |---|---|---|
-| `mmse_lsa_create(config)` | 回傳非 `NULL` handle | 回傳 `NULL`：`config == NULL`、config 未通過驗證、記憶體配置失敗 |
-| `mmse_lsa_get_mem_size(config)` | 回傳需求 byte 數（> 0） | 回傳 **`0`**：`config == NULL`、config 未通過驗證、尺寸計算溢位 |
-| `mmse_lsa_init(mem, mem_size, config)` | 回傳指向 `mem` 內部的 handle | 回傳 `NULL`：`mem == NULL`、`mem` 未 16-byte 對齊、`mem_size` 不足、config 未通過驗證 |
-| `mmse_lsa_destroy(self)` | `void` | `self == NULL` 安靜跳過；static instance 為 no-op 且可重複呼叫；**heap instance 只能呼叫一次** |
-| `mmse_lsa_process(...)` | 回傳 `0` | 回傳 `-1`：`self` / `spectrum_in` / `spectrum_out` 任一為 `NULL` |
-| `mmse_lsa_process_gain(...)` | 回傳 `0` | 回傳 `-1`：`self` 或 `spectrum_in` 為 `NULL`。`extra_noise_psd` 與 `gain_out` 為 `NULL` 是合法用法，不是錯誤 |
-| `mmse_lsa_reset(self)` | `void` | `self == NULL` **安靜 no-op**，沒有任何回報 |
-| `mmse_lsa_get_hop_size()` / `get_frame_size()` / `get_n_freqs()` | 回傳正整數 | handle 為 `NULL` 時回傳 **`0`** |
-| `mmse_lsa_get_latency()` | 一律回傳 `0` | handle 為 `NULL` 也回傳 `0`。`0` 是正常值，**不是**錯誤碼 |
-| `mmse_lsa_is_initialized()` | `true` / `false` | handle 為 `NULL` 時回傳 `false` |
-| `mmse_lsa_get_spp()` / `get_noise_psd()` / `get_gain()` | 回傳唯讀陣列指標，並在 `n_freqs != NULL` 時寫入長度 | handle 為 `NULL` 時回傳 `NULL` 並把 `*n_freqs` 設為 `0`。`n_freqs` 本身可以傳 `NULL` |
-| `mmse_lsa_debug_status(self, out)` | `void`，填滿 `*out` | `out == NULL` 時**什麼都不做**；`self == NULL` 時把 `*out` **全部歸零**（不會寫入 NaN） |
-| `mmse_lsa_validate_config(config)` | 回傳 `true` | 回傳 `false`：`config == NULL`，或任何欄位越界／為 NaN／為 Inf |
-| `mmse_lsa_default_config()` / `_for_grid()` / `mmse_lsa_config_for_mode()` / `_for_mode_grid()` | 以值回傳 `MmseLsaConfig` | **沒有錯誤回傳值**。傳入不支援的 sample rate 時會產生一個 `fft_size == 0` 的無效 config，必須靠 `mmse_lsa_validate_config()` 才會發現 |
-| `mmse_lsa_apply_stationary(config)` | `void`，就地修改 | **沒有 `NULL` 檢查**，傳 `NULL` 會直接解參考造成當機 |
-| `mmse_lsa_default_fft_size(sample_rate)` | 回傳預設 FFT 尺寸 | 不支援的 sample rate 回傳 **`0`** |
-| `mmse_lsa_retime_alpha()` / `_alpha_ref()` | 回傳換算後的係數 | 參數越界時**原封不動回傳輸入值**，不報錯 |
-| `mmse_lsa_retime_frames()` / `_frames_ref()` | 回傳換算後的 frame 數 | 參數無效或結果溢位時回傳 **`0`** |
+| `anr_create(config)` | 回傳非 `NULL` handle | 回傳 `NULL`：`config == NULL`、config 未通過驗證、記憶體配置失敗 |
+| `anr_get_mem_size(config)` | 回傳需求 byte 數（> 0） | 回傳 **`0`**：`config == NULL`、config 未通過驗證、尺寸計算溢位 |
+| `anr_init(mem, mem_size, config)` | 回傳指向 `mem` 內部的 handle | 回傳 `NULL`：`mem == NULL`、`mem` 未 16-byte 對齊、`mem_size` 不足、config 未通過驗證 |
+| `anr_destroy(self)` | `void` | `self == NULL` 安靜跳過；static instance 為 no-op 且可重複呼叫；**heap instance 只能呼叫一次** |
+| `anr_process(...)` | 回傳 `0` | 回傳 `-1`：`self` / `spectrum_in` / `spectrum_out` 任一為 `NULL` |
+| `anr_process_gain(...)` | 回傳 `0` | 回傳 `-1`：`self` 或 `spectrum_in` 為 `NULL`。`extra_noise_psd` 與 `gain_out` 為 `NULL` 是合法用法，不是錯誤 |
+| `anr_reset(self)` | `void` | `self == NULL` **安靜 no-op**，沒有任何回報 |
+| `anr_get_hop_size()` / `get_frame_size()` / `get_n_freqs()` | 回傳正整數 | handle 為 `NULL` 時回傳 **`0`** |
+| `anr_get_latency()` | 一律回傳 `0` | handle 為 `NULL` 也回傳 `0`。`0` 是正常值，**不是**錯誤碼 |
+| `anr_is_initialized()` | `true` / `false` | handle 為 `NULL` 時回傳 `false` |
+| `anr_get_spp()` / `get_noise_psd()` / `get_gain()` | 回傳唯讀陣列指標，並在 `n_freqs != NULL` 時寫入長度 | handle 為 `NULL` 時回傳 `NULL` 並把 `*n_freqs` 設為 `0`。`n_freqs` 本身可以傳 `NULL` |
+| `anr_debug_status(self, out)` | `void`，填滿 `*out` | `out == NULL` 時**什麼都不做**；`self == NULL` 時把 `*out` **全部歸零**（不會寫入 NaN） |
+| `anr_validate_config(config)` | 回傳 `true` | 回傳 `false`：`config == NULL`，或任何欄位越界／為 NaN／為 Inf |
+| `anr_default_config()` / `_for_grid()` / `anr_config_for_mode()` / `_for_mode_grid()` | 以值回傳 `AnrConfig` | **沒有錯誤回傳值**。傳入不支援的 sample rate 時會產生一個 `fft_size == 0` 的無效 config，必須靠 `anr_validate_config()` 才會發現 |
+| `anr_apply_stationary(config)` | `void`，就地修改 | **沒有 `NULL` 檢查**，傳 `NULL` 會直接解參考造成當機 |
+| `anr_default_fft_size(sample_rate)` | 回傳預設 FFT 尺寸 | 不支援的 sample rate 回傳 **`0`** |
+| `anr_retime_alpha()` / `_alpha_ref()` | 回傳換算後的係數 | 參數越界時**原封不動回傳輸入值**，不報錯 |
+| `anr_retime_frames()` / `_frames_ref()` | 回傳換算後的 frame 數 | 參數無效或結果溢位時回傳 **`0`** |
 
 要點：
 
-- **`mmse_lsa_validate_config()` 是呼叫端唯一能得知「config 為什麼被拒絕」的手段。**
+- **`anr_validate_config()` 是呼叫端唯一能得知「config 為什麼被拒絕」的手段。**
   `create` / `init` / `get_mem_size` 三支都會在內部再驗一次，但它們只會回 `NULL` / `0`，
   無法區分是 config 不合法還是記憶體不足。請在建構前自己先驗一次。
 - config constructor 全部沒有錯誤通道；「不支援的 sample rate」要到 validate 才會現形。
@@ -476,13 +476,13 @@ cc -std=gnu99 app.c \
 
 ## 4. Config 欄位參考
 
-`MmseLsaConfig`（`c_impl/include/mmse_lsa_types.h`）目前有 46 個欄位。以下完整說明
+`AnrConfig`（`c_impl/include/anr_types.h`）目前有 46 個欄位。以下完整說明
 產品整合會直接調整的 grid、SPP、MCRA、gain 與 stationary 欄位；低頻語音 guard
 及預設關閉的研究欄位則在 4.2 的預設摘要與 header 中列出，避免把實驗開關誤當成
 一般調參介面。
 「預設值」欄若標示為**依 grid 而定**，代表 constructor 會依實際 hop 換算，實測值見 4.2 節。
 
-**通則**：instance 建立後，改動你手上那份 `MmseLsaConfig` 不會有任何效果（內部已經複製並
+**通則**：instance 建立後，改動你手上那份 `AnrConfig` 不會有任何效果（內部已經複製並
 衍生出尺寸與狀態）。要換 sample rate、grid、`L` 或 `num_init_frames`，必須 destroy 後重建。
 
 ### 4.1 Grid 欄位（4 個）
@@ -494,7 +494,7 @@ cc -std=gnu99 app.c \
 | `frame_size` | analysis frame 長度 | **必須等於 `fft_size`**（不做 zero padding） | 等於 `fft_size` |
 | `hop_size` | 每次前進的樣本數 | **必須等於 `frame_size / 2`**（固定 50% overlap） | `fft_size / 2` |
 
-合法 grid（實測 `mmse_lsa_validate_config()`，其餘組合一律被拒）：
+合法 grid（實測 `anr_validate_config()`，其餘組合一律被拒）：
 
 | sample_rate | fft_size = frame_size | hop_size | hop 長度 | n_freqs | 狀態 |
 |---:|---:|---:|---:|---:|---|
@@ -504,7 +504,7 @@ cc -std=gnu99 app.c \
 | 16000 | 512 | 256 | 16.000 ms | 257 | 支援的替代 grid |
 | 48000 | 1024 | 512 | 10.667 ms | 513 | 唯一 grid |
 
-要用替代 grid，改用 `mmse_lsa_config_for_mode_grid(sample_rate, fft_size, mode)`。
+要用替代 grid，改用 `anr_config_for_mode_grid(sample_rate, fft_size, mode)`。
 **何時改**：hop 越短延遲越低、每秒運算次數越多；hop 越長頻率解析度越好、延遲越高。
 除此之外沒有理由動它。
 
@@ -545,7 +545,7 @@ aggressive −28/0.45/−12/1.3）；上表的時間常數與低頻語音 guard 
 
 記憶體需求（KISS backend，預設建置參數，實測 byte 數）：
 
-| grid | `mmse_lsa_get_mem_size()` | 加上 `-DUSE_FAST_PERCENTILE` | `fft_get_mem_size()` |
+| grid | `anr_get_mem_size()` | 加上 `-DUSE_FAST_PERCENTILE` | `fft_get_mem_size()` |
 |---|---:|---:|---:|
 | 8k/128 | 29 888 | 23 232 | 4 688 |
 | 8k/256 | 35 552 | 28 736 | 8 784 |
@@ -553,7 +553,7 @@ aggressive −28/0.45/−12/1.3）；上表的時間常數與低頻語音 guard 
 | 16k/512 | 69 856 | 56 384 | 16 976 |
 | 48k/1024 | 183 616 | 144 512 | 33 360 |
 
-（低頻語音 guard 的 frame 純量狀態讓每個 grid 的 `mmse_lsa_get_mem_size()` 各多 112 B，
+（低頻語音 guard 的 frame 純量狀態讓每個 grid 的 `anr_get_mem_size()` 各多 112 B，
 `fft_get_mem_size()` 不變。）
 
 需求量同時受 `fft_size`、`L`、`num_init_frames` 與建置參數影響，上表僅供規劃 pool 大小時
@@ -610,11 +610,11 @@ MCRA broadband gate 內部用來計數的 `spp > 0.5` 則是另一個分類門�
 ### 4.7 內容保留（stationary）疊加參數（5 個）
 
 這五個欄位是與 strength 正交的「內容保留」疊加層，預設全部關閉。正常情況下請整組交給
-`mmse_lsa_apply_stationary()` 設定，不要單獨手動打開。
+`anr_apply_stationary()` 設定，不要單獨手動打開。
 
 | 欄位 | 意義 | 合法範圍 | 預設 | 何時調、往哪個方向 |
 |---|---|---|---|---|
-| `stationary_floor` | 是否啟用「只移除穩態噪聲底」的增益下限 | `bool`（不做範圍檢查） | `false` | 由 `mmse_lsa_apply_stationary()` 設為 `true` |
+| `stationary_floor` | 是否啟用「只移除穩態噪聲底」的增益下限 | `bool`（不做範圍檢查） | `false` | 由 `anr_apply_stationary()` 設為 `true` |
 | `stationary_floor_exponent` | 上述下限的陡峭度 | 有限值，`[0.5, 8.0]` | 1.0（stationary 設為 2.0） | **調大**：抑噪更深、內容保留變少。**調小**：保留更多非穩態內容（音樂／瞬態） |
 | `stationary_floor_beta` | 上述下限的偏移量 | 有限值，**`> 0` 且 `<= 16.0`** | 1.0 | **調大**：抑噪更深。**調小**：更保守。不確定就維持 1.0 |
 | `scene_change_tonal_veto` | 低頻呈現音調性時，否決場景重置 | `bool`（不做範圍檢查） | `false`（stationary 設為 `true`） | 素材含音樂時開啟，可避免音樂被當成場景變化 |
@@ -623,9 +623,9 @@ MCRA broadband gate 內部用來計數的 `spp > 0.5` 則是另一個分類門�
 ### 4.8 hop 換算輔助函式
 
 如果你在某個 grid 上手調出一組係數，想在另一個 grid 上得到相同的實際時間常數，用
-`mmse_lsa_retime_alpha_ref(alpha, sample_rate, hop_size, ref_hop_seconds)`（平滑係數）與
-`mmse_lsa_retime_frames_ref(frames, sample_rate, hop_size, ref_hop_seconds)`（frame 計數）；
-`mmse_lsa_retime_alpha()` / `mmse_lsa_retime_frames()` 是 10 ms 參考 hop 的簡寫。
+`anr_retime_alpha_ref(alpha, sample_rate, hop_size, ref_hop_seconds)`（平滑係數）與
+`anr_retime_frames_ref(frames, sample_rate, hop_size, ref_hop_seconds)`（frame 計數）；
+`anr_retime_alpha()` / `anr_retime_frames()` 是 10 ms 參考 hop 的簡寫。
 兩者在參數無效時**不會報錯**（見第 3 節），呼叫前請自行確認輸入。
 
 ---
@@ -634,14 +634,14 @@ MCRA broadband gate 內部用來計數的 `spp > 0.5` 則是另一個分類門�
 
 ### 5.1 四個 strength preset
 
-用 `mmse_lsa_config_for_mode(sample_rate, mode)` 取得。與 grid 無關的差異：
+用 `anr_config_for_mode(sample_rate, mode)` 取得。與 grid 無關的差異：
 
 | Preset | `g_min_db` | `q` | `xi_min_db` | `noise_over_subtraction` | 適用方向 |
 |---|---:|---:|---:|---:|---|
-| `MMSE_LSA_NR_MILD` | -20.0 | 0.58 | -10.0 | 1.2 | 最保守，優先保留語音細節 |
-| `MMSE_LSA_NR_MODERATE` | -23.0 | 0.54 | -10.0 | 1.3 | mild 與 balanced 之間 |
-| `MMSE_LSA_NR_BALANCED` | -25.0 | 0.52 | -10.0 | 1.4 | 預設，語音品質與抑噪平衡 |
-| `MMSE_LSA_NR_AGGRESSIVE` | -28.0 | 0.45 | -12.0 | 1.3 | 抑噪最深，較可能犧牲語音細節 |
+| `ANR_MODE_MILD` | -20.0 | 0.58 | -10.0 | 1.2 | 最保守，優先保留語音細節 |
+| `ANR_MODE_MODERATE` | -23.0 | 0.54 | -10.0 | 1.3 | mild 與 balanced 之間 |
+| `ANR_MODE_BALANCED` | -25.0 | 0.52 | -10.0 | 1.4 | 預設，語音品質與抑噪平衡 |
+| `ANR_MODE_AGGRESSIVE` | -28.0 | 0.45 | -12.0 | 1.3 | 抑噪最深，較可能犧牲語音細節 |
 
 四個 preset 只覆寫上面四個深度欄位。DD、MCRA tracker、gain attack/decay 與低頻語音
 guard 的**設定值**完全共用；以預設 16 kHz / 256 grid 為例，`alpha_d=0.921954`、
@@ -651,11 +651,11 @@ guard 的**設定值**完全共用；以預設 16 kHz / 256 grid 為例，`alpha
 `q = 0.52`，生效值為 `value + (q − 0.52)`，所以隨 preset 的 `q` 自動位移（mild 0.61、
 moderate 0.57、balanced 0.55、aggressive 0.48）。理由是純噪聲幀的語音帶 SPP 平均值本來就
 落在 `q`；若固定用 0.55，這道閘在 mild 會永遠開著、在 aggressive 會關掉一半。生效值可用
-`mmse_lsa_get_speech_protect_frame_threshold()` 讀回。
+`anr_get_speech_protect_frame_threshold()` 讀回。
 
 ### 5.2 stationary 內容保留模式
 
-`mmse_lsa_apply_stationary(&config)` 是疊加在任一 strength preset 之上的**正交**模式，
+`anr_apply_stationary(&config)` 是疊加在任一 strength preset 之上的**正交**模式，
 用於「只削掉穩態噪聲底、盡量保留語音／音樂／瞬態」的素材。它不是第五種 strength preset。
 
 它會就地修改（實測，16 kHz / 256 grid，套用於 `balanced` 之上）：
@@ -674,16 +674,16 @@ moderate 0.57、balanced 0.55、aggressive 0.48）。理由是純噪聲幀的語
 | `scene_change_tonal_veto` | `true` |
 | `scene_change_lo_flatness_max` | 0.4 |
 
-> **注意（實測）**：`mmse_lsa_apply_stationary()` **會無條件覆寫 `g_min_db` 與 `xi_min_db`**。
+> **注意（實測）**：`anr_apply_stationary()` **會無條件覆寫 `g_min_db` 與 `xi_min_db`**。
 > 因此 `mild + stationary`、`moderate + stationary`、`aggressive + stationary` 的
 > `g_min_db` 全部都是 -30.0、`xi_min_db` 全部都是 -22.0；strength preset 只剩
 > `q` 與 `noise_over_subtraction` 保有差異，時間常數原本就共用。若你要的是
 > 「mild 的增益下限 + stationary 行為」，
-> 必須在呼叫 `mmse_lsa_apply_stationary()` **之後**自己把 `g_min_db` 改回去，
-> 並重新跑一次 `mmse_lsa_validate_config()`。
+> 必須在呼叫 `anr_apply_stationary()` **之後**自己把 `g_min_db` 改回去，
+> 並重新跑一次 `anr_validate_config()`。
 
-呼叫順序固定為：先 `mmse_lsa_config_for_mode()`，再 `mmse_lsa_apply_stationary()`，
-最後 `mmse_lsa_validate_config()`。
+呼叫順序固定為：先 `anr_config_for_mode()`，再 `anr_apply_stationary()`，
+最後 `anr_validate_config()`。
 
 ### 5.3 建議調參順序
 
@@ -704,8 +704,8 @@ moderate 0.57、balanced 0.55、aggressive 0.48）。理由是純噪聲幀的語
 
 | 症狀 | 先確認 | 建議動作 |
 |---|---|---|
-| 開頭完全沒有降噪 | 是否還在初始化期（`mmse_lsa_is_initialized()`） | 這是契約 A 的正常行為；確認開頭是純噪聲段 |
-| 換檔案後沿用了上一檔的噪聲模型 | 是否呼叫了 `mmse_lsa_reset()` | 契約 B：串流邊界必須自己 reset，並清掉呼叫端的 analysis／OLA buffer |
+| 開頭完全沒有降噪 | 是否還在初始化期（`anr_is_initialized()`） | 這是契約 A 的正常行為；確認開頭是純噪聲段 |
+| 換檔案後沿用了上一檔的噪聲模型 | 是否呼叫了 `anr_reset()` | 契約 B：串流邊界必須自己 reset，並清掉呼叫端的 analysis／OLA buffer |
 | 語音變悶、細節掉光 | preset 太強、`g_min_db` 太低 | 改 `mild` / `moderate`，或把 `g_min_db` 調高 |
 | Musical noise（零星水聲） | 增益變動太快 | 提高 `alpha_decay`；必要時提高 `alpha_xi` |
 | 音樂／瞬態被吃掉 | 是否啟用 stationary | 疊 `stationary`；必要時降低 `stationary_floor_exponent` |
@@ -720,7 +720,7 @@ moderate 0.57、balanced 0.55、aggressive 0.48）。理由是純噪聲幀的語
 
 ## 6. 依賴附錄：共用 FFT 層
 
-`c_impl/include/mmse_lsa_denoiser.h` **直接 `#include "fft_wrapper.h"`**，這個 header 來自
+`c_impl/include/anr.h` **直接 `#include "fft_wrapper.h"`**，這個 header 來自
 `../audio_common/include/`。沒有它，NR 的 header 連編譯都過不了；`Complex` 型別、以及
 per-hop 必須用到的 FFT，全部由這一層提供。
 
@@ -733,7 +733,7 @@ typedef struct {
 } Complex;
 ```
 
-`mmse_lsa_process()` 的輸入與輸出都是 `Complex[n_freqs]`，其中 `n_freqs == fft_size / 2 + 1`。
+`anr_process()` 的輸入與輸出都是 `Complex[n_freqs]`，其中 `n_freqs == fft_size / 2 + 1`。
 
 ### 6.2 需要用到的函式
 
@@ -764,9 +764,9 @@ typedef struct {
 | 1024 | 33 360 |
 
 FFT 的 static memory 與 NR 的是**兩塊獨立的 pool**，各自查詢、各自 16-byte 對齊；
-`mmse_lsa_get_mem_size()` **不包含** FFT 的需求。
+`anr_get_mem_size()` **不包含** FFT 的需求。
 
-### 6.4 non-aliasing（`restrict`）要求 —— 與 `mmse_lsa_process()` 相反
+### 6.4 non-aliasing（`restrict`）要求 —— 與 `anr_process()` 相反
 
 `fft_forward()` 與 `fft_inverse()` 的輸入與輸出指標都宣告為 `restrict`：
 
@@ -774,13 +774,13 @@ FFT 的 static memory 與 NR 的是**兩塊獨立的 pool**，各自查詢、各
 - 需要「就地」語意時，請改用 `fft_forward_scratch()` / `fft_inverse_scratch()`：它們允許
   呼叫端的輸入 buffer 在回傳後內容變成未定義，適合傳入本來就要丟棄的 scratch buffer。
 
-對照之下，`mmse_lsa_process()` **明確允許** `spectrum_out == spectrum_in` 的 in-place 呼叫
+對照之下，`anr_process()` **明確允許** `spectrum_out == spectrum_in` 的 in-place 呼叫
 （見 1.4 節）。兩層的規則不同，不要互相套用：
 
 | | 允許同一個指標 | 允許部分重疊 |
 |---|---|---|
-| `mmse_lsa_process()` | 是 | 否 |
+| `anr_process()` | 是 | 否 |
 | `fft_forward()` / `fft_inverse()` | 否 | 否 |
 
 1.1 節的範例正是照這個規則寫的：FFT 的時域 buffer 與頻譜 buffer 始終是兩塊不同的記憶體，
-而 `mmse_lsa_process()` 就地作用在頻譜 buffer 上。
+而 `anr_process()` 就地作用在頻譜 buffer 上。

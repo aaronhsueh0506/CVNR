@@ -26,65 +26,65 @@ pre code{background:none;padding:0}
 <h1>NR C library(MMSE-LSA denoiser)— <code>lib/nr/c_impl</code></h1>
 
 <h2>概要</h2>
-<p><code>MmseLsaDenoiser</code>(V3-2)是 OM-LSA 族降噪核心:Ephraim-Malah 1985 MMSE-LSA 增益 + Cohen&amp;Berdugo 2001 MCRA 噪聲估計 + SPP。<b>頻域 I/O</b>:輸入/輸出都是 <code>Complex[n_freqs]</code> 頻譜,window / forward FFT / inverse FFT / OLA 全由呼叫端負責(mono pipeline 直接餵 AEC 的 <code>ctx.error_spec</code>,一次 FFT 走完 AEC+NR+RES 三級)。純 DSP、無 NN/NPU 成分;全部 state 收在 <code>MmseLsaDenoiser</code> C struct(caller pool 或 heap)。</p>
-<p>mono pipeline(<code>pipelines/mono_aec_nr_res/audio_pipeline.c</code>)實際使用的 seam 是 <b><code>mmse_lsa_process_gain()</code> + <code>mmse_lsa_get_gain()</code></b>:算出每 bin 增益但不套用,並可把外部殘留回音 PSD R² 折進噪聲底(unified gain,ξ = S²/(N²+R²));MCRA 追蹤器只吃乾淨功率,R² 不污染噪聲估計。下游再取 <code>g_total = min(G_nr, G_res)</code>。</p>
+<p><code>AnrDenoiser</code>(V3-2)是 OM-LSA 族降噪核心:Ephraim-Malah 1985 MMSE-LSA 增益 + Cohen&amp;Berdugo 2001 MCRA 噪聲估計 + SPP。<b>頻域 I/O</b>:輸入/輸出都是 <code>Complex[n_freqs]</code> 頻譜,window / forward FFT / inverse FFT / OLA 全由呼叫端負責(mono pipeline 直接餵 AEC 的 <code>ctx.error_spec</code>,一次 FFT 走完 AEC+NR+RES 三級)。純 DSP、無 NN/NPU 成分;全部 state 收在 <code>AnrDenoiser</code> C struct(caller pool 或 heap)。</p>
+<p>mono pipeline(<code>pipelines/mono_aec_nr_res/audio_pipeline.c</code>)實際使用的 seam 是 <b><code>anr_process_gain()</code> + <code>anr_get_gain()</code></b>:算出每 bin 增益但不套用,並可把外部殘留回音 PSD R² 折進噪聲底(unified gain,ξ = S²/(N²+R²));MCRA 追蹤器只吃乾淨功率,R² 不污染噪聲估計。下游再取 <code>g_total = min(G_nr, G_res)</code>。</p>
 <div class="tblwrap"><table>
-<tr><th>sr</th><th>fft_size(白名單)</th><th>hop</th><th>n_freqs</th><th>L(balanced 實測)</th><th>num_init_frames</th><th>mmse_lsa_get_mem_size(balanced 實測)</th></tr>
+<tr><th>sr</th><th>fft_size(白名單)</th><th>hop</th><th>n_freqs</th><th>L(balanced 實測)</th><th>num_init_frames</th><th>anr_get_mem_size(balanced 實測)</th></tr>
 <tr><td>8000</td><td>128(預設)/ 256</td><td>64 / 128</td><td>65 / 129</td><td>64 / 32</td><td>25 / 13</td><td>29,888 / 35,552 B</td></tr>
 <tr><td>16000</td><td>256(預設)/ 512</td><td>128 / 256</td><td>129 / 257</td><td>64 / 32</td><td>25 / 13</td><td>58,304 / 69,856 B</td></tr>
 <tr><td>48000</td><td>1024</td><td>512</td><td>513</td><td>48</td><td>19</td><td>183,616 B</td></tr>
 </table></div>
-<p class="small">格點規則:frame = fft、hop = frame/2、無 zero-padding(<code>mmse_lsa_validate_config()</code> 強制)。常數重定時:大多數係數以 10 ms hop 為著作基準(<code>mmse_lsa_retime_alpha/_frames</code>),少數(<code>alpha_xi</code>、<code>alpha_attack</code>、<code>L=32</code>)以 16 ms 為基準(<code>*_ref(..., 0.016)</code>)——兩個著作格點並存是刻意的,詳見 <code>mmse_lsa_types.h</code> 各欄註解。</p>
-<p><b>Strength modes</b>(<code>MmseLsaNrMode</code>;g_min 為振幅 dB,/20 慣例):</p>
+<p class="small">格點規則:frame = fft、hop = frame/2、無 zero-padding(<code>anr_validate_config()</code> 強制)。常數重定時:大多數係數以 10 ms hop 為著作基準(<code>anr_retime_alpha/_frames</code>),少數(<code>alpha_xi</code>、<code>alpha_attack</code>、<code>L=32</code>)以 16 ms 為基準(<code>*_ref(..., 0.016)</code>)——兩個著作格點並存是刻意的,詳見 <code>anr_types.h</code> 各欄註解。</p>
+<p><b>Strength modes</b>(<code>AnrMode</code>;g_min 為振幅 dB,/20 慣例):</p>
 <div class="tblwrap"><table>
 <tr><th>mode</th><th>g_min_db</th><th>q</th><th>xi_min_db</th><th>over-subtraction</th><th>備註</th></tr>
-<tr><td><code>MMSE_LSA_NR_MILD</code></td><td>−20</td><td>0.58</td><td>−10</td><td>1.2</td><td>最溫和,保語音細節</td></tr>
-<tr><td><code>MMSE_LSA_NR_MODERATE</code></td><td>−23</td><td>0.54</td><td>−10</td><td>1.3</td><td>mild ↔ balanced 之間</td></tr>
-<tr><td><code>MMSE_LSA_NR_BALANCED</code></td><td>−25</td><td>0.52</td><td>−10</td><td>1.4</td><td>預設(= <code>mmse_lsa_default_config</code>)</td></tr>
-<tr><td><code>MMSE_LSA_NR_AGGRESSIVE</code></td><td>−28</td><td>0.45</td><td>−12</td><td>1.3</td><td>最深抑制</td></tr>
+<tr><td><code>ANR_MODE_MILD</code></td><td>−20</td><td>0.58</td><td>−10</td><td>1.2</td><td>最溫和,保語音細節</td></tr>
+<tr><td><code>ANR_MODE_MODERATE</code></td><td>−23</td><td>0.54</td><td>−10</td><td>1.3</td><td>mild ↔ balanced 之間</td></tr>
+<tr><td><code>ANR_MODE_BALANCED</code></td><td>−25</td><td>0.52</td><td>−10</td><td>1.4</td><td>預設(= <code>anr_default_config</code>)</td></tr>
+<tr><td><code>ANR_MODE_AGGRESSIVE</code></td><td>−28</td><td>0.45</td><td>−12</td><td>1.3</td><td>最深抑制</td></tr>
 </table></div>
 <p class="small">幀級語音保護門檻 0.55 著作於 balanced 的 q=0.52，生效值為 <code>0.55+(q−0.52)</code>；四級依序為 0.61／0.57／0.55／0.48。</p>
-<p class="small">另有正交的內容保留 overlay <code>mmse_lsa_apply_stationary()</code>(Wiener 下界 (ξ/(β+ξ))^p,p=2;只移除穩態噪聲底,保音樂/瞬態)。</p>
+<p class="small">另有正交的內容保留 overlay <code>anr_apply_stationary()</code>(Wiener 下界 (ξ/(β+ξ))^p,p=2;只移除穩態噪聲底,保音樂/瞬態)。</p>
 
 <h2>API 用法</h2>
-<pre><code>#include "mmse_lsa_denoiser.h"
+<pre><code>#include "anr.h"
 
 /* mono pipeline 的實際組態:canonical 強度 preset + pipeline overlay */
-MmseLsaConfig cfg = mmse_lsa_config_for_mode_grid(16000, 512, MMSE_LSA_NR_BALANCED);
-cfg.L = mmse_lsa_retime_frames(150, 16000, cfg.hop_size);
+AnrConfig cfg = anr_config_for_mode_grid(16000, 512, ANR_MODE_BALANCED);
+cfg.L = anr_retime_frames(150, 16000, cfg.hop_size);
 cfg.alpha_decay = cfg.alpha_g;
 
-size_t bytes = mmse_lsa_get_mem_size(&amp;cfg);        /* 0 = config 無效 */
-MmseLsaDenoiser* d = mmse_lsa_init(pool, bytes, &amp;cfg);   /* 或 mmse_lsa_create(&amp;cfg) */
+size_t bytes = anr_get_mem_size(&amp;cfg);        /* 0 = config 無效 */
+AnrDenoiser* d = anr_init(pool, bytes, &amp;cfg);   /* 或 anr_create(&amp;cfg) */
 
 for (每個 hop) {
     /* 呼叫端已有 E(f) = AecResContext.error_spec(或自行 window+FFT) */
     /* extra = ctx.r2[k] / 32768²(unified gain);純 NR 傳 NULL */
-    mmse_lsa_process_gain(d, error_spec, extra_noise_psd, NULL);
-    const float* g_nr = mmse_lsa_get_gain(d, NULL);   /* [g_min,1],下一次呼叫前有效 */
+    anr_process_gain(d, error_spec, extra_noise_psd, NULL);
+    const float* g_nr = anr_get_gain(d, NULL);   /* [g_min,1],下一次呼叫前有效 */
     /* pipeline:g_total[k] = min(g_nr[k], ctx.res_gain[k]);套用+IFFT+OLA 由呼叫端 */
 }
-mmse_lsa_destroy(d);   /* mmse_lsa_init 實例為 no-op */</code></pre>
-<p class="small">獨立使用(不外接 RES)可改用 <code>mmse_lsa_process(d, spec_in, spec_out)</code>:直接把增益套在頻譜上,可 in-place。查詢:<code>mmse_lsa_get_spp/get_noise_psd/get_gain/is_initialized/debug_status</code>。切換音訊流呼叫 <code>mmse_lsa_reset()</code>。</p>
+anr_destroy(d);   /* anr_init 實例為 no-op */</code></pre>
+<p class="small">獨立使用(不外接 RES)可改用 <code>anr_process(d, spec_in, spec_out)</code>:直接把增益套在頻譜上,可 in-place。查詢:<code>anr_get_spp/get_noise_psd/get_gain/is_initialized/debug_status</code>。切換音訊流呼叫 <code>anr_reset()</code>。</p>
 
 <p><b>執行期重設定</b>(在 running instance 上換 tuning,不重建、不重新配置記憶體):</p>
-<pre><code>int mmse_lsa_reconfigure(MmseLsaDenoiser* self, const MmseLsaConfig* target);
-int mmse_lsa_set_mode(MmseLsaDenoiser* self, MmseLsaNrMode mode);
+<pre><code>int anr_reconfigure(AnrDenoiser* self, const AnrConfig* target);
+int anr_set_mode(AnrDenoiser* self, AnrMode mode);
 
 /* A. standalone:直接換強度 */
-if (mmse_lsa_set_mode(d, MMSE_LSA_NR_AGGRESSIVE) != 0) { /* 引數不合法 */ }
+if (anr_set_mode(d, ANR_MODE_AGGRESSIVE) != 0) { /* 引數不合法 */ }
 
 /* B. 自己疊了覆寫的呼叫端(兩條出貨 pipeline 都屬此類):重組整份組態再交出去 */
-MmseLsaConfig target = mmse_lsa_config_for_mode_grid(sr, fft_size, MMSE_LSA_NR_AGGRESSIVE);
-target.L = mmse_lsa_retime_frames(150, sr, target.hop_size); /* 我方覆寫 */
+AnrConfig target = anr_config_for_mode_grid(sr, fft_size, ANR_MODE_AGGRESSIVE);
+target.L = anr_retime_frames(150, sr, target.hop_size); /* 我方覆寫 */
 target.alpha_decay = target.alpha_g;                         /* 我方覆寫 */
-if (mmse_lsa_reconfigure(d, &amp;target) != 0) { /* 幾何不符或 target 無效 */ }</code></pre>
-<p class="small">不重新配置任何記憶體,所以格點(<code>sample_rate</code>/<code>frame_size</code>/<code>hop_size</code>/<code>fft_size</code>)與兩個決定 pool 大小的欄位(<code>L</code>、<code>num_init_frames</code>)<b>必須等於實例當下的值</b>,<code>target</code> 另外要完整通過 <code>mmse_lsa_validate_config()</code>。回 0,或 −1(NULL / target 無效 / 幾何不符)且<b>什麼都不寫</b>。在兩個 hop 之間呼叫、與 <code>mmse_lsa_process()</code> 序列化;<b>非 thread-safe</b>。</p>
-<p class="small"><b>狀態刻意保留</b>:追蹤中的噪聲底、MCRA 最小值追蹤環與其 scene-change run length、SPP 的 a-priori-SNR 歷史、增益平滑歷史全部繼續跑。換強度不是重啟——串流中途丟掉噪聲估計造成的 artefact 比原本想調掉的東西更糟;真的要重啟用 <code>mmse_lsa_reset()</code>。</p>
-<p class="small"><code>mmse_lsa_reconfigure()</code> <b>逐字採用</b> <code>target</code>:不做 preset 查表、不做 overlay 疊加。<code>mmse_lsa_set_mode()</code> 則是 <b>standalone 專用</b>的便利包裝——組出該 mode 的 canonical 組態後交給 <code>reconfigure()</code>;內容軸與強度軸正交,所以經 <code>mmse_lsa_apply_stationary()</code> 建立的實例會<b>重新套上</b>該 overlay(換強度不該讓 stationary 實例悄悄變成 hybrid)。</p>
-<p class="small"><b>兩者不可互換。</b>mono 與四麥克風核心兩條出貨 pipeline 的 NR 組態都是「canonical preset <b>加上</b>自己的覆寫」(<code>L</code>、<code>alpha_decay</code>; <code>broadband_threshold</code> 保留 canonical <code>1.0</code>,見下方「使用端」)。把裸的 canonical preset 交給 <code>mmse_lsa_set_mode()</code>,在這種實例上會被<b>拒絕</b>(它的 <code>L</code> 不同)——這正是兩條 pipeline 各自提供 setter(<code>audio_pipeline_set_nr_mode()</code> / <code>four_aec_nr_res_set_nr_mode()</code>)重組完整組態再呼叫 <code>mmse_lsa_reconfigure()</code> 的原因。整合時請勿改用便利包裝。回歸測試 <code>make test-reconfigure</code>(<code>test/test_reconfigure.c</code>)。</p>
+if (anr_reconfigure(d, &amp;target) != 0) { /* 幾何不符或 target 無效 */ }</code></pre>
+<p class="small">不重新配置任何記憶體,所以格點(<code>sample_rate</code>/<code>frame_size</code>/<code>hop_size</code>/<code>fft_size</code>)與兩個決定 pool 大小的欄位(<code>L</code>、<code>num_init_frames</code>)<b>必須等於實例當下的值</b>,<code>target</code> 另外要完整通過 <code>anr_validate_config()</code>。回 0,或 −1(NULL / target 無效 / 幾何不符)且<b>什麼都不寫</b>。在兩個 hop 之間呼叫、與 <code>anr_process()</code> 序列化;<b>非 thread-safe</b>。</p>
+<p class="small"><b>狀態刻意保留</b>:追蹤中的噪聲底、MCRA 最小值追蹤環與其 scene-change run length、SPP 的 a-priori-SNR 歷史、增益平滑歷史全部繼續跑。換強度不是重啟——串流中途丟掉噪聲估計造成的 artefact 比原本想調掉的東西更糟;真的要重啟用 <code>anr_reset()</code>。</p>
+<p class="small"><code>anr_reconfigure()</code> <b>逐字採用</b> <code>target</code>:不做 preset 查表、不做 overlay 疊加。<code>anr_set_mode()</code> 則是 <b>standalone 專用</b>的便利包裝——組出該 mode 的 canonical 組態後交給 <code>reconfigure()</code>;內容軸與強度軸正交,所以經 <code>anr_apply_stationary()</code> 建立的實例會<b>重新套上</b>該 overlay(換強度不該讓 stationary 實例悄悄變成 hybrid)。</p>
+<p class="small"><b>兩者不可互換。</b>mono 與四麥克風核心兩條出貨 pipeline 的 NR 組態都是「canonical preset <b>加上</b>自己的覆寫」(<code>L</code>、<code>alpha_decay</code>; <code>broadband_threshold</code> 保留 canonical <code>1.0</code>,見下方「使用端」)。把裸的 canonical preset 交給 <code>anr_set_mode()</code>,在這種實例上會被<b>拒絕</b>(它的 <code>L</code> 不同)——這正是兩條 pipeline 各自提供 setter(<code>audio_pipeline_set_nr_mode()</code> / <code>four_aec_nr_res_set_nr_mode()</code>)重組完整組態再呼叫 <code>anr_reconfigure()</code> 的原因。整合時請勿改用便利包裝。回歸測試 <code>make test-reconfigure</code>(<code>test/test_reconfigure.c</code>)。</p>
 
-<h2>Block diagram(一次 <code>mmse_lsa_process_gain()</code> 的程式流)</h2>
+<h2>Block diagram(一次 <code>anr_process_gain()</code> 的程式流)</h2>
 <pre>
  spectrum_in Complex[n_freqs]         extra_noise_psd float[n_freqs] | NULL
     |                                     |
@@ -109,7 +109,7 @@ if (mmse_lsa_reconfigure(d, &amp;target) != 0) { /* 幾何不符或 target 無�
           mcra_update(power, spp)        ← 只吃乾淨 power,R² 不進噪聲追蹤
              → noise_psd / S / S_min(L 幀最小值追蹤)+ scene-change 偵測
     |
- gain_out(可 NULL;mmse_lsa_get_gain() 讀同一 buffer)
+ gain_out(可 NULL;anr_get_gain() 讀同一 buffer)
 </pre>
 
 <h2>訊號泳道圖(hop 為欄;NR 本體 0 lag)</h2>
@@ -132,13 +132,13 @@ caller(合成)  g_total=min(gain,G_res)  同左                      同左
 <tr><th>張量</th><th>shape</th><th>dtype</th><th>每次呼叫幀數</th><th>時域樣本數</th><th>備註</th></tr>
 <tr><td><code>spectrum_in</code></td><td>[n_freqs]</td><td>Complex(2×float32)</td><td>1</td><td>對應 1 hop(64–512 樣本)</td><td>呼叫端 FFT 輸出;n_freqs=65/129/257/513</td></tr>
 <tr><td><code>extra_noise_psd</code></td><td>[n_freqs]</td><td>float32</td><td>1</td><td>—</td><td>|spectrum_in|² 尺度的 R²;NULL=純 NR</td></tr>
-<tr><td><code>gain_out</code> / <code>mmse_lsa_get_gain()</code></td><td>[n_freqs]</td><td>float32</td><td>1</td><td>—</td><td>線性 [g_min,1];get_gain 指標到下一次 process 呼叫前有效</td></tr>
-<tr><td><code>spectrum_out</code>(僅 <code>mmse_lsa_process</code>)</td><td>[n_freqs]</td><td>Complex</td><td>1</td><td>—</td><td>增益已套用;可 in-place</td></tr>
-<tr><td><code>mmse_lsa_get_spp/get_noise_psd</code></td><td>[n_freqs]</td><td>float32</td><td>—</td><td>—</td><td>唯讀查詢(SPP機率 / 噪聲功率)</td></tr>
+<tr><td><code>gain_out</code> / <code>anr_get_gain()</code></td><td>[n_freqs]</td><td>float32</td><td>1</td><td>—</td><td>線性 [g_min,1];get_gain 指標到下一次 process 呼叫前有效</td></tr>
+<tr><td><code>spectrum_out</code>(僅 <code>anr_process</code>)</td><td>[n_freqs]</td><td>Complex</td><td>1</td><td>—</td><td>增益已套用;可 in-place</td></tr>
+<tr><td><code>anr_get_spp/get_noise_psd</code></td><td>[n_freqs]</td><td>float32</td><td>—</td><td>—</td><td>唯讀查詢(SPP機率 / 噪聲功率)</td></tr>
 </table></div>
 
 <h2>State 表(跨呼叫 state;全部由 C struct 保存)</h2>
-<p class="small">存放者一律是 <code>MmseLsaDenoiser</code> struct + 內嵌 <code>McraNoiseEstimator</code>/<code>SppEstimator</code> 子模組,單一 pool(<code>mmse_lsa_init</code>)或 heap(<code>mmse_lsa_create</code>)。無 NPU/host 端 state。</p>
+<p class="small">存放者一律是 <code>AnrDenoiser</code> struct + 內嵌 <code>McraNoiseEstimator</code>/<code>SppEstimator</code> 子模組,單一 pool(<code>anr_init</code>)或 heap(<code>anr_create</code>)。無 NPU/host 端 state。</p>
 <div class="tblwrap"><table>
 <tr><th>state</th><th>shape</th><th>大小(16k/512)</th><th>內容</th></tr>
 <tr><td><code>gain_prev</code>、<code>enhanced_psd_prev</code></td><td>float32[n_freqs] ×2</td><td>2×1,028 B</td><td>decision-directed ξ 的前一幀 state(跨 hop 的核心遞迴)</td></tr>
@@ -149,19 +149,19 @@ caller(合成)  g_total=min(gain,G_res)  同左                      同左
 <tr><td>MCRA:<code>spp</code> + scene-change 計數器</td><td>float32[n_freqs] + 純量</td><td>1,028 B</td><td>內部 SPP 平滑、scene reset 連續計數</td></tr>
 <tr><td>SPP:<code>gamma_prev / noise_psd_prev</code></td><td>float32[n_freqs] ×2</td><td>2×1,028 B</td><td>前一幀 a-posteriori SNR / 噪聲 PSD</td></tr>
 <tr><td>本幀 scratch(<code>power/noise_aug/spp/xi/gamma/gain/v/…</code>)</td><td>float32[n_freqs] ×~9</td><td>~9×1,028 B</td><td>每 hop 全覆寫,不跨 hop(列出僅為完整)</td></tr>
-<tr><td><b>合計</b></td><td colspan="3"><code>mmse_lsa_get_mem_size</code> 實測:見概要表(16k/512 balanced = 69,728 B)</td></tr>
+<tr><td><b>合計</b></td><td colspan="3"><code>anr_get_mem_size</code> 實測:見概要表(16k/512 balanced = 69,728 B)</td></tr>
 </table></div>
 
 <h2>延遲與 warm-up</h2>
 <ul>
-<li><b>演算法延遲 = 0 樣本</b>:<code>mmse_lsa_get_latency()</code> 回 0。頻域增益同 hop 產出;框架延遲(window+FFT / IFFT+OLA,50% overlap 下為 1 hop)由呼叫端的 transform 負擔——mono pipeline 的端到端 1 hop 就來自這層(參見 aec.html 延遲表)。</li>
-<li><b>Warm-up = <code>num_init_frames</code></b>(≈200 ms,格點重定時:16k/256=25 幀、16k/512=13 幀、48k=19 幀,實測):期間累積噪聲底、<b>增益=1 直通</b>(不抑制),滿幀後 <code>mcra_init_noise()</code> 完成初始化,<code>mmse_lsa_is_initialized()</code> 轉 true。</li>
+<li><b>演算法延遲 = 0 樣本</b>:<code>anr_get_latency()</code> 回 0。頻域增益同 hop 產出;框架延遲(window+FFT / IFFT+OLA,50% overlap 下為 1 hop)由呼叫端的 transform 負擔——mono pipeline 的端到端 1 hop 就來自這層(參見 aec.html 延遲表)。</li>
+<li><b>Warm-up = <code>num_init_frames</code></b>(≈200 ms,格點重定時:16k/256=25 幀、16k/512=13 幀、48k=19 幀,實測):期間累積噪聲底、<b>增益=1 直通</b>(不抑制),滿幀後 <code>mcra_init_noise()</code> 完成初始化,<code>anr_is_initialized()</code> 轉 true。</li>
 <li>MCRA 最小值追蹤窗 L(balanced 實測 64/32/48 幀 ≈ 512 ms)決定噪聲底適應新環境的時間尺度;scene-change 偵測(hi-freq γ + 頻譜平坦度,<code>broadband_threshold&lt;1</code> 時另有寬頻 reset)提供快速路徑。</li>
 </ul>
 
 <h2>相關檔案與測試路徑</h2>
 <ul>
-<li>API:<code>lib/nr/c_impl/include/mmse_lsa_denoiser.h</code>、<code>mmse_lsa_types.h</code>(config/preset/驗證全在此);實作:<code>src/mmse_lsa_denoiser.c</code>、<code>src/mcra_noise_estimator.c</code>、<code>src/spp_estimator.c</code></li>
+<li>API:<code>lib/nr/c_impl/include/anr.h</code>、<code>anr_types.h</code>(python/config/preset/驗證全在此);實作:<code>src/anr.c</code>、<code>src/mcra_noise_estimator.c</code>、<code>src/spp_estimator.c</code></li>
 <li>使用端:<code>pipelines/mono_aec_nr_res/audio_pipeline.c</code>(mono pipeline 的 NR seam;overlay 註解含 2026-08-03 A/B 決策依據)、<code>lib/nr/c_impl/example/main_mem.c</code>(獨立 freq-domain runner,含 <code>build_sqrt_hann()</code>)</li>
 <li>文件:<code>lib/nr/docs/c_user_manual_zh_TW.md</code>、<code>lib/nr/c_impl/README.md</code></li>
 <li>測試(本頁撰寫時實跑):<code>make test-config</code> 186 檢查全過(ALL CHECKS PASSED;config 驗證 + gain-borrow 行為)/ <code>make test-config-parity</code> 3 格點 × 4 strength 的 12 列常數 CSV 輸出,exit 0(供 Python 端 parity 比對)</li>

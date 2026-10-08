@@ -3,7 +3,7 @@
 Single-channel traditional noise-reduction library. The release algorithm is
 V3-2 MMSE-LSA/OMLSA with Bayesian speech-presence probability and MCRA noise
 tracking. Python is the readable reference implementation; `c_impl/` is the
-embedded C library.
+embedded C library, exposed through the functional ANR API (`anr.h`).
 
 ## Release contract
 
@@ -27,12 +27,17 @@ reference wrapper.
 
 ## Python usage
 
+Python code, YAML configuration, dependencies and tests live in `python/`.
+From the repository root, run the CLI below or set `PYTHONPATH=python` for
+module imports. Audio fixtures and research outputs remain in `test_wav/`
+and `results/`.
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -r python/requirements.txt
 
-python process_audio.py input.wav --versions V3-2 \
+python python/process_audio.py input.wav --versions V3-2 \
   --nr-mode balanced --mode full --fft-size 256
 ```
 
@@ -48,6 +53,11 @@ the CLI never silently falls back to unrelated defaults.
 
 ## C build and integration
 
+The C API and archive are named ANR. See the [complete C API migration](docs/anr_migration.md)
+for the source, header, type, function, and link-name changes.
+The [bit-exact optimization record](docs/anr_optimization.md) covers the adopted
+NEON kernels, three-grid cost measurements, validation and reset behavior.
+
 ```bash
 # NE10/NEON build (embedded deliverable, default backend everywhere). SIMD=1 is the default.
 make -C c_impl WERROR=1
@@ -57,22 +67,22 @@ make -C c_impl SIMD=0 test
 make -C c_impl BACKEND=kiss SIMD=0 WERROR=1
 ```
 
-Use `mmse_lsa_get_mem_size()` followed by `mmse_lsa_init()` for the
-caller-owned static-memory path. `mmse_lsa_create()` is the heap convenience
+Use `anr_get_mem_size()` followed by `anr_init()` for the
+caller-owned static-memory path. `anr_create()` is the heap convenience
 wrapper. The pool path and heap path share the same processing core; see
 [`c_impl/README.md`](c_impl/README.md) and the
 [C integration manual](docs/c_user_manual_zh_TW.md) for API details.
 
 The tuning scalars can also be swapped on a running instance:
-`mmse_lsa_reconfigure()` takes a caller-composed `MmseLsaConfig` verbatim, and
-`mmse_lsa_set_mode()` is the standalone convenience that composes the canonical
+`anr_reconfigure()` takes a caller-composed `AnrConfig` verbatim, and
+`anr_set_mode()` is the standalone convenience that composes the canonical
 config for a strength mode (re-applying the stationary overlay if the instance
 has one). Nothing is reallocated, so the grid and the two pool-sizing fields
 (`L`, `num_init_frames`) must match the instance; the noise floor, MCRA ring,
 SPP history and gain smoothing history are all preserved. A caller that layers
 its own overrides on top of a preset — as both Audio_ALG pipelines do — must
-rebuild its whole composition and call `mmse_lsa_reconfigure()`; handing the bare
-canonical preset to `mmse_lsa_set_mode()` would revert those overrides, or be
+rebuild its whole composition and call `anr_reconfigure()`; handing the bare
+canonical preset to `anr_set_mode()` would revert those overrides, or be
 refused outright when the composition changed `L`. Details in
 [`c_impl/README.md`](c_impl/README.md).
 
@@ -84,17 +94,17 @@ copy an arbitrary file from a stale `bin/` directory.
 
 ```bash
 # Python tests, including Python/C effective-config parity.
-python -m pytest tests
+python -m pytest
 
 # C validation and configuration parity dump.
 make -C c_impl SIMD=0 test
 make -C c_impl test-config-parity
 
 # Full VCTK+DEMAND benchmark and fail-closed comparison.
-pip install -r requirements-dev.txt
-python tools/run_vctk_benchmark.py --mode full --strength balanced \
+pip install -r python/requirements-dev.txt
+python python/tools/run_vctk_benchmark.py --mode full --strength balanced \
   --output results/vctk_candidate.json
-python tools/compare_vctk_benchmark.py \
+python python/tools/compare_vctk_benchmark.py \
   results/vctk_baseline.json results/vctk_candidate.json
 ```
 
@@ -109,7 +119,7 @@ match exactly; it never performs automatic delay alignment. The noisy input is
 optional, but supplying it adds baseline and improvement metrics:
 
 ```bash
-python tools/score_wav_directories.py \
+python python/tools/score_wav_directories.py \
   --clean-dir /path/to/clean \
   --enhanced-dir /path/to/enhanced \
   --noisy-dir /path/to/noisy \
@@ -121,7 +131,7 @@ The output directory contains `summary.json`, `summary.csv`, and
 sample rates; each is resampled to the common 16 kHz scoring domain before
 length validation, and all metrics use those same 16 kHz samples. Resampling
 does not estimate or remove delay. This scorer requires the PESQ/STOI packages
-from `requirements-dev.txt`.
+from `python/requirements-dev.txt`.
 
 ## Limitations
 
@@ -138,15 +148,20 @@ from `requirements-dev.txt`.
 
 | Path | Purpose |
 |---|---|
-| `process_audio.py` | Python WAV CLI and canonical config composition |
-| `core/`, `denoisers/` | Python reference implementation |
-| `config/` | Versioned YAML configuration |
+| `python/process_audio.py` | Python WAV CLI and canonical config composition |
+| `python/core/`, `python/denoisers/` | Python reference implementation |
+| `python/config/` | Versioned YAML configuration |
 | `c_impl/include/`, `c_impl/src/` | Public C API and production source |
-| `tests/`, `c_impl/test/` | Regression, parity, and negative-input tests |
-| `tools/` | Benchmark, diagnosis, and conversion utilities |
+| `python/tests/`, `c_impl/test/` | Regression, parity, and negative-input tests |
+| `python/tools/` | Benchmark, diagnosis, and conversion utilities |
 | `docs/parameter_tuning.md` | Supported tuning workflow |
 | `docs/archive/` | Historical plans and superseded research documents |
 
 Historical result files under `results/` are evidence snapshots, not current
 defaults. Source headers and the current READMEs take precedence if an archived
 report disagrees.
+
+## C API 與驗證紀錄
+
+C 介面已改名為 ANR，並含兩個逐位元一致的核心加速；遷移對照見 [anr_migration.md](docs/anr_migration.md)，
+加速與重現指令見 [anr_optimization.md](docs/anr_optimization.md)，驗證範圍與已移出 repo 的證據清單見 [anr_validation.md](docs/anr_validation.md)。

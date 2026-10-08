@@ -1,4 +1,4 @@
-# MMSE-LSA Denoiser Makefile
+# ANR Makefile
 # V3-2 C Implementation
 #
 # =============================================================================
@@ -15,7 +15,7 @@
 #                                         explicitly)
 #
 # The deliverable and the default are both the NE10 backend. Parity /
-# bit-exact gates that need the deterministic KISS reference (tools/
+# bit-exact gates that need the deterministic KISS reference (python/tools/
 # parity_nr.py, byte-equal regression checks) must pass BACKEND=kiss
 # explicitly.
 # =============================================================================
@@ -34,31 +34,9 @@ ifeq ($(filter print-%,$(MAKECMDGOALS)),)
 $(info NR: FFT backend = $(BACKEND) -- switch with `make BACKEND=kiss` or `make BACKEND=ne10`)
 endif
 
-# CFG_SIG payload-coverage placeholders: CXXFLAGS/
-# CPPFLAGS/EXTRA_LDFLAGS/NO_STDIO are not consumed by this Makefile today
-# (this repo has no C++ TUs of its own, and no NO_STDIO-gated code path),
-# but the CFG_SIG payload below unconditionally includes them so the
-# payload string has the same stable shape as audio_common's and AEC's, and
-# so a future use of any of them here keys builds correctly instead of
-# silently aliasing with a build that didn't set it. DEBUG is real here
-# (see the "Default optimizations" section below) -- resolved before that
-# section runs, and before CFG_SIG.
-#
-# CXXFLAGS and CPPFLAGS are also two of the five names the "Command-line
-# override rejection" foreach further below rejects a command-line/`-e`
-# override of -- the same class of bug audio_common's CPPFLAGS and AEC's
-# CXXFLAGS/CPPFLAGS had, both fixed the same way. `?=` only ever assigns when
-# the variable's origin is still "undefined" -- if either already has a value from the
-# environment, `?=` is a complete no-op (GNU Make never attempts the
-# assignment at all), so the origin never flips to "environment override"
-# under `make -e` no matter how early this line sits. `+=` fixes this while
-# keeping the externally-visible behaviour identical: appending an empty
-# string is a no-op on the VALUE (a plain-environment CXXFLAGS/CPPFLAGS
-# still folds in normally -- origin becomes "file" -- and still
-# participates in CFG_SIG_PAYLOAD unchanged), but `+=` is an unconditional
-# assignment ATTEMPT, so under `-e` GNU Make's origin bookkeeping now
-# correctly flips it to "environment override", which the foreach rejects.
-# See audio_common's/AEC's Makefile for the identical fix and full writeup.
+# CXXFLAGS applies to the C++ API smoke test; the production library is C.
+# CPPFLAGS and NO_STDIO remain payload placeholders. Empty appends also
+# expose environment overrides to the validation guard.
 CXXFLAGS      +=
 CPPFLAGS      +=
 EXTRA_LDFLAGS ?=
@@ -297,22 +275,9 @@ ifeq ($(WERROR),1)
   CFLAGS += -Werror
 endif
 
-# --- FP-contraction policy: unified across all four repos. This repo
-# has no C++ TUs of its own (CXXFLAGS is a CFG_SIG
-# payload-coverage placeholder only, per the comment near the top of this
-# file -- nothing here ever compiles a .cpp), so only CFLAGS needs the
-# policy flag. Appended here, AFTER every prior CFLAGS append in this file
-# (base flags, -I paths, EXTRA_CFLAGS, the DEBUG-vs-default-optimizations
-# block, and WERROR just above), and BEFORE CFG_SIG_PAYLOAD is computed
-# below -- so it automatically participates in CFG_SIG (no separate payload
-# entry needed) and nothing after this line can re-append and override it.
-# See audio_common's Makefile for the full cross-repo design writeup (this
-# repo's three own TUs -- mmse_lsa_denoiser.c/mcra_noise_estimator.c/
-# spp_estimator.c -- include only fast_math.h/fft_wrapper.h, no NEON
-# intrinsics, so they are genuinely scalar and expected to disassemble
-# fmadd/fmla-free under this flag; see scripts/audit_fp_contract.sh in
-# audio_common for the disassembly-level verification).
-#
+# Keep multiply/add ordering stable in C and the C++ smoke test.
+# audio_common/scripts/audit_fp_contract.sh checks implicit FMA.
+# Append FP_POLICY after caller flags and before computing CFG_SIG.
 # --- Bare-literal policy flag, defined early (`make -e`
 # environment-override gap) --------------------------------------------------
 # FP_POLICY is a plain, dependency-free `:=` literal (no reference to CFLAGS
@@ -376,7 +341,7 @@ $(foreach v,CFLAGS CXXFLAGS CPPFLAGS LDFLAGS FP_POLICY FP_ALLOWED_CHARS_RE,\
 # build never creates an obj/bin directory.
 #
 # CORRECTED UNDERSTANDING (this used to check $(CFLAGS) alone, reasoning that
-# this repo has no C++ TUs of its own so CXXFLAGS/CPPFLAGS "didn't matter" --
+# production C-only builds still include CXXFLAGS/CPPFLAGS in provenance --
 # the exact same reasoning audio_common's and AEC's Makefiles both had to
 # correct. CXXFLAGS/CPPFLAGS are still two of the
 # five names the "Command-line override rejection" foreach above rejects a
@@ -612,7 +577,7 @@ endif
 #      `EXTRA_CFLAGS='-DROUND9_NOTE=-Ofastness -DTEXT=ffast-math'` (comma/
 #      plus/equals-bearing positive controls), and `WERROR=1` -- all pass
 #      the allow-list/conflict checks and produce a real, working
-#      denoise_wav/libmmse_lsa.a exactly as before this fix.
+#      denoise_wav/libanr.a exactly as before this fix.
 # See audio_common's Makefile for the full cross-repo writeup this
 # comment summarizes (identical fix and identical manual-verification
 # discipline, applied here).
@@ -706,7 +671,7 @@ CFLAGS    += $(FP_POLICY)
 # re-invokes itself with AC_LIB set; phase 2 (AC_LIB known) defines the real
 # rules, with $(AC_LIB) as a NORMAL (not order-only) prerequisite so relinking
 # happens iff its mtime actually advanced. `lib` (this repo's own
-# libmmse_lsa.a -- denoiser/MCRA/SPP core only, no FFT/audio_common code)
+# libanr.a -- denoiser/MCRA/SPP core only, no FFT/audio_common code)
 # needs none of this and lives entirely outside the dispatch, further down.
 #
 # `make -n`: see AEC's Makefile comment for why the dispatch recipe's
@@ -718,8 +683,8 @@ CFLAGS    += $(FP_POLICY)
 AC_FWD = BACKEND=$(BACKEND) SIMD=$(SIMD) WERROR=$(WERROR) CC='$(CC)' CXX='$(CXX)' EXTRA_CFLAGS='$(EXTRA_CFLAGS)' NO_STDIO=$(NO_STDIO) TOOLCHAIN_CHECK=$(TOOLCHAIN_CHECK)
 
 ifeq ($(AC_LIB),)
-.PHONY: all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-scene-change
-all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-scene-change:
+.PHONY: all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-scene-change test-api-cpp
+all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-scene-change test-api-cpp:
 	+@ac="$$($(MAKE) -s --no-print-directory -C $(AC_DIR) $(AC_FWD) print-lib-path)"; \
 	 test -n "$$ac" || { echo "FATAL: could not resolve audio_common archive path (AC_DIR=$(AC_DIR) -- is audio_common present as a sibling of this repo?)" >&2; exit 1; }; \
 	 $(MAKE) --no-print-directory $@ AC_LIB="$$ac"
@@ -751,13 +716,13 @@ BIN_ROOT ?= bin
 OBJ_DIR = $(OBJ_ROOT)/$(BACKEND)-$(CFG_SIG)
 BIN_DIR = $(BIN_ROOT)/$(BACKEND)-$(CFG_SIG)
 
-# Source files (gain calculation merged into mmse_lsa_denoiser.c). FFT + fast_math
+# Source files (gain calculation merged into anr.c). FFT + fast_math
 # come from audio_common (linked via $(AC_LIB)); this repo only supplies the
 # denoiser/MCRA/SPP core. Participates in CFG_SIG_PAYLOAD below:
 # adding or removing a source file keys to a fresh obj/bin
 # directory (see the fresh-archive recipe below for the other half of the
 # stale-member fix).
-SRCS = $(SRC_DIR)/mmse_lsa_denoiser.c \
+SRCS = $(SRC_DIR)/anr.c \
        $(SRC_DIR)/mcra_noise_estimator.c \
        $(SRC_DIR)/spp_estimator.c
 
@@ -767,7 +732,7 @@ SRCS = $(SRC_DIR)/mmse_lsa_denoiser.c \
 # applied here). BIN_DIR used to be flat (`bin`), so an ne10 build after a
 # kiss build -- or two same-backend builds differing only in EXTRA_CFLAGS/
 # WERROR/DEBUG, or a stale mtime from a differently-flagged prior build --
-# could silently deliver the wrong `denoise_wav`/`libmmse_lsa.a`/etc. to
+# could silently deliver the wrong `denoise_wav`/`libanr.a`/etc. to
 # whatever last happened to write that flat path. Payload coverage
 # (USER-MANDATED): CC CXX AR RANLIB CFLAGS CXXFLAGS CPPFLAGS LDFLAGS
 # EXTRA_CFLAGS EXTRA_LDFLAGS BACKEND WERROR NO_STDIO DEBUG, PLUS (consumer-
@@ -843,9 +808,9 @@ $(OBJ_DIR)/%.o: $(EXAMPLE_DIR)/%.c | _cfg_guard
 
 # Build static library (denoiser/MCRA/SPP core only — link $(AC_LIB) separately
 # for the FFT backend, same as the binaries above). No audio_common archive
-# is linked into libmmse_lsa.a, so (per the two-phase design above) this is a
+# is linked into libanr.a, so (per the two-phase design above) this is a
 # real rule living entirely outside the AC_LIB dispatch.
-LIB_TARGET = $(BIN_DIR)/libmmse_lsa.a
+LIB_TARGET = $(BIN_DIR)/libanr.a
 
 .PHONY: lib
 lib: $(LIB_TARGET)
@@ -883,11 +848,11 @@ $(TARGET): $(OBJS) $(EXAMPLE_OBJS) $(AC_LIB) | _cfg_guard
 	@echo "Build complete: $@"
 
 # =============================================================================
-# Python<->C parity runner (drives mmse_lsa_process_gain on dumped spectra)
+# Python<->C parity runner (drives anr_process_gain on dumped spectra)
 # Built separately from denoise_wav (both have their own main()).
 # Honors EXTRA_CFLAGS, so:  make parity            -> fast-math
 #                           make debug parity       -> std-math (or: make parity DEBUG=1)
-# See tools/parity_nr.py for the Python side.
+# See python/tools/parity_nr.py for the Python side.
 # =============================================================================
 .PHONY: parity
 PARITY_TARGET = $(BIN_DIR)/parity_runner
@@ -905,7 +870,7 @@ $(OBJ_DIR)/parity_runner.o: $(EXAMPLE_DIR)/parity_runner.c | _cfg_guard
 # caller-provided memory — zero malloc/free on the audio path. Links the
 # static-memory example (example/main_mem.c) against the SAME objects as
 # denoise_wav (the malloc path and the static path are always both compiled in
-# now — see mmse_lsa_get_mem_size()/mmse_lsa_init() — so there is no separate
+# now — see anr_get_mem_size()/anr_init() — so there is no separate
 # object set to keep from mixing, unlike the old compile-time-gated build).
 # Honors EXTRA_CFLAGS, e.g.:  make mem EXTRA_CFLAGS="-DUSE_STANDARD_MATH"
 # FFT backends: both KISS and NE10 are 100% no-malloc on the static path
@@ -985,8 +950,8 @@ $(OBJ_DIR)/test_scene_change_margin.o: $(TEST_DIR)/test_scene_change_margin.c | 
 
 # =============================================================================
 # Python<->C effective-config parity dump (2026-08-03): prints the canonical
-# MmseLsaConfig for every shipped (grid, strength) combination so
-# ../tests/test_config_parity.py can certify it against process_audio.py's
+# AnrConfig for every shipped (grid, strength) combination so
+# ../python/tests/test_config_parity.py can certify it against process_audio.py's
 # build_v3_2_base_params()+apply_strength() composition. See
 # test/test_config_parity.c's own header comment.
 # =============================================================================
@@ -1001,7 +966,26 @@ $(TEST_PARITY_TARGET): $(OBJS) $(OBJ_DIR)/test_config_parity.o $(AC_LIB) | _cfg_
 
 $(OBJ_DIR)/test_config_parity.o: $(TEST_DIR)/test_config_parity.c | _cfg_guard
 	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
+
+# Verify the public C API through a C++ caller.
+.PHONY: test-api-cpp
+TEST_CPP_TARGET = $(BIN_DIR)/test_api_cpp
+test-api-cpp: $(TEST_CPP_TARGET)
+	"$(abspath $(TEST_CPP_TARGET))"
+
+$(TEST_CPP_TARGET): $(OBJS) $(OBJ_DIR)/test_api_cpp.o $(AC_LIB) | _cfg_guard
+	$(CXX) $(filter-out -std=gnu99,$(CFLAGS)) $(CXXFLAGS) $(FP_POLICY) -o $@ $(OBJS) $(OBJ_DIR)/test_api_cpp.o $(AC_LIB) $(LDFLAGS)
+
+$(OBJ_DIR)/test_api_cpp.o: $(TEST_DIR)/test_api_cpp.cpp | _cfg_guard
+	$(CXX) $(filter-out -std=gnu99,$(CFLAGS)) $(CXXFLAGS) -std=c++17 $(FP_POLICY) -MD -MP -c -o $@ $<
 endif
+
+# Compare release kernels with the scalar reference using temporary native binaries.
+PYTHON ?= python3
+.PHONY: test-bit-exact
+test-bit-exact:
+	$(PYTHON) ../python/tools/test_bit_exact.py --backend $(BACKEND) --simd $(SIMD) \
+	  --ac-dir "$(abspath $(AC_DIR))" --cc "$(CC)" --cxx "$(CXX)"
 
 # --- Query targets -----------------------------------------------------------
 # Report THIS invocation's own build identity (empty AC_PRODUCER_SIG unless
@@ -1367,7 +1351,7 @@ endif
 
 # Help
 help:
-	@echo "MMSE-LSA Denoiser Build System"
+	@echo "ANR Build System"
 	@echo ""
 	@echo "Targets:"
 	@echo "  all      - Build the denoiser executable (default)"

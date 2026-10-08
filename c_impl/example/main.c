@@ -1,35 +1,14 @@
-/**
- * main.c - MMSE-LSA Denoiser standalone runner (freq-domain)
- *
- * The lib core (mmse_lsa_process) is a FREQ-DOMAIN, caller-owns-FFT API:
- * it takes Complex[n_freqs] in and writes Complex[n_freqs] out (gain applied,
- * phase preserved). This runner owns the analysis window, forward rFFT,
- * inverse FFT, and overlap-add (OLA) — it mirrors the Python FrameProcessor +
- * Reconstructor (denoisers/v3_2_mmse_lsa.py) so the output is parity-comparable
- * with the Python V3-2 reference.
- *
- * Framing (matches Python config/v3_2_config.yaml exactly):
- *   frame_size = 512, hop = 256 (50% overlap), fft_size = 512, n_freqs = 257
- *   window = sqrt(periodic Hann):  w[n] = sqrt(0.5 - 0.5*cos(2*pi*n/N))
- *   Analysis : windowed = frame * w ; X = rFFT(windowed)
- *   NR core  : Y = mmse_lsa_process(X)         (gain to complex spectrum)
- *   Synthesis: y = iFFT(Y) ; out += y * w (OLA)  -- sqrt-Hann^2 @ 50% = COLA,
- *              so NO extra normalization is needed (matches the Python Reconstructor).
- *
- * Batch semantics (matches Python denoise()): the whole signal is buffered,
- * split into ceil((N-frame)/hop)+1 frames (last frame zero-padded), processed,
- * and the OLA output is cropped to the original input length.
- *
- * Usage: denoise_wav <input.wav> <output.wav> [options]
- */
+/* ANR WAV runner. Caller owns sqrt(periodic Hann), FFT and overlap-add.
+ * Frame equals FFT size; hop is frame/2. Zero-pad the last frame and crop
+ * output to input length. Usage: denoise_wav input.wav output.wav [options]. */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
 
-#include "mmse_lsa_denoiser.h"
-#include "mmse_lsa_types.h"
+#include "anr.h"
+#include "anr_types.h"
 #include "fft_wrapper.h"
 #include "wav_io.h"
 
@@ -38,7 +17,7 @@
 #endif
 
 void print_usage(const char* prog) {
-    printf("MMSE-LSA Speech Denoiser (V3-2 C Implementation, freq-domain runner)\n");
+    printf("ANR (C implementation, frequency-domain runner)\n");
     printf("\n");
     printf("Usage: %s <input.wav> <output.wav> [options]\n", prog);
     printf("\n");
@@ -51,7 +30,7 @@ void print_usage(const char* prog) {
     printf("  --nr-mode <m>  NR strength: mild|moderate|balanced|aggressive (default: balanced)\n");
     printf("  --stationary   Content-preservation mode: remove only the stationary noise\n");
     printf("                 floor, preserve speech/music/transients (layered on --nr-mode)\n");
-    printf("  --debug        Print one mmse_lsa_debug_status() line per second of audio\n");
+    printf("  --debug        Print one anr_debug_status() line per second of audio\n");
     printf("  --fft-size <n> Select project grid (256/512 @16k; 1024 @48k)\n");
     printf("\n");
     printf("Frame equals FFT size; hop is frame/2; transform input is never zero-padded.\n");
@@ -106,7 +85,7 @@ int main(int argc, char* argv[]) {
     int stationary = 0;
     int debug = 0;
     int fft_size_override = 0;
-    MmseLsaNrMode nr_mode = MMSE_LSA_NR_BALANCED;
+    AnrMode nr_mode = ANR_MODE_BALANCED;
 
     for (int i = 3; i < argc; i++) {
         if (strcmp(argv[i], "--bypass") == 0) {
@@ -119,10 +98,10 @@ int main(int argc, char* argv[]) {
             fft_size_override = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--nr-mode") == 0 && i + 1 < argc) {
             const char *m = argv[++i];
-            if (strcmp(m, "mild") == 0)             nr_mode = MMSE_LSA_NR_MILD;
-            else if (strcmp(m, "moderate") == 0)    nr_mode = MMSE_LSA_NR_MODERATE;
-            else if (strcmp(m, "aggressive") == 0)  nr_mode = MMSE_LSA_NR_AGGRESSIVE;
-            else                                    nr_mode = MMSE_LSA_NR_BALANCED;
+            if (strcmp(m, "mild") == 0)             nr_mode = ANR_MODE_MILD;
+            else if (strcmp(m, "moderate") == 0)    nr_mode = ANR_MODE_MODERATE;
+            else if (strcmp(m, "aggressive") == 0)  nr_mode = ANR_MODE_AGGRESSIVE;
+            else                                    nr_mode = ANR_MODE_BALANCED;
         }
     }
 
@@ -170,19 +149,13 @@ int main(int argc, char* argv[]) {
 
     /* 4. Build config on the no-padding project grid. */
     int selected_fft = fft_size_override > 0
-                     ? fft_size_override : mmse_lsa_default_fft_size(sample_rate);
-    MmseLsaConfig config = mmse_lsa_config_for_mode_grid(
+                     ? fft_size_override : anr_default_fft_size(sample_rate);
+    AnrConfig config = anr_config_for_mode_grid(
         sample_rate, selected_fft, nr_mode);
-    if (stationary) mmse_lsa_apply_stationary(&config);
+    if (stationary) anr_apply_stationary(&config);
 
-    /* F05: reject a sample rate / framing this port has never been verified
-     * against, with a clear message, before ever touching the denoiser API
-     * (mmse_lsa_create/get_mem_size would also reject it internally, but with
-     * a generic "Failed to create denoiser" error rather than naming the
-     * actual problem). The whitelist matches mmse_lsa_validate_config():
-     * 8000/16000/48000 Hz and the selected FFT must form one of the explicit
-     * no-padding grids accepted by mmse_lsa_validate_config(). */
-    if (!mmse_lsa_validate_config(&config)) {
+    /* Reject unsupported grids before creating the denoiser. */
+    if (!anr_validate_config(&config)) {
         fprintf(stderr,
                 "Error: unsupported sample rate %d Hz for NR processing "
                 "(supported: 8000, 16000, 48000 Hz)\n", sample_rate);
@@ -196,11 +169,11 @@ int main(int argc, char* argv[]) {
     const int fft_size   = config.fft_size;
     const int n_freqs    = fft_size / 2 + 1;
 
-    MmseLsaDenoiser* denoiser = mmse_lsa_create(&config);
+    AnrDenoiser* denoiser = anr_create(&config);
     FftHandle*       fft      = fft_create(fft_size);
     if (!denoiser || !fft) {
         fprintf(stderr, "Error: Failed to create denoiser/FFT\n");
-        if (denoiser) mmse_lsa_destroy(denoiser);
+        if (denoiser) anr_destroy(denoiser);
         if (fft) fft_destroy(fft);
         wav_close_write(wav_out);
         free(signal);
@@ -237,14 +210,14 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "Error: Memory allocation failed\n");
         free(out_ola); free(win); free(frame_buf); free(time_out);
         free(spec_in); free(spec_out);
-        mmse_lsa_destroy(denoiser); fft_destroy(fft);
+        anr_destroy(denoiser); fft_destroy(fft);
         wav_close_write(wav_out); free(signal);
         return 1;
     }
 
     build_sqrt_hann(win, frame_size);
 
-    /* 6. Per-frame: window -> rFFT -> mmse_lsa_process -> iFFT -> window -> OLA. */
+    /* 6. Per-frame: window -> rFFT -> anr_process -> iFFT -> window -> OLA. */
     printf("\nProcessing %d frames...\n", n_frames);
     int debug_last_sec = -1;
     for (int f = 0; f < n_frames; f++) {
@@ -262,8 +235,8 @@ int main(int argc, char* argv[]) {
         fft_forward(fft, frame_buf, spec_in);
 
         /* NR core: apply per-bin gain to the complex spectrum (phase preserved). */
-        if (mmse_lsa_process(denoiser, spec_in, spec_out) < 0) {
-            fprintf(stderr, "Error: mmse_lsa_process failed at frame %d\n", f);
+        if (anr_process(denoiser, spec_in, spec_out) < 0) {
+            fprintf(stderr, "Error: anr_process failed at frame %d\n", f);
             break;
         }
 
@@ -284,8 +257,8 @@ int main(int argc, char* argv[]) {
             int cur_sec = start / sample_rate;
             if (cur_sec != debug_last_sec) {
                 debug_last_sec = cur_sec;
-                MmseLsaDebugStatus st;
-                mmse_lsa_debug_status(denoiser, &st);
+                AnrDebugStatus st;
+                anr_debug_status(denoiser, &st);
                 fprintf(stderr,
                     "[dbg %d.0s] init=%d gain(mean/min)=%.1f/%.1fdB spp=%.2f noise=%.1fdB\n",
                     cur_sec, st.initialized, st.mean_gain_db, st.min_gain_db,
@@ -309,7 +282,7 @@ int main(int argc, char* argv[]) {
     free(out_ola); free(win); free(frame_buf); free(time_out);
     free(spec_in); free(spec_out);
     free(signal);
-    mmse_lsa_destroy(denoiser);
+    anr_destroy(denoiser);
     fft_destroy(fft);
     wav_close_write(wav_out);
 
