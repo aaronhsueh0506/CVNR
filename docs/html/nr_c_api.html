@@ -164,10 +164,10 @@ if (anr_process_gain(nr, error_spec, extra_noise_psd, gain) != 0) { /* error */ 
 <tr><td colspan="4" style="background:#eef5f0"><b>SPP(語音存在機率)</b></td></tr>
 <tr><td><code>q</code></td><td>0.52</td><td>finite,<b>開區間 (0,1)</b>;0 與 1 都被拒</td><td>語音先驗機率,經 <code>prior_ratio=(1-q)/q</code> 進 SPP sigmoid。調大 → 偏 mild、更保語音;調小 → 偏 aggressive、抑噪更深</td></tr>
 <tr><td><code>alpha_xi</code></td><td>0.959166</td><td><code>[0,1]</code></td><td>DD 先驗 SNR 平滑。調大 → 更平滑、musical noise 更少,但起音較鈍</td></tr>
-<tr><td><code>xi_min_db</code></td><td>-10.0</td><td><code>[-80,80]</code></td><td>先驗 SNR 下限(<b>功率</b> dB,<code>/10</code>)。調低 → 殘留底噪更少但處理痕跡更明顯。stationary 模式下是控制殘留噪聲深度的主要旋鈕</td></tr>
+<tr><td><code>xi_min_db</code></td><td>-10.0</td><td><code>[-80,80]</code></td><td>先驗 SNR 下限(<b>功率</b> dB,<code>/10</code>)。調低 → 殘留底噪更少但處理痕跡更明顯。是控制殘留噪聲深度的主要旋鈕</td></tr>
 <tr><td colspan="4" style="background:#eef5f0"><b>MCRA 噪聲估計</b></td></tr>
 <tr><td><code>alpha_s</code></td><td>0.959796</td><td><code>[0,1]</code></td><td>功率譜時間平滑。調大 → 噪聲追蹤更穩、對瞬態不敏感。一般不動</td></tr>
-<tr><td><code>alpha_d</code></td><td>0.921954</td><td><code>[0,1]</code></td><td>噪聲估計更新慣性。調大 → 更新更慢、更不易把語音吸收進噪聲底(stationary 走這個方向);調小 → 追噪聲底快但易吃掉語音</td></tr>
+<tr><td><code>alpha_d</code></td><td>0.921954</td><td><code>[0,1]</code></td><td>噪聲估計更新慣性。調大 → 更新更慢、更不易把語音吸收進噪聲底;調小 → 追噪聲底快但易吃掉語音</td></tr>
 <tr><td><code>alpha_p</code></td><td>0.275946</td><td><code>[0,1]</code></td><td>語音存在指示平滑。一般不動</td></tr>
 <tr><td><code>L</code></td><td>64</td><td><code>1..320</code></td><td>MCRA 最小值追蹤視窗(frame 數,≈512 ms)。調大 → 不易把持續語音誤判為噪聲,但噪聲底上升時追得慢。<b>會改變記憶體需求</b></td></tr>
 <tr><td><code>delta_db</code></td><td>10.0</td><td><code>[-80,80]</code></td><td>語音判定門檻(功率 dB)。調高 → 更難判為語音,噪聲估計更易吸收訊號 → 抑噪深但傷語音風險高</td></tr>
@@ -178,19 +178,9 @@ if (anr_process_gain(nr, error_spec, extra_noise_psd, gain) != 0) { /* error */ 
 <tr><td><code>scene_change_blend</code></td><td>0.5</td><td><code>[0,1]</code></td><td>確認後保留舊噪聲底的比例:<code>new = blend*old + (1-blend)*obs</code></td></tr>
 <tr><td><code>scene_change_flatness_threshold</code></td><td>0.4</td><td><code>[0,1]</code></td><td>高頻頻譜平坦度門檻。調高 → 更保守,音樂/語音不易誤觸</td></tr>
 <tr><td><code>broadband_threshold</code></td><td>1.0</td><td><code>[0,1]</code>;<b><code>1.0</code> = 停用</b></td><td>寬頻場景重置閘門。設 <code>&lt;1.0</code> 時噪聲突然出現能更快追上</td></tr>
-<tr><td colspan="4" style="background:#eef5f0"><b>內容保留(stationary)疊加層,正交於強度軸,預設全關</b></td></tr>
-<tr><td><code>stationary_floor</code></td><td>false</td><td>bool,不做範圍檢查</td><td>啟用 Wiener 增益下限 <code>gain &gt;= (ξ/(β+ξ))^p</code></td></tr>
-<tr><td><code>stationary_floor_exponent</code></td><td>1.0</td><td><code>[0.5, 8.0]</code></td><td>下限陡峭度。調大 → 抑噪更深、內容保留變少</td></tr>
-<tr><td><code>stationary_floor_beta</code></td><td>1.0</td><td><code>&gt;0</code> 且 <code>&lt;=16.0</code></td><td>下限偏移。調大 → 抑噪更深</td></tr>
-<tr><td><code>scene_change_tonal_veto</code></td><td>false</td><td>bool,不做範圍檢查</td><td>低頻呈音調性(音樂)時否決場景重置</td></tr>
-<tr><td><code>scene_change_lo_flatness_max</code></td><td>0.4</td><td><code>[0,1]</code></td><td>低頻「算不算音調性」門檻,只在 <code>tonal_veto=true</code> 時生效</td></tr>
 </table></div>
 <div class="note"><code>q=0.52</code> 是 balanced preset 的作者設定,不是把輸出 SPP 固定為 0.52。頻譜沒有偏向語音或非語音的證據時,Bayesian posterior 會自然回到約 <code>q</code>;MCRA broadband gate 內部的 <code>spp &gt; 0.5</code> 是另一個分類門檻。</div>
 <p class="small">全部範圍取自 <code>anr_validate_config()</code>(<code>anr_types.h</code>),它是 <code>get_mem_size()</code>／<code>create()</code>／<code>init()</code>／<code>reconfigure()</code> 共用的唯一閘門。</p>
-
-<h3>stationary 疊加層的陷阱</h3>
-<p><code>anr_apply_stationary(&amp;cfg)</code>(<code>anr_types.h</code>)是<b>就地</b>疊加,且<b>無 NULL 檢查</b>(傳 NULL 直接當機)。呼叫順序固定:<code>config_for_mode()</code> → <code>apply_stationary()</code> → <code>validate_config()</code>。</p>
-<div class="warn">它<b>無條件覆寫</b> <code>g_min_db</code>(→ -30.0)與 <code>xi_min_db</code>(→ -22.0)。所以各 strength 的這兩個欄位會變成一樣,只剩 <code>q</code> 與 <code>noise_over_subtraction</code> 保有差異;時間常數原本就共用。若要「mild 的增益下限 + stationary 行為」,必須在 <code>apply_stationary()</code> <b>之後</b>手動改回並重跑 <code>validate_config()</code>。</div>
 
 <h3>為什麼有 retime 系列函式</h3>
 <p>EMA 係數與 frame 計數多半是在某個參考 hop(10 ms 或 16 ms)下調出來的錨點值;不同 grid 的實際 hop 不同(8／16／10.667 ms),原封套用會讓真實時間常數跑掉。<code>anr_retime_alpha()</code>／<code>_retime_frames()</code>(及帶 <code>_ref</code> 的顯式版本)把「錨點值 + 錨點 hop」換算成當前 grid 的等效值。</p>
@@ -207,7 +197,7 @@ int anr_set_mode(AnrDenoiser *nr, AnrMode mode);</pre>
 <tr><td>回 <code>-1</code></td><td><code>self</code>/<code>target</code> 為 NULL、<code>target</code> 未過 <code>validate_config()</code>、六個幾何欄位任一不符。<b><code>-1</code> 時什麼都沒寫</b></td></tr>
 <tr><td>時序</td><td>在兩個 frame <b>之間</b>呼叫、與 <code>process()</code> 序列化。<b>非 thread-safe</b></td></tr>
 </table></div>
-<div class="warn"><b><code>set_mode()</code> 與 <code>reconfigure()</code> 不可互換。</b><code>set_mode()</code> 組的是<b>裸的 canonical preset</b>,只適用 standalone(它會自動重新套上 stationary overlay,避免變成 hybrid)。兩條出貨 pipeline 的 NR 組態都是「canonical preset <b>加上</b>自己的覆寫」(<code>L</code>／<code>alpha_decay</code>; <code>broadband_threshold</code> 保留 canonical <code>1.0</code>),把 canonical preset 丟給 <code>set_mode()</code> 會因為 <code>L</code> 不同而<b>被拒絕</b>。這正是 <code>audio_pipeline_set_nr_mode()</code>／<code>four_aec_nr_res_set_nr_mode()</code> 各自重組完整組態再呼叫 <code>reconfigure()</code> 的原因——application 不要繞過 pipeline setter。</div>
+<div class="warn"><b><code>set_mode()</code> 與 <code>reconfigure()</code> 不可互換。</b><code>set_mode()</code> 組的是<b>裸的 canonical preset</b>,只適用 standalone。兩條出貨 pipeline 的 NR 組態都是「canonical preset <b>加上</b>自己的覆寫」(<code>L</code>／<code>alpha_decay</code>; <code>broadband_threshold</code> 保留 canonical <code>1.0</code>),把 canonical preset 丟給 <code>set_mode()</code> 會因為 <code>L</code> 不同而<b>被拒絕</b>。這正是 <code>audio_pipeline_set_nr_mode()</code>／<code>four_aec_nr_res_set_nr_mode()</code> 各自重組完整組態再呼叫 <code>reconfigure()</code> 的原因——application 不要繞過 pipeline setter。</div>
 <pre>/* standalone:直接換 mode */
 anr_set_mode(nr, ANR_MODE_AGGRESSIVE);
 

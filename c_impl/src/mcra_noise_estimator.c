@@ -61,8 +61,6 @@ struct McraNoiseEstimator {
     float scene_change_flatness_threshold;  // Hi-freq flatness threshold
     int scene_change_count;                 // Current consecutive count
     float broadband_threshold;              // Broadband scene-reset gate (<1.0 enables)
-    bool scene_change_tonal_veto;           // Skip reset when LOW band is tonal (music-safe)
-    float scene_change_lo_flatness_max;     // Lo-band flatness below this => tonal => veto
 
 #ifndef USE_FAST_PERCENTILE
     // Buffer for exact percentile calculation during initialization
@@ -138,8 +136,6 @@ void mcra_apply_config_scalars(McraNoiseEstimator* self,
     self->scene_change_blend = config->scene_change_blend;
     self->scene_change_flatness_threshold = config->scene_change_flatness_threshold;
     self->broadband_threshold = config->broadband_threshold;
-    self->scene_change_tonal_veto = config->scene_change_tonal_veto;
-    self->scene_change_lo_flatness_max = config->scene_change_lo_flatness_max;
 
 #ifndef USE_FAST_PERCENTILE
     self->num_init_frames = config->num_init_frames;
@@ -586,12 +582,7 @@ void mcra_update_ex(McraNoiseEstimator* self,
             if (self->scene_change_count < self->scene_change_min_frames)
                 self->scene_change_count++;
             if (self->scene_change_count >= self->scene_change_min_frames) {
-                // Tonal low-band content vetoes stationary-mode scene resets.
-                bool blocked = self->scene_change_tonal_veto &&
-                               spectral_flatness(power, 0, hi_start,
-                                                  self->flatness_scratch) <
-                                   self->scene_change_lo_flatness_max;
-                if (!blocked) mcra_reset_noise_floor(self, power);
+                mcra_reset_noise_floor(self, power);
                 self->scene_change_count = 0;
             }
         } else {

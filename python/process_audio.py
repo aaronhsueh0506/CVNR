@@ -188,7 +188,7 @@ def create_denoiser_from_config(
         strength: NR 強度預設 ('mild' | 'balanced' | 'aggressive')，僅 V3-2 有效；
               None 則取 config 的 strength，預設 'balanced'（= base YAML）。
               強度軸（深度）與 mode 軸（內容保留）正交，先套 strength 再套 mode，
-              對應 C anr_config_for_mode() 後接 anr_apply_stationary()。
+              C 端只有強度軸（anr_config_for_mode()），沒有 stationary 模式。
 
     Returns:
         降噪器實例
@@ -297,7 +297,7 @@ def create_denoiser_from_config(
         params = build_v3_2_base_params(config, sample_rate, frame_size, frame_shift, fft_size)
 
         # NR strength preset (mild | balanced | aggressive) — the DEPTH axis. Applied FIRST so the
-        # content mode composes on top (mirrors C config_for_mode() then apply_stationary()).
+        # content mode composes on top (Python only; the C library has no stationary mode).
         # 'balanced' == base YAML (empty overlay). Explicit arg wins over config.
         strength = strength or config.get('strength', 'balanced')
         params = apply_strength(params, strength)

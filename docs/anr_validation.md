@@ -20,9 +20,11 @@ repository tests reproduce the bit-exact claims on demand (see
   same source tree, per backend. The two FFT backends are not claimed to be
   bit-exact with each other.
 - **WAV byte equality.** 384 end-to-end configurations (12 input files, four
-  strengths, stationary overlay on/off, four backend/SIMD builds) give output
-  WAV files byte-equal to the release before the rename, and heap and static
-  allocation give byte-equal output, always within the same backend.
+  strengths, the stationary overlay on/off, four backend/SIMD builds) give
+  output WAV files byte-equal to the release before the rename, and heap and
+  static allocation give byte-equal output, always within the same backend. The
+  stationary overlay was recorded in this matrix and is not part of the C
+  library any more; the 192 configurations without it remain applicable.
 - **Regression suites.** Configuration, reconfiguration, noise restart,
   scene change, C++ header compilation and Python/C configuration parity pass.
 - **Python/C gain comparison** is a numerical parity check on float32 gains
@@ -35,11 +37,11 @@ before/after pairs each repeat the same frozen spectra pool 150 times. The
 measured region is the frequency-domain C core plus spectrum power, excluding
 the caller's FFT, window, overlap-add, initialization and I/O.
 
-| Grid | Core time reduction, full mode | Core time change, stationary overlay |
-|---|---:|---:|
-| 16 kHz, FFT 256, hop 128 | 6.687 % | +0.204 % (slower) |
-| 16 kHz, FFT 512, hop 256 | 7.729 % | +0.799 % (slower) |
-| 48 kHz, FFT 1024, hop 512 | 6.983 % | +0.341 % (slower) |
+| Grid | Core time reduction |
+|---|---:|
+| 16 kHz, FFT 256, hop 128 | 6.687 % |
+| 16 kHz, FFT 512, hop 256 | 7.729 % |
+| 48 kHz, FFT 1024, hop 512 | 6.983 % |
 
 ## Scope limits
 

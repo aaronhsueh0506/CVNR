@@ -75,8 +75,8 @@ def _build_reference_denoiser(sample_rate, config_dir, mode='full', strength='ba
     """Build the production V3-2 MmseLsaDenoiser exactly like process_audio.py.
 
     strength = the depth preset (mild|moderate|balanced|aggressive), mirrored by C
-    anr_config_for_mode(). mode = content axis (full|stationary), mirrored by C
-    anr_apply_stationary(). Pass the SAME two args to parity_runner.
+    anr_config_for_mode(). mode must be 'full': the C library has no stationary mode, so
+    the parity comparison excludes it. Pass the SAME two args to parity_runner.
     """
     # Reuse process_audio's loader so config/v3_2_config.yaml drives the params.
     from process_audio import create_denoiser_from_config
@@ -191,8 +191,9 @@ def main():
     d.add_argument('--fft-size', type=int, default=None,
                    help='Explicit supported FFT grid (frame=FFT, hop=FFT/2); '
                         'omitted uses the runtime sample-rate default.')
-    d.add_argument('--mode', choices=('full', 'stationary'), default='full',
-                   help="NR content mode (must match parity_runner's mode arg)")
+    d.add_argument('--mode', choices=('full',), default='full',
+                   help="NR content mode (must match parity_runner's mode arg); "
+                        "the C library has no stationary mode, so parity covers 'full' only")
     d.add_argument('--strength', choices=('mild', 'moderate', 'balanced', 'aggressive'),
                    default='balanced',
                    help="NR strength preset (must match parity_runner's strength arg)")

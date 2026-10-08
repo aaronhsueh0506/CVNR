@@ -51,7 +51,6 @@ void print_usage(const char* prog) {
     printf("Options:\n");
     printf("  --bypass       Bypass mode (copy input to output)\n");
     printf("  --nr-mode <m>  NR strength: mild|moderate|balanced|aggressive (default: balanced)\n");
-    printf("  --stationary   Content-preservation mode (layered on --nr-mode)\n");
     printf("  --debug        Print one anr_debug_status() line per second of audio\n\n");
     printf("  --fft-size <n> Select project grid (256/512 @16k; 1024 @48k)\n\n");
     printf("All state is pre-allocated in static memory; no malloc on the audio path.\n");
@@ -75,7 +74,6 @@ int main(int argc, char* argv[]) {
     const char* input_path  = argv[1];
     const char* output_path = argv[2];
     int bypass = 0;
-    int stationary = 0;
     int debug = 0;
     int fft_size_override = 0;
     AnrMode nr_mode = ANR_MODE_BALANCED;
@@ -83,8 +81,6 @@ int main(int argc, char* argv[]) {
     for (int i = 3; i < argc; i++) {
         if (strcmp(argv[i], "--bypass") == 0) {
             bypass = 1;
-        } else if (strcmp(argv[i], "--stationary") == 0) {
-            stationary = 1;
         } else if (strcmp(argv[i], "--debug") == 0) {
             debug = 1;
         } else if (strcmp(argv[i], "--fft-size") == 0 && i + 1 < argc) {
@@ -157,7 +153,6 @@ int main(int argc, char* argv[]) {
                      ? fft_size_override : anr_default_fft_size(sample_rate);
     AnrConfig config = anr_config_for_mode_grid(
         sample_rate, selected_fft, nr_mode);
-    if (stationary) anr_apply_stationary(&config);
 
     /* F05: reject a sample rate / framing this port has never been verified
      * against, with a clear message (same whitelist as main.c / see there for
@@ -203,8 +198,7 @@ int main(int argc, char* argv[]) {
     }
 
     const char* mode_names[] = {"mild", "moderate", "balanced", "aggressive"};
-    printf("  NR mode: %s\n", stationary ? "stationary (content-preservation)"
-                                          : mode_names[nr_mode]);
+    printf("  NR mode: %s\n", mode_names[nr_mode]);
 
     /* 6. Framing (identical rule to main.c / Python FrameProcessor). */
     int n_frames = (n_samples <= frame_size)

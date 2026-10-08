@@ -62,8 +62,8 @@ void anr_reset(AnrDenoiser* self);
  */
 int anr_reconfigure(AnrDenoiser* self, const AnrConfig* target);
 
-/* Compose the canonical strength preset on the current grid, reapplying an existing stationary
- * overlay, then reconfigure. Caller-specific overlays require anr_reconfigure() instead.
+/* Compose the canonical strength preset on the current grid, then reconfigure. Caller-specific
+ * overlays require anr_reconfigure() instead.
  * Returns 0, or -1 for NULL, invalid mode or rejected config.
  */
 int anr_set_mode(AnrDenoiser* self, AnrMode mode);

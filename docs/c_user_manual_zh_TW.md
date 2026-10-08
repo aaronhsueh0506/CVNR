@@ -107,8 +107,7 @@ typedef struct {
 void nr_stream_destroy(NrStream *s);
 
 /* Returns 0 on success, -1 on failure (nothing is left allocated on -1). */
-int nr_stream_init(NrStream *s, int sample_rate,
-                   AnrMode mode, int stationary)
+int nr_stream_init(NrStream *s, int sample_rate, AnrMode mode)
 {
     int n, n_freqs;
 
@@ -117,7 +116,6 @@ int nr_stream_init(NrStream *s, int sample_rate,
 
     /* 1. config: preset on the default grid for this sample rate. */
     s->cfg = anr_config_for_mode(sample_rate, mode);
-    if (stationary) anr_apply_stationary(&s->cfg);
 
     /* 2. validate before create (tells you the config itself was rejected). */
     if (!anr_validate_config(&s->cfg)) return -1;
@@ -208,7 +206,7 @@ int nr_stream_demo(const float *pcm, int n_samples, float *out)
     NrStream s;
     int i, hop;
 
-    if (nr_stream_init(&s, 16000, ANR_MODE_BALANCED, 0) != 0)
+    if (nr_stream_init(&s, 16000, ANR_MODE_BALANCED) != 0)
         return -1;
 
     hop = s.cfg.hop_size;                  /* never hard-code the hop */
@@ -227,8 +225,7 @@ int nr_stream_demo(const float *pcm, int n_samples, float *out)
 ### 1.2 呼叫順序
 
 1. **建 config**：`anr_config_for_mode()`（預設 grid）或
-   `anr_config_for_mode_grid()`（指定 grid）。要 stationary 就再套
-   `anr_apply_stationary()`。
+   `anr_config_for_mode_grid()`（指定 grid）。
 2. **驗證**：`anr_validate_config()`。這是唯一能在建構前知道 config 被拒絕的方式。
 3. **建構**：`anr_create()`（heap）或 `anr_get_mem_size()` + `anr_init()`
    （caller-owned memory）。同時自備 `FftHandle`。
@@ -430,7 +427,6 @@ cc -std=gnu99 app.c \
 ```bash
 ./denoise_wav noisy.wav clean.wav
 ./denoise_wav noisy.wav clean.wav --nr-mode mild
-./denoise_wav noisy.wav clean.wav --nr-mode balanced --stationary
 ./denoise_wav noisy.wav clean.wav --fft-size 512      # 指定 grid，見 4.1 節
 ./denoise_wav input.wav copy.wav --bypass
 ./denoise_wav noisy.wav clean.wav --debug             # 每秒印一行狀態
@@ -458,7 +454,6 @@ cc -std=gnu99 app.c \
 | `anr_debug_status(self, out)` | `void`，填滿 `*out` | `out == NULL` 時**什麼都不做**；`self == NULL` 時把 `*out` **全部歸零**（不會寫入 NaN） |
 | `anr_validate_config(config)` | 回傳 `true` | 回傳 `false`：`config == NULL`，或任何欄位越界／為 NaN／為 Inf |
 | `anr_default_config()` / `_for_grid()` / `anr_config_for_mode()` / `_for_mode_grid()` | 以值回傳 `AnrConfig` | **沒有錯誤回傳值**。傳入不支援的 sample rate 時會產生一個 `fft_size == 0` 的無效 config，必須靠 `anr_validate_config()` 才會發現 |
-| `anr_apply_stationary(config)` | `void`，就地修改 | **沒有 `NULL` 檢查**，傳 `NULL` 會直接解參考造成當機 |
 | `anr_default_fft_size(sample_rate)` | 回傳預設 FFT 尺寸 | 不支援的 sample rate 回傳 **`0`** |
 | `anr_retime_alpha()` / `_alpha_ref()` | 回傳換算後的係數 | 參數越界時**原封不動回傳輸入值**，不報錯 |
 | `anr_retime_frames()` / `_frames_ref()` | 回傳換算後的 frame 數 | 參數無效或結果溢位時回傳 **`0`** |
@@ -476,8 +471,8 @@ cc -std=gnu99 app.c \
 
 ## 4. Config 欄位參考
 
-`AnrConfig`（`c_impl/include/anr_types.h`）目前有 46 個欄位。以下完整說明
-產品整合會直接調整的 grid、SPP、MCRA、gain 與 stationary 欄位；低頻語音 guard
+`AnrConfig`（`c_impl/include/anr_types.h`）目前有 41 個欄位。以下完整說明
+產品整合會直接調整的 grid、SPP、MCRA、與 gain 欄位；低頻語音 guard
 及預設關閉的研究欄位則在 4.2 的預設摘要與 header 中列出，避免把實驗開關誤當成
 一般調參介面。
 「預設值」欄若標示為**依 grid 而定**，代表 constructor 會依實際 hop 換算，實測值見 4.2 節。
@@ -535,9 +530,7 @@ cc -std=gnu99 app.c \
 `scene_change_blend = 0.5`、`scene_change_flatness_threshold = 0.4`、`broadband_threshold = 1.0`、
 `speech_protect_floor = true`（`speech_protect_floor_db = -15.0`、`speech_protect_threshold = 0.0`、
 `speech_protect_frame_threshold = 0.55`）、`speech_aware_noise_tracking = true`（驗證範圍：DNS／VCTK／板端無明顯 regression；尚未以長時間低 F0 有聲語音證明它實際改善 50–300 Hz 噪聲底的漂移）（`noise_gate_xi_db = 3.0`、
-`noise_gate_lf_hz = 300.0`、`noise_gate_frame_frac = 0.5`）、`stationary_floor = false`、
-`stationary_floor_exponent = 1.0`、`stationary_floor_beta = 1.0`、`scene_change_tonal_veto = false`、
-`scene_change_lo_flatness_max = 0.4`。四級 strength preset 只改 `g_min_db / q / xi_min_db /
+`noise_gate_lf_hz = 300.0`、`noise_gate_frame_frac = 0.5`）。四級 strength preset 只改 `g_min_db / q / xi_min_db /
 noise_over_subtraction`（mild −20/0.58/−10/1.2、moderate −23/0.54/−10/1.3、balanced −25/0.52/−10/1.4、
 aggressive −28/0.45/−12/1.3）；上表的時間常數與低頻語音 guard 的**設定值**四級共用，
 但 `speech_protect_frame_threshold` 的**生效值**為 `value + (q − 0.52)`，隨 preset 的 `q`
@@ -565,7 +558,7 @@ aggressive −28/0.45/−12/1.3）；上表的時間常數與低頻語音 guard 
 |---|---|---|---|---|
 | `alpha_xi` | 訊噪比估計的時間平滑係數 | 有限值，`[0, 1]` | 依 grid | **調大**：輸出更平滑，musical noise 更少，但語音起音較鈍。**調小**：反應更快，容易出現孤立的增益跳動。聽到零星「水聲／音樂噪聲」時先往上調 |
 | `q` | 語音先驗機率 | 有限值，**開區間 `(0, 1)`**（`0` 與 `1` 都會被拒） | 0.52 | **調大**（趨近 mild 0.58）：更保守、更保語音。**調小**（趨近 aggressive 0.45）：抑噪更深、較容易傷語音 |
-| `xi_min_db` | 訊噪比下限（dB） | 有限值，`[-80, 80]` | -10.0（aggressive -12.0） | **調低**：殘留底噪更低（更安靜、更容易聽出處理痕跡）。**調高**：保留較多自然底噪。這是 stationary 模式下控制殘留噪聲深度的主要旋鈕 |
+| `xi_min_db` | 訊噪比下限（dB） | 有限值，`[-80, 80]` | -10.0（aggressive -12.0） | **調低**：殘留底噪更低（更安靜、更容易聽出處理痕跡）。**調高**：保留較多自然底噪。這是控制殘留噪聲深度的主要旋鈕 |
 
 `q=0.52` 是 balanced preset 的作者設定，不是把輸出的 SPP 固定成 0.52。當頻譜沒有提供
 偏向語音或非語音的證據時，Bayesian posterior 會自然回到約 `q`，所以 debug 的
@@ -577,7 +570,7 @@ MCRA broadband gate 內部用來計數的 `spp > 0.5` 則是另一個分類門�
 | 欄位 | 意義 | 合法範圍 | 預設 | 何時調、往哪個方向 |
 |---|---|---|---|---|
 | `alpha_s` | 功率譜的時間平滑係數 | 有限值，`[0, 1]` | 依 grid | **調大**：噪聲追蹤更穩、對瞬態不敏感。**調小**：反應快但估計抖動。一般不動 |
-| `alpha_d` | 噪聲估計的更新慣性 | 有限值，`[0, 1]` | 依 grid | **調大**：噪聲估計更新更慢、更不容易吸收語音（stationary 模式即採此方向）。**調小**：噪聲底變化時追得更快，但較易把語音當成噪聲吃掉 |
+| `alpha_d` | 噪聲估計的更新慣性 | 有限值，`[0, 1]` | 依 grid | **調大**：噪聲估計更新更慢、更不容易吸收語音。**調小**：噪聲底變化時追得更快，但較易把語音當成噪聲吃掉 |
 | `alpha_p` | 語音存在指示的平滑係數 | 有限值，`[0, 1]` | 依 grid | **調大**：判定更穩定但反應慢。**調小**：反應快但抖。一般不動 |
 | `L` | 最小值追蹤視窗長度（frame 數） | `1 ~ 320` | 依 grid（約 512 ms） | **調大**：不容易把持續語音誤當噪聲，但噪聲底上升時追得慢。**調小**：追得快但長句語音可能被當成噪聲。改這個欄位會改變記憶體需求 |
 | `delta_db` | 語音判定門檻（dB） | 有限值，`[-80, 80]` | 10.0 | **調高**：更難判定為語音 → 噪聲估計更容易吸收訊號（抑噪深、傷語音風險高）。**調低**：更容易判定為語音 → 噪聲估計更保守 |
@@ -607,20 +600,7 @@ MCRA broadband gate 內部用來計數的 `spp > 0.5` 則是另一個分類門�
 > 設成相同的值，所以只調 `alpha_g` 看起來「沒有作用」是正常的。想調平滑度請改
 > `alpha_decay`（必要時連同 `alpha_attack`）。
 
-### 4.7 內容保留（stationary）疊加參數（5 個）
-
-這五個欄位是與 strength 正交的「內容保留」疊加層，預設全部關閉。正常情況下請整組交給
-`anr_apply_stationary()` 設定，不要單獨手動打開。
-
-| 欄位 | 意義 | 合法範圍 | 預設 | 何時調、往哪個方向 |
-|---|---|---|---|---|
-| `stationary_floor` | 是否啟用「只移除穩態噪聲底」的增益下限 | `bool`（不做範圍檢查） | `false` | 由 `anr_apply_stationary()` 設為 `true` |
-| `stationary_floor_exponent` | 上述下限的陡峭度 | 有限值，`[0.5, 8.0]` | 1.0（stationary 設為 2.0） | **調大**：抑噪更深、內容保留變少。**調小**：保留更多非穩態內容（音樂／瞬態） |
-| `stationary_floor_beta` | 上述下限的偏移量 | 有限值，**`> 0` 且 `<= 16.0`** | 1.0 | **調大**：抑噪更深。**調小**：更保守。不確定就維持 1.0 |
-| `scene_change_tonal_veto` | 低頻呈現音調性時，否決場景重置 | `bool`（不做範圍檢查） | `false`（stationary 設為 `true`） | 素材含音樂時開啟，可避免音樂被當成場景變化 |
-| `scene_change_lo_flatness_max` | 低頻「算不算音調性」的平坦度門檻 | 有限值，`[0, 1]` | 0.4 | 只在 `scene_change_tonal_veto` 為 `true` 時有效。**調高**：更多素材被視為音調性 → 更常否決重置 |
-
-### 4.8 hop 換算輔助函式
+### 4.7 hop 換算輔助函式
 
 如果你在某個 grid 上手調出一組係數，想在另一個 grid 上得到相同的實際時間常數，用
 `anr_retime_alpha_ref(alpha, sample_rate, hop_size, ref_hop_seconds)`（平滑係數）與
@@ -653,54 +633,21 @@ moderate 0.57、balanced 0.55、aggressive 0.48）。理由是純噪聲幀的語
 落在 `q`；若固定用 0.55，這道閘在 mild 會永遠開著、在 aggressive 會關掉一半。生效值可用
 `anr_get_speech_protect_frame_threshold()` 讀回。
 
-### 5.2 stationary 內容保留模式
-
-`anr_apply_stationary(&config)` 是疊加在任一 strength preset 之上的**正交**模式，
-用於「只削掉穩態噪聲底、盡量保留語音／音樂／瞬態」的素材。它不是第五種 strength preset。
-
-它會就地修改（實測，16 kHz / 256 grid，套用於 `balanced` 之上）：
-
-| 欄位 | 套用後 |
-|---|---|
-| `stationary_floor` | `true` |
-| `stationary_floor_exponent` | 2.0 |
-| `stationary_floor_beta` | 1.0 |
-| `xi_min_db` | **-22.0（覆寫）** |
-| `g_min_db` | **-30.0（覆寫）** |
-| `alpha_xi` | 0.959166 |
-| `alpha_d` | 0.974679（更慢的噪聲更新） |
-| `scene_change_min_frames` | 60（約 480 ms） |
-| `scene_change_flatness_threshold` | 0.6 |
-| `scene_change_tonal_veto` | `true` |
-| `scene_change_lo_flatness_max` | 0.4 |
-
-> **注意（實測）**：`anr_apply_stationary()` **會無條件覆寫 `g_min_db` 與 `xi_min_db`**。
-> 因此 `mild + stationary`、`moderate + stationary`、`aggressive + stationary` 的
-> `g_min_db` 全部都是 -30.0、`xi_min_db` 全部都是 -22.0；strength preset 只剩
-> `q` 與 `noise_over_subtraction` 保有差異，時間常數原本就共用。若你要的是
-> 「mild 的增益下限 + stationary 行為」，
-> 必須在呼叫 `anr_apply_stationary()` **之後**自己把 `g_min_db` 改回去，
-> 並重新跑一次 `anr_validate_config()`。
-
-呼叫順序固定為：先 `anr_config_for_mode()`，再 `anr_apply_stationary()`，
-最後 `anr_validate_config()`。
-
-### 5.3 建議調參順序
+### 5.2 建議調參順序
 
 由上而下，**一次只動一項**，每動一次就重新聽／重新量測：
 
 1. **先選 strength preset**（`mild` / `moderate` / `balanced` / `aggressive`）。絕大多數需求
    到這一步就結束。
-2. **素材含音樂或明顯瞬態** → 疊 `stationary`（注意 5.2 的覆寫行為）。
-3. **深度還差一點** → 只動 `g_min_db`（整體殘留噪聲深度）與 `xi_min_db`（殘留底噪的自然度）。
-4. **聽到 musical noise／增益抖動** → 提高 `alpha_decay`（必要時連 `alpha_attack`）。
+2. **深度還差一點** → 只動 `g_min_db`（整體殘留噪聲深度）與 `xi_min_db`（殘留底噪的自然度）。
+3. **聽到 musical noise／增益抖動** → 提高 `alpha_decay`（必要時連 `alpha_attack`）。
    **不要改 `alpha_g`**，它在目前實作中不影響輸出（見 4.6）。
-5. **場景切換追不上／誤觸太多** → 依序考慮 `scene_change_threshold_db`、
+4. **場景切換追不上／誤觸太多** → 依序考慮 `scene_change_threshold_db`、
    `scene_change_min_frames`、`broadband_threshold`。
-6. **最後**才碰 MCRA 核心（`alpha_s` / `alpha_d` / `alpha_p` / `L` / `delta_db`）。
+5. **最後**才碰 MCRA 核心（`alpha_s` / `alpha_d` / `alpha_p` / `L` / `delta_db`）。
    改 `L` 或 `num_init_frames` 會改變記憶體需求，static memory 整合要重新查詢 pool 大小。
 
-### 5.4 常見症狀對照
+### 5.3 常見症狀對照
 
 | 症狀 | 先確認 | 建議動作 |
 |---|---|---|
@@ -708,7 +655,6 @@ moderate 0.57、balanced 0.55、aggressive 0.48）。理由是純噪聲幀的語
 | 換檔案後沿用了上一檔的噪聲模型 | 是否呼叫了 `anr_reset()` | 契約 B：串流邊界必須自己 reset，並清掉呼叫端的 analysis／OLA buffer |
 | 語音變悶、細節掉光 | preset 太強、`g_min_db` 太低 | 改 `mild` / `moderate`，或把 `g_min_db` 調高 |
 | Musical noise（零星水聲） | 增益變動太快 | 提高 `alpha_decay`；必要時提高 `alpha_xi` |
-| 音樂／瞬態被吃掉 | 是否啟用 stationary | 疊 `stationary`；必要時降低 `stationary_floor_exponent` |
 | 噪聲底改變後追不上 | 場景偵測太保守 | 降低 `scene_change_threshold_db` 或 `scene_change_min_frames`，或啟用 `broadband_threshold < 1.0` |
 | 輸出有週期性音量起伏 | window／OLA 寫錯 | 確認 periodic sqrt-Hann、50% overlap、analysis 與 synthesis 乘同一個 window |
 | 當機或頻譜越界 | buffer 長度與 `n_freqs` 不一致 | 尺寸一律由 config／query API 取得，不要硬編 |

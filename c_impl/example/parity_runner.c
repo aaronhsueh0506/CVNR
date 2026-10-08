@@ -20,9 +20,8 @@
  *   [n_frames][n_freqs]                                  (2 x int32)
  *   per frame f:  G_c[n_freqs] (float32)
  *
- * Usage: parity_runner <in_spectra.bin> <out_c_gains.bin> [full|stationary]
- *   The optional mode selects the C config (default full = balanced V3-2); pass
- *   'stationary' to mirror parity_nr.py dump --mode stationary.
+ * Usage: parity_runner <in_spectra.bin> <out_c_gains.bin> [full] [mild|moderate|balanced|aggressive]
+ *   The optional mode must be 'full'; the strength defaults to balanced.
  */
 
 #include <stdio.h>
@@ -40,10 +39,13 @@
 int main(int argc, char* argv[]) {
     if (argc < 3) {
         fprintf(stderr, "Usage: %s <in_spectra.bin> <out_c_gains.bin> "
-                        "[full|stationary] [mild|moderate|balanced|aggressive]\n", argv[0]);
+                        "[full] [mild|moderate|balanced|aggressive]\n", argv[0]);
         return 1;
     }
-    int stationary = (argc >= 4 && strcmp(argv[3], "stationary") == 0);
+    if (argc >= 4 && strcmp(argv[3], "full") != 0) {
+        fprintf(stderr, "Error: unsupported mode '%s' (only 'full')\n", argv[3]);
+        return 1;
+    }
     AnrMode nr_mode = ANR_MODE_BALANCED;
     if (argc >= 5) {
         if (strcmp(argv[4], "mild") == 0)            nr_mode = ANR_MODE_MILD;
@@ -95,7 +97,6 @@ int main(int argc, char* argv[]) {
      * directly, so it is part of the parity contract. */
     AnrConfig config = anr_config_for_mode_grid(
         sample_rate, fft_size, nr_mode);
-    if (stationary) anr_apply_stationary(&config);
 
     AnrDenoiser* denoiser = anr_create(&config);
     if (!denoiser) {

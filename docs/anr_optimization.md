@@ -11,13 +11,13 @@ and non-fused floating-point order. No additional state, allocation or delay is
 introduced. The main source uses an inline gain block; the separately maintained
 Audio_ALG copy uses a private helper selected against its own original source.
 
-| Grid | Main full C core time reduction | Main stationary time increase |
-|---|---:|---:|
-| 16k, FFT256, hop128 | 6.687% | 0.204% |
-| 16k, FFT512, hop256 | 7.729% | 0.799% |
-| 48k, FFT1024, hop512 | 6.983% | 0.341% |
+| Grid | C core time reduction |
+|---|---:|
+| 16k, FFT256, hop128 | 6.687% |
+| 16k, FFT512, hop256 | 7.729% |
+| 48k, FFT1024, hop512 | 6.983% |
 
-Full remains the default; stationary is opt-in. Measurements use Apple M4,
+Measurements use Apple M4,
 NE10, clang O2 and strict FP flags. Four alternating pairs each repeat the same
 frozen development spectra pool 150 times. They cover the frequency-domain C
 core and spectrum power, excluding caller FFT/window/OLA, initialization and

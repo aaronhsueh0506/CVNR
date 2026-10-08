@@ -76,11 +76,6 @@ struct AnrDenoiser {
     float* log_gain_prev;
     bool   gain_initialized;
 
-    /* Stationary-mode Wiener gain lower-bound (default off → full behaviour). */
-    bool   stationary_floor;
-    float  stationary_floor_exponent;   /* p */
-    float  stationary_floor_beta;       /* β */
-
     bool   is_static;   /* true: caller-owned pool; false: heap-owned allocations. */
 };
 
@@ -104,10 +99,6 @@ static void apply_gain_config_scalars(AnrDenoiser* self,
     self->speech_protect_frame_threshold =
         config->speech_protect_frame_threshold +
         (config->q - ANR_SPEECH_PROTECT_ANCHOR_Q);
-
-    self->stationary_floor          = config->stationary_floor;
-    self->stationary_floor_exponent = config->stationary_floor_exponent;
-    self->stationary_floor_beta     = config->stationary_floor_beta;
 }
 
 /* First bin at or above hz, and the bin count covering [0, hz] inclusive. */
@@ -296,11 +287,6 @@ static void calculate_gain(AnrDenoiser* self,
     bool  cross_band_prior = self->config.cross_band_speech_prior;
     float prior_lift = self->cross_band_prior_lift;
     bool  dd_from_gmmse = self->config.dd_from_gmmse;
-    /* Stationary-mode Wiener lower-bound (default off): gain >= (ξ/(β+ξ))^p. */
-    bool  stat_floor   = self->stationary_floor;
-    float stat_p       = self->stationary_floor_exponent;
-    float stat_beta    = self->stationary_floor_beta;
-    bool  stat_p2      = (stat_p == 2.0f);  /* preset p; skip powf on the common path */
 
     float* v_scratch        = self->gain_v_scratch;
     float* xi_ratio_scratch = self->gain_xi_ratio_scratch;
@@ -358,59 +344,56 @@ static void calculate_gain(AnrDenoiser* self,
     sk_fast_log_f32(v_scratch, v_scratch, n_freqs);
 
 #if defined(USE_FAST_GAIN_SMOOTHING) && SK_HAVE_NEON && !defined(ANR_REFERENCE_FINAL_GAIN)
-    if (!stat_floor) {
-        {
-            float* restrict logs = v_scratch;
-            float* restrict saved_logs = self->log_gain_prev;
-            float* restrict emitted = gain_out;
-            float* restrict previous_gain = self->gain_prev;
-            float* restrict previous_psd = self->enhanced_psd_prev;
-            const float* restrict posterior = spp;
-            const float* restrict power = self->power;
-            const float* restrict conditional_gain = xi_ratio_scratch;
-            for (int k = 0; k < n_freqs; ++k) {
-                float p = posterior[k];
-                if (cross_band_prior) p = lift_spp(p, prior_lift);
-                float log_gain = p * logs[k] + (1.0f - p) * log_g_min;
-                if (self->gain_initialized) {
-                    float prev = saved_logs[k];
-                    float alpha = (log_gain > prev) ? alpha_attack : alpha_decay;
-                    log_gain = alpha * prev + (1.0f - alpha) * log_gain;
-                }
-                logs[k] = log_gain;
-                emitted[k] = (log_gain < log_g_min) ? log_g_min
-                             : (log_gain > 0.0f) ? 0.0f : log_gain;
+    {
+        float* restrict logs = v_scratch;
+        float* restrict saved_logs = self->log_gain_prev;
+        float* restrict emitted = gain_out;
+        float* restrict previous_gain = self->gain_prev;
+        float* restrict previous_psd = self->enhanced_psd_prev;
+        const float* restrict posterior = spp;
+        const float* restrict power = self->power;
+        const float* restrict conditional_gain = xi_ratio_scratch;
+        for (int k = 0; k < n_freqs; ++k) {
+            float p = posterior[k];
+            if (cross_band_prior) p = lift_spp(p, prior_lift);
+            float log_gain = p * logs[k] + (1.0f - p) * log_g_min;
+            if (self->gain_initialized) {
+                float prev = saved_logs[k];
+                float alpha = (log_gain > prev) ? alpha_attack : alpha_decay;
+                log_gain = alpha * prev + (1.0f - alpha) * log_gain;
             }
-            sk_fast_exp_f32(emitted, emitted, n_freqs);
-            for (int k = 0; k < n_freqs; ++k) {
-                float log_gain = logs[k];
-                float gain = emitted[k];
-                float log_save = log_gain;
-                if (log_gain < log_g_min) {
-                    gain = g_min;
-                    log_save = log_g_min;
-                } else if (log_gain > 0.0f) {
-                    gain = 1.0f;
-                    log_save = 0.0f;
-                }
-                emitted[k] = gain;
-                saved_logs[k] = log_save;
-                previous_gain[k] = gain;
-                float dd_gain = dd_from_gmmse ? conditional_gain[k] : gain;
-                previous_psd[k] = dd_gain * dd_gain * power[k];
-            }
+            logs[k] = log_gain;
+            emitted[k] = (log_gain < log_g_min) ? log_g_min
+                         : (log_gain > 0.0f) ? 0.0f : log_gain;
         }
-        apply_low_band_speech_floor(self, gain_out);
-        self->gain_initialized = true;
-        return;
+        sk_fast_exp_f32(emitted, emitted, n_freqs);
+        for (int k = 0; k < n_freqs; ++k) {
+            float log_gain = logs[k];
+            float gain = emitted[k];
+            float log_save = log_gain;
+            if (log_gain < log_g_min) {
+                gain = g_min;
+                log_save = log_g_min;
+            } else if (log_gain > 0.0f) {
+                gain = 1.0f;
+                log_save = 0.0f;
+            }
+            emitted[k] = gain;
+            saved_logs[k] = log_save;
+            previous_gain[k] = gain;
+            float dd_gain = dd_from_gmmse ? conditional_gain[k] : gain;
+            previous_psd[k] = dd_gain * dd_gain * power[k];
+        }
     }
+    apply_low_band_speech_floor(self, gain_out);
+    self->gain_initialized = true;
+    return;
 #endif
 
-    /* Blend OM-LSA log gain, smooth against the previous hop, apply the stationary floor and
-     * store DD state. Each bin reads its own prior-hop history before overwriting it.
+    /* Blend OM-LSA log gain, smooth against the previous hop and store DD state. Each bin reads
+     * its own prior-hop history before overwriting it.
      */
     for (int k = 0; k < n_freqs; k++) {
-        float xi_k    = xi[k];
         float spp_k   = spp[k];
 
         if (cross_band_prior) spp_k = lift_spp(spp_k, prior_lift);
@@ -434,12 +417,6 @@ static void calculate_gain(AnrDenoiser* self,
         } else {
             gain = fast_exp(log_gain);  log_gain_save = log_gain;
         }
-        /* Stationary floor: max(gain, (ξ/(β+ξ))^p); recompute saved log gain after flooring. */
-        if (stat_floor) {
-            float ratio   = xi_k / (stat_beta + xi_k);
-            float g_floor = stat_p2 ? ratio * ratio : powf(ratio, stat_p);
-            if (g_floor > gain) { gain = g_floor; log_gain_save = fast_log(gain + 1e-10f); }
-        }
         gain_out[k] = gain;
 #else
         float gain = fast_exp(log_gain);
@@ -447,11 +424,6 @@ static void calculate_gain(AnrDenoiser* self,
         if (gain < g_min) gain = g_min;
         if (gain > 1.0f)  gain = 1.0f;
 #endif
-        if (stat_floor) {
-            float ratio   = xi_k / (stat_beta + xi_k);
-            float g_floor = stat_p2 ? ratio * ratio : powf(ratio, stat_p);
-            if (g_floor > gain) gain = g_floor;
-        }
         gain_out[k] = gain;
         float log_gain_save = fast_log(gain + 1e-10f);
 #endif
@@ -852,8 +824,6 @@ int anr_set_mode(AnrDenoiser* self, AnrMode mode) {
     if (!anr_nr_mode_is_valid(mode)) return -1;
     target = anr_config_for_mode_grid(self->config.sample_rate,
                                            self->config.fft_size, mode);
-    /* Preserve the stationary-content overlay when changing strength. */
-    if (self->config.stationary_floor) anr_apply_stationary(&target);
     return anr_reconfigure(self, &target);
 }
 

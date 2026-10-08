@@ -109,13 +109,6 @@ typedef struct {
     float alpha_g;          // Python config parity only; C gain path uses alpha_attack/decay.
     float alpha_attack;     // Asymmetric attack (0.15 at the 16-ms anchor)
     float alpha_decay;      // Asymmetric decay (0.88 = alpha_g)
-
-    // Stationary-content overlay is independent of strength; full mode leaves it off.
-    bool  stationary_floor;              // Wiener gain lower-bound gain>=(ξ/(β+ξ))^p (default off)
-    float stationary_floor_exponent;     // p (1.0 = pure Wiener; stationary preset uses 2.0)
-    float stationary_floor_beta;         // β (1.0 = remove exactly the stationary floor N)
-    bool  scene_change_tonal_veto;       // skip scene reset when the LOW band is tonal (music-safe)
-    float scene_change_lo_flatness_max;  // lo-band flatness below this => tonal => veto (0.4)
 } AnrConfig;
 
 /* Default FFT: 8k/128, 16k/256, 48k/1024. Alternate 8k/256 and 16k/512 grids are supported;
@@ -241,13 +234,6 @@ static inline AnrConfig anr_default_config_for_grid(
     config.alpha_attack = anr_retime_alpha_ref(0.15f, sample_rate, config.hop_size, 0.016);
     config.alpha_decay = anr_retime_alpha(0.88f, sample_rate, config.hop_size);
 
-    // Content-preservation mode: default = full (all overlay levers off).
-    config.stationary_floor            = false;
-    config.stationary_floor_exponent   = 1.0f;
-    config.stationary_floor_beta       = 1.0f;
-    config.scene_change_tonal_veto     = false;
-    config.scene_change_lo_flatness_max = 0.4f;
-
     return config;
 }
 
@@ -320,33 +306,6 @@ static inline void anr_apply_cross_band_speech_experiment(
     config->cross_band_speech_prior_max_q =
         config->q < 0.95f ? config->q + 0.04f : 0.99f;
     config->cross_band_speech_prior_alpha = 0.90f;
-}
-
-/* Overlay stationary-content preservation on a strength preset: Wiener lower bound
- * (ξ/(β+ξ))^p, slower noise tracking and tonal scene-reset veto. Full mode has no overlay.
- */
-static inline void anr_apply_stationary(AnrConfig* config) {
-    // the mechanism: Wiener gain lower-bound (ξ/(β+ξ))^p
-    config->stationary_floor          = true;
-    config->stationary_floor_exponent = 2.0f;   // p=2 deepens noise removal; music retention ~0
-    config->stationary_floor_beta     = 1.0f;   // remove exactly N
-    // residual-noise depth is set by xi_min (NOT g_min); leave natural comfort noise
-    config->xi_min_db                 = -22.0f;
-    // This overlay was authored at a 16-ms hop and mirrors Python
-    // core/nr_modes.py; do not retime it from the 10-ms reference.
-    config->alpha_xi = anr_retime_alpha_ref(
-        0.92f, config->sample_rate, config->hop_size, 0.016);
-    config->g_min_db                  = -30.0f;  // amplitude dB (/20); mostly inert under the bound
-    // keep N an honest STATIONARY floor: slow the posterior-gated recursive average so
-    // music phrases aren't absorbed (which would collapse ξ and defeat the bound)
-    config->alpha_d = anr_retime_alpha_ref(
-        0.95f, config->sample_rate, config->hop_size, 0.016);
-    // music-aware scene-change: percussion can't confirm; tonal (music) low band is vetoed
-    config->scene_change_min_frames = anr_retime_frames_ref(
-        30, config->sample_rate, config->hop_size, 0.016);
-    config->scene_change_flatness_threshold = 0.6f;
-    config->scene_change_tonal_veto        = true;
-    config->scene_change_lo_flatness_max   = 0.4f;
 }
 
 /* Construction/reconfiguration validation: supported grid, bounded dimensions, and finite
@@ -516,23 +475,6 @@ static inline bool anr_validate_config(const AnrConfig* config) {
     }
     if (!isfinite(config->alpha_decay) ||
         config->alpha_decay < 0.0f || config->alpha_decay > 1.0f) {
-        return false;
-    }
-
-    // Wiener floor (xi/(beta+xi))^p: p >= 0.5, beta > 0; tonal flatness in [0,1].
-    if (!isfinite(config->stationary_floor_exponent) ||
-        config->stationary_floor_exponent < 0.5f ||
-        config->stationary_floor_exponent > 8.0f) {
-        return false;
-    }
-    if (!isfinite(config->stationary_floor_beta) ||
-        config->stationary_floor_beta <= 0.0f ||
-        config->stationary_floor_beta > 16.0f) {
-        return false;
-    }
-    if (!isfinite(config->scene_change_lo_flatness_max) ||
-        config->scene_change_lo_flatness_max < 0.0f ||
-        config->scene_change_lo_flatness_max > 1.0f) {
         return false;
     }
 

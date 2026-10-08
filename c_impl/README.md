@@ -150,7 +150,7 @@ malloc——`fft_destroy()` 對 pool-owned handle 一律直接 return，呼叫�
 第 5 節的 `create_static_nr`/`destroy_static_nr` 完整範例。
 
 演算法與 malloc 版**逐位元相同**（只差配置方式）：`bin/denoise_mem` 輸出與 `bin/denoise_wav`
-byte-for-byte 一致，已對 4 個 preset + stationary、KISS 與 NE10 兩個 backend 分別驗證
+byte-for-byte 一致，已對 4 個 preset、KISS 與 NE10 兩個 backend 分別驗證
 （backend 之間本來就不逐位元相同，只比較同一 backend 內 mem vs malloc）。同一機制也覆蓋子模組
 `fft_get_mem_size`/`fft_init`、`mcra_get_mem_size`/`mcra_init`、`spp_get_mem_size`/`spp_init`。
 
@@ -298,18 +298,15 @@ MCRA 噪聲估計的瓶頸是每幀掃描 ring buffer（L=32 幀）找最小值�
 ```bash
 ./bin/denoise_wav input.wav output.wav                     # 預設 balanced
 ./bin/denoise_wav input.wav output.wav --nr-mode moderate  # 強度：mild|moderate|balanced|aggressive
-./bin/denoise_wav input.wav output.wav --stationary        # 內容保留模式（見下）
 ./bin/denoise_wav input.wav output.wav --bypass            # 不處理，原樣複製
 ```
 
-**兩條正交的模式軸：**
-- **強度軸** `--nr-mode {mild|moderate|balanced|aggressive}`（`anr_config_for_mode`）：全消，越強壓越深。
+**強度軸：**
+- `--nr-mode {mild|moderate|balanced|aggressive}`（`anr_config_for_mode`）：全消，越強壓越深。
   4 級深度階梯 g_min = −20 / −25 / −30 / −40 dB（振幅 /20）。所有預設共用 `alpha_xi=0.92`
   （2026-07 musical-noise fix：DD ξ 平滑，壓掉 SPP 抖動＝musical noise；對語音幾乎零成本）。
-- **內容軸** `--stationary`（`anr_apply_stationary`，疊在強度 base 上）：ReSpeaker-like，**只**移除穩態
-  噪聲底噪，保留非穩態內容（語音／音樂／瞬態）。機制 = Wiener 增益下界 `gain ≥ (ξ/(β+ξ))^p`（p=2）
-  + music-aware tonal-veto scene-change。此下界**只在 stationary 生效**（`stationary_floor` 預設 false，
-  full 模式完全略過 → 與原 V3-2 byte-identical）。鏡像 Python `python/core/nr_modes.py` 的 `apply_mode`。
+
+C 函式庫沒有 stationary 內容保留模式；Python 參考實作仍保留（見 `python/README.md`）。
 
 ### 程式碼整合（freq-domain：caller 自備 FFT / 窗 / OLA）
 
@@ -363,9 +360,7 @@ length、SPP 的 a-priori-SNR 歷史、增益平滑歷史，全部繼續跑。�
 否則那些覆寫會被悄悄還原回 canonical preset 的值。
 
 **`anr_set_mode()` 只給 standalone 情境**：它替該 mode 組出 canonical 組態、
-交給 `anr_reconfigure()`。內容軸與強度軸正交，所以經 `anr_apply_stationary()`
-建立的實例會**重新套上**該 overlay——換強度不該讓一個 stationary 實例悄悄變成 hybrid。
-回 `0`，或 `-1`（NULL、超出 enum 的 mode、target 被拒）。
+交給 `anr_reconfigure()`。回 `0`，或 `-1`（NULL、超出 enum 的 mode、target 被拒）。
 
 > **不要在 pipeline 實例上用 `anr_set_mode()`。** 兩條出貨 pipeline（mono 與
 > 四麥克風核心）的 NR 組態都是「canonical preset **加上**自己的覆寫」
@@ -467,7 +462,6 @@ Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差
 |---|---|
 | 殘留底噪吵 | 換 AGGRESSIVE 模式，或沿深度軸手動：`config.q = 0.45f`、`config.noise_over_subtraction = 1.3f`、`config.g_min_db = -28.0f` |
 | 語音變悶 / 細節掉 | 換 MILD 模式，或 `config.q = 0.58f`、`config.g_min_db = -20.0f`、`config.noise_over_subtraction = 1.2f` |
-| 音樂 / 非穩態內容被吃掉 | 改用 `--stationary`（只移除穩態底噪，保留音樂／瞬態） |
 | Musical noise | 提高 `config.alpha_decay`（必要時連同 `alpha_attack`）；`alpha_g` 目前不參與 C 輸出。`xi_min_db` 調高（如 -10 → -8）而非調低 |
 | 場景切換慢（開冷氣、進車廂） | `config.scene_change_threshold_db = 7.0f` |
 | 場景偵測誤觸發 | `config.scene_change_threshold_db = 12.0f`、`config.scene_change_min_frames = 8` |
@@ -481,7 +475,6 @@ Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差
 ### 當這些都不夠
 - 檢查是否屬於「不適用情境」—— 本模組 by design 無法處理風聲 / 衝擊 / 重疊干擾
 - 用 `make debug` 重編並開啟 `DEBUG_DUMP` 輸出 `noise_psd / spp / xi / gamma / gain`，與 Python 逐幀對比
-- 若非穩態內容（音樂／人聲）被過度壓抑，改用 `--stationary` 內容保留模式
 - 註：舊「V4 OMLSA + wind handler」子系統已整個移除（Python 與 C 皆不再提供；adaptive-q 亦驗證 NO-SHIP）
 
 ## 配置參數
@@ -512,8 +505,6 @@ Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差
 | `alpha_g` | 0.88 | 增益平滑因子 |
 | `alpha_attack` | 0.15（16 ms 錨點） | 非對稱平滑 Attack；建構時依 grid retime |
 | `alpha_decay` | 0.88 | 非對稱平滑 Decay (= alpha_g) |
-| `stationary_floor` | false | Wiener 增益下界 `(ξ/(β+ξ))^p`；**僅 `--stationary` 開啟**，full 不受影響 |
-| `scene_change_tonal_veto` | false | tonal 低頻（音樂）跳過噪聲底噪重置；僅 stationary |
 
 ## 延遲
 

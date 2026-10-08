@@ -59,12 +59,12 @@ def compare(reference, optimized):
             raise RuntimeError("inconsistent runner configuration")
         print("final-gain NEON path exercised:", "yes" if info[1][2] else "no (scalar build)", flush=True)
         while True:
-            headers = [read_exact(p.stdout, 32) for p in processes]
+            headers = [read_exact(p.stdout, 28) for p in processes]
             if headers == [None, None]:
                 break
             if None in headers or headers[0] != headers[1]:
                 raise RuntimeError("record metadata/length mismatch")
-            magic, grid, strength, content, feature, frame, field, words = struct.unpack("=8I", headers[0])
+            magic, grid, strength, feature, frame, field, words = struct.unpack("=7I", headers[0])
             if magic != 0x414E5232 or field >= len(FIELDS) or words > 200000:
                 raise RuntimeError("invalid record header")
             values = [read_exact(p.stdout, 4 * words) for p in processes]
@@ -75,7 +75,7 @@ def compare(reference, optimized):
                 a = struct.unpack_from("=I", values[0], 4 * first)[0]
                 b = struct.unpack_from("=I", values[1], 4 * first)[0]
                 raise RuntimeError(
-                    f"grid={'ABC'[grid]} strength={strength} stationary={content} "
+                    f"grid={'ABC'[grid]} strength={strength} "
                     f"feature={feature} hop={frame} {FIELDS[field]}[{first}]: "
                     f"0x{a:08x} != 0x{b:08x}"
                 )
@@ -91,7 +91,7 @@ def compare(reference, optimized):
                 process.terminate()
             process.wait()
             process.stdout.close()
-    expected = 3 * (4 * 2 + 3 + 2) * info[0][3]
+    expected = 3 * (4 + 2 + 1) * info[0][3]
     if frames != expected or count == 0:
         raise RuntimeError(f"incomplete coverage: {frames} hops, expected {expected}")
     print(f"ANR bit-exact PASS: {frames} hops, {count} state/output records, {byte_count} bytes compared", flush=True)

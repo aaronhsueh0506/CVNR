@@ -46,9 +46,9 @@ python python/process_audio.py input.wav --versions V3-2 \
 gain dynamics, and low-frequency speech guard; a preset changes only `g_min`,
 the speech-presence prior `q`, the a-priori-SNR floor, and noise
 over-subtraction. This keeps the noise-reduction ladder monotonic instead of
-making a stronger preset accidentally track speech as noise. `--mode
-stationary` enables the content-preserving stationary
-noise preset. Missing, malformed, or unreadable YAML configuration is fatal;
+making a stronger preset accidentally track speech as noise. In the Python
+reference only, `--mode stationary` enables the content-preserving stationary
+noise preset; the C library has no stationary mode. Missing, malformed, or unreadable YAML configuration is fatal;
 the CLI never silently falls back to unrelated defaults.
 
 ## C build and integration
@@ -76,8 +76,7 @@ wrapper. The pool path and heap path share the same processing core; see
 The tuning scalars can also be swapped on a running instance:
 `anr_reconfigure()` takes a caller-composed `AnrConfig` verbatim, and
 `anr_set_mode()` is the standalone convenience that composes the canonical
-config for a strength mode (re-applying the stationary overlay if the instance
-has one). Nothing is reallocated, so the grid and the two pool-sizing fields
+config for a strength mode. Nothing is reallocated, so the grid and the two pool-sizing fields
 (`L`, `num_init_frames`) must match the instance; the noise floor, MCRA ring,
 SPP history and gain smoothing history are all preserved. A caller that layers
 its own overrides on top of a preset — as both Audio_ALG pipelines do — must

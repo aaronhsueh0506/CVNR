@@ -25,9 +25,9 @@ static void write_words(const void* values, size_t count) {
 
 static void record(const uint32_t* context, uint32_t field,
                    const void* values, uint32_t count) {
-    uint32_t header[8] = {RECORD_MAGIC, context[0], context[1], context[2],
-                          context[3], context[4], field, count};
-    write_words(header, 8);
+    uint32_t header[7] = {RECORD_MAGIC, context[0], context[1], context[2],
+                          context[3], field, count};
+    write_words(header, 7);
     write_words(values, count);
 }
 
@@ -57,17 +57,12 @@ static void dump_state(const uint32_t* context, const AnrDenoiser* s,
 }
 
 static void run_case(uint32_t grid, int sr, int fft, AnrMode strength,
-                     uint32_t content, uint32_t feature, int static_memory) {
+                     uint32_t feature, int static_memory) {
     AnrConfig config = anr_config_for_mode_grid(sr, fft, strength);
-    if (content) anr_apply_stationary(&config);
     if (feature == 1) config.dd_from_gmmse = true;
     if (feature == 2) {
         anr_apply_cross_band_speech_experiment(&config);
         config.makeup_gain = true;
-    }
-    if (feature == 3) {
-        anr_apply_stationary(&config);
-        config.stationary_floor_exponent = 1.7f;
     }
     void* pool = NULL;
     AnrDenoiser* s;
@@ -85,7 +80,7 @@ static void run_case(uint32_t grid, int sr, int fft, AnrMode strength,
     float* extra = (float*)malloc((size_t)nf * sizeof(float));
     float* returned_gain = (float*)malloc((size_t)nf * sizeof(float));
     if (!input || !output || !extra || !returned_gain) exit(5);
-    rng = 918273u + grid * 101u + (uint32_t)strength * 17u + content * 3u + feature;
+    rng = 918273u + grid * 101u + (uint32_t)strength * 17u + feature;
     for (uint32_t frame = 0; frame < FRAMES; ++frame) {
         float scale = frame < 48 ? 0.05f : frame < 112 ? 2.0f
                     : frame < 176 ? 0.2f : frame < 224 ? 0.0f : 0.5f;
@@ -116,7 +111,7 @@ static void run_case(uint32_t grid, int sr, int fft, AnrMode strength,
             float* gain_out = (frame & 8u) ? returned_gain : NULL;
             if (anr_process_gain(s, input, external, gain_out)) exit(10);
         }
-        uint32_t context[] = {grid, (uint32_t)strength, content,
+        uint32_t context[] = {grid, (uint32_t)strength,
                               feature + (static_memory ? 4u : 0u), frame};
         dump_state(context, s, output, returned_gain);
     }
@@ -142,12 +137,10 @@ int main(void) {
     const int sizes[] = {256, 512, 1024};
     for (uint32_t grid = 0; grid < 3; ++grid) {
         for (int strength = ANR_MODE_MILD; strength <= ANR_MODE_AGGRESSIVE; ++strength)
-            for (uint32_t content = 0; content < 2; ++content)
-                run_case(grid, rates[grid], sizes[grid], (AnrMode)strength, content, 0, 0);
-        for (uint32_t feature = 1; feature <= 3; ++feature)
-            run_case(grid, rates[grid], sizes[grid], ANR_MODE_BALANCED, 0, feature, 0);
-        for (uint32_t content = 0; content < 2; ++content)
-            run_case(grid, rates[grid], sizes[grid], ANR_MODE_BALANCED, content, 0, 1);
+            run_case(grid, rates[grid], sizes[grid], (AnrMode)strength, 0, 0);
+        for (uint32_t feature = 1; feature <= 2; ++feature)
+            run_case(grid, rates[grid], sizes[grid], ANR_MODE_BALANCED, feature, 0);
+        run_case(grid, rates[grid], sizes[grid], ANR_MODE_BALANCED, 0, 1);
     }
     return fflush(stdout) == 0 ? 0 : 11;
 }

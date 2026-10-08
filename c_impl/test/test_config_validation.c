@@ -169,12 +169,6 @@ int main(void) {
         cfg = anr_default_config(16000); cfg.alpha_g = INFINITY;
         expect_config_rejected(&cfg, "alpha_g = +Inf", big_buf, BIG_BUF);
 
-        cfg = anr_default_config(16000); cfg.stationary_floor_exponent = NAN;
-        expect_config_rejected(&cfg, "stationary_floor_exponent = NaN", big_buf, BIG_BUF);
-
-        cfg = anr_default_config(16000); cfg.stationary_floor_beta = INFINITY;
-        expect_config_rejected(&cfg, "stationary_floor_beta = +Inf", big_buf, BIG_BUF);
-
         /* (b) Concrete garbage values from the remediation ask. */
         cfg = anr_default_config(16000); cfg.q = 0.0f;
         expect_config_rejected(&cfg, "q = 0 (degenerate probability)", big_buf, BIG_BUF);
@@ -213,15 +207,8 @@ int main(void) {
         cfg = anr_default_config(16000); cfg.g_min_db = -200.0f;
         expect_config_rejected(&cfg, "g_min_db = -200 (out of range)", big_buf, BIG_BUF);
 
-        cfg = anr_default_config(16000); cfg.stationary_floor_beta = 0.0f;
-        expect_config_rejected(&cfg, "stationary_floor_beta = 0 (non-positive)", big_buf, BIG_BUF);
-
-        cfg = anr_default_config(16000); cfg.stationary_floor_exponent = 0.0f;
-        expect_config_rejected(&cfg, "stationary_floor_exponent = 0 (below 0.5 floor)", big_buf, BIG_BUF);
-
         /* (c) Every shipped config must still validate, across every
-         * supported sample rate: all four strength presets, each with the
-         * stationary overlay on top, and the bare default. */
+         * supported sample rate: all four strength presets and the bare default. */
         AnrMode modes[] = { ANR_MODE_MILD, ANR_MODE_MODERATE,
                                    ANR_MODE_BALANCED, ANR_MODE_AGGRESSIVE };
         const char* mode_names[] = { "mild", "moderate", "balanced", "aggressive" };
@@ -234,12 +221,6 @@ int main(void) {
                 snprintf(msg, sizeof msg, "preset %s @ %dHz: validate_config() accepts",
                          mode_names[i], sample_rates[r]);
                 CHECK(anr_validate_config(&preset), msg);
-
-                AnrConfig preset_st = preset;
-                anr_apply_stationary(&preset_st);
-                snprintf(msg, sizeof msg, "preset %s+stationary @ %dHz: validate_config() accepts",
-                         mode_names[i], sample_rates[r]);
-                CHECK(anr_validate_config(&preset_st), msg);
             }
 
             AnrConfig def = anr_default_config(sample_rates[r]);

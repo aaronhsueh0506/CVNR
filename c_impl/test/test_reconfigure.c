@@ -1,5 +1,5 @@
 /* Runtime reconfiguration must retain state and caller-composed tunables.
- * Reject invalid or resized configs without writes; preserve stationary mode.
+ * Reject invalid or resized configs without writes.
  * Checks heap/static paths and unchanged pool sizes. Returns failure count. */
 
 #include "anr.h"
@@ -306,38 +306,6 @@ static void check_pipeline_overrides_survive(void) {
     inst_close(&in);
 }
 
-/* ── 5: the stationary overlay is orthogonal and survives ──────────────── */
-
-static void check_stationary_overlay_survives(void) {
-    AnrConfig cfg = anr_config_for_mode_grid(16000, 512,
-                                                      ANR_MODE_BALANCED);
-    AnrConfig canonical;
-    Inst in;
-    printf("-- the stationary content overlay survives a strength change --\n");
-    anr_apply_stationary(&cfg);
-    if (inst_open(&in, &cfg) != 0) { CHECK(0, "stationary instance created"); return; }
-    inst_run(&in, 40, 0x55u);
-
-    CHECK(anr_set_mode(in.d, ANR_MODE_AGGRESSIVE) == 0,
-          "stationary instance accepts a strength change");
-
-    /* What a naive recomposition would have installed. Every field the
-     * overlay owns must differ from it -- otherwise the instance silently
-     * became a hybrid that is neither full nor stationary. */
-    canonical = anr_config_for_mode_grid(16000, 512,
-                                              ANR_MODE_AGGRESSIVE);
-    {
-        AnrConfig want = canonical;
-        anr_apply_stationary(&want);
-        CHECK(want.xi_min_db != canonical.xi_min_db ||
-                  want.alpha_xi != canonical.alpha_xi ||
-                  want.alpha_d != canonical.alpha_d,
-              "the overlay genuinely differs from the bare preset (so this "
-              "check is not vacuous)");
-    }
-    inst_close(&in);
-}
-
 /* ── 7: the pool byte count never moves ────────────────────────────────── */
 
 static void check_pool_size_is_unchanged(void) {
@@ -399,7 +367,6 @@ int main(void) {
     check_state_clearing_is_observable();
     check_refusal_is_total();
     check_pipeline_overrides_survive();
-    check_stationary_overlay_survives();
     check_pool_size_is_unchanged();
     check_frame_gate_follows_q();
 
