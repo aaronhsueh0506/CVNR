@@ -2,6 +2,16 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [Unreleased] · 移除 C 端 stationary 內容保留模式
+
+- 移除 `anr_apply_stationary()`、`AnrConfig` 欄位 `stationary_floor` /
+  `stationary_floor_exponent` / `stationary_floor_beta` /
+  `scene_change_tonal_veto` / `scene_change_lo_flatness_max`、`calculate_gain` 的 Wiener
+  下界分支，以及範例程式與 parity runner 的 `--stationary`。Python reference 保留該模式，
+  Python/C parity 只涵蓋 full。
+- `AnrConfig` 由 180 縮為 160 bytes，`anr_get_mem_size()` 每個實例少 48 bytes；呼叫端若逐欄位
+  建立 `AnrConfig` 或以固定常數配置 static pool，需要重新編譯。預設組態的輸出逐位元不變。
+
 ## [Unreleased] · 數位靜音幀不計入噪聲初始化與追蹤
 
 - 所有 bin 功率皆為精確 0 的幀不計入 `num_init_frames`，也不推進 MCRA tracker

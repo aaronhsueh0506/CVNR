@@ -43,6 +43,16 @@ historical records, so their old names describe the versions originally
 measured. Select fresh artifacts through the Makefile query targets or a new
 release manifest; an older build directory can still contain older artifacts.
 
+## Removed stationary mode
+
+The C library no longer provides the stationary content mode: `anr_apply_stationary()`,
+the `AnrConfig` fields `stationary_floor`, `stationary_floor_exponent`,
+`stationary_floor_beta`, `scene_change_tonal_veto` and `scene_change_lo_flatness_max`,
+and the `--stationary` option of the example programs are gone. `AnrConfig` shrinks
+from 180 to 160 bytes and `anr_get_mem_size()` by 48 bytes, so callers that build
+`AnrConfig` field by field or size static pools from a fixed constant must be
+rebuilt. The Python reference keeps its stationary mode.
+
 ## Python directory layout
 
 Python implementation, tools, tests, YAML configuration and requirements now

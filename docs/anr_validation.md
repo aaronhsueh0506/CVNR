@@ -30,6 +30,50 @@ repository tests reproduce the bit-exact claims on demand (see
 - **Python/C gain comparison** is a numerical parity check on float32 gains
   (absolute error statistics), not Python/C bit-exactness.
 
+## Digital-silence frames
+
+Frames whose bins are all exactly zero do not count toward noise initialization
+and do not advance the noise tracker.
+
+- A 1 kHz tone (10 s) that follows 5 s of exact zeros converges to the same gain
+  as the same tone without leading silence, within 0.07 dB, at 16 kHz/FFT 256,
+  16 kHz/FFT 512 and 48 kHz/FFT 1024 in the balanced and aggressive modes, with
+  the same time to reach -6 dB. Without the change the converged gain stays at
+  -1.9 / -0.2 / -0.02 dB against -18.1 dB for the control.
+- Streams without any all-zero frame produce byte-identical WAV output: 48 of
+  48 configurations for each of three such stimuli (speech-like noise with a
+  weak tone, and two stimuli whose digital silence is replaced by +-1 LSB
+  noise). Per-hop state streams match bit for bit when the all-zero stretch of
+  the stream is replaced by a very low level signal.
+- Streams that do contain all-zero frames change by design. In a speech-like
+  noise stream with isolated zero stretches of 20, 60 and 150 ms, the output
+  in the 0.1-0.4 s after the longest stretch is up to 4.4 dB quieter (deeper
+  noise suppression); in a probe at 16 kHz/FFT 512 in the aggressive mode it
+  matches the output of the same stream without the stretches within 0.3 dB.
+  The last two seconds differ by less than 0.01 dB.
+- `make test-noise-restart` fails without the change (initialization on
+  silence, the noise floor moving across silence, and a tone whose first frame
+  is a reduced-power onset) and passes with it.
+
+## Stationary mode removal
+
+The C library has no stationary content mode. With the default configuration
+the output is unchanged by the removal: the per-hop state and output stream
+of all configurations that do not use the stationary mode is bit-identical
+before and after on both FFT backends and both SIMD settings (97,354 records
+of 97,354 for the unmodified stream, 97,375 of 97,375 with the zero stretch
+replaced), and 144 end-to-end WAV configurations (six stimuli, three grids,
+balanced and aggressive, four builds) give byte-identical files. A deliberate
+1-ulp change in one gain bin is detected by both comparisons. The
+instance size shrinks by 48 bytes per instance (`anr_get_mem_size` 58,304 to
+58,256 bytes at 16 kHz/FFT 256, 69,856 to 69,808 at 16 kHz/FFT 512, 183,616 to
+183,568 at 48 kHz/FFT 1024) and `AnrConfig` from 180 to 160 bytes. Per-hop cost
+shows no consistent change: over six grid/mode cells (Apple M4, NE10, frozen
+spectra of a speech-like stimulus, 12 alternating pairs) the median pair ratio
+ranges from -1.4 % to +6.2 % with no consistent sign and the best-of-run ratio
+from -3.1 % to +3.0 %. The measurement cannot resolve differences below about
+3 %; the removed code was a branch that is false in every default run.
+
 ## Cost
 
 Apple M4, NE10 backend, clang -O2 with the strict FP flags. Four alternating
@@ -53,6 +97,9 @@ the caller's FFT, window, overlap-add, initialization and I/O.
 - The WAV matrix uses 12 development input files and covers only the listed
   strengths and options; it does not prove equality for other inputs.
 - The Python reference and the C library agree numerically, not bitwise.
+- The stimuli used for the digital-silence and stationary-removal comparisons are
+  synthetic (speech-like harmonic bursts, coloured noise, a weak tone); they do
+  not cover recorded material.
 - Algorithms, presets, state geometry, memory size and latency are unchanged by
   the rename and the two kernels.
 

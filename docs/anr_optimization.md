@@ -23,7 +23,9 @@ frozen development spectra pool 150 times. They cover the frequency-domain C
 core and spectrum power, excluding caller FFT/window/OLA, initialization and
 I/O. These are host measurements, not embedded-board or whole-pipeline results.
 Validation scope and the list of evidence files kept outside the repository
-are in [anr_validation.md](anr_validation.md).
+are in [anr_validation.md](anr_validation.md); the trace and WAV counts quoted
+below were recorded before the stationary mode was removed and include its
+configurations.
 
 The selected implementation matches the preceding release for all 523,882,912 trace bytes over
 38,456 hops. End-to-end WAV checks cover 384 configurations, comparing preceding/new
