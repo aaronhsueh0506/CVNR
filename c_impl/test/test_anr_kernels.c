@@ -223,6 +223,42 @@ static int test_restart_inert(void) {
     return 0;
 }
 
+#if defined(USE_OPTIMIZED_MIN_BUFFER) && defined(USE_INCREMENTAL_MIN)
+static int test_ring_min(void) {
+    static const int lengths[] = {1, 2, 3, 4, 5, 8, 16, 31, 32, 48, 64};
+    static float s_s[MAX_N + OFFSETS], smin_ref_s[MAX_N], smin_neon_s[MAX_N];
+    static float ring_ref[MAX_N * 64], ring_neon[MAX_N * 64];
+    Stats stats = {0};
+    for (int trial = 0; trial < TRIALS / 2; ++trial) {
+        int n = test_size(trial);
+        int L = lengths[random_bits() % (sizeof(lengths) / sizeof(lengths[0]))];
+        int ring_pos = (int)(random_bits() % (uint32_t)L);
+        float* s = s_s + trial % OFFSETS;
+        const float growth = 1.0f + 1e-6f;
+        for (int k = 0; k < n; ++k) {
+            float smin = draw(0.0f, 100.0f, NULL, 0);
+            if (trial % 5 != 0 && !(smin == smin)) smin = 1.0f;   /* mostly ordinary minima */
+            float edge = smin * growth;
+            const float s_edges[] = {smin};
+            const float o_edges[] = {edge, smin};
+            s[k] = draw(0.0f, 100.0f, s_edges, 1);
+            smin_ref_s[k] = smin_neon_s[k] = smin;
+            for (int l = 0; l < L; ++l) ring_ref[(size_t)k * L + l] = draw(0.0f, 100.0f, NULL, 0);
+            ring_ref[(size_t)k * L + ring_pos] = draw(0.0f, 100.0f, o_edges, 2);
+        }
+        memcpy(ring_neon, ring_ref, (size_t)n * L * sizeof(float));
+        mcra_ring_min_scalar(smin_ref_s, s, ring_ref, L, ring_pos, n);
+        mcra_ring_min_neon(smin_neon_s, s, ring_neon, L, ring_pos, n);
+        stats.calls++;
+        if (compare_arrays("ring_min", "S_min", smin_ref_s, smin_neon_s, n, trial, &stats) ||
+            compare_arrays("ring_min", "ring", ring_ref, ring_neon, n * L, trial, &stats))
+            return 1;
+    }
+    report("ring_min", &stats);
+    return 0;
+}
+#endif
+
 #endif /* SK_HAVE_NEON */
 
 int main(void) {
@@ -235,6 +271,9 @@ int main(void) {
     if (test_final_gain()) return 1;
 #endif
     if (test_restart_inert()) return 1;
+#if defined(USE_OPTIMIZED_MIN_BUFFER) && defined(USE_INCREMENTAL_MIN)
+    if (test_ring_min()) return 1;
+#endif
 #else
     printf("ANR kernels: scalar build, no vector twin compiled (NEON=0)\n");
 #endif

@@ -222,7 +222,7 @@ static inline float mcra_min_ordered_neon(const float* values, int n) {
 }
 #endif
 
-static inline float mcra_min_ordered(const float* values, int n) {
+static inline ANR_MAYBE_UNUSED float mcra_min_ordered(const float* values, int n) {
 #if ANR_VECTOR
     return mcra_min_ordered_neon(values, n);
 #else
@@ -523,6 +523,102 @@ void mcra_init_noise(McraNoiseEstimator* self, const float* power_sum, int n_fra
     self->is_initialized = true;
 }
 
+#if defined(USE_OPTIMIZED_MIN_BUFFER) && defined(USE_INCREMENTAL_MIN)
+/* Ring write and incremental minimum for bins [0, n): store the new smoothed power S in slot
+ * ring_pos of each bin's row (row k starts at ring[k * L]), keep S_min when S is a new minimum,
+ * and rescan the row only when the evicted value was at most S_min * (1 + 1e-6).
+ */
+static inline void mcra_ring_min_elem(float* s_min, float new_s, float* row, int ring_pos,
+                                      bool* rescan) {
+    float old_val = row[ring_pos];
+    row[ring_pos] = new_s;
+    *rescan = false;
+    if (new_s <= *s_min) {
+        *s_min = new_s;
+    } else if (old_val <= *s_min * (1.0f + 1e-6f)) {
+        *rescan = true;
+    }
+}
+
+static inline ANR_MAYBE_UNUSED void mcra_ring_min_scalar(float* s_min, const float* s,
+                                                         float* ring, int L, int ring_pos,
+                                                         int n) {
+    for (int k = 0; k < n; k++) {
+        bool rescan;
+        mcra_ring_min_elem(s_min + k, s[k], ring + (size_t)k * L, ring_pos, &rescan);
+        if (rescan) s_min[k] = mcra_min_ordered_scalar(ring + (size_t)k * L, L);
+    }
+}
+
+#if SK_HAVE_NEON
+/* Block of bins processed before the deferred rescans; bounds the pending-bin list. */
+#define MCRA_RING_BLOCK 128
+
+/* Per 4-bit lane mask: ascending numbers of the set lanes (unused entries 0) and their count. */
+static const uint16_t mcra_lane_list[16][4] = {
+    {0, 0, 0, 0}, {0, 0, 0, 0}, {1, 0, 0, 0}, {0, 1, 0, 0},
+    {2, 0, 0, 0}, {0, 2, 0, 0}, {1, 2, 0, 0}, {0, 1, 2, 0},
+    {3, 0, 0, 0}, {0, 3, 0, 0}, {1, 3, 0, 0}, {0, 1, 3, 0},
+    {2, 3, 0, 0}, {0, 2, 3, 0}, {1, 2, 3, 0}, {0, 1, 2, 3}};
+static const uint8_t mcra_lane_count[16] = {0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4};
+
+/* Same result as the scalar twin: the compare and select run on four bins at once, the bins that
+ * need a rescan are collected without a data-dependent branch and rescanned after each block.
+ */
+static inline void mcra_ring_min_neon(float* s_min, const float* s, float* ring, int L,
+                                      int ring_pos, int n) {
+    const float32x4_t growth = vdupq_n_f32(1.0f + 1e-6f);
+    const uint32_t lane_bits[4] = {1u, 2u, 4u, 8u};
+    const uint32x4_t weights = vld1q_u32(lane_bits);
+    uint16_t pending[MCRA_RING_BLOCK + 4];
+    for (int base = 0; base < n; base += MCRA_RING_BLOCK) {
+        const int end = base + MCRA_RING_BLOCK < n ? base + MCRA_RING_BLOCK : n;
+        int count = 0;
+        int k = base;
+        for (; k + 4 <= end; k += 4) {
+            float* p0 = ring + (size_t)k * L + ring_pos;
+            float* p1 = p0 + L;
+            float* p2 = p1 + L;
+            float* p3 = p2 + L;
+            float32x4_t old_val = vld1q_lane_f32(p0, vdupq_n_f32(0.0f), 0);
+            old_val = vld1q_lane_f32(p1, old_val, 1);
+            old_val = vld1q_lane_f32(p2, old_val, 2);
+            old_val = vld1q_lane_f32(p3, old_val, 3);
+            float32x4_t new_s = vld1q_f32(s + k);
+            vst1q_lane_f32(p0, new_s, 0);
+            vst1q_lane_f32(p1, new_s, 1);
+            vst1q_lane_f32(p2, new_s, 2);
+            vst1q_lane_f32(p3, new_s, 3);
+            float32x4_t current = vld1q_f32(s_min + k);
+            uint32x4_t is_min = vcleq_f32(new_s, current);
+            uint32x4_t stale = vbicq_u32(vcleq_f32(old_val, vmulq_f32(current, growth)), is_min);
+            vst1q_f32(s_min + k, vbslq_f32(is_min, new_s, current));
+            uint32_t bits = vaddvq_u32(vandq_u32(stale, weights));
+            vst1_u16(pending + count, vadd_u16(vld1_u16(mcra_lane_list[bits]),
+                                               vdup_n_u16((uint16_t)k)));
+            count += mcra_lane_count[bits];
+        }
+        for (; k < end; k++) {
+            bool rescan;
+            mcra_ring_min_elem(s_min + k, s[k], ring + (size_t)k * L, ring_pos, &rescan);
+            if (rescan) pending[count++] = (uint16_t)k;
+        }
+        for (int i = 0; i < count; i++)
+            s_min[pending[i]] = mcra_min_ordered_neon(ring + (size_t)pending[i] * L, L);
+    }
+}
+#endif
+
+static inline void mcra_ring_min(float* s_min, const float* s, float* ring, int L, int ring_pos,
+                                 int n) {
+#if ANR_VECTOR
+    mcra_ring_min_neon(s_min, s, ring, L, ring_pos, n);
+#else
+    mcra_ring_min_scalar(s_min, s, ring, L, ring_pos, n);
+#endif
+}
+#endif
+
 /* Restart inert bins with p=0 so a returning signal can update the floor. The update keeps
  * the non-fused order alpha_d*N + (1-alpha_d)*power; other bins are left unchanged.
  */
@@ -581,6 +677,9 @@ void mcra_update_ex(McraNoiseEstimator* self,
 
     // Ring update and incremental minima.
     int ring_pos = self->ring_idx;
+#if defined(USE_OPTIMIZED_MIN_BUFFER) && defined(USE_INCREMENTAL_MIN)
+    mcra_ring_min(self->S_min, self->S, self->min_buffer, L, ring_pos, n_freqs);
+#else
     for (int k = 0; k < n_freqs; k++) {
         float new_S = self->S[k];
 
@@ -635,6 +734,7 @@ void mcra_update_ex(McraNoiseEstimator* self,
 #endif
 #endif  // USE_INCREMENTAL_MIN
     }
+#endif
 
     // Advance ring index
     self->ring_idx = (self->ring_idx + 1) % L;
