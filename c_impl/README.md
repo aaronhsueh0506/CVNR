@@ -194,7 +194,8 @@ Makefile:218: *** FP policy conflict: CFLAGS/CXXFLAGS/CPPFLAGS/EXTRA_CFLAGS cont
 object 含 NEON 程式碼——`anr.o`、`spp_estimator.o` 與 `mcra_noise_estimator.o` 使用
 `audio_common/simd_kernels.h` 的 exp/EMA kernel，`mcra_noise_estimator.o` 另含
 `mcra_min_ordered` 的 NEON 最小值搜尋——但只用不融合的 vmul/vadd/vsub 與比較/選擇指令，
-沒有顯式 `fmaf()`/`fma()`/`vfmaq_f32` 呼叫；SIMD=0 時為純 scalar。若出現任何
+沒有顯式 `fmaf()`/`fma()`/`vfmaq_f32` 呼叫。SIMD=0（`-DSIMD_KERNELS_FORCE_SCALAR`）時不編入
+這些 NEON intrinsic 路徑，但編譯器的自動向量化仍可能產生向量指令，同樣不含融合指令。若出現任何
 fmadd/fmsub/fnmadd/fnmsub/fmla/fmls 指令即判定失敗——那正是編譯器「自行」融合
 `a*b+c` 的訊號，也正是這個 flag 存在的目的。詳見該腳本 header 的完整 scoping 說明。
 
