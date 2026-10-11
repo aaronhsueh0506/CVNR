@@ -52,7 +52,7 @@ static void expect_config_rejected(const AnrConfig* cfg, const char* label,
 }
 
 int main(void) {
-    printf("=== NR config validation / alignment guard tests (F05/F07) ===\n\n");
+    printf("=== NR config validation / alignment guard tests ===\n\n");
 
     /* Generic oversized, 16-aligned scratch buffer reused by every rejection
      * check below. */

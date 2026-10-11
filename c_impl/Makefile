@@ -40,9 +40,8 @@ ifneq ($(DEBUG),1)
 $(error DEBUG must be exactly 0 or 1 (got DEBUG='$(DEBUG)') -- pass DEBUG=0 \
   (default: fast-math + the six production optimizations, same as a bare \
   `make`) or DEBUG=1 (same as `make debug`: standard-math, optimizations \
-  off). Any other value -- including one inherited from a stray exported \
-  DEBUG environment variable -- used to silently fall through to the \
-  standard-math debug path instead of erroring; it no longer does)
+  off). Any other value is rejected, including one inherited from an exported \
+  DEBUG environment variable)
 endif
 endif
 
@@ -627,7 +626,7 @@ _publish_impl: $(PUBLISH_ARTIFACTS)
 	if [ "$$commit" = "unknown" ]; then \
 	  echo "FATAL: publish refused -- nr has no git identity here (not a git checkout)." >&2; \
 	  echo "  Without an identity the attestation cannot name the source state OR enumerate untracked" >&2; \
-	  echo "  content, so NO escape hatch admits this (ALLOW_DIRTY_PUBLISH used to)." >&2; \
+	  echo "  content, so NO escape hatch admits this." >&2; \
 	  echo "  Publish from a real checkout or a scratch clone with a disposable commit instead." >&2; \
 	  exit 1; \
 	fi; \
@@ -642,7 +641,7 @@ _publish_impl: $(PUBLISH_ARTIFACTS)
 	if [ "$$ac_commit" = "unknown" ]; then \
 	  echo "FATAL: publish refused -- audio_common (AC_DIR=$(AC_DIR)) has no git identity here (missing, not a directory, or not a git checkout)." >&2; \
 	  echo "  Without an identity the attestation cannot name the source state OR enumerate untracked" >&2; \
-	  echo "  content, so NO escape hatch admits this (ALLOW_DIRTY_PUBLISH used to)." >&2; \
+	  echo "  content, so NO escape hatch admits this." >&2; \
 	  echo "  Point AC_DIR at a real audio_common checkout (or a scratch clone with a disposable commit)." >&2; \
 	  exit 1; \
 	fi; \
@@ -839,7 +838,7 @@ help:
 	@echo "\`make publish\` for a stable dist/<backend>/current/ handoff path."
 	@echo ""
 	@echo "Flags:"
-	@echo "  USE_STANDARD_MATH   - now selected via \`make debug\` (DEBUG=1), not EXTRA_CFLAGS"
+	@echo "  USE_STANDARD_MATH   - selected via \`make debug\` (DEBUG=1), not EXTRA_CFLAGS"
 	@echo "  USE_FAST_PERCENTILE - Use mean*0.23 approximation instead of exact 30th percentile"
 	@echo ""
 	@echo "Memory usage:"
