@@ -60,6 +60,7 @@ static void run_case(uint32_t grid, int sr, int fft, AnrMode strength,
                      uint32_t feature, int static_memory) {
     AnrConfig config = anr_config_for_mode_grid(sr, fft, strength);
     if (feature == 1) config.dd_from_gmmse = true;
+    if (feature == 3) config.alpha_d = 0.4f;   /* fast decay: bins held at zero reach the inert floor */
     if (feature == 2) {
         anr_apply_cross_band_speech_experiment(&config);
         config.makeup_gain = true;
@@ -93,6 +94,9 @@ static void run_case(uint32_t grid, int sr, int fft, AnrMode strength,
         if (frame >= 48 && frame < 176) {
             input[3].r += 2.0f;
             input[7].i += 1.0f;
+        }
+        if (feature == 3 && frame >= 40 && frame < 200) {
+            for (int k = 30; k < 38 && k < nf; ++k) input[k].r = input[k].i = 0.0f;
         }
         if (feature && frame == 88) anr_reset(s);
         if (feature && frame == 160) {
@@ -138,7 +142,7 @@ int main(void) {
     for (uint32_t grid = 0; grid < 3; ++grid) {
         for (int strength = ANR_MODE_MILD; strength <= ANR_MODE_AGGRESSIVE; ++strength)
             run_case(grid, rates[grid], sizes[grid], (AnrMode)strength, 0, 0);
-        for (uint32_t feature = 1; feature <= 2; ++feature)
+        for (uint32_t feature = 1; feature <= 3; ++feature)
             run_case(grid, rates[grid], sizes[grid], ANR_MODE_BALANCED, feature, 0);
         run_case(grid, rates[grid], sizes[grid], ANR_MODE_BALANCED, 0, 1);
     }

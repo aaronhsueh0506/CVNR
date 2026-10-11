@@ -523,6 +523,44 @@ void mcra_init_noise(McraNoiseEstimator* self, const float* power_sum, int n_fra
     self->is_initialized = true;
 }
 
+/* Restart inert bins with p=0 so a returning signal can update the floor. The update keeps
+ * the non-fused order alpha_d*N + (1-alpha_d)*power; other bins are left unchanged.
+ */
+static inline void mcra_restart_inert_elem(float* noise, float power, float alpha_d) {
+    if (*noise < MCRA_NOISE_PSD_INERT)
+        *noise = alpha_d * *noise + (1.0f - alpha_d) * power;
+}
+
+static inline ANR_MAYBE_UNUSED void mcra_restart_inert_scalar(float* noise, const float* power,
+                                                              float alpha_d, int n) {
+    for (int k = 0; k < n; k++) mcra_restart_inert_elem(noise + k, power[k], alpha_d);
+}
+
+#if SK_HAVE_NEON
+static inline void mcra_restart_inert_neon(float* noise, const float* power, float alpha_d,
+                                           int n) {
+    const float32x4_t floor_psd = vdupq_n_f32(MCRA_NOISE_PSD_INERT);
+    const float32x4_t alpha = vdupq_n_f32(alpha_d);
+    const float32x4_t one_minus = vdupq_n_f32(1.0f - alpha_d);
+    int k = 0;
+    for (; k + 4 <= n; k += 4) {
+        float32x4_t current = vld1q_f32(noise + k);
+        float32x4_t restarted = vaddq_f32(vmulq_f32(alpha, current),
+                                          vmulq_f32(one_minus, vld1q_f32(power + k)));
+        vst1q_f32(noise + k, vbslq_f32(vcltq_f32(current, floor_psd), restarted, current));
+    }
+    for (; k < n; k++) mcra_restart_inert_elem(noise + k, power[k], alpha_d);
+}
+#endif
+
+static inline void mcra_restart_inert(float* noise, const float* power, float alpha_d, int n) {
+#if ANR_VECTOR
+    mcra_restart_inert_neon(noise, power, alpha_d, n);
+#else
+    mcra_restart_inert_scalar(noise, power, alpha_d, n);
+#endif
+}
+
 void mcra_update_ex(McraNoiseEstimator* self,
                     const float* power,
                     const float* spp_ext,
@@ -682,15 +720,7 @@ void mcra_update_ex(McraNoiseEstimator* self,
                                   alpha_d, bb_scale, n_freqs - slow_end);
     }
 
-    /* Restart inert bins with p=0 so a returning signal can update the floor. Preserve the
-     * non-fused update order: alpha_d*N + (1-alpha_d)*power.
-     */
-    for (int k = 0; k < n_freqs; k++) {
-        if (self->noise_psd[k] < MCRA_NOISE_PSD_INERT) {
-            self->noise_psd[k] = alpha_d * self->noise_psd[k]
-                               + (1.0f - alpha_d) * power[k];
-        }
-    }
+    mcra_restart_inert(self->noise_psd, power, alpha_d, n_freqs);
 }
 
 void mcra_update(McraNoiseEstimator* self, const float* power, const float* spp_ext) {

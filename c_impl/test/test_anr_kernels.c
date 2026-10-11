@@ -199,6 +199,30 @@ static int test_final_gain(void) {
 }
 #endif
 
+static int test_restart_inert(void) {
+    static float noise_s[MAX_N + OFFSETS], power_s[MAX_N + OFFSETS];
+    static float ref[MAX_N], neon[MAX_N];
+    const float edges[] = {MCRA_NOISE_PSD_INERT, 0.0f, 1e-10f, 1.0f};
+    Stats stats = {0};
+    for (int trial = 0; trial < TRIALS; ++trial) {
+        int n = test_size(trial);
+        float* noise = noise_s + trial % OFFSETS;
+        float* power = power_s + (trial / OFFSETS) % OFFSETS;
+        float alpha_d = (trial % 13 == 0) ? from_bits(SPECIAL_BITS[random_bits() % 8u]) : uniform(0.0f, 1.0f);
+        for (int i = 0; i < n; ++i) {
+            noise[i] = draw(0.0f, 4e-20f, edges, 4);
+            power[i] = draw(0.0f, 1e6f, edges, 4);
+            ref[i] = neon[i] = noise[i];
+        }
+        mcra_restart_inert_scalar(ref, power, alpha_d, n);
+        mcra_restart_inert_neon(neon, power, alpha_d, n);
+        stats.calls++;
+        if (compare_arrays("restart_inert", "noise", ref, neon, n, trial, &stats)) return 1;
+    }
+    report("restart_inert", &stats);
+    return 0;
+}
+
 #endif /* SK_HAVE_NEON */
 
 int main(void) {
@@ -210,6 +234,7 @@ int main(void) {
 #ifdef USE_FAST_GAIN_SMOOTHING
     if (test_final_gain()) return 1;
 #endif
+    if (test_restart_inert()) return 1;
 #else
     printf("ANR kernels: scalar build, no vector twin compiled (NEON=0)\n");
 #endif

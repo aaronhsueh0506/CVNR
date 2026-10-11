@@ -91,7 +91,7 @@ def compare(reference, optimized):
                 process.terminate()
             process.wait()
             process.stdout.close()
-    expected = 3 * (4 + 2 + 1) * info[0][3]
+    expected = 3 * (4 + 3 + 1) * info[0][3]
     if frames != expected or count == 0:
         raise RuntimeError(f"incomplete coverage: {frames} hops, expected {expected}")
     print(f"ANR bit-exact PASS: {frames} hops, {count} state/output records, {byte_count} bytes compared", flush=True)
