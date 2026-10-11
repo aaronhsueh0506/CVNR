@@ -223,6 +223,53 @@ static int test_restart_inert(void) {
     return 0;
 }
 
+static int test_spp_dd(void) {
+    static float power_s[MAX_N + OFFSETS], noise_s[MAX_N + OFFSETS], prev_s[MAX_N + OFFSETS];
+    static float enh_s[MAX_N + OFFSETS];
+    static float gamma_ref[MAX_N], gamma_neon[MAX_N], xi_ref[MAX_N], xi_neon[MAX_N];
+    static float v_ref[MAX_N], v_neon[MAX_N];
+    const float edges[] = {1e-10f, 1.0f, 0.0f, -1e-10f};
+    Stats stats = {0};
+    AnrConfig cfg = anr_default_config_for_grid(16000, 512);
+    for (int trial = 0; trial < TRIALS; ++trial) {
+        int n = test_size(trial);
+        SppEstimator* a = spp_create(n, &cfg);
+        SppEstimator* b = spp_create(n, &cfg);
+        if (!a || !b) return 1;
+        a->alpha = b->alpha = (trial % 17 == 0) ? from_bits(SPECIAL_BITS[random_bits() % 8u])
+                                                : uniform(0.0f, 1.0f);
+        a->xi_min = b->xi_min = (trial % 19 == 0) ? from_bits(SPECIAL_BITS[random_bits() % 8u])
+                                                  : uniform(0.0f, 1.0f);
+        float* power = power_s + trial % OFFSETS;
+        float* noise = noise_s + (trial / 2) % OFFSETS;
+        float* noise_prev = prev_s + (trial / 3) % OFFSETS;
+        float* enhanced = enh_s + (trial / 5) % OFFSETS;
+        for (int i = 0; i < n; ++i) {
+            power[i] = draw(0.0f, 1e6f, edges, 4);
+            noise[i] = draw(0.0f, 1e5f, edges, 4);
+            noise_prev[i] = draw(0.0f, 1e5f, edges, 4);
+            enhanced[i] = draw(0.0f, 1e6f, edges, 4);
+        }
+        int with_v = trial & 1;
+        spp_dd_scalar(a, power, noise, noise_prev, enhanced, gamma_ref, xi_ref,
+                      with_v ? v_ref : NULL, n);
+        spp_dd_neon(b, power, noise, noise_prev, enhanced, gamma_neon, xi_neon,
+                    with_v ? v_neon : NULL, n);
+        stats.calls++;
+        int bad = compare_arrays("spp_dd", "gamma", gamma_ref, gamma_neon, n, trial, &stats) ||
+                  compare_arrays("spp_dd", "xi", xi_ref, xi_neon, n, trial, &stats) ||
+                  compare_arrays("spp_dd", "v_scratch", a->v_scratch, b->v_scratch, n, trial, &stats) ||
+                  compare_arrays("spp_dd", "term_xi", a->term_xi_scratch, b->term_xi_scratch, n, trial, &stats) ||
+                  compare_arrays("spp_dd", "gamma_prev", a->gamma_prev, b->gamma_prev, n, trial, &stats) ||
+                  (with_v && compare_arrays("spp_dd", "v_out", v_ref, v_neon, n, trial, &stats));
+        spp_destroy(a);
+        spp_destroy(b);
+        if (bad) return 1;
+    }
+    report("spp_dd", &stats);
+    return 0;
+}
+
 #if defined(USE_OPTIMIZED_MIN_BUFFER) && defined(USE_INCREMENTAL_MIN)
 static int test_ring_min(void) {
     static const int lengths[] = {1, 2, 3, 4, 5, 8, 16, 31, 32, 48, 64};
@@ -271,6 +318,7 @@ int main(void) {
     if (test_final_gain()) return 1;
 #endif
     if (test_restart_inert()) return 1;
+    if (test_spp_dd()) return 1;
 #if defined(USE_OPTIMIZED_MIN_BUFFER) && defined(USE_INCREMENTAL_MIN)
     if (test_ring_min()) return 1;
 #endif
