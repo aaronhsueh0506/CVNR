@@ -1,9 +1,10 @@
 # ANR validation summary
 
-This page records what was verified for the C API rename to ANR and the two
-bit-exact kernel changes (batched final-gain exponential, ordered NEON minimum
-rescan), what the verification does not cover, and which evidence files were
-kept out of the repository.
+This page records what was verified for the C API rename to ANR and the bit-exact
+kernel changes (batched final-gain exponential and NEON kernels for the MCRA
+minimum ring, inert-bin restart, SPP decision-directed pass and gain stages), what
+the verification does not cover, and which evidence files were kept out of the
+repository.
 
 ## What was verified
 
@@ -14,9 +15,10 @@ repository tests reproduce the bit-exact claims on demand (see
 - **Four-way bit-exact stream.** For FFT backend kiss and NE10, each with
   `SIMD=0` and `SIMD=1`, the optimized build and an independent scalar
   reference build (`-DANR_REFERENCE_KERNELS`) produce identical state and
-  gain traces: 523,882,912 trace bytes over 38,456 hops, plus 514,000 minimum
-  arrays containing NaN, signed zero, infinity, subnormal and random bit
-  patterns. `make test-bit-exact` runs this gate; it compares two builds of the
+  gain traces: 164,236,480 trace bytes (111,301 records) over 6,144 hops, plus
+  616,800 minimum arrays containing NaN, signed zero, infinity, subnormal and
+  random bit patterns, plus the scalar-versus-NEON differential test of every
+  kernel. `make test-bit-exact` runs this gate; it compares two builds of the
   same source tree, per backend. The two FFT backends are not claimed to be
   bit-exact with each other.
 - **WAV byte equality.** 384 end-to-end configurations (12 input files, four
@@ -98,16 +100,13 @@ from -3.1 % to +3.0 %. The measurement cannot resolve differences below about
 
 ## Cost
 
-Apple M4, NE10 backend, clang -O2 with the strict FP flags. Four alternating
-before/after pairs each repeat the same frozen spectra pool 150 times. The
-measured region is the frequency-domain C core plus spectrum power, excluding
-the caller's FFT, window, overlap-add, initialization and I/O.
-
-| Grid | Core time reduction |
-|---|---:|
-| 16 kHz, FFT 256, hop 128 | 6.687 % |
-| 16 kHz, FFT 512, hop 256 | 7.729 % |
-| 48 kHz, FFT 1024, hop 512 | 6.983 % |
+Apple M4, NE10 backend, clang -O2 with the strict FP flags; `make bench-anr`
+measures the frequency-domain C core (`anr_process()` and `anr_process_gain()`),
+excluding the caller's FFT, window, overlap-add, initialization and I/O. Twelve
+alternating runs of the scalar-twin build and the NEON build, each run the median
+of 30 passes of 600 hops, give a median reduction of 36.6 % to 42.7 % per hop over
+the three grids and two strengths; the per-cell figures are in
+[anr_optimization.md](anr_optimization.md).
 
 ## Scope limits
 
@@ -123,7 +122,7 @@ the caller's FFT, window, overlap-add, initialization and I/O.
   synthetic (speech-like harmonic bursts, coloured noise, a weak tone); they do
   not cover recorded material.
 - Algorithms, presets, state geometry, memory size and latency are unchanged by
-  the rename and the two kernels.
+  the rename and the kernels.
 
 ## Evidence files kept outside the repository
 

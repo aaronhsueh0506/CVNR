@@ -57,6 +57,7 @@ The C API and archive are named ANR. See the [complete C API migration](docs/anr
 for the source, header, type, function, and link-name changes.
 The [bit-exact optimization record](docs/anr_optimization.md) covers the adopted
 NEON kernels, three-grid cost measurements, validation and reset behavior.
+`make -C c_impl bench-anr` prints the per-hop cost of the current build.
 
 ```bash
 # NE10/NEON build (embedded deliverable, default backend everywhere). SIMD=1 is the default.

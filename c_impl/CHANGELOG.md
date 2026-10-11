@@ -2,6 +2,17 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [Unreleased] · 核心 NEON kernel（輸出逐位元不變）
+
+- MCRA 最小值 ring 的 rescan 與更新、inert-bin 重啟、SPP decision-directed 前段、gain 輸入準備、
+  final gain 的 blend 與 select/store 各有 scalar twin 與 NEON twin；運算順序與原迴圈相同
+  （分離乘加、原除法、ordered compare 加 bit select），輸出與 scalar 路徑逐位元相同。
+- `-DANR_REFERENCE_KERNELS` 取代 `ANR_REFERENCE_FINAL_GAIN`，一次切換所有 kernel 的 scalar 路徑。
+  `make test-bit-exact` 另跑每個 kernel 的 scalar/NEON 差分測試（`test/test_anr_kernels.c`）；
+  串流測試新增一個讓 inert-bin 重啟分支被走到的案例。
+- 新增 `make bench-anr`：三組 grid、兩種強度的每 hop 成本（host 計時）。Apple M4、NE10、clang -O2：
+  相對 scalar twin 每 hop 減少 36.6 % 至 42.7 %；目標平台未量。
+
 ## [Unreleased] · 移除 C 端 stationary 內容保留模式
 
 - 移除 `anr_apply_stationary()`、`AnrConfig` 欄位 `stationary_floor` /

@@ -2,38 +2,61 @@
 
 This release keeps the processing and presets of the preceding release. It renames the C
 API and source/archive files to ANR, moves Python reference code into `python/`,
-and accelerates two existing C operations. See [migration](anr_migration.md).
+and accelerates existing C operations without changing any output bit. See
+[migration](anr_migration.md).
 
-MCRA retains the frequency-major minimum ring. Its NEON rescan preserves scalar
-NaN and first-on-tie behavior, including signed zero. Full-mode final gain uses
-the existing batch exponential kernel and scratch storage with the same clamps
-and non-fused floating-point order. No additional state, allocation or delay is
-introduced. The main source uses an inline gain block; the separately maintained
-Audio_ALG copy uses a private helper selected against its own original source.
+## NEON kernels
 
-| Grid | C core time reduction |
-|---|---:|
-| 16k, FFT256, hop128 | 6.687% |
-| 16k, FFT512, hop256 | 7.729% |
-| 48k, FFT1024, hop512 | 6.983% |
+Each kernel is a pair of static functions in the library sources. The scalar twin
+defines the arithmetic and also processes the tail of an array; the NEON twin processes
+four bins at a time. Both keep the operation order of the original loop: separate rounded
+multiply and add (no fused multiply-add), the original divides, ordered compares with a
+bit select (so a NaN behaves as in the scalar branch), and no reciprocal or square-root
+estimates. No additional state, allocation or delay is introduced.
+Building with `-DANR_REFERENCE_KERNELS` selects the scalar twins instead (the final-gain
+passes use the per-bin reference loop), which is how one source tree is compared with
+itself.
 
-Measurements use Apple M4,
-NE10, clang O2 and strict FP flags. Four alternating pairs each repeat the same
-frozen development spectra pool 150 times. They cover the frequency-domain C
-core and spectrum power, excluding caller FFT/window/OLA, initialization and
-I/O. These are host measurements, not embedded-board or whole-pipeline results.
-Validation scope and the list of evidence files kept outside the repository
-are in [anr_validation.md](anr_validation.md); the trace and WAV counts quoted
-below were recorded before the stationary mode was removed and include its
-configurations.
+| Stage | Kernel |
+|---|---|
+| MCRA minimum ring, rescan | Lane-wise running minima over the row. The result is the ordered minimum whenever the seed vectors hold no NaN and the minimum is not a zero; any other row takes the scalar first-on-tie rule, so NaN, signed zero and ties behave exactly as before. |
+| MCRA minimum ring, update | Compare and select of the incremental minimum on four bins. Bins whose evicted value was the minimum are collected through a lane table without a data-dependent branch and rescanned after each block of 128 bins. |
+| MCRA inert-bin restart | Select between the restart update and the unchanged value. |
+| SPP decision-directed pass | Posterior SNR, a-priori SNR and the exponent argument, with the original three divides. |
+| Gain input preparation | Clamp and divide that produce v and xi/(1+xi). |
+| Final gain | Blend and smoothing of the log gain before the batched exponential, and select and store of the next-hop state after it. |
 
-The selected implementation matches the preceding release for all 523,882,912 trace bytes over
-38,456 hops. End-to-end WAV checks cover 384 configurations, comparing preceding/new
-and heap/static output bytes within the same backend. The formal test also
-checks deep intermediate state and 514,000 minimum arrays containing NaNs,
-signed zero, infinities, subnormals and random bit patterns. C++ API, configuration,
-reconfiguration, silence restart and scene-change regressions pass. Python/C
-gain comparisons are numerical parity checks, not Python/C bit-exactness.
+Loops that stay scalar: the speech-evidence sum and the high-band power and noise sums
+(serial float reductions whose order is part of the result), the integer counters, the
+speech-indicator smoothing, the gain application and the loops that clang already
+vectorizes with the same result. The exponential, logarithm and E1 kernels come from
+`audio_common` and are unchanged.
+
+## Cost
+
+`make bench-anr` (from `c_impl/`) times `anr_process()` and `anr_process_gain()` with an
+extra noise PSD on three grids and two strengths. It uses frozen synthetic spectra, a
+fresh instance per pass, five untimed warm-up passes and 30 timed passes of 600 hops, and
+prints median, quartiles and minimum. The figures below are medians in microseconds per
+hop on Apple M4 with the NE10 backend and clang -O2 with the strict FP flags, scalar
+twins (`EXTRA_CFLAGS=-DANR_REFERENCE_KERNELS`) against the NEON kernels, 12 alternating
+runs of the two binaries. They describe the host and compiler that built the binaries;
+they are not target-platform figures.
+
+| Grid | Strength | `anr_process` | `anr_process_gain` + extra PSD |
+|---|---|---|---|
+| 16 kHz, FFT 256 | balanced | 1.455 → 0.853 (−41.6 %) | 1.391 → 0.827 (−40.8 %) |
+| 16 kHz, FFT 256 | aggressive | 1.459 → 0.852 (−41.7 %) | 1.390 → 0.828 (−40.5 %) |
+| 16 kHz, FFT 512 | balanced | 2.678 → 1.648 (−38.4 %) | 2.507 → 1.588 (−36.6 %) |
+| 16 kHz, FFT 512 | aggressive | 2.717 → 1.655 (−39.2 %) | 2.518 → 1.590 (−36.9 %) |
+| 48 kHz, FFT 1024 | balanced | 5.461 → 3.142 (−42.5 %) | 5.395 → 3.103 (−42.4 %) |
+| 48 kHz, FFT 1024 | aggressive | 5.470 → 3.135 (−42.7 %) | 5.410 → 3.102 (−42.6 %) |
+
+The scalar twins are compiled by the host compiler, which vectorizes some of them; on a
+compiler or core that does not, the gap is expected to be larger. Validation scope and its
+limits are in [anr_validation.md](anr_validation.md).
+
+## Verification
 
 From `c_impl/`, run:
 
@@ -42,11 +65,27 @@ make BACKEND=ne10 SIMD=1 WERROR=1 all lib mem parity test-config test-reconfigur
 make BACKEND=kiss SIMD=0 WERROR=1 test-bit-exact
 ```
 
-Repeat the bit-exact target for both backends and SIMD settings when modifying
-these kernels. Keep `-ffp-contract=off`; reassociation/fast-math is outside this
-contract. The test script uses the production optimization definitions and an
-independent scalar final-gain/minimum reference. Its current target does not
-forward arbitrary DEBUG or EXTRA_CFLAGS into the reference test build.
+`make test-bit-exact` builds the library twice from the same sources, once with
+`-DANR_REFERENCE_KERNELS`, and runs three checks:
+
+- a synthetic per-hop stream (three grids; four strengths, DD-from-G_H1, cross-band
+  prior with make-up, a fast-decay case that reaches the inert-bin restart, and a static
+  pool; 256 hops each, including digital-silence hops; the feature cases add runtime
+  resets and reconfiguration) whose state and output bytes must be identical between the two builds;
+- the ordered-minimum test, which compares the minimum with an independent scalar rule on
+  random bit patterns, NaN payloads, signed zeros, infinities, subnormals, ties and
+  unaligned starts;
+- the kernel differential test (`test/test_anr_kernels.c`), which compares the scalar and
+  NEON twin of every kernel on random values, NaN, signed zero, infinity, subnormals and
+  values at each comparison boundary. A NaN result that differs from its twin only in the
+  payload is counted separately; every other difference fails.
+
+Repeat the bit-exact target for both backends and SIMD settings when modifying these
+kernels. Keep `-ffp-contract=off`; reassociation and fast-math are outside this contract.
+The test script uses the production optimization definitions and does not forward
+arbitrary DEBUG or EXTRA_CFLAGS into the reference build. C++ API, configuration,
+reconfiguration, silence restart and scene-change regressions are separate make targets.
+Python/C gain comparisons are numerical parity checks, not Python/C bit-exactness.
 
 Digital silence. A frame whose bins are all exactly zero carries no noise
 statistics: it does not count toward noise initialization and does not advance
