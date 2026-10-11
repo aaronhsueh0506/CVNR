@@ -13,7 +13,7 @@ repository tests reproduce the bit-exact claims on demand (see
 
 - **Four-way bit-exact stream.** For FFT backend kiss and NE10, each with
   `SIMD=0` and `SIMD=1`, the optimized build and an independent scalar
-  reference build (`-DANR_REFERENCE_FINAL_GAIN`) produce identical state and
+  reference build (`-DANR_REFERENCE_KERNELS`) produce identical state and
   gain traces: 523,882,912 trace bytes over 38,456 hops, plus 514,000 minimum
   arrays containing NaN, signed zero, infinity, subnormal and random bit
   patterns. `make test-bit-exact` runs this gate; it compares two builds of the

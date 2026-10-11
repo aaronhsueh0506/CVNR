@@ -343,7 +343,7 @@ static void calculate_gain(AnrDenoiser* self,
     /* log(G_H1 + eps) in-place; SIMD kernel supports exact aliasing. */
     sk_fast_log_f32(v_scratch, v_scratch, n_freqs);
 
-#if defined(USE_FAST_GAIN_SMOOTHING) && SK_HAVE_NEON && !defined(ANR_REFERENCE_FINAL_GAIN)
+#if defined(USE_FAST_GAIN_SMOOTHING) && ANR_VECTOR
     {
         float* restrict logs = v_scratch;
         float* restrict saved_logs = self->log_gain_prev;

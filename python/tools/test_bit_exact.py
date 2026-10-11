@@ -126,7 +126,7 @@ def main():
         scratch = Path(directory)
         binaries = {}
         for name, source, extra in (
-            ("reference", "test_bit_exact_stream.c", ["-DANR_REFERENCE_FINAL_GAIN"]),
+            ("reference", "test_bit_exact_stream.c", ["-DANR_REFERENCE_KERNELS"]),
             ("optimized", "test_bit_exact_stream.c", []),
             ("minimum", "test_min_ordered_special.c", []),
         ):

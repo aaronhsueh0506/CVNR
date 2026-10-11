@@ -126,7 +126,7 @@ static void run_case(uint32_t grid, int sr, int fft, AnrMode strength,
 int main(void) {
     if (sizeof(float) != sizeof(uint32_t) || sizeof(Complex) != 2 * sizeof(float)) return 1;
     setvbuf(stdout, NULL, _IOFBF, 65536);
-#if defined(USE_FAST_GAIN_SMOOTHING) && SK_HAVE_NEON && !defined(ANR_REFERENCE_FINAL_GAIN)
+#if defined(USE_FAST_GAIN_SMOOTHING) && ANR_VECTOR
     const uint32_t vector_gain = 1;
 #else
     const uint32_t vector_gain = 0;
