@@ -76,13 +76,13 @@ typedef struct {
     float speech_protect_frame_threshold;   // Frame gate authored at ANR_SPEECH_PROTECT_ANCHOR_Q
 
     // Speech preservation; DD-from-G_H1 and make-up are optional and off by default.
-    bool  dd_from_gmmse;              // Research: Cohen eq.18 DD from G_H1
+    bool  dd_from_gmmse;              // DD power from G_H1 (Cohen eq. 18)
     bool  speech_aware_noise_tracking;
     float alpha_d_speech;             // Slow rising LF noise update
     float noise_gate_xi_db;            // Frame speech-evidence threshold
     float noise_gate_lf_hz;            // Protected low-frequency range
     float noise_gate_frame_frac;       // Required fraction of speech bins
-    bool  makeup_gain;                 // Research: post-OM-LSA frame scalar
+    bool  makeup_gain;                 // Post-OM-LSA frame scalar
     float makeup_prior_xi_db;         // C make-up uses noise_gate_xi_db; field mirrors Python.
     float makeup_blim;
     float makeup_up_slope;
@@ -157,7 +157,7 @@ static inline int anr_retime_frames_ref(int frames_ref,
     return frames_d > (double)INT_MAX ? 0 : (int)frames_d;
 }
 
-/** Convert a legacy 10-ms frame count without shortening real duration. */
+/** Convert a frame count authored at 10 ms without shortening real duration. */
 static inline int anr_retime_frames(int frames_10ms,
                                          int sample_rate, int hop_size) {
     if (frames_10ms <= 0 || sample_rate <= 0 || hop_size <= 0) return 0;

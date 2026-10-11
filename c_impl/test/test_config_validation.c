@@ -169,7 +169,7 @@ int main(void) {
         cfg = anr_default_config(16000); cfg.alpha_g = INFINITY;
         expect_config_rejected(&cfg, "alpha_g = +Inf", big_buf, BIG_BUF);
 
-        /* (b) Concrete garbage values from the remediation ask. */
+        /* (b) Concrete out-of-range values. */
         cfg = anr_default_config(16000); cfg.q = 0.0f;
         expect_config_rejected(&cfg, "q = 0 (degenerate probability)", big_buf, BIG_BUF);
 
@@ -207,7 +207,7 @@ int main(void) {
         cfg = anr_default_config(16000); cfg.g_min_db = -200.0f;
         expect_config_rejected(&cfg, "g_min_db = -200 (out of range)", big_buf, BIG_BUF);
 
-        /* (c) Every shipped config must still validate, across every
+        /* (c) Every shipped config must validate, across every
          * supported sample rate: all four strength presets and the bare default. */
         AnrMode modes[] = { ANR_MODE_MILD, ANR_MODE_MODERATE,
                                    ANR_MODE_BALANCED, ANR_MODE_AGGRESSIVE };
@@ -243,7 +243,7 @@ int main(void) {
 
         /* The alternate 16-kHz/256 grid must preserve preset wall-clock
          * constants too; mutating only fft/frame/hop after construction is
-         * intentionally no longer the supported construction path. */
+         * not a supported construction path. */
         {
             const int grid_sr[] = {8000, 8000, 16000, 16000, 48000};
             const int grid_fft[] = {128, 256, 256, 512, 1024};

@@ -33,7 +33,7 @@
 #include "anr_types.h"
 #include "fft_wrapper.h"
 
-#define PARITY_MAGIC_V1 0x4E525031  /* 'NRP1': legacy, implicit 16 kHz */
+#define PARITY_MAGIC_V1 0x4E525031  /* 'NRP1': implicit 16 kHz */
 #define PARITY_MAGIC    0x4E525032  /* 'NRP2': carries the signal grid rate */
 
 int main(int argc, char* argv[]) {

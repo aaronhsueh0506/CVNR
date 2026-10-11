@@ -154,10 +154,9 @@ int main(int argc, char* argv[]) {
     AnrConfig config = anr_config_for_mode_grid(
         sample_rate, selected_fft, nr_mode);
 
-    /* F05: reject a sample rate / framing this port has never been verified
-     * against, with a clear message (same whitelist as main.c / see there for
-     * rationale — anr_get_mem_size/init would also reject it internally,
-     * but with a generic pool-size error rather than naming the problem). */
+    /* Reject a sample rate or framing outside the supported grids with a clear message (same
+     * whitelist as main.c); anr_get_mem_size() and anr_init() would also reject it, but with a
+     * generic pool-size error. */
     if (!anr_validate_config(&config)) {
         fprintf(stderr,
                 "Error: unsupported sample rate %d Hz for NR processing "

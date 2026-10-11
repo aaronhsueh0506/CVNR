@@ -134,7 +134,7 @@ static void reset_frame_evidence_state(AnrDenoiser* self) {
     self->makeup_prior_state = 0.5f;
 }
 
-/* First-order logit lift of a posterior by the frame prior (research switch). */
+/* First-order logit lift of a posterior by the frame prior (optional; off by default). */
 static inline float lift_spp(float spp_k, float lift) {
     return spp_k + lift * spp_k * (1.0f - spp_k);
 }
