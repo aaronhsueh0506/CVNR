@@ -143,38 +143,91 @@ void mcra_apply_config_scalars(McraNoiseEstimator* self,
 }
 
 #ifdef USE_OPTIMIZED_MIN_BUFFER
-/* Preserve first-on-tie selection and scalar NaN handling. */
-static float mcra_min_ordered(const float* values, int n) {
+/* Ordered minimum: start from values[0] and replace on a strict '<'. A NaN never replaces and
+ * a NaN in values[0] is never replaced; among equal values the earliest stays, so +0 and -0
+ * keep their position-dependent identity.
+ */
+static inline float mcra_min_ordered_scalar(const float* values, int n) {
     float minimum = values[0];
-    int i = 1;
-#if SK_HAVE_NEON
-    for (; i + 4 <= n; i += 4) {
-        float32x4_t v = vld1q_f32(values + i);
-        uint32x4_t valid = vceqq_f32(v, v);
-#if defined(__aarch64__)
-        bool has_nan = vminvq_u32(valid) == 0;
-#else
-        uint32x2_t valid_pair = vand_u32(vget_low_u32(valid),
-                                        vget_high_u32(valid));
-        bool has_nan = (vget_lane_u32(valid_pair, 0) &
-                        vget_lane_u32(valid_pair, 1)) == 0;
-#endif
-        if (has_nan) {
-            for (int j = 0; j < 4; ++j)
-                if (values[i + j] < minimum) minimum = values[i + j];
-            continue;
-        }
-        float32x4_t next = vextq_f32(v, v, 1);
-        v = vbslq_f32(vcltq_f32(next, v), next, v);
-        next = vextq_f32(v, v, 2);
-        v = vbslq_f32(vcltq_f32(next, v), next, v);
-        float group_minimum = vgetq_lane_f32(v, 0);
-        if (group_minimum < minimum) minimum = group_minimum;
-    }
-#endif
-    for (; i < n; ++i)
+    for (int i = 1; i < n; ++i)
         if (values[i] < minimum) minimum = values[i];
     return minimum;
+}
+
+#if SK_HAVE_NEON
+static inline float32x4_t mcra_vmin_lt(float32x4_t a, float32x4_t b) {
+    return vbslq_f32(vcltq_f32(b, a), b, a);   /* b where b < a, else a */
+}
+
+/* Minimum through independent lane-wise running minima. It equals the ordered minimum whenever
+ * no element is NaN and the minimum is not a zero: equal non-zero floats have equal bits, so
+ * the order of comparison cannot change the result. Returns false (result untouched) for NaN or
+ * a zero minimum, which need the position-dependent scalar rule.
+ */
+static inline bool mcra_min_ordered_fast_neon(const float* values, int n, float* result) {
+    if (n < 4) return false;
+    float32x4_t a0, a1, a2, a3;
+    uint32x4_t valid;
+    int i;
+    if (n >= 16) {
+        a0 = vld1q_f32(values);
+        a1 = vld1q_f32(values + 4);
+        a2 = vld1q_f32(values + 8);
+        a3 = vld1q_f32(values + 12);
+        valid = vandq_u32(vandq_u32(vceqq_f32(a0, a0), vceqq_f32(a1, a1)),
+                          vandq_u32(vceqq_f32(a2, a2), vceqq_f32(a3, a3)));
+        for (i = 16; i + 16 <= n; i += 16) {
+            float32x4_t x0 = vld1q_f32(values + i);
+            float32x4_t x1 = vld1q_f32(values + i + 4);
+            float32x4_t x2 = vld1q_f32(values + i + 8);
+            float32x4_t x3 = vld1q_f32(values + i + 12);
+            valid = vandq_u32(valid, vandq_u32(vandq_u32(vceqq_f32(x0, x0), vceqq_f32(x1, x1)),
+                                               vandq_u32(vceqq_f32(x2, x2), vceqq_f32(x3, x3))));
+            a0 = mcra_vmin_lt(a0, x0);
+            a1 = mcra_vmin_lt(a1, x1);
+            a2 = mcra_vmin_lt(a2, x2);
+            a3 = mcra_vmin_lt(a3, x3);
+        }
+        a0 = mcra_vmin_lt(a0, a1);
+        a2 = mcra_vmin_lt(a2, a3);
+        a0 = mcra_vmin_lt(a0, a2);
+    } else {
+        a0 = vld1q_f32(values);
+        valid = vceqq_f32(a0, a0);
+        i = 4;
+    }
+    for (; i + 4 <= n; i += 4) {
+        float32x4_t x = vld1q_f32(values + i);
+        valid = vandq_u32(valid, vceqq_f32(x, x));
+        a0 = mcra_vmin_lt(a0, x);
+    }
+    a0 = mcra_vmin_lt(a0, vextq_f32(a0, a0, 2));
+    a0 = mcra_vmin_lt(a0, vextq_f32(a0, a0, 1));
+    float minimum = vgetq_lane_f32(a0, 0);
+    bool all_valid = vminvq_u32(valid) != 0;
+    for (; i < n; ++i) {
+        float x = values[i];
+        all_valid = all_valid && x == x;
+        if (x < minimum) minimum = x;
+    }
+    if (!all_valid || minimum == 0.0f) return false;
+    *result = minimum;
+    return true;
+}
+
+static inline float mcra_min_ordered_neon(const float* values, int n) {
+    float minimum;
+    if (mcra_min_ordered_fast_neon(values, n, &minimum)) return minimum;
+    return mcra_min_ordered_scalar(values, n);
+}
+#endif
+
+static inline float mcra_min_ordered(const float* values, int n) {
+#if ANR_VECTOR
+    return mcra_min_ordered_neon(values, n);
+#else
+    return mcra_min_ordered_scalar(values, n);
+#endif
 }
 #endif
 
