@@ -37,9 +37,17 @@ and do not advance the noise tracker.
 
 - A 1 kHz tone (10 s) that follows 5 s of exact zeros converges to the same gain
   as the same tone without leading silence, within 0.07 dB, at 16 kHz/FFT 256,
-  16 kHz/FFT 512 and 48 kHz/FFT 1024 in the balanced and aggressive modes, with
-  the same time to reach -6 dB. Without the change the converged gain stays at
+  16 kHz/FFT 512 and 48 kHz/FFT 1024 in the balanced and aggressive modes, and
+  reaches -6 dB within one 64 ms block of the control (0.192 s after the tone
+  starts with the change). Without the change the converged gain stays at
   -1.9 / -0.2 / -0.02 dB against -18.1 dB for the control.
+- Noise that follows 5 s of digital silence starts like a cold start after the
+  change. The output stays below -6 dB from 0.192 s after the noise starts
+  (control without silence: 0.19-0.26 s) and is within 3 dB of its converged
+  level from 0.26-0.58 s (control: 0.26-0.45 s). Before the change it stayed
+  below -6 dB from 0.064-0.128 s, so the first -6 dB is reached later now,
+  while the output was within 3 dB of the converged level only from
+  0.58-1.73 s.
 - Streams without any all-zero frame produce byte-identical WAV output: 48 of
   48 configurations for each of three such stimuli (speech-like noise with a
   weak tone, and two stimuli whose digital silence is replaced by +-1 LSB
@@ -47,10 +55,21 @@ and do not advance the noise tracker.
   the stream is replaced by a very low level signal.
 - Streams that do contain all-zero frames change by design. In a speech-like
   noise stream with isolated zero stretches of 20, 60 and 150 ms, the output
-  in the 0.1-0.4 s after the longest stretch is up to 4.4 dB quieter (deeper
-  noise suppression); in a probe at 16 kHz/FFT 512 in the aggressive mode it
-  matches the output of the same stream without the stretches within 0.3 dB.
-  The last two seconds differ by less than 0.01 dB.
+  in the 100 ms blocks that follow the longest stretch is up to 4.4 dB quieter
+  than before the change (deeper noise suppression; worst case 16 kHz/FFT 512,
+  aggressive mode). The last two seconds differ by less than 0.01 dB.
+  Compared with the output of the same stream without any stretch (probe at
+  16 kHz/FFT 512, aggressive mode; the longest stretch ends at 7.65 s):
+  - The first 100 ms block after the stretch (7.6-7.7 s) is 4.1 dB below it
+    with the change (-70.7 against -66.6 dBFS) and 0.4 dB above it before the
+    change. This block holds the 4.4 dB worst case. About 3 dB of that gap comes
+    from the last 50 ms of the stretch inside the block, whose output is
+    exactly zero; over the 50 ms after the stretch the output with the change
+    is 1.1 dB below.
+    The balanced mode shows the same block about 4 dB low both before (-3.7 dB)
+    and after (-4.1 dB) the change.
+  - From the second block on (7.7-8.0 s) the output with the change matches it
+    within 0.3 dB; before the change it was up to 3.7 dB higher.
 - `make test-noise-restart` fails without the change (initialization on
   silence, the noise floor moving across silence, and a tone whose first frame
   is a reduced-power onset) and passes with it.
@@ -64,8 +83,11 @@ before and after on both FFT backends and both SIMD settings (97,354 records
 of 97,354 for the unmodified stream, 97,375 of 97,375 with the zero stretch
 replaced), and 144 end-to-end WAV configurations (six stimuli, three grids,
 balanced and aggressive, four builds) give byte-identical files. A deliberate
-1-ulp change in one gain bin is detected by both comparisons. The
-instance size shrinks by 48 bytes per instance (`anr_get_mem_size` 58,304 to
+1-ulp change in one gain bin is detected by the stream comparison in all eight
+runs (two streams, four builds) and by the WAV comparison in 45 of 48 runs
+(two stimuli, three grids, two modes, four builds); the other three outputs are
+equal after 16-bit quantisation, so the WAV comparison is the weaker of the
+two. The instance size shrinks by 48 bytes per instance (`anr_get_mem_size` 58,304 to
 58,256 bytes at 16 kHz/FFT 256, 69,856 to 69,808 at 16 kHz/FFT 512, 183,616 to
 183,568 at 48 kHz/FFT 1024) and `AnrConfig` from 180 to 160 bytes. Per-hop cost
 shows no consistent change: over six grid/mode cells (Apple M4, NE10, frozen
