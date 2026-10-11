@@ -17,6 +17,13 @@
 #define ANR_VECTOR 0
 #endif
 
+/* Scalar twins are compiled in every build; the vector build calls them only from tests. */
+#if defined(__GNUC__) || defined(__clang__)
+#define ANR_MAYBE_UNUSED __attribute__((unused))
+#else
+#define ANR_MAYBE_UNUSED
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif

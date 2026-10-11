@@ -129,6 +129,7 @@ def main():
             ("reference", "test_bit_exact_stream.c", ["-DANR_REFERENCE_KERNELS"]),
             ("optimized", "test_bit_exact_stream.c", []),
             ("minimum", "test_min_ordered_special.c", []),
+            ("kernels", "test_anr_kernels.c", []),
         ):
             obj = scratch / (name + ".o")
             binary = scratch / name
@@ -138,6 +139,7 @@ def main():
             binaries[name] = binary
         compare(binaries["reference"], binaries["optimized"])
         run([str(binaries["minimum"])])
+        run([str(binaries["kernels"])])
 
 
 if __name__ == "__main__":

@@ -272,6 +272,189 @@ static const float* prepare_noise_for_spp(AnrDenoiser* self,
     return self->noise_aug;
 }
 
+/* Gain inputs from the SPP stage: v clamped to [1e-10, 700] (NaN passes through) and the
+ * a-priori ratio xi/(1+xi) recovered as v/(gamma + 1e-10). The output arrays must not overlap
+ * the inputs.
+ */
+#ifdef USE_SHARED_XI_RATIO
+static inline void gain_prepare_elem(float v_in, float gamma, float* v_out,
+                                     float* ratio_out) {
+    float v = v_in;
+    if (v < 1e-10f) v = 1e-10f;
+    if (v > 700.0f) v = 700.0f;
+    *v_out = v;
+    *ratio_out = v_in / (gamma + 1e-10f);
+}
+
+static inline ANR_MAYBE_UNUSED void gain_prepare_scalar(const float* v_in, const float* gamma,
+                                                        float* v_out, float* ratio_out, int n) {
+    for (int k = 0; k < n; k++)
+        gain_prepare_elem(v_in[k], gamma[k], v_out + k, ratio_out + k);
+}
+
+#if SK_HAVE_NEON
+static inline void gain_prepare_neon(const float* v_in, const float* gamma,
+                                     float* v_out, float* ratio_out, int n) {
+    const float32x4_t eps = vdupq_n_f32(1e-10f);
+    const float32x4_t v_max = vdupq_n_f32(700.0f);
+    int k = 0;
+    for (; k + 4 <= n; k += 4) {
+        float32x4_t v_raw = vld1q_f32(v_in + k);
+        float32x4_t ratio = vdivq_f32(v_raw, vaddq_f32(vld1q_f32(gamma + k), eps));
+        float32x4_t v = vbslq_f32(vcltq_f32(v_raw, eps), eps, v_raw);
+        v = vbslq_f32(vcgtq_f32(v, v_max), v_max, v);
+        vst1q_f32(v_out + k, v);
+        vst1q_f32(ratio_out + k, ratio);
+    }
+    for (; k < n; k++)
+        gain_prepare_elem(v_in[k], gamma[k], v_out + k, ratio_out + k);
+}
+#endif
+
+static inline void gain_prepare(const float* v_in, const float* gamma,
+                                float* v_out, float* ratio_out, int n) {
+#if ANR_VECTOR
+    gain_prepare_neon(v_in, gamma, v_out, ratio_out, n);
+#else
+    gain_prepare_scalar(v_in, gamma, v_out, ratio_out, n);
+#endif
+}
+#endif
+
+#ifdef USE_FAST_GAIN_SMOOTHING
+/* Batched final-gain passes: blend and smooth the log gain, then (after the caller's exp over
+ * the clamped log gain) select, store the next-hop state and form the DD power.
+ */
+typedef struct {
+    float log_g_min;
+    float g_min;
+    float alpha_attack;
+    float alpha_decay;
+    float prior_lift;
+    bool  cross_band_prior;
+    bool  smooth;          /* smooth against the previous log gain */
+    bool  dd_from_gmmse;
+} FinalGainParams;
+
+/* log_mmse: log(G_H1 + eps) in, blended and smoothed log gain out. emitted: that log gain clamped
+ * to [log_g_min, 0], ready for exp(). prev_log is read only when smooth is set.
+ */
+static inline void final_blend_elem(const FinalGainParams* g, float posterior, float prev_log,
+                                    float* log_mmse, float* emitted) {
+    float p = posterior;
+    if (g->cross_band_prior) p = lift_spp(p, g->prior_lift);
+    float log_gain = p * *log_mmse + (1.0f - p) * g->log_g_min;
+    if (g->smooth) {
+        float alpha = (log_gain > prev_log) ? g->alpha_attack : g->alpha_decay;
+        log_gain = alpha * prev_log + (1.0f - alpha) * log_gain;
+    }
+    *log_mmse = log_gain;
+    *emitted = (log_gain < g->log_g_min) ? g->log_g_min
+               : (log_gain > 0.0f) ? 0.0f : log_gain;
+}
+
+static inline ANR_MAYBE_UNUSED void final_blend_scalar(const FinalGainParams* g,
+                                                       const float* posterior, float* log_mmse,
+                                                       const float* saved_logs, float* emitted,
+                                                       int n) {
+    for (int k = 0; k < n; k++)
+        final_blend_elem(g, posterior[k], g->smooth ? saved_logs[k] : 0.0f, log_mmse + k,
+                         emitted + k);
+}
+
+/* exp_gain: exp() of the clamped log gain in, final gain out. The log gain outside
+ * [log_g_min, 0] takes g_min / 1 and the matching saved log gain.
+ */
+static inline void final_store_elem(const FinalGainParams* g, float log_gain, float conditional,
+                                    float power, float* exp_gain, float* saved_log,
+                                    float* previous_gain, float* previous_psd) {
+    float gain = *exp_gain;
+    float log_save = log_gain;
+    if (log_gain < g->log_g_min) {
+        gain = g->g_min;
+        log_save = g->log_g_min;
+    } else if (log_gain > 0.0f) {
+        gain = 1.0f;
+        log_save = 0.0f;
+    }
+    *exp_gain = gain;
+    *saved_log = log_save;
+    *previous_gain = gain;
+    float dd_gain = g->dd_from_gmmse ? conditional : gain;
+    *previous_psd = dd_gain * dd_gain * power;
+}
+
+static inline ANR_MAYBE_UNUSED void final_store_scalar(const FinalGainParams* g,
+                                                       const float* log_gain, float* exp_gain,
+                                                       float* saved_logs, float* previous_gain,
+                                                       float* previous_psd,
+                                                       const float* conditional_gain,
+                                                       const float* power, int n) {
+    for (int k = 0; k < n; k++)
+        final_store_elem(g, log_gain[k], conditional_gain[k], power[k], exp_gain + k,
+                         saved_logs + k, previous_gain + k, previous_psd + k);
+}
+
+#if SK_HAVE_NEON
+static inline void final_blend_neon(const FinalGainParams* g, const float* posterior,
+                                    float* log_mmse, const float* saved_logs, float* emitted,
+                                    int n) {
+    const float32x4_t one = vdupq_n_f32(1.0f);
+    const float32x4_t zero = vdupq_n_f32(0.0f);
+    const float32x4_t log_min = vdupq_n_f32(g->log_g_min);
+    const float32x4_t lift = vdupq_n_f32(g->prior_lift);
+    const float32x4_t attack = vdupq_n_f32(g->alpha_attack);
+    const float32x4_t decay = vdupq_n_f32(g->alpha_decay);
+    int k = 0;
+    for (; k + 4 <= n; k += 4) {
+        float32x4_t p = vld1q_f32(posterior + k);
+        if (g->cross_band_prior)
+            p = vaddq_f32(p, vmulq_f32(vmulq_f32(lift, p), vsubq_f32(one, p)));
+        float32x4_t log_gain = vaddq_f32(vmulq_f32(p, vld1q_f32(log_mmse + k)),
+                                         vmulq_f32(vsubq_f32(one, p), log_min));
+        if (g->smooth) {
+            float32x4_t prev = vld1q_f32(saved_logs + k);
+            float32x4_t alpha = vbslq_f32(vcgtq_f32(log_gain, prev), attack, decay);
+            log_gain = vaddq_f32(vmulq_f32(alpha, prev),
+                                 vmulq_f32(vsubq_f32(one, alpha), log_gain));
+        }
+        vst1q_f32(log_mmse + k, log_gain);
+        float32x4_t clamped = vbslq_f32(vcgtq_f32(log_gain, zero), zero, log_gain);
+        vst1q_f32(emitted + k, vbslq_f32(vcltq_f32(log_gain, log_min), log_min, clamped));
+    }
+    for (; k < n; k++)
+        final_blend_elem(g, posterior[k], g->smooth ? saved_logs[k] : 0.0f, log_mmse + k,
+                         emitted + k);
+}
+
+static inline void final_store_neon(const FinalGainParams* g, const float* log_gain,
+                                    float* exp_gain, float* saved_logs, float* previous_gain,
+                                    float* previous_psd, const float* conditional_gain,
+                                    const float* power, int n) {
+    const float32x4_t one = vdupq_n_f32(1.0f);
+    const float32x4_t zero = vdupq_n_f32(0.0f);
+    const float32x4_t log_min = vdupq_n_f32(g->log_g_min);
+    const float32x4_t gain_min = vdupq_n_f32(g->g_min);
+    int k = 0;
+    for (; k + 4 <= n; k += 4) {
+        float32x4_t lg = vld1q_f32(log_gain + k);
+        uint32x4_t below = vcltq_f32(lg, log_min);
+        uint32x4_t above = vcgtq_f32(lg, zero);
+        float32x4_t gain = vbslq_f32(below, gain_min,
+                                     vbslq_f32(above, one, vld1q_f32(exp_gain + k)));
+        float32x4_t log_save = vbslq_f32(below, log_min, vbslq_f32(above, zero, lg));
+        vst1q_f32(exp_gain + k, gain);
+        vst1q_f32(saved_logs + k, log_save);
+        vst1q_f32(previous_gain + k, gain);
+        float32x4_t dd = g->dd_from_gmmse ? vld1q_f32(conditional_gain + k) : gain;
+        vst1q_f32(previous_psd + k, vmulq_f32(vmulq_f32(dd, dd), vld1q_f32(power + k)));
+    }
+    for (; k < n; k++)
+        final_store_elem(g, log_gain[k], conditional_gain[k], power[k], exp_gain + k,
+                         saved_logs + k, previous_gain + k, previous_psd + k);
+}
+#endif
+#endif
 
 static void calculate_gain(AnrDenoiser* self,
                             const float* spp,
@@ -292,30 +475,24 @@ static void calculate_gain(AnrDenoiser* self,
     float* xi_ratio_scratch = self->gain_xi_ratio_scratch;
 
     /* Prepare clamped v and xi/(1+xi), preserving scalar operation order. */
-    for (int k = 0; k < n_freqs; k++) {
-        float xi_k    = xi[k];
-        float gamma_k = gamma[k];
-
-        float v, xi_ratio;
 #ifdef USE_SHARED_XI_RATIO
-        if (v_in != NULL) {
-            v        = v_in[k];
-            xi_ratio = v / (gamma_k + 1e-10f);
-        } else {
-            xi_ratio = xi_k / (1.0f + xi_k);
-            v        = xi_ratio * gamma_k;
-        }
+    if (v_in != NULL) {
+        gain_prepare(v_in, gamma, v_scratch, xi_ratio_scratch, n_freqs);
+    } else
 #else
-        (void)v_in;
-        xi_ratio = xi_k / (1.0f + xi_k);
-        v        = xi_ratio * gamma_k;
+    (void)v_in;
 #endif
+    {
+        for (int k = 0; k < n_freqs; k++) {
+            float xi_ratio = xi[k] / (1.0f + xi[k]);
+            float v        = xi_ratio * gamma[k];
 
-        if (v < 1e-10f) v = 1e-10f;
-        if (v > 700.0f) v = 700.0f;
+            if (v < 1e-10f) v = 1e-10f;
+            if (v > 700.0f) v = 700.0f;
 
-        v_scratch[k]        = v;
-        xi_ratio_scratch[k] = xi_ratio;
+            v_scratch[k]        = v;
+            xi_ratio_scratch[k] = xi_ratio;
+        }
     }
 
     /* E1(v) in-place; USE_STANDARD_MATH selects exp1_approx(). */
@@ -345,45 +522,12 @@ static void calculate_gain(AnrDenoiser* self,
 
 #if defined(USE_FAST_GAIN_SMOOTHING) && ANR_VECTOR
     {
-        float* restrict logs = v_scratch;
-        float* restrict saved_logs = self->log_gain_prev;
-        float* restrict emitted = gain_out;
-        float* restrict previous_gain = self->gain_prev;
-        float* restrict previous_psd = self->enhanced_psd_prev;
-        const float* restrict posterior = spp;
-        const float* restrict power = self->power;
-        const float* restrict conditional_gain = xi_ratio_scratch;
-        for (int k = 0; k < n_freqs; ++k) {
-            float p = posterior[k];
-            if (cross_band_prior) p = lift_spp(p, prior_lift);
-            float log_gain = p * logs[k] + (1.0f - p) * log_g_min;
-            if (self->gain_initialized) {
-                float prev = saved_logs[k];
-                float alpha = (log_gain > prev) ? alpha_attack : alpha_decay;
-                log_gain = alpha * prev + (1.0f - alpha) * log_gain;
-            }
-            logs[k] = log_gain;
-            emitted[k] = (log_gain < log_g_min) ? log_g_min
-                         : (log_gain > 0.0f) ? 0.0f : log_gain;
-        }
-        sk_fast_exp_f32(emitted, emitted, n_freqs);
-        for (int k = 0; k < n_freqs; ++k) {
-            float log_gain = logs[k];
-            float gain = emitted[k];
-            float log_save = log_gain;
-            if (log_gain < log_g_min) {
-                gain = g_min;
-                log_save = log_g_min;
-            } else if (log_gain > 0.0f) {
-                gain = 1.0f;
-                log_save = 0.0f;
-            }
-            emitted[k] = gain;
-            saved_logs[k] = log_save;
-            previous_gain[k] = gain;
-            float dd_gain = dd_from_gmmse ? conditional_gain[k] : gain;
-            previous_psd[k] = dd_gain * dd_gain * power[k];
-        }
+        FinalGainParams params = {log_g_min, g_min, alpha_attack, alpha_decay, prior_lift,
+                                  cross_band_prior, self->gain_initialized, dd_from_gmmse};
+        final_blend_neon(&params, spp, v_scratch, self->log_gain_prev, gain_out, n_freqs);
+        sk_fast_exp_f32(gain_out, gain_out, n_freqs);
+        final_store_neon(&params, v_scratch, gain_out, self->log_gain_prev, self->gain_prev,
+                         self->enhanced_psd_prev, xi_ratio_scratch, self->power, n_freqs);
     }
     apply_low_band_speech_floor(self, gain_out);
     self->gain_initialized = true;
