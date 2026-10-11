@@ -245,8 +245,8 @@ CFLAGS    += $(FP_POLICY)
 AC_FWD = BACKEND=$(BACKEND) SIMD=$(SIMD) WERROR=$(WERROR) CC='$(CC)' CXX='$(CXX)' EXTRA_CFLAGS='$(EXTRA_CFLAGS)' NO_STDIO=$(NO_STDIO) TOOLCHAIN_CHECK=$(TOOLCHAIN_CHECK)
 
 ifeq ($(AC_LIB),)
-.PHONY: all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-scene-change test-api-cpp
-all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-scene-change test-api-cpp:
+.PHONY: all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-scene-change test-api-cpp bench-anr
+all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-scene-change test-api-cpp bench-anr:
 	+@ac="$$($(MAKE) -s --no-print-directory -C $(AC_DIR) $(AC_FWD) print-lib-path)"; \
 	 test -n "$$ac" || { echo "FATAL: could not resolve audio_common archive path (AC_DIR=$(AC_DIR) -- is audio_common present as a sibling of this repo?)" >&2; exit 1; }; \
 	 $(MAKE) --no-print-directory $@ AC_LIB="$$ac"
@@ -493,6 +493,21 @@ $(TEST_CPP_TARGET): $(OBJS) $(OBJ_DIR)/test_api_cpp.o $(AC_LIB) | _cfg_guard
 
 $(OBJ_DIR)/test_api_cpp.o: $(TEST_DIR)/test_api_cpp.cpp | _cfg_guard
 	$(CXX) $(filter-out -std=gnu99,$(CFLAGS)) $(CXXFLAGS) -std=c++17 $(FP_POLICY) -MD -MP -c -o $@ $<
+
+# Per-hop cost of anr_process() and anr_process_gain() on three grids and two strengths. Host-only
+# timing of the build selected by BACKEND/SIMD/CC; run it on an otherwise idle machine.
+.PHONY: bench-anr
+BENCH_TARGET = $(BIN_DIR)/bench_anr
+BENCH_ARGS ?=
+bench-anr: $(BENCH_TARGET)
+	"$(abspath $(BENCH_TARGET))" $(BENCH_ARGS)
+
+$(BENCH_TARGET): $(OBJS) $(OBJ_DIR)/bench_anr.o $(AC_LIB) | _cfg_guard
+	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/bench_anr.o $(AC_LIB) $(LDFLAGS)
+	@echo "Build complete: $@"
+
+$(OBJ_DIR)/bench_anr.o: $(TEST_DIR)/bench_anr.c | _cfg_guard
+	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
 endif
 
 # Compare release kernels with the scalar reference using temporary native binaries.
@@ -815,6 +830,7 @@ help:
 	@echo "  test-scene-change - Build + run the scene-change flatness margin test"
 	@echo "  test-api-cpp - Build + run the C++ header compile/link smoke test"
 	@echo "  test-bit-exact - Compare the optimized kernels with the scalar reference (needs python3)"
+	@echo "  bench-anr - Build + run the per-hop cost benchmark (host timing of this build; BENCH_ARGS=\"<passes> <warmup> <hops>\")"
 	@echo "  lib      - Build static library"
 	@echo "  publish  - Copy this build's artifacts to dist/<backend>/<config-hash>/ + update dist/<backend>/current"
 	@echo "  clean    - Remove build artifacts (dist/ survives -- publish is a deliberate release)"
