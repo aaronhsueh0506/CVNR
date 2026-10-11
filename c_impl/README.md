@@ -1,6 +1,6 @@
 # ANR — C Implementation (V3-2 主線)
 
-> **基準版本**: v1.12.3（c_impl）。本輪採用 ANR 完整改名與 bit-exact NEON 加速；[量測與驗證紀錄](../docs/anr_optimization.md)。共用數學函式仍由 `audio_common/fast_math.h` 提供。
+> **基準版本**: v1.12.3（c_impl）。含 ANR 命名與 bit-exact NEON 加速；[量測與驗證紀錄](../docs/anr_optimization.md)。共用數學函式仍由 `audio_common/fast_math.h` 提供。
 > **對應 Python**: `python/denoisers/v3_2_mmse_lsa.py`
 
 C 介面、檔名與 archive 已統一為 ANR；[完整改名對照](../docs/anr_migration.md)。
@@ -14,7 +14,7 @@ C 介面、檔名與 archive 已統一為 ANR；[完整改名對照](../docs/anr
 - **SPP 語音存在機率**：Decision Directed 方法（Fix #3: DD term 用**前一幀** `noise_psd`）
 - **非對稱增益平滑**：Attack/Decay 分離控制
 - **可配置優化開關**：透過編譯開關選擇精度/速度權衡
-- **場景轉換偵測**：高頻 gamma + spectral flatness 雙重條件；flatness 閾值現在可由 `scene_change_flatness_threshold` 調整
+- **場景轉換偵測**：高頻 gamma + spectral flatness 雙重條件；flatness 閾值可由 `scene_change_flatness_threshold` 調整
 - **與 Python V3-2 同步**：Part A Review 修復已 port（#1, #3, #6, #9）
 - **不含 V4 wind handler**：V4 為 Python-only research 框架，VCTK/DEMAND 驗證未能改善風聲，C 端暫不實作
 
@@ -186,13 +186,15 @@ TU——自己的原始碼**與**vendored 的 KISS/NE10 C/C++ 一律套用這兩
 
 ```
 $ make EXTRA_CFLAGS=-ffast-math
-Makefile:179: *** FP policy conflict: CFLAGS/EXTRA_CFLAGS contains -ffast-math; this repo pins -ffp-contract=off; remove -ffast-math from EXTRA_CFLAGS.  Stop.
+Makefile:218: *** FP policy conflict: CFLAGS/CXXFLAGS/CPPFLAGS/EXTRA_CFLAGS contains -ffast-math; this repo pins -ffp-contract=off; remove -ffast-math from CFLAGS/CXXFLAGS/CPPFLAGS/EXTRA_CFLAGS.  Stop.
 ```
 
 `../audio_common/scripts/audit_fp_contract.sh` 是 disassembly 等級的驗證：反組譯
-本 repo 的 `anr_denoiser.o`/`mcra_noise_estimator.o`/`spp_estimator.o`（皆只
-`#include fast_math.h`/`fft_wrapper.h`，沒有 NEON intrinsics，也沒有顯式
-`fmaf()`/`fma()` 呼叫，屬於 genuinely scalar），若出現任何
+本 repo 的 `anr.o`/`mcra_noise_estimator.o`/`spp_estimator.o`。SIMD=1（AArch64）時這三個
+object 含 NEON 程式碼——`anr.o`、`spp_estimator.o` 與 `mcra_noise_estimator.o` 使用
+`audio_common/simd_kernels.h` 的 exp/EMA kernel，`mcra_noise_estimator.o` 另含
+`mcra_min_ordered` 的 NEON 最小值搜尋——但只用不融合的 vmul/vadd/vsub 與比較/選擇指令，
+沒有顯式 `fmaf()`/`fma()`/`vfmaq_f32` 呼叫；SIMD=0 時為純 scalar。若出現任何
 fmadd/fmsub/fnmadd/fnmsub/fmla/fmls 指令即判定失敗——那正是編譯器「自行」融合
 `a*b+c` 的訊號，也正是這個 flag 存在的目的。詳見該腳本 header 的完整 scoping 說明。
 
