@@ -38,15 +38,15 @@ and do not advance the noise tracker.
 - A 1 kHz tone (10 s) that follows 5 s of exact zeros converges to the same gain
   as the same tone without leading silence, within 0.07 dB, at 16 kHz/FFT 256,
   16 kHz/FFT 512 and 48 kHz/FFT 1024 in the balanced and aggressive modes, and
-  reaches -6 dB within one 64 ms block of the control (0.192 s after the tone
-  starts with the change). Without the change the converged gain stays at
+  reaches -6 dB 0.192 s after the tone starts, within one 64 ms block of the
+  control (0.192 s). Without the change the converged gain stays at
   -1.9 / -0.2 / -0.02 dB against -18.1 dB for the control.
 - Noise that follows 5 s of digital silence starts like a cold start after the
   change. The output stays below -6 dB from 0.192 s after the noise starts
   (control without silence: 0.19-0.26 s) and is within 3 dB of its converged
   level from 0.26-0.58 s (control: 0.26-0.45 s). Before the change it stayed
-  below -6 dB from 0.064-0.128 s, so the first -6 dB is reached later now,
-  while the output was within 3 dB of the converged level only from
+  below -6 dB from 0.064-0.128 s, so the first -6 dB is reached later with the
+  change, while the output was within 3 dB of the converged level only from
   0.58-1.73 s.
 - Streams without any all-zero frame produce byte-identical WAV output: 48 of
   48 configurations for each of three such stimuli (speech-like noise with a
@@ -64,7 +64,7 @@ and do not advance the noise tracker.
     with the change (-70.7 against -66.6 dBFS) and 0.4 dB above it before the
     change. This block holds the 4.4 dB worst case. About 3 dB of that gap comes
     from the last 50 ms of the stretch inside the block, whose output is
-    exactly zero; over the 50 ms after the stretch the output with the change
+    below -100 dBFS; over the 50 ms after the stretch the output with the change
     is 1.1 dB below.
     The balanced mode shows the same block about 4 dB low both before (-3.7 dB)
     and after (-4.1 dB) the change.
