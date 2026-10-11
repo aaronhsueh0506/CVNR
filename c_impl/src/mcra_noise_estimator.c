@@ -159,58 +159,45 @@ static inline float32x4_t mcra_vmin_lt(float32x4_t a, float32x4_t b) {
     return vbslq_f32(vcltq_f32(b, a), b, a);   /* b where b < a, else a */
 }
 
-/* Minimum through independent lane-wise running minima. It equals the ordered minimum whenever
- * no element is NaN and the minimum is not a zero: equal non-zero floats have equal bits, so
- * the order of comparison cannot change the result. Returns false (result untouched) for NaN or
- * a zero minimum, which need the position-dependent scalar rule.
+/* Minimum through independent lane-wise running minima, seeded from the first vectors. A NaN
+ * after the seed never replaces a minimum, exactly like the scalar rule, so only the seed needs
+ * a NaN check. The result equals the ordered minimum whenever the seed holds no NaN and the
+ * minimum is not a zero: equal non-zero floats have equal bits, so the order of comparison
+ * cannot change it. Returns false (result untouched) otherwise, which needs the scalar rule.
  */
 static inline bool mcra_min_ordered_fast_neon(const float* values, int n, float* result) {
     if (n < 4) return false;
     float32x4_t a0, a1, a2, a3;
-    uint32x4_t valid;
+    uint32x4_t seed_valid;
     int i;
     if (n >= 16) {
         a0 = vld1q_f32(values);
         a1 = vld1q_f32(values + 4);
         a2 = vld1q_f32(values + 8);
         a3 = vld1q_f32(values + 12);
-        valid = vandq_u32(vandq_u32(vceqq_f32(a0, a0), vceqq_f32(a1, a1)),
-                          vandq_u32(vceqq_f32(a2, a2), vceqq_f32(a3, a3)));
+        seed_valid = vandq_u32(vandq_u32(vceqq_f32(a0, a0), vceqq_f32(a1, a1)),
+                               vandq_u32(vceqq_f32(a2, a2), vceqq_f32(a3, a3)));
         for (i = 16; i + 16 <= n; i += 16) {
-            float32x4_t x0 = vld1q_f32(values + i);
-            float32x4_t x1 = vld1q_f32(values + i + 4);
-            float32x4_t x2 = vld1q_f32(values + i + 8);
-            float32x4_t x3 = vld1q_f32(values + i + 12);
-            valid = vandq_u32(valid, vandq_u32(vandq_u32(vceqq_f32(x0, x0), vceqq_f32(x1, x1)),
-                                               vandq_u32(vceqq_f32(x2, x2), vceqq_f32(x3, x3))));
-            a0 = mcra_vmin_lt(a0, x0);
-            a1 = mcra_vmin_lt(a1, x1);
-            a2 = mcra_vmin_lt(a2, x2);
-            a3 = mcra_vmin_lt(a3, x3);
+            a0 = mcra_vmin_lt(a0, vld1q_f32(values + i));
+            a1 = mcra_vmin_lt(a1, vld1q_f32(values + i + 4));
+            a2 = mcra_vmin_lt(a2, vld1q_f32(values + i + 8));
+            a3 = mcra_vmin_lt(a3, vld1q_f32(values + i + 12));
         }
         a0 = mcra_vmin_lt(a0, a1);
         a2 = mcra_vmin_lt(a2, a3);
         a0 = mcra_vmin_lt(a0, a2);
     } else {
         a0 = vld1q_f32(values);
-        valid = vceqq_f32(a0, a0);
+        seed_valid = vceqq_f32(a0, a0);
         i = 4;
     }
-    for (; i + 4 <= n; i += 4) {
-        float32x4_t x = vld1q_f32(values + i);
-        valid = vandq_u32(valid, vceqq_f32(x, x));
-        a0 = mcra_vmin_lt(a0, x);
-    }
+    for (; i + 4 <= n; i += 4) a0 = mcra_vmin_lt(a0, vld1q_f32(values + i));
     a0 = mcra_vmin_lt(a0, vextq_f32(a0, a0, 2));
     a0 = mcra_vmin_lt(a0, vextq_f32(a0, a0, 1));
     float minimum = vgetq_lane_f32(a0, 0);
-    bool all_valid = vminvq_u32(valid) != 0;
-    for (; i < n; ++i) {
-        float x = values[i];
-        all_valid = all_valid && x == x;
-        if (x < minimum) minimum = x;
-    }
-    if (!all_valid || minimum == 0.0f) return false;
+    for (; i < n; ++i)
+        if (values[i] < minimum) minimum = values[i];
+    if (vminvq_u32(seed_valid) == 0 || minimum == 0.0f) return false;
     *result = minimum;
     return true;
 }
