@@ -17,11 +17,13 @@
 #define ANR_VECTOR 0
 #endif
 
-/* Scalar twins are compiled in every build; the vector build calls them only from tests. */
+/* Storage class of the kernel twins. The scalar twins of a vector build and the vector twins of a
+ * reference build are compiled but may stay unreferenced.
+ */
 #if defined(__GNUC__) || defined(__clang__)
-#define ANR_MAYBE_UNUSED __attribute__((unused))
+#define ANR_TWIN static inline __attribute__((unused))
 #else
-#define ANR_MAYBE_UNUSED
+#define ANR_TWIN static inline
 #endif
 
 #ifdef __cplusplus

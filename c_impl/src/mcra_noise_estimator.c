@@ -155,7 +155,7 @@ static inline float mcra_min_ordered_scalar(const float* values, int n) {
 }
 
 #if SK_HAVE_NEON
-static inline float32x4_t mcra_vmin_lt(float32x4_t a, float32x4_t b) {
+ANR_TWIN float32x4_t mcra_vmin_lt(float32x4_t a, float32x4_t b) {
     return vbslq_f32(vcltq_f32(b, a), b, a);   /* b where b < a, else a */
 }
 
@@ -165,7 +165,7 @@ static inline float32x4_t mcra_vmin_lt(float32x4_t a, float32x4_t b) {
  * minimum is not a zero: equal non-zero floats have equal bits, so the order of comparison
  * cannot change it. Returns false (result untouched) otherwise, which needs the scalar rule.
  */
-static inline bool mcra_min_ordered_fast_neon(const float* values, int n, float* result) {
+ANR_TWIN bool mcra_min_ordered_fast_neon(const float* values, int n, float* result) {
     if (n < 4) return false;
     float32x4_t a0, a1, a2, a3;
     uint32x4_t seed_valid;
@@ -202,14 +202,14 @@ static inline bool mcra_min_ordered_fast_neon(const float* values, int n, float*
     return true;
 }
 
-static inline float mcra_min_ordered_neon(const float* values, int n) {
+ANR_TWIN float mcra_min_ordered_neon(const float* values, int n) {
     float minimum;
     if (mcra_min_ordered_fast_neon(values, n, &minimum)) return minimum;
     return mcra_min_ordered_scalar(values, n);
 }
 #endif
 
-static inline ANR_MAYBE_UNUSED float mcra_min_ordered(const float* values, int n) {
+ANR_TWIN float mcra_min_ordered(const float* values, int n) {
 #if ANR_VECTOR
     return mcra_min_ordered_neon(values, n);
 #else
@@ -527,9 +527,9 @@ static inline void mcra_ring_min_elem(float* s_min, float new_s, float* row, int
     }
 }
 
-static inline ANR_MAYBE_UNUSED void mcra_ring_min_scalar(float* s_min, const float* s,
-                                                         float* ring, int L, int ring_pos,
-                                                         int n) {
+ANR_TWIN void mcra_ring_min_scalar(float* s_min, const float* s,
+                                   float* ring, int L, int ring_pos,
+                                   int n) {
     for (int k = 0; k < n; k++) {
         bool rescan;
         mcra_ring_min_elem(s_min + k, s[k], ring + (size_t)k * L, ring_pos, &rescan);
@@ -552,8 +552,8 @@ static const uint8_t mcra_lane_count[16] = {0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 
 /* Same result as the scalar twin: the compare and select run on four bins at once, the bins that
  * need a rescan are collected without a data-dependent branch and rescanned after each block.
  */
-static inline void mcra_ring_min_neon(float* s_min, const float* s, float* ring, int L,
-                                      int ring_pos, int n) {
+ANR_TWIN void mcra_ring_min_neon(float* s_min, const float* s, float* ring, int L,
+                                 int ring_pos, int n) {
     const float32x4_t growth = vdupq_n_f32(1.0f + 1e-6f);
     const uint32_t lane_bits[4] = {1u, 2u, 4u, 8u};
     const uint32x4_t weights = vld1q_u32(lane_bits);
@@ -614,14 +614,14 @@ static inline void mcra_restart_inert_elem(float* noise, float power, float alph
         *noise = alpha_d * *noise + (1.0f - alpha_d) * power;
 }
 
-static inline ANR_MAYBE_UNUSED void mcra_restart_inert_scalar(float* noise, const float* power,
-                                                              float alpha_d, int n) {
+ANR_TWIN void mcra_restart_inert_scalar(float* noise, const float* power,
+                                        float alpha_d, int n) {
     for (int k = 0; k < n; k++) mcra_restart_inert_elem(noise + k, power[k], alpha_d);
 }
 
 #if SK_HAVE_NEON
-static inline void mcra_restart_inert_neon(float* noise, const float* power, float alpha_d,
-                                           int n) {
+ANR_TWIN void mcra_restart_inert_neon(float* noise, const float* power, float alpha_d,
+                                      int n) {
     const float32x4_t floor_psd = vdupq_n_f32(MCRA_NOISE_PSD_INERT);
     const float32x4_t alpha = vdupq_n_f32(alpha_d);
     const float32x4_t one_minus = vdupq_n_f32(1.0f - alpha_d);

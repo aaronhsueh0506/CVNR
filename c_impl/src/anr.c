@@ -286,15 +286,15 @@ static inline void gain_prepare_elem(float v_in, float gamma, float* v_out,
     *ratio_out = v_in / (gamma + 1e-10f);
 }
 
-static inline ANR_MAYBE_UNUSED void gain_prepare_scalar(const float* v_in, const float* gamma,
-                                                        float* v_out, float* ratio_out, int n) {
+ANR_TWIN void gain_prepare_scalar(const float* v_in, const float* gamma,
+                                  float* v_out, float* ratio_out, int n) {
     for (int k = 0; k < n; k++)
         gain_prepare_elem(v_in[k], gamma[k], v_out + k, ratio_out + k);
 }
 
 #if SK_HAVE_NEON
-static inline void gain_prepare_neon(const float* v_in, const float* gamma,
-                                     float* v_out, float* ratio_out, int n) {
+ANR_TWIN void gain_prepare_neon(const float* v_in, const float* gamma,
+                                float* v_out, float* ratio_out, int n) {
     const float32x4_t eps = vdupq_n_f32(1e-10f);
     const float32x4_t v_max = vdupq_n_f32(700.0f);
     int k = 0;
@@ -353,10 +353,10 @@ static inline void final_blend_elem(const FinalGainParams* g, float posterior, f
                : (log_gain > 0.0f) ? 0.0f : log_gain;
 }
 
-static inline ANR_MAYBE_UNUSED void final_blend_scalar(const FinalGainParams* g,
-                                                       const float* posterior, float* log_mmse,
-                                                       const float* saved_logs, float* emitted,
-                                                       int n) {
+ANR_TWIN void final_blend_scalar(const FinalGainParams* g,
+                                 const float* posterior, float* log_mmse,
+                                 const float* saved_logs, float* emitted,
+                                 int n) {
     for (int k = 0; k < n; k++)
         final_blend_elem(g, posterior[k], g->smooth ? saved_logs[k] : 0.0f, log_mmse + k,
                          emitted + k);
@@ -384,21 +384,21 @@ static inline void final_store_elem(const FinalGainParams* g, float log_gain, fl
     *previous_psd = dd_gain * dd_gain * power;
 }
 
-static inline ANR_MAYBE_UNUSED void final_store_scalar(const FinalGainParams* g,
-                                                       const float* log_gain, float* exp_gain,
-                                                       float* saved_logs, float* previous_gain,
-                                                       float* previous_psd,
-                                                       const float* conditional_gain,
-                                                       const float* power, int n) {
+ANR_TWIN void final_store_scalar(const FinalGainParams* g,
+                                 const float* log_gain, float* exp_gain,
+                                 float* saved_logs, float* previous_gain,
+                                 float* previous_psd,
+                                 const float* conditional_gain,
+                                 const float* power, int n) {
     for (int k = 0; k < n; k++)
         final_store_elem(g, log_gain[k], conditional_gain[k], power[k], exp_gain + k,
                          saved_logs + k, previous_gain + k, previous_psd + k);
 }
 
 #if SK_HAVE_NEON
-static inline void final_blend_neon(const FinalGainParams* g, const float* posterior,
-                                    float* log_mmse, const float* saved_logs, float* emitted,
-                                    int n) {
+ANR_TWIN void final_blend_neon(const FinalGainParams* g, const float* posterior,
+                               float* log_mmse, const float* saved_logs, float* emitted,
+                               int n) {
     const float32x4_t one = vdupq_n_f32(1.0f);
     const float32x4_t zero = vdupq_n_f32(0.0f);
     const float32x4_t log_min = vdupq_n_f32(g->log_g_min);
@@ -427,10 +427,10 @@ static inline void final_blend_neon(const FinalGainParams* g, const float* poste
                          emitted + k);
 }
 
-static inline void final_store_neon(const FinalGainParams* g, const float* log_gain,
-                                    float* exp_gain, float* saved_logs, float* previous_gain,
-                                    float* previous_psd, const float* conditional_gain,
-                                    const float* power, int n) {
+ANR_TWIN void final_store_neon(const FinalGainParams* g, const float* log_gain,
+                               float* exp_gain, float* saved_logs, float* previous_gain,
+                               float* previous_psd, const float* conditional_gain,
+                               const float* power, int n) {
     const float32x4_t one = vdupq_n_f32(1.0f);
     const float32x4_t zero = vdupq_n_f32(0.0f);
     const float32x4_t log_min = vdupq_n_f32(g->log_g_min);

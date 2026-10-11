@@ -162,10 +162,10 @@ static inline void spp_dd_elem(const SppEstimator* self, float power, float nois
     *gamma_prev = gamma;
 }
 
-static inline ANR_MAYBE_UNUSED void spp_dd_scalar(SppEstimator* self, const float* power,
-                                                  const float* noise, const float* noise_prev,
-                                                  const float* enhanced_prev, float* gamma_out,
-                                                  float* xi_out, float* v_out, int n) {
+ANR_TWIN void spp_dd_scalar(SppEstimator* self, const float* power,
+                            const float* noise, const float* noise_prev,
+                            const float* enhanced_prev, float* gamma_out,
+                            float* xi_out, float* v_out, int n) {
     for (int k = 0; k < n; k++)
         spp_dd_elem(self, power[k], noise[k], enhanced_prev[k], noise_prev[k], gamma_out + k,
                     xi_out + k, v_out ? v_out + k : NULL, self->v_scratch + k,
@@ -173,9 +173,9 @@ static inline ANR_MAYBE_UNUSED void spp_dd_scalar(SppEstimator* self, const floa
 }
 
 #if SK_HAVE_NEON
-static inline void spp_dd_neon(SppEstimator* self, const float* power, const float* noise,
-                               const float* noise_prev, const float* enhanced_prev,
-                               float* gamma_out, float* xi_out, float* v_out, int n) {
+ANR_TWIN void spp_dd_neon(SppEstimator* self, const float* power, const float* noise,
+                          const float* noise_prev, const float* enhanced_prev,
+                          float* gamma_out, float* xi_out, float* v_out, int n) {
     const float32x4_t eps = vdupq_n_f32(1e-10f);
     const float32x4_t one = vdupq_n_f32(1.0f);
     const float32x4_t zero = vdupq_n_f32(0.0f);
