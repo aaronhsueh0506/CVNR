@@ -23,7 +23,10 @@ repository tests reproduce the bit-exact claims on demand (see
   bit-exact with each other. "Identical" here and below means identical bits
   except the payload bits of a NaN result; the streams hold no NaN input, and the
   kernel differential test counts a NaN result that differs only in its payload
-  separately.
+  separately. With `SIMD=0` both builds of the stream test run the scalar twins and the
+  differential test has no vector twin, so those two configurations do not test the
+  scalar twins against anything; they are covered by the stream hash of the preceding commit, rebuilt
+  and compared with that of the changed sources on all four configurations.
 - **WAV byte equality.** 384 end-to-end configurations (12 input files, four
   strengths, the stationary overlay on/off, four backend/SIMD builds) give
   output WAV files byte-equal to the release before the rename, and heap and

@@ -112,6 +112,19 @@ make BACKEND=kiss SIMD=0 WERROR=1 test-bit-exact
   values at each comparison boundary. A NaN result that differs from its twin only in the
   payload is counted separately; every other difference fails.
 
+The kernel-level tests (`test/test_anr_kernels.c` and `test/test_min_ordered_special.c`)
+run inside `make test-bit-exact`; there is no separate target. `test_anr_kernels.c` is the
+only gate for the growth constant `1.0f + 1e-6f` of the minimum ring and for the
+`1 - alpha_d` weight of the inert-bin restart: a change of either leaves the per-hop stream, which compares two
+builds of the same sources, unchanged.
+
+Under `SIMD=0` no NEON twin is compiled. `test_anr_kernels.c` then reports that it has
+nothing to compare, and the stream comparison sets scalar against scalar, so `test-bit-exact`
+cannot fail on a change of a scalar twin (only the ordered-minimum test still checks scalar
+code against an independent rule). The scalar twins are covered by comparing the
+per-hop stream hash of the preceding sources with that of the changed sources on the same
+build configuration; run that comparison whenever a scalar twin changes.
+
 Repeat the bit-exact target for both backends and SIMD settings when modifying these
 kernels. Keep `-ffp-contract=off`; reassociation and fast-math are outside this contract.
 The test script uses the production optimization definitions and does not forward
