@@ -1,9 +1,9 @@
 # C ANR API migration
 
-The C noise-reduction library now uses its function name, **ANR** (adaptive
+The C noise-reduction library uses its function name, **ANR** (adaptive
 noise reduction), rather than its gain-estimation algorithm in public names.
-This is a complete source/API rename: the previous names and forwarding
-wrappers are not provided. The Python reference retains its algorithm names.
+The rename is complete: the previous names and forwarding wrappers are not
+provided. The Python reference keeps its algorithm names.
 
 | Previous C name | Current C name |
 |---|---|
@@ -24,7 +24,7 @@ Update includes, types, function calls, constants, source lists, and archive
 link inputs together, then rebuild every consumer. Link `libanr.a` with the
 matching `libaudio_common.a` as before. The frequency-domain API, struct
 fields, supported grids, presets, memory ownership, and streaming semantics
-are unchanged by this rename. Algorithm descriptions still identify the
+are unchanged by the rename. Algorithm descriptions identify the
 MMSE-LSA/OMLSA gain and MCRA/SPP components for technical accuracy.
 
 ```c
@@ -37,25 +37,25 @@ anr_process(nr, spectrum, spectrum);
 anr_destroy(nr);
 ```
 
-Both current C runners, C regression tests, and Python/C parity tooling use
-the new API. Existing research results and archived documentation remain
-historical records, so their old names describe the versions originally
-measured. Select fresh artifacts through the Makefile query targets or a new
-release manifest; an older build directory can still contain older artifacts.
+Both C runners, the C regression tests and the Python/C parity tooling use
+this API. Research results and archived documentation record the names of the
+versions they measured. Select artifacts through the Makefile query targets or
+a release manifest; a build directory kept from an earlier version can contain
+artifacts built under the previous names.
 
-## Removed stationary mode
+## Stationary mode
 
-The C library no longer provides the stationary content mode: `anr_apply_stationary()`,
-the `AnrConfig` fields `stationary_floor`, `stationary_floor_exponent`,
+The C library has no stationary content mode: `anr_apply_stationary()`, the
+`AnrConfig` fields `stationary_floor`, `stationary_floor_exponent`,
 `stationary_floor_beta`, `scene_change_tonal_veto` and `scene_change_lo_flatness_max`,
-and the `--stationary` option of the example programs are gone. `AnrConfig` shrinks
-from 180 to 160 bytes and `anr_get_mem_size()` by 48 bytes, so callers that build
-`AnrConfig` field by field or size static pools from a fixed constant must be
-rebuilt. The Python reference keeps its stationary mode.
+and the `--stationary` option of the example programs do not exist. `AnrConfig` is
+160 bytes (180 before the mode was removed) and `anr_get_mem_size()` returns 48 bytes
+less per instance, so callers that build `AnrConfig` field by field or size static
+pools from a fixed constant must be rebuilt. The Python reference has a stationary mode.
 
 ## Python directory layout
 
-Python implementation, tools, tests, YAML configuration and requirements now
+Python implementation, tools, tests, YAML configuration and requirements
 live under `python/`, matching the adjacent AEC repository layout. Module and
 class names remain unchanged. No Python algorithm is renamed. The repository
 root retains `c_impl/`, `docs/`, `test_wav/` and `results/`.

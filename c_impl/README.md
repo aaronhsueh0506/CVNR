@@ -123,9 +123,9 @@ make mem BACKEND=kiss # 可攜、逐位元可重現的參考 backend（顯式指
 用 `make print-bin-dir`（帶上與建置相同的參數）取得確切路徑，或
 `make publish` 產出穩定的 `dist/<backend>/current/` 交付路徑。
 
-denoiser、MCRA、SPP、FFT 現在**同時**提供 malloc 路徑（`_create`）與靜態記憶體路徑
-（`_get_mem_size` + `_init`，跟 AEC 那邊的 `aec_get_mem_size`/`aec_init` 命名慣例一致）——
-不再有編譯期 `#ifdef` 二選一，兩條路徑永遠都編進同一份 object，用哪條純粹是「呼叫哪個函式」的
+denoiser、MCRA、SPP、FFT **同時**提供 malloc 路徑（`_create`）與靜態記憶體路徑
+（`_get_mem_size` + `_init`，與 AEC 的 `aec_get_mem_size`/`aec_init` 命名慣例一致）。
+兩條路徑編進同一份 object，沒有編譯期 `#ifdef` 切換，用哪條純粹是「呼叫哪個函式」的
 runtime 選擇（每個 handle 內部有一個 `is_static` flag：`_create()` 設 0，`_init()` 設 1，
 `_destroy()` 靠它決定要不要真的 free）。用法：先用 `_get_mem_size()` 問要多少，配一塊
 （static 陣列，或呼叫端自己的 platform 記憶體 block），交給 `_init(mem, size, ...)`：
@@ -141,41 +141,39 @@ anr_destroy(d);                                     // no-op（記憶體由呼�
 `anr_destroy()` 在這裡是**真正**的 no-op：`AnrDenoiser` 本身不持有 FFT 或任何
 backend heap 資源（頻域 I/O 由呼叫端自己的 `FftHandle` 負責，見下方完整範例），所以
 static instance 的 destroy 沒有東西要釋放。呼叫端另外持有的 `FftHandle`（`fft_init`）
-現在也是**真正**的 no-op：KISS backend 本來就是零 malloc/no-op，NE10 backend 自
-`audio_common` 的 vendored patch P0001（+P0003 硬化）起，R2C/C2R 的 twiddle cfg
-同樣改由呼叫端 pool 切出（`ne10_fft_init_r2c_float32_ext`），不再有任何 backend-internal
-malloc——`fft_destroy()` 對 pool-owned handle 一律直接 return，呼叫幾次都安全
-（idempotent）。細節見下方 backend 差異段落，以及
+的 destroy 也是**真正**的 no-op：KISS backend 零 malloc，NE10 backend 的 R2C/C2R twiddle cfg
+由呼叫端 pool 切出（`audio_common` 的 vendored patch P0001＋P0003 硬化，
+`ne10_fft_init_r2c_float32_ext`），沒有任何 backend-internal malloc——`fft_destroy()` 對
+pool-owned handle 一律直接 return，呼叫幾次都安全（idempotent）。細節見下方 backend 差異段落，以及
 [`../docs/c_user_manual_zh_TW.md`](../docs/c_user_manual_zh_TW.md)
 第 5 節的 `create_static_nr`/`destroy_static_nr` 完整範例。
 
 演算法與 malloc 版**逐位元相同**（只差配置方式）：`bin/denoise_mem` 輸出與 `bin/denoise_wav`
 byte-for-byte 一致，已對 4 個 preset、KISS 與 NE10 兩個 backend 分別驗證
-（backend 之間本來就不逐位元相同，只比較同一 backend 內 mem vs malloc）。同一機制也覆蓋子模組
+（backend 之間不逐位元相同，只比較同一 backend 內 mem vs malloc）。同一機制也覆蓋子模組
 `fft_get_mem_size`/`fft_init`、`mcra_get_mem_size`/`mcra_init`、`spp_get_mem_size`/`spp_init`。
 
-**零 malloc 保證，說法更新**：因為 malloc 路徑永遠都編譯進同一份 object（不再靠 `#ifdef` 拿掉），
-用 `nm` 檢查 object 檔**一定會看到** `malloc`/`calloc`/`free` 符號——這些符號來自 `_create()`，
-只是靜態路徑（`_init()`）在 runtime 上完全不會走到那幾行。保證因此改寫成：**靜態路徑在執行期不
-呼叫任何配置器**（`_init()` 本身只做指標運算 + `memset`；`calloc`/`malloc` 只有透過 `_create()` 才
+**零 malloc 保證**：malloc 路徑編譯進同一份 object，用 `nm` 檢查 object 檔**一定會看到**
+`malloc`/`calloc`/`free` 符號——這些符號來自 `_create()`，靜態路徑（`_init()`）在 runtime
+完全不會走到那幾行。保證的內容是：**靜態路徑在執行期不呼叫任何配置器**（`_init()` 本身只做指標運算 + `memset`；`calloc`/`malloc` 只有透過 `_create()` 才
 會被觸發到，`_init()` 的呼叫路徑完全不會經過它們）。連預設的 exact-percentile 初始化也不例外——
 MCRA 的 percentile gather/quickselect 用預先配好的 `percentile_scratch`（in-place quickselect，
 免複製）。`example/main_mem.c` 本身呼叫 `_init()` 系列，執行期同樣 0 malloc。
 
-**FFT + fast_math 現在來自共用的 `../audio_common`**（`make BACKEND=kiss|ne10` 產出
-`libaudio_common.a`，`c_impl/Makefile` 直接連結，不再自帶一份 kiss_fft/NE10 原始碼副本）。
+**FFT 與 fast_math 來自共用的 `../audio_common`**（`make BACKEND=kiss|ne10` 產出
+`libaudio_common.a`，`c_impl/Makefile` 直接連結；本 repo 不含 kiss_fft/NE10 原始碼副本）。
 backend 差異：KISS 與 NE10 都是 **100% 零 malloc**——`audio_common` 的 vendored patch
 P0001（+P0003 硬化）讓 NE10 的 R2C/C2R twiddle cfg 也能從呼叫端 pool 切出
 （`ne10_fft_init_r2c_float32_ext`），handle、work buffer、twiddle cfg 三者都在 pool 內，
-`fft_init()` 到 `fft_destroy()` 全程零 heap；**每幀音訊路徑本來就零 malloc**。此分支已在
+`fft_init()` 到 `fft_destroy()` 全程零 heap；**每幀音訊路徑零 malloc**。此分支已在
 arm64（Apple Silicon）上原生編譯 + 驗證 NE10 版 mem==malloc byte-for-byte（NE10 輸出本身
 跟 KISS 不同屬預期，兩個 backend 不互相比較）。
 
-> **Note:** v1.3.0 起 `make` 預設啟用 6 個數學等價優化（100% 相關度），不需要手動指定。
+> **Note:** `make` 預設啟用 6 個數學等價優化（100% 相關度），不需要手動指定。
 
 ### FP-contraction 統一政策
 
-`-ffp-contract=off -fno-math-errno` 現在是**橫跨四個 repo 的統一政策**（`audio_common`、
+`-ffp-contract=off -fno-math-errno` 是**橫跨四個 repo 的統一政策**（`audio_common`、
 `NR/c_impl`、`AEC/c_impl`、`Audio_ALG/pipelines`）：每個 Makefile 編譯的每一個
 TU——自己的原始碼**與**vendored 的 KISS/NE10 C/C++ 一律套用這兩個 flag。本 repo
 無自己的 C++ TU（`CXXFLAGS` 只是 CFG_SIG payload-coverage 佔位，見 Makefile
@@ -201,7 +199,7 @@ fmadd/fmsub/fnmadd/fnmsub/fmla/fmls 指令即判定失敗——那正是編譯�
 
 ## 編譯開關說明
 
-### 預設啟用（v1.3.0 起，數學等價，`make` 即啟用）
+### 預設啟用（數學等價，`make` 即啟用）
 
 | 開關 | 說明 | 效果 | 相關度 |
 |------|------|------|--------|
@@ -233,27 +231,21 @@ fmadd/fmsub/fnmadd/fnmsub/fmla/fmls 指令即判定失敗——那正是編譯�
 | 嵌入式/最小記憶體 | `make EXTRA_CFLAGS="-DUSE_FAST_PERCENTILE"` |
 | 嵌入式/零 malloc（呼叫端提供記憶體） | `make mem`（`_get_mem_size`/`_init`，見上「靜態記憶體版本」） |
 
-## 嵌入式優化詳解（v1.3.0）
+## 嵌入式優化詳解
 
-### 化簡 1：消除 sqrtf — magnitude 到 power 域
+### 優化 1：消除 sqrtf — magnitude 到 power 域
 
-`process_frame` 原本每幀對 513 頻點計算 `sqrtf(power[k])` 得到 `magnitude`。
-但下游所有使用點都把 magnitude **平方回去**，sqrt 與 ² 互相抵銷：
+`process_frame` 在 power 域運算，不對 513 頻點計算 `sqrtf(power[k])`。
+下游所有使用點都需要 magnitude 的**平方**，sqrt 與 ² 互相抵銷，所以直接計算：
 
 ```
-原本（3 步，含 sqrtf）:
-  magnitude[k]       = sqrtf(power[k])              // sqrt
-  enhanced_mag[k]    = gain[k] * magnitude[k]        // ×
-  enhanced_psd[k]    = enhanced_mag[k]²              // ²  ← sqrt 被抵銷
-
-化簡後（1 步，無 sqrtf）:
-  enhanced_psd[k]    = gain[k]² × power[k]           // 直接算
+enhanced_psd[k] = gain[k]² × power[k]
 ```
 
 最終音訊重建用 `fft_apply_gain(spectrum, gain)` 直接乘 complex spectrum，不需要 magnitude。
 **magnitude 陣列只在 `#ifdef DEBUG_DUMP` 時計算**。
 
-### 化簡 2：MCRA 增量最小值追蹤
+### 優化 2：MCRA 增量最小值追蹤
 
 MCRA 噪聲估計的瓶頸是每幀掃描 ring buffer（L=32 幀）找最小值：
 513 頻點 × 32 幀 = **16,416 次比較/幀**。
@@ -270,7 +262,7 @@ MCRA 噪聲估計的瓶頸是每幀掃描 ring buffer（L=32 幀）找最小值�
 平均: ~95% 的幀只需 O(1)，從 61,560 比較降至 ~513 比較
 ```
 
-### 化簡 3：迴圈合併
+### 優化 3：迴圈合併
 
 **mcra_noise_estimator.c** — 6 個獨立 for-k 迴圈 → 2 個 + 場景偵測：
 - Loop A: S 時間平滑 + min buffer 寫入 + min 追蹤
@@ -478,7 +470,7 @@ Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差
 ### 當這些都不夠
 - 檢查是否屬於「不適用情境」—— 本模組 by design 無法處理風聲 / 衝擊 / 重疊干擾
 - 用 `make debug` 重編並開啟 `DEBUG_DUMP` 輸出 `noise_psd / spp / xi / gamma / gain`，與 Python 逐幀對比
-- 註：舊「V4 OMLSA + wind handler」子系統已整個移除（Python 與 C 皆不再提供；adaptive-q 亦驗證 NO-SHIP）
+- 註：Python 與 C 皆不含「V4 OMLSA + wind handler」子系統（adaptive-q 亦驗證 NO-SHIP）
 
 ## 配置參數
 
@@ -492,7 +484,7 @@ Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差
 |------|--------|------|
 | `frame_size` | 等於 `fft_size` | 不補零的 2 次方分析窗；8k→128（可選 256）、16k→256（可選 512）、48k→1024 |
 | `hop_size` | `frame_size / 2` | 固定 50% overlap |
-| `fft_size` | 依 rate/grid 選擇 | 嚴格等於 frame，不再採「20 ms frame 補到下一個 2 次方」 |
+| `fft_size` | 依 rate/grid 選擇 | 嚴格等於 frame（不將 20 ms frame 補到下一個 2 次方） |
 | `alpha_xi` | 0.92 | 先驗 SNR (ξ) DD 平滑；2026-07 musical-noise fix（was 0.88） |
 | `q` | 0.52 | balanced 語音先驗機率 |
 | `xi_min_db` | -10 | balanced 先驗 SNR 下限 (dB) |
@@ -503,7 +495,7 @@ Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差
 | `scene_change_threshold_db` | 10.0 | 場景轉換高頻 gamma 閾值 (dB) |
 | `scene_change_min_frames` | 5 | 場景轉換需連續幀數 |
 | `scene_change_blend` | 0.5 | 場景轉換噪聲重置混合比 |
-| `scene_change_flatness_threshold` | 0.4 | 場景轉換高頻 spectral flatness 閾值 (Fix #6 v4.2 新增) |
+| `scene_change_flatness_threshold` | 0.4 | 場景轉換高頻 spectral flatness 閾值 (Fix #6, v4.2) |
 | `g_min_db` | -25.0 | balanced 最小增益（**audio 振幅 dB，/20**；約 0.056 floor） |
 | `alpha_g` | 0.88 | 增益平滑因子 |
 | `alpha_attack` | 0.15（16 ms 錨點） | 非對稱平滑 Attack；建構時依 grid retime |
@@ -558,7 +550,7 @@ c_impl/
 - **基本使用** (16 kHz, USE_FAST_PERCENTILE)：~50 KB
 - **精確 percentile** (`make` 預設不啟用 USE_FAST_PERCENTILE)：+20 KB
 - **48 kHz** (n_freqs=513, L=32)：~130 KB；MCRA `min_buffer` 約 ~66 KB
-- **v4.2 新增**：Fix #3 加的 `noise_psd_prev` 每實例 +`n_freqs × 4` bytes（16 kHz ~1 KB）
+- **v4.2**：Fix #3 的 `noise_psd_prev` 每實例 +`n_freqs × 4` bytes（16 kHz ~1 KB）
 
 
 ## 參考文獻
