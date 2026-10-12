@@ -108,7 +108,10 @@ measures the frequency-domain C core (`anr_process()` and `anr_process_gain()`),
 excluding the caller's FFT, window, overlap-add, initialization and I/O. Twelve
 alternating runs of the scalar-twin build and the NEON build, each run the median
 of 30 passes of 600 hops, give a median reduction of 36.6 % to 42.7 % per hop over
-the three grids and two strengths; the per-cell figures are in
+the three grids and two strengths (baseline: scalar-twin build, comparison: NEON build).
+Against the code before this change on the same NEON-enabled build the reduction is
+39.7 % to 48.6 %, because that code already had a NEON ordered minimum that was slower
+than a plain scalar loop on this host. The per-cell figures are in
 [anr_optimization.md](anr_optimization.md).
 
 ## Scope limits

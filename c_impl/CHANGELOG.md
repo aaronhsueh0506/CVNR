@@ -12,7 +12,8 @@
   `make test-bit-exact` 另跑每個 kernel 的 scalar/NEON 差分測試（`test/test_anr_kernels.c`）；
   串流測試新增一個讓 inert-bin 重啟分支被走到的案例。
 - 新增 `make bench-anr`：三組 grid、兩種強度的每 hop 成本（host 計時）。Apple M4、NE10、clang -O2：
-  相對 scalar twin 每 hop 減少 36.6 % 至 42.7 %；目標平台未量。
+  scalar-twin 建置 → NEON 建置每 hop 減少 36.6 % 至 42.7 %；本變更前 → 後（同為 NEON 建置，
+  前者的 NEON 有序最小值在此 host 上比純 scalar 迴圈慢）減少 39.7 % 至 48.6 %；目標平台未量。
 
 ## [Unreleased] · 移除 C 端 stationary 內容保留模式
 

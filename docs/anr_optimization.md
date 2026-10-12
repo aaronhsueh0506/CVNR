@@ -49,10 +49,15 @@ Every statement below that says "identical" or "bit-exact" carries this exceptio
 extra noise PSD on three grids and two strengths. It uses frozen synthetic spectra, a
 fresh instance per pass, five untimed warm-up passes and 30 timed passes of 600 hops, and
 prints median, quartiles and minimum. The figures below are medians in microseconds per
-hop on Apple M4 with the NE10 backend and clang -O2 with the strict FP flags, scalar
-twins (`EXTRA_CFLAGS=-DANR_REFERENCE_KERNELS`) against the NEON kernels, 12 alternating
-runs of the two binaries. They describe the host and compiler that built the binaries;
-they are not target-platform figures.
+hop on Apple M4 with the NE10 backend and clang -O2 with the strict FP flags, 12
+alternating runs of the two binaries compared in each table. They describe the host and
+compiler that built the binaries; they are not target-platform figures.
+
+The two tables answer different questions and have different baselines; do not mix them.
+
+**Scalar-twin build to NEON build (36.6 % to 42.7 % less).** The baseline is the same
+source compiled with `EXTRA_CFLAGS=-DANR_REFERENCE_KERNELS` (every kernel runs its scalar
+twin), the comparison the NEON kernels are designed for.
 
 | Grid | Strength | `anr_process` | `anr_process_gain` + extra PSD |
 |---|---|---|---|
@@ -63,9 +68,24 @@ they are not target-platform figures.
 | 48 kHz, FFT 1024 | balanced | 5.461 → 3.142 (−42.5 %) | 5.395 → 3.103 (−42.4 %) |
 | 48 kHz, FFT 1024 | aggressive | 5.470 → 3.135 (−42.7 %) | 5.410 → 3.102 (−42.6 %) |
 
+**Before to after this change, same build (39.7 % to 48.6 % less).** The baseline is the
+code before the NEON kernels, both binaries built with the NEON path on. That code already
+had a NEON ordered minimum, which on this host was slower than a plain scalar loop, so
+this reduction is larger than the one above. An independent repetition of the comparison
+gave 38.9 % to 46.6 %.
+
+| Grid | Strength | `anr_process` | `anr_process_gain` + extra PSD |
+|---|---|---|---|
+| 16 kHz, FFT 256 | balanced | 1.607 → 0.831 (−48.3 %) | 1.537 → 0.805 (−47.6 %) |
+| 16 kHz, FFT 256 | aggressive | 1.614 → 0.830 (−48.6 %) | 1.539 → 0.805 (−47.7 %) |
+| 16 kHz, FFT 512 | balanced | 2.768 → 1.647 (−40.5 %) | 2.628 → 1.584 (−39.7 %) |
+| 16 kHz, FFT 512 | aggressive | 2.815 → 1.648 (−41.4 %) | 2.632 → 1.585 (−39.8 %) |
+| 48 kHz, FFT 1024 | balanced | 5.880 → 3.135 (−46.7 %) | 5.806 → 3.099 (−46.6 %) |
+| 48 kHz, FFT 1024 | aggressive | 5.837 → 3.131 (−46.4 %) | 5.796 → 3.096 (−46.6 %) |
+
 The scalar twins are compiled by the host compiler, which vectorizes some of them; on a
-compiler or core that does not, the gap is expected to be larger. Validation scope and its
-limits are in [anr_validation.md](anr_validation.md).
+compiler or core that does not, the gap to the scalar twins is expected to be larger.
+Validation scope and its limits are in [anr_validation.md](anr_validation.md).
 
 ## Verification
 
