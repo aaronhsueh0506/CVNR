@@ -549,8 +549,9 @@ static const uint16_t mcra_lane_list[16][4] = {
     {2, 3, 0, 0}, {0, 2, 3, 0}, {1, 2, 3, 0}, {0, 1, 2, 3}};
 static const uint8_t mcra_lane_count[16] = {0, 1, 1, 2, 1, 2, 2, 3, 1, 2, 2, 3, 2, 3, 3, 4};
 
-/* Same result as the scalar twin: the compare and select run on four bins at once, the bins that
- * need a rescan are collected without a data-dependent branch and rescanned after each block.
+/* Same result as the scalar twin (except the payload bits of a NaN): the compare and select run
+ * on four bins at once, the bins that need a rescan are collected without a data-dependent
+ * branch and rescanned after each block.
  */
 ANR_TWIN void mcra_ring_min_neon(float* s_min, const float* s, float* ring, int L,
                                  int ring_pos, int n) {

@@ -8,7 +8,8 @@
 #include "spp_estimator.h"
 
 /* ANR_VECTOR selects the NEON twin of every kernel in this library. Each kernel is a static
- * function pair: <name>_scalar defines the arithmetic, <name>_neon reproduces it bit for bit.
+ * function pair: <name>_scalar defines the arithmetic, <name>_neon reproduces it bit for bit
+ * except the payload bits of a NaN result.
  * ANR_REFERENCE_KERNELS forces the scalar path so one build can be compared with another.
  */
 #if SK_HAVE_NEON && !defined(ANR_REFERENCE_KERNELS)

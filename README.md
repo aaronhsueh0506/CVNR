@@ -163,5 +163,5 @@ report disagrees.
 
 ## C API 與驗證紀錄
 
-C 介面已改名為 ANR，並含兩個逐位元一致的核心加速；遷移對照見 [anr_migration.md](docs/anr_migration.md)，
+C 介面已改名為 ANR，並含逐位元一致的 NEON 核心加速（NaN 結果的 payload 位元除外）；遷移對照見 [anr_migration.md](docs/anr_migration.md)，
 加速與重現指令見 [anr_optimization.md](docs/anr_optimization.md)，驗證範圍與已移出 repo 的證據清單見 [anr_validation.md](docs/anr_validation.md)。

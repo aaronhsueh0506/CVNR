@@ -1,6 +1,6 @@
 # ANR — C Implementation (V3-2 主線)
 
-> **基準版本**: v1.12.3（c_impl）。含 ANR 命名與 bit-exact NEON 加速；[量測與驗證紀錄](../docs/anr_optimization.md)。共用數學函式仍由 `audio_common/fast_math.h` 提供。
+> **基準版本**: v1.12.3（c_impl）。含 ANR 命名與 bit-exact NEON 加速（NaN 結果的 payload 位元除外）；[量測與驗證紀錄](../docs/anr_optimization.md)。共用數學函式仍由 `audio_common/fast_math.h` 提供。
 > **對應 Python**: `python/denoisers/v3_2_mmse_lsa.py`
 
 C 介面、檔名與 archive 已統一為 ANR；[完整改名對照](../docs/anr_migration.md)。

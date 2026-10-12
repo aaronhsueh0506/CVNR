@@ -20,7 +20,10 @@ repository tests reproduce the bit-exact claims on demand (see
   random bit patterns, plus the scalar-versus-NEON differential test of every
   kernel. `make test-bit-exact` runs this gate; it compares two builds of the
   same source tree, per backend. The two FFT backends are not claimed to be
-  bit-exact with each other.
+  bit-exact with each other. "Identical" here and below means identical bits
+  except the payload bits of a NaN result; the streams hold no NaN input, and the
+  kernel differential test counts a NaN result that differs only in its payload
+  separately.
 - **WAV byte equality.** 384 end-to-end configurations (12 input files, four
   strengths, the stationary overlay on/off, four backend/SIMD builds) give
   output WAV files byte-equal to the release before the rename, and heap and
@@ -113,8 +116,9 @@ the three grids and two strengths; the per-cell figures are in
 - Cost figures are host measurements on Apple M4 with NE10; they are not
   embedded-board, whole-pipeline or other-compiler results. Embedded cycle
   counts are not covered.
-- Bit-exactness is established between builds of one backend. The kiss and
-  NE10 outputs are separate references.
+- Bit-exactness (except the payload bits of a NaN result) is established between builds of
+  one backend. The kiss and NE10
+  outputs are separate references.
 - The WAV matrix uses 12 development input files and covers only the listed
   strengths and options; it does not prove equality for other inputs.
 - The Python reference and the C library agree numerically, not bitwise.

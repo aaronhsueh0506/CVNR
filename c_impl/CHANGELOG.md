@@ -2,11 +2,12 @@
 
 所有重要的改動都會記錄在此文件中。
 
-## [Unreleased] · 核心 NEON kernel（輸出逐位元不變）
+## [Unreleased] · 核心 NEON kernel（輸出逐位元不變，NaN 結果的 payload 位元除外）
 
 - MCRA 最小值 ring 的 rescan 與更新、inert-bin 重啟、SPP decision-directed 前段、gain 輸入準備、
   final gain 的 blend 與 select/store 各有 scalar twin 與 NEON twin；運算順序與原迴圈相同
-  （分離乘加、原除法、ordered compare 加 bit select），輸出與 scalar 路徑逐位元相同。
+  （分離乘加、原除法、ordered compare 加 bit select），輸出與 scalar 路徑逐位元相同，
+  NaN 結果的 payload 位元除外（final-gain 的 blend／store 在隨機位元輸入下約 0.9 % 的呼叫會不同）。
 - `-DANR_REFERENCE_KERNELS` 取代 `ANR_REFERENCE_FINAL_GAIN`，一次切換所有 kernel 的 scalar 路徑。
   `make test-bit-exact` 另跑每個 kernel 的 scalar/NEON 差分測試（`test/test_anr_kernels.c`）；
   串流測試新增一個讓 inert-bin 重啟分支被走到的案例。

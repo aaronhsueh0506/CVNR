@@ -2,7 +2,8 @@
 
 This release keeps the processing and presets of the preceding release. It renames the C
 API and source/archive files to ANR, moves Python reference code into `python/`,
-and accelerates existing C operations without changing any output bit. See
+and accelerates existing C operations without changing any output bit, except the
+payload bits of a NaN result (see [Bit-exact scope](#bit-exact-scope)). See
 [migration](anr_migration.md).
 
 ## NEON kernels
@@ -12,7 +13,8 @@ defines the arithmetic and also processes the tail of an array; the NEON twin pr
 four bins at a time. Both keep the operation order of the original loop: separate rounded
 multiply and add (no fused multiply-add), the original divides, ordered compares with a
 bit select (so a NaN behaves as in the scalar branch), and no reciprocal or square-root
-estimates. No additional state, allocation or delay is introduced.
+estimates. The NEON twin returns the same bits as the scalar twin except the payload bits
+of a NaN result. No additional state, allocation or delay is introduced.
 Building with `-DANR_REFERENCE_KERNELS` selects the scalar twins instead (the final-gain
 passes use the per-bin reference loop), which is how one source tree is compared with
 itself.
@@ -31,6 +33,15 @@ Loops that stay scalar: the speech-evidence sum and the high-band power and nois
 speech-indicator smoothing, the gain application and the loops that clang already
 vectorizes with the same result. The exponential, logarithm and E1 kernels come from
 `audio_common` and are unchanged.
+
+## Bit-exact scope
+
+For every input that holds no NaN, scalar twin, NEON twin and the loops they replace return
+identical bits; the same holds for infinities, signed zeros and subnormals. A NaN stays a NaN
+in the same place. Only the payload bits of a NaN result can differ: the NEON final-gain
+blend and store (`final_blend`, `final_store`) did so in about 0.9 % of the calls of a
+random-bit-pattern differential test against the original loops, and no other kernel did.
+Every statement below that says "identical" or "bit-exact" carries this exception.
 
 ## Cost
 
@@ -71,7 +82,8 @@ make BACKEND=kiss SIMD=0 WERROR=1 test-bit-exact
 - a synthetic per-hop stream (three grids; four strengths, DD-from-G_H1, cross-band
   prior with make-up, a fast-decay case that reaches the inert-bin restart, and a static
   pool; 256 hops each, including digital-silence hops; the feature cases add runtime
-  resets and reconfiguration) whose state and output bytes must be identical between the two builds;
+  resets and reconfiguration) whose state and output bytes must be identical between the two builds
+  (its inputs are finite, so the payload exception does not arise);
 - the ordered-minimum test, which compares the minimum with an independent scalar rule on
   random bit patterns, NaN payloads, signed zeros, infinities, subnormals, ties and
   unaligned starts;
