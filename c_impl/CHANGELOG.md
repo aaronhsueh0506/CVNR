@@ -31,9 +31,13 @@
   decision-directed 路徑的 `xi_min` 下界；posterior SNR 不超過 1 的頻點得到 xi = 0，MMSE-LSA
   增益恆為 `g_min`，不論 SPP，使第一個追蹤幀落在增益下限，下一幀起才回到 SPP 加權的增益
   （回音消除管線的串流上平均增益低 11 至 12 dB，約 1 至 3 幀）。改為 `max(gamma - 1, xi_min)`
-  （C `spp_prepare`、Python `SppEstimator.estimate`）。每個串流的第一個追蹤幀受影響，其後經
-  decision-directed 與增益平滑的記憶留下逐幀遞減的微小差異，輸出不再與先前版本逐位元相同。
-  `AnrDenoiser` 大小與 `anr_get_mem_size()` 不變。
+  （C `spp_prepare`、Python `SppEstimator.estimate`）。首次／缺少 gain history 的 direct 估計分支
+  使用同一下限（`gain_prev` 為 NULL 的呼叫每次都走此分支）；受 floor 約束的頻點直接改變，後續可受
+  遞迴狀態影響。遞迴狀態可能使差異延續；已測資料的大部分差異集中初期，不保證逐幀單調遞減。
+  輸出不再與先前版本逐位元相同。`AnrDenoiser` 大小與 `anr_get_mem_size()` 不變。
+- 本變更不改初始化透通窗（gain = 1），因此不處理落在該窗內的點擊聲。Python 的 `SppEstimator`
+  由 V3、V3-2、V3-3 三個 denoiser 與 `compute_spp_batch` 共用，這些路徑的輸出也可能改變；
+  C 函式庫只對應 V3-2。
 - `make test-noise-restart`（殘留回音 PSD 遠高於訊號時，第一個追蹤幀不低於其後穩態 1 dB）與
   `python/tests/test_first_frame_gain.py` 涵蓋；移除下界則兩者皆失敗。
 

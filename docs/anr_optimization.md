@@ -155,5 +155,14 @@ then `g_min` for any SPP, and the first tracked frame sits at the gain floor
 while the following frames settle higher; the log-gain smoothing carries the
 notch into the next two frames. The bypass state left by the initialization
 window (`gain_prev`, `enhanced_psd_prev`) is not read by this first estimate.
-The change touches the first tracked frame of every stream; the decision-directed
-and smoothing state carry a small, decaying difference into the following frames.
+The direct branch is taken by the first estimate and by any call without gain history
+(`gain_prev` NULL), and all of those calls use the same floor. A bin held by the floor
+changes directly in that estimate; the recursive decision-directed, noise-tracker and
+gain-smoothing state can carry the difference into later frames, so the difference may
+continue for some time. Most of the measured difference lies in the first frames; there is
+no guarantee that it decays monotonically.
+
+The unity-gain initialization window itself is unchanged, so a click inside that window is
+not addressed by this change. The Python `SppEstimator` is shared by the V3, V3-2 and V3-3
+denoisers and `compute_spp_batch`, so their first estimates change in the same way; the C
+library mirrors V3-2 only.

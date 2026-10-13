@@ -97,12 +97,37 @@ and do not advance the noise tracker.
   grids, with and without leading zeros): 0 to 3.4 dB before, at most 0.9 dB after;
   the largest gain in the first 15 frames above the settled value changes by at most
   1.2 dB. Python and C agree on these streams to the existing parity level.
-- Effect on the full chain (154 echo-cancellation pipeline clips): the output differs from
-  the earlier output by -47 dB (median, 0 to 0.35 s after the stream start, relative to
-  the output rms), -79 dB at 0.35 to 1 s and -134 dB at 1 to 3 s. AECMOS over the 136 pool clips: no (grid, scenario, metric) 95 % CI
-  lower bound of the paired difference below -0.007, worst clip -0.018. VCTK noisy test
-  set (824 files, three grids): PESQ +0.0001 to +0.0002, STOI -0.00002 to 0, SI-SDR
-  -0.003 to -0.001 dB, all inside the non-inferiority margins.
+- Effect on the full chain (154 echo-cancellation pipeline clips): the difference to the output
+  before the change, as rms relative to the output rms before the change, has the median
+  -47 dB over 0 to 0.35 s after the stream start (largest -16.5 dB, the first frames after
+  initialization of a clip whose output there is near -60 dBFS), -79 dB at 0.35 to 1 s and
+  -134 dB at 1 to 3 s; it can reach later times through the recursive state (largest -83 dB
+  at 3 to 10 s and -68 dB beyond 10 s). It is a difference-to-output ratio, not an
+  attenuation of speech.
+- AECMOS over the 136 pool clips (official scoring segments): far-end single-talk and
+  double-talk segments are sample-identical, so their scores do not change. Near-end,
+  official first-20-s scores: mean paired difference of the degradation score +0.0001
+  and +0.0003 on the two 16 kHz grids and -0.0024 on the 48 kHz grid (95 % interval
+  [-0.0064, +0.0007]; 8 of 10 clips change; worst clip -0.0176, whose output differs
+  by -68 dBFS or less within the first 1.2 s, largest before its speech starts); no
+  (grid, scenario, metric) interval lower bound is below -0.0064. On the 20 s windows chosen
+  for near-end speech content of the ten 48 kHz near-end recordings the mean is +0.0001
+  ([-0.0011, +0.0016]); four of those windows lie after the changed region and are
+  sample-identical. The 48 kHz official-prefix mean (-0.0024) is lower than -0.001.
+- Clean-source short-window check (20 ms blocks where the clean source is active, new loss
+  above 3 dB against the output before the change): none in 824 VCTK files on three grids
+  (largest block loss -0.9 dB), none in 24 clean-sentence pipeline runs with and without
+  five seconds of leading zeros, none in 64 near-end mix runs (near-end speech starting
+  between 0 and 8 s). VCTK noisy test set (824 files, three grids): PESQ +0.0001 to
+  +0.0002, STOI -0.00002 to 0, SI-SDR -0.003 to -0.001 dB, all inside the non-inferiority
+  margins; worst single files SI-SDR -0.32 dB (a 1.6 s file, less noise suppression in the
+  first 0.9 s) and PESQ -0.018.
+- Limits. The unity-gain initialization window is left as it is. In the clip with 13.65 s
+  of leading zeros the official first-20-s degradation score is the same with and without
+  this change (3.630). The score over 20 s starting at the first non-zero sample is 0.046
+  below the output before the digital-silence change, against 0.62 below on the first
+  20 s; that only shows that the gap depends on the scoring window, which contains
+  different content, and is no statement about speech-time quality.
 - `make test-noise-restart` and `python/tests/test_first_frame_gain.py` fail without the
   floor and pass with it.
 
