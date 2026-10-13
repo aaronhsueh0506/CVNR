@@ -89,6 +89,22 @@ and do not advance the noise tracker.
 - `make test-noise-restart` fails without the change (initialization on
   silence, the noise floor moving across silence, and a tone whose first frame
   is a reduced-power onset) and passes with it.
+- First tracked frame after initialization (mean over bins of the gain in dB, first
+  tracked frame against the settled value of the same stream). Pipeline streams
+  (echo canceller residual PSD added to the noise floor): 11.2 to 12.4 dB below the
+  settled value on six clips before the change (first frame at the balanced gain floor,
+  -25 dB), 0.0 to 1.7 dB after. Noise-only input (white, babble and car noise, three
+  grids, with and without leading zeros): 0 to 3.4 dB before, at most 0.9 dB after;
+  the largest gain in the first 15 frames above the settled value changes by at most
+  1.2 dB. Python and C agree on these streams to the existing parity level.
+- Effect on the full chain (154 echo-cancellation pipeline clips): the output differs from
+  the earlier output by -47 dB (median, 0 to 0.35 s after the stream start, relative to
+  the output rms), -79 dB at 0.35 to 1 s and -134 dB at 1 to 3 s. AECMOS over the 136 pool clips: no (grid, scenario, metric) 95 % CI
+  lower bound of the paired difference below -0.007, worst clip -0.018. VCTK noisy test
+  set (824 files, three grids): PESQ +0.0001 to +0.0002, STOI -0.00002 to 0, SI-SDR
+  -0.003 to -0.001 dB, all inside the non-inferiority margins.
+- `make test-noise-restart` and `python/tests/test_first_frame_gain.py` fail without the
+  floor and pass with it.
 
 ## Stationary mode removal
 

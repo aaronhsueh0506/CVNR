@@ -246,8 +246,8 @@ static void spp_prepare(SppEstimator* self, const float* Y_psd, const float* noi
         // Decision-directed a-priori SNR.
         float xi;
         if (!self->is_initialized || gain_prev == NULL) {
-            // First frame: direct estimate
-            xi = gamma > 1.0f ? gamma - 1.0f : 0.0f;
+            // First frame: direct estimate with the same floor as the DD path.
+            xi = gamma - 1.0f > xi_min ? gamma - 1.0f : xi_min;
         } else {
             // Fallback: use gain^2 * gamma_prev approximation
             float g2 = gain_prev[k] * gain_prev[k];

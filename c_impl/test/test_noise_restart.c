@@ -4,7 +4,9 @@
  *  - they do not advance the tracker, so a converged noise floor survives a silent stretch;
  *  - after five seconds of silence a stationary tone whose first frame is a waveform onset
  *    (partial frame at reduced power) reaches the same steady gain as the same tone without
- *    leading silence.
+ *    leading silence;
+ *  - the first frame after initialization is not pushed to the gain floor by an a-priori SNR
+ *    estimate that lacks the floor of later frames.
  */
 #include <math.h>
 #include <stdio.h>
@@ -89,6 +91,33 @@ static void run_state_case(const char* label, AnrConfig cfg) {
     free(spec); free(gain); anr_destroy(d);
 }
 
+/* Posterior SNR below 1 on every bin (the extra residual-echo PSD far above the signal): the first
+ * frame after initialization must not sit at the gain floor while the next frames settle higher.
+ * Frames 0..num_init-1 are the unity bypass. */
+static void run_first_frame_case(const char* label, AnrConfig cfg) {
+    AnrDenoiser* d = anr_create(&cfg);
+    int nf, h, k, n_frames, ni = cfg.num_init_frames;
+    Complex* spec; float* gain; float* extra; double first = 0.0, settled = 0.0; int bad = 0;
+    if (!d) { CHECK(0, "%s: create failed", label); return; }
+    nf = anr_get_n_freqs(d); n_frames = ni + 20;
+    spec = (Complex*)calloc((size_t)nf, sizeof(Complex)); gain = (float*)calloc((size_t)nf, sizeof(float));
+    extra = (float*)calloc((size_t)nf, sizeof(float));
+    for (k = 0; k < nf; ++k) extra[k] = 1.0e8f;
+    for (h = 0; h < n_frames; ++h) {
+        double acc = 0.0;
+        for (k = 0; k < nf; ++k) { spec[k].r = 400.0f + (float)((k * 7 + h * 3) % 11); spec[k].i = 0.0f; }
+        anr_process_gain(d, spec, extra, gain);
+        for (k = 0; k < nf; ++k) { acc += 20.0 * log10((double)gain[k] + 1e-6); if (h < ni) bad += gain[k] != 1.0f; }
+        acc /= nf;
+        if (h == ni) first = acc;
+        if (h >= ni + 10) settled += acc / 10.0;
+    }
+    printf("%-40s first tracked frame %.1f dB, settled %.1f dB\n", label, first, settled);
+    CHECK(bad == 0, "%s: initialization frames are not unity", label);
+    CHECK(first > settled - 1.0, "%s: first tracked frame %.1f dB lies below the settled %.1f dB", label, first, settled);
+    free(spec); free(gain); free(extra); anr_destroy(d);
+}
+
 int main(void) {
     static const int rates[2] = { 16000, 48000 };
     static const double onsets[2] = { 1.0, 0.5 };
@@ -106,6 +135,9 @@ int main(void) {
         snprintf(label, sizeof(label), "%d Hz state", rates[r]);
         run_state_case(label, def);
     }
+    run_first_frame_case("16000 Hz 256 first frame", anr_config_for_mode_grid(16000, 256, ANR_MODE_BALANCED));
+    run_first_frame_case("16000 Hz 512 first frame", anr_config_for_mode_grid(16000, 512, ANR_MODE_BALANCED));
+    run_first_frame_case("48000 Hz 1024 first frame", anr_config_for_mode_grid(48000, 1024, ANR_MODE_BALANCED));
     if (g_fail) { printf(">>> FAIL\n"); return 1; }
     printf(">>> PASS\n");
     return 0;

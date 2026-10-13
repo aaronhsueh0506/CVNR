@@ -25,6 +25,18 @@
 - `AnrConfig` 由 180 縮為 160 bytes，`anr_get_mem_size()` 每個實例少 48 bytes；呼叫端若逐欄位
   建立 `AnrConfig` 或以固定常數配置 static pool，需要重新編譯。預設組態的輸出逐位元不變。
 
+## [Unreleased] · 初始化後第一幀的 a-priori SNR 下界
+
+- 初始化完成後的第一次 SPP 估計沒有 a-priori SNR 歷史，原本取 `max(gamma - 1, 0)`，缺少
+  decision-directed 路徑的 `xi_min` 下界；posterior SNR 不超過 1 的頻點得到 xi = 0，MMSE-LSA
+  增益恆為 `g_min`，不論 SPP，使第一個追蹤幀落在增益下限，下一幀起才回到 SPP 加權的增益
+  （回音消除管線的串流上平均增益低 11 至 12 dB，約 1 至 3 幀）。改為 `max(gamma - 1, xi_min)`
+  （C `spp_prepare`、Python `SppEstimator.estimate`）。每個串流的第一個追蹤幀受影響，其後經
+  decision-directed 與增益平滑的記憶留下逐幀遞減的微小差異，輸出不再與先前版本逐位元相同。
+  `AnrDenoiser` 大小與 `anr_get_mem_size()` 不變。
+- `make test-noise-restart`（殘留回音 PSD 遠高於訊號時，第一個追蹤幀不低於其後穩態 1 dB）與
+  `python/tests/test_first_frame_gain.py` 涵蓋；移除下界則兩者皆失敗。
+
 ## [Unreleased] · 數位靜音幀不計入噪聲初始化與追蹤
 
 - 所有 bin 功率皆為精確 0 的幀不計入 `num_init_frames`，也不推進 MCRA tracker
@@ -32,8 +44,7 @@
   已收斂的噪聲底在靜音段中保持不變。修正：一段數位靜音後出現的穩態單音（第一幀為
   部分功率的波形起點）原本永不被抑制。沒有全零幀的串流輸出逐位元不變。
 - 以全零幀開頭的串流，`num_init_frames`（約 200 ms）的初始化透通窗（gain = 1）落在其後的第一段
-  非零訊號上；該窗內的訊號不受抑制，初始化完成後的第一幀有一次短暫的增益下探，與任何訊號起頭的
-  串流相同。沒有全零幀的串流輸出逐位元不變。
+  非零訊號上；該窗內的訊號不受抑制。沒有全零幀的串流不受靜音規則影響。
 - Python reference 同步；`make test-noise-restart` 與 `python/tests/test_noise_tracker_restart.py`
   涵蓋初始化略過、追蹤略過與起點幀為部分功率的單音。
 

@@ -153,8 +153,8 @@ class SppEstimator:
 
         # 2. 估計先驗 SNR (a priori SNR) - Decision Directed 方法
         if self.xi_prev is None or gain_prev is None:
-            # 初始化：使用直接估計
-            xi = np.maximum(gamma - 1, 0)
+            # 初始化：使用直接估計，與 DD 路徑相同的下界 xi_min
+            xi = np.maximum(gamma - 1, self.xi_min)
         else:
             # Ephraim-Malah (1984) 標準 DD：
             #   ξ(k,l) = α · |X̂(k,l-1)|² / λ_d(k,l-1) + (1-α) · max(γ(k,l)-1, 0)

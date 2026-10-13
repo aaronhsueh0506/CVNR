@@ -144,6 +144,16 @@ Existing scene-change adaptation is retained.
 The initialization window (`num_init_frames`, about 200 ms at unity gain)
 therefore follows the leading silence instead of being consumed by it: the first
 non-zero frames of such a stream pass unprocessed until the floor is
-initialized, exactly as the first frames of a stream that starts with signal do,
-and the first tracked frame shows the usual cold-start dip. Streams without an
-all-zero frame are unchanged bit for bit.
+initialized, exactly as the first frames of a stream that starts with signal do.
+Streams without an all-zero frame are unaffected by the silence rule.
+
+First tracked frame. The first SPP estimate after initialization has no a-priori
+SNR history and uses the direct estimate `max(gamma - 1, xi_min)`, with the same
+floor `xi_min` as the decision-directed estimate of later frames. Without the
+floor, a bin whose posterior SNR is at most 1 gets xi = 0, the MMSE-LSA gain is
+then `g_min` for any SPP, and the first tracked frame sits at the gain floor
+while the following frames settle higher; the log-gain smoothing carries the
+notch into the next two frames. The bypass state left by the initialization
+window (`gain_prev`, `enhanced_psd_prev`) is not read by this first estimate.
+The change touches the first tracked frame of every stream; the decision-directed
+and smoothing state carry a small, decaying difference into the following frames.
