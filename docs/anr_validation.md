@@ -113,7 +113,10 @@ and do not advance the noise tracker.
   (grid, scenario, metric) interval lower bound is below -0.0064. On the 20 s windows chosen
   for near-end speech content of the ten 48 kHz near-end recordings the mean is +0.0001
   ([-0.0011, +0.0016]); four of those windows lie after the changed region and are
-  sample-identical. The 48 kHz official-prefix mean (-0.0024) is lower than -0.001.
+  sample-identical. The 48 kHz official-prefix mean (-0.0024) is below the -0.001 per-grid
+  near-end mean line used for the echo-cancellation chain; it is accepted for this
+  consistency fix, the other nine 48 kHz clips average -0.0007, and the loss of the worst clip
+  lies before its speech starts.
 - Clean-source short-window check (20 ms blocks where the clean source is active, new loss
   above 3 dB against the output before the change): none in 824 VCTK files on three grids
   (largest block loss -0.9 dB), none in 24 clean-sentence pipeline runs with and without
@@ -125,7 +128,8 @@ and do not advance the noise tracker.
 - Limits. The unity-gain initialization window is left as it is. In the clip with 13.65 s
   of leading zeros the official first-20-s degradation score is the same with and without
   this change (3.630). The score over 20 s starting at the first non-zero sample is 0.046
-  below the output before the digital-silence change, against 0.62 below on the first
+  below the output before the digital-silence change (that comparison concerns the
+  digital-silence rule, not this change), against 0.62 below on the first
   20 s; that only shows that the gap depends on the scoring window, which contains
   different content, and is no statement about speech-time quality.
 - `make test-noise-restart` and `python/tests/test_first_frame_gain.py` fail without the
