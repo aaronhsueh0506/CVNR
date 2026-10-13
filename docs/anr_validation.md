@@ -78,6 +78,14 @@ and do not advance the noise tracker.
     and after (-4.1 dB) the change.
   - From the second block on (7.7-8.0 s) the output with the change matches it
     within 0.3 dB; before the change it was up to 3.7 dB higher.
+- Leading digital silence moves the unity-gain initialization window onto the
+  first non-zero frames (19 frames, 0.2 s at 48 kHz/FFT 1024). In a 48 kHz
+  echo-cancellation pipeline clip whose input is exactly zero for the first
+  13.65 s, the output peak in the first 0.5 s after the onset is 0.0103 with
+  the change against 0.0065 before it (4.0 dB), and the AECMOS degradation score
+  of the first 20 s is 3.630 against 4.253 (3.601 / 3.690 against 4.172 / 4.240
+  with the microphone scaled by 1 +- 2^-24). The loss lies in the 0.25 s after
+  the onset: that span of the earlier output restores the score to 4.252.
 - `make test-noise-restart` fails without the change (initialization on
   silence, the noise floor moving across silence, and a tone whose first frame
   is a reduced-power onset) and passes with it.

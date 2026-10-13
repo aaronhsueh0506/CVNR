@@ -140,3 +140,10 @@ stretch. `make test-noise-restart` covers both, and a stationary tone whose
 first frame is a reduced-power waveform onset after five seconds of silence.
 Streaming reset remains caller-controlled at a new stream or discontinuity.
 Existing scene-change adaptation is retained.
+
+The initialization window (`num_init_frames`, about 200 ms at unity gain)
+therefore follows the leading silence instead of being consumed by it: the first
+non-zero frames of such a stream pass unprocessed until the floor is
+initialized, exactly as the first frames of a stream that starts with signal do,
+and the first tracked frame shows the usual cold-start dip. Streams without an
+all-zero frame are unchanged bit for bit.
