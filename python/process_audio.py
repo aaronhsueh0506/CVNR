@@ -153,6 +153,7 @@ def build_v3_2_base_params(config, sample_rate, frame_size, frame_shift, fft_siz
             'scene_change_min_frames': noise_config.get('scene_change_min_frames', 5),
             'scene_change_blend': noise_config.get('scene_change_blend', 0.5),
             'scene_change_flatness_threshold': noise_config.get('scene_change_flatness_threshold', 0.4),
+            'scene_change_confirm_frames': noise_config.get('scene_change_confirm_frames', 0),
             'mcra_accept_external_spp': noise_config.get('mcra_accept_external_spp', True),
             'alpha_noise_speech': noise_config.get('alpha_d_speech'),
             'noise_gate_xi_db': noise_config.get('noise_gate_xi_db'),
