@@ -120,6 +120,18 @@ class McraNoiseEstimator:
         # gated in one frame the rise is a noise-scene change, not speech, and
         # the ordinary update is kept so a level step is still tracked.
         slow_mask_max_frac: Optional[float] = None,
+        # arm 4 (R²→tracker decoupling, post-hoc variant): when the caller
+        # passes `extra_noise_psd` into update(), the ordinary (unmodified)
+        # recursion still runs first — this does NOT change tilde_alpha_d or
+        # which spp drives it. Afterward, per bin, the fraction of THIS
+        # frame's positive noise_psd rise that is explainable by the supplied
+        # extra (R²-derived) power is subtracted back out. Only a bin whose
+        # estimate rose AND whose frame power exceeded the pre-update estimate
+        # is touched; a falling bin, or one with no extra power, is untouched.
+        # Default False keeps update() exactly as shipped even if a caller
+        # passes extra_noise_psd (belt-and-suspenders for callers that forget
+        # to gate it).
+        remove_echo_explained_rise: bool = False,
     ):
         self.alpha_s = alpha_s
         self.alpha_d = alpha_d
@@ -140,6 +152,7 @@ class McraNoiseEstimator:
         if slow_mask_max_frac is not None and not 0.0 < slow_mask_max_frac <= 1.0:
             raise ValueError("slow_mask_max_frac must be None or in (0, 1]")
         self.slow_mask_max_frac = slow_mask_max_frac
+        self.remove_echo_explained_rise = remove_echo_explained_rise
         self.alpha_p = alpha_p
         self.L = L
         self.delta = 10 ** (delta_db / 10)  # 線性域的 delta
@@ -220,6 +233,10 @@ class McraNoiseEstimator:
         is_speech: Optional[bool] = None,  # 保持接口兼容（MCRA 內部判斷，忽略此參數）
         spp: Optional[np.ndarray] = None,  # v2.0: 支持外部 SPP（軟判決）
         slow_mask: Optional[np.ndarray] = None,  # per-bin override of the slow-update gate
+        extra_noise_psd: Optional[np.ndarray] = None,  # arm 4: raw per-bin R²-derived
+            # power added upstream THIS frame (same array the caller folded into
+            # the gain-side noise floor); used only post-hoc, see
+            # remove_echo_explained_rise above.
     ) -> np.ndarray:
         """
         MCRA 噪聲估計更新
@@ -228,6 +245,7 @@ class McraNoiseEstimator:
             magnitude: 當前幀的幅度譜 (n_freqs,)
             is_speech: 忽略，MCRA 使用 SPP 判斷
             spp: 外部 SPP 值 (n_freqs,)，可選
+            extra_noise_psd: arm 4 的事後修正用，R² 注入量（可選）
 
         返回:
             noise_psd: 更新後的噪聲功率譜密度 (n_freqs,)
@@ -237,6 +255,13 @@ class McraNoiseEstimator:
 
         # 1. 計算當前幀的功率譜
         power = magnitude ** 2
+
+        # arm 4: snapshot the pre-update estimate. Captured here (before any of
+        # steps 2-8, including the scene-change block) and consumed only after
+        # the entire unmodified recursion below has run — mirrors the C
+        # prototype's own before/after snapshot in res_nr_coupling_probe.c.
+        apply_arm4 = self.remove_echo_explained_rise and extra_noise_psd is not None
+        previous_noise_psd = self.noise_psd.copy() if apply_arm4 else None
 
         # 2. 時間平滑
         # S(k,l) = α_s·S(k,l-1) + (1-α_s)·|Y(k,l)|²
@@ -367,6 +392,32 @@ class McraNoiseEstimator:
         if np.any(dead):
             self.noise_psd[dead] = (self.alpha_d * self.noise_psd[dead]
                                     + (1 - self.alpha_d) * power[dead])
+
+        # arm 4: post-hoc, per-bin subtractive correction. The update above
+        # (steps 2-8 plus the dead-bin restart) ran completely unmodified —
+        # this does not change tilde_alpha_d, the gate, or which spp drove it.
+        # For a bin that rose this frame (tracked > previous) on a frame whose
+        # power also exceeded the pre-update estimate, remove the fraction of
+        # that rise explainable by the supplied extra (R²) power:
+        #   excess = power - previous          (the rise the frame power could cause)
+        #   fraction = min(extra / excess, 1.0) (how much of it extra explains)
+        #   tracked = previous + (tracked - previous) * (1 - fraction)
+        # A bin with no extra power, or one that fell, is untouched. This
+        # corrects where the extra power LANDED in noise_psd; it does not
+        # correct the update RATE itself (tilde_alpha_d still saw whatever spp
+        # it was handed) — a partial fix by design, not a complete one.
+        if apply_arm4:
+            excess = power - previous_noise_psd
+            rising = ((extra_noise_psd > 0.0)
+                      & (self.noise_psd > previous_noise_psd)
+                      & (excess > 0.0))
+            if np.any(rising):
+                fraction = np.minimum(extra_noise_psd[rising] / excess[rising], 1.0)
+                self.noise_psd[rising] = (
+                    previous_noise_psd[rising]
+                    + (self.noise_psd[rising] - previous_noise_psd[rising])
+                    * (1.0 - fraction)
+                )
 
         self.frame_count += 1
 

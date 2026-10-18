@@ -103,6 +103,14 @@ class MmseLsaDenoiser(BaseDenoiser):
         # default for standalone NR); False = plain MCRA (use in AEC pipeline
         # to prevent residual-echo from freezing noise tracking).
         mcra_accept_external_spp: bool = True,
+        # arm 4 (R²→tracker decoupling, post-hoc variant): when True AND the
+        # caller passes extra_noise_psd into denoise_spectrum(), each noise
+        # update() call also receives that frame's raw extra_noise_psd[i] so
+        # the tracker can subtract back out the fraction of its OWN rise that
+        # the supplied R² explains (see McraNoiseEstimator.update()). Default
+        # False keeps the estimator byte-identical even when extra_noise_psd
+        # is supplied, matching the shipped behaviour exactly.
+        mcra_remove_echo_explained_rise: bool = False,
         # NR mode ('full' | 'stationary'). Set by nr_modes.apply_mode() upstream; the
         # stationary-floor / scene-change params below carry the preset. Default 'full' +
         # all-off → byte-identical shipped V3-2.
@@ -378,13 +386,21 @@ class MmseLsaDenoiser(BaseDenoiser):
                 scene_change_tonal_veto=scene_change_tonal_veto,
                 scene_change_lo_flatness_max=scene_change_lo_flatness_max,
                 accept_external_spp=mcra_accept_external_spp,
+                remove_echo_explained_rise=mcra_remove_echo_explained_rise,
             )
         else:
+            if mcra_remove_echo_explained_rise:
+                raise ValueError(
+                    "mcra_remove_echo_explained_rise requires noise_method='mcra'")
             self.noise_estimator = RecursiveAverageNoiseEstimator(
                 alpha=alpha_d_effective,
                 num_init_frames=num_init_frames,
                 update_during_speech=False
             )
+        # arm 4 call-site gate: only McraNoiseEstimator.update() accepts
+        # extra_noise_psd; mcra_remove_echo_explained_rise=True implies
+        # noise_method == 'mcra' (enforced above).
+        self._pass_extra_to_tracker = mcra_remove_echo_explained_rise
 
         # 創建 SPP 估計器
         self.noise_gate_lf_bin = (
@@ -668,10 +684,20 @@ class MmseLsaDenoiser(BaseDenoiser):
                                 if (self.spp_estimator.cross_band_prior_strength > 0.0
                                     or self.spp_estimator.frame_prior_q_max is not None)
                                 else spp)
+            # arm 4: the raw (un-ν-scaled) R² term folded into THIS frame's
+            # gain-side noise floor above, handed to update() only for its
+            # post-hoc correction — see mcra_remove_echo_explained_rise.
+            # Only McraNoiseEstimator.update() accepts this kwarg, so it is
+            # omitted entirely (not just passed as None) unless that estimator
+            # and the flag are both in play.
+            tracker_update_kwargs = {}
+            if self._pass_extra_to_tracker and extra_noise_psd is not None:
+                tracker_update_kwargs['extra_noise_psd'] = extra_noise_psd[i]
             if silent[i]:
                 pass
             elif self.noise_gate_xi is None:
-                self.noise_estimator.update(noisy_magnitude[i], spp=noise_update_spp)
+                self.noise_estimator.update(noisy_magnitude[i], spp=noise_update_spp,
+                                            **tracker_update_kwargs)
             else:
                 if self.noise_gate_lf_bin is None:
                     slow_mask = xi > self.noise_gate_xi
@@ -682,7 +708,8 @@ class MmseLsaDenoiser(BaseDenoiser):
                     if speech_xi_fraction > self.noise_gate_frame_frac:
                         slow_mask[:self.noise_gate_lf_bin] = True
                 self.noise_estimator.update(noisy_magnitude[i], spp=noise_update_spp,
-                                            slow_mask=slow_mask)
+                                            slow_mask=slow_mask,
+                                            **tracker_update_kwargs)
 
         # 相位保持不變
         enhanced_phase = noisy_phase
