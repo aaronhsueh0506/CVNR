@@ -149,42 +149,163 @@ class McraNoiseEstimator:
         # 98.0%). At 16 kHz/512 and 48 kHz/1024 the SAME AM proxy failed
         # 100% of seeds tried at the operating values below (10, 18).
         #
-        # CORRECTION (independent review, see 2026-10 campaign notes): "safe
-        # at 16 kHz/256" is NOT a grid property -- it is a confirmation-
-        # window-vs-modulation-period boundary that 256 happens to sit just
-        # inside of for the ONE AM rate tested (3 Hz). From first principles:
-        # confirmation needs (min_frames + confirm) hit frames with gaps
-        # <= SCENE_CHANGE_MISS_TOLERANCE; at 256/confirm=12 that window is
-        # ~136 ms with a ~24 ms gap budget, which just clears a 3 Hz half-
-        # period (~167 ms) but NOT a 4 Hz one -- at 512/confirm=10 and
-        # 48k/1024/confirm=18 the window is wider (~240-245 ms) and a 3 Hz
-        # half-period already fails it, which is why those two grids show
-        # 100% AM failure while 256 shows 0%. The SAME latent boundary exists
-        # at 256; it has simply not been hit by the one modulation frequency
-        # used in this sweep. Syllabic/babble/wind modulation commonly runs
-        # 3-8 Hz, i.e. partly ABOVE this boundary even at 256 -- consistent
-        # with the pink-noise failure already measured here (1/20 at
-        # confirm=12). Do not read "0/20 at 256" as "safe to enable at 256";
-        # read it as "not yet shown unsafe at 256, at the one rate tried."
-        #
-        # The acceptance bar used to validate confirm_frames also OMITTED a
-        # previously-registered guard from this same campaign's noise-
-        # tracker lineage (project_effect_first_survey_2026_10_02.md, NR1B
-        # arm A3: HF-only rise, e.g. hiss/wind, must recover within ~0.4 s)
-        # -- A3 is exactly what the modulated-amplitude case above probes,
-        # and is what sank the earlier V-broadband attempt. This mechanism
-        # has not been judged against the full historical bar, only a
-        # partial reconstruction of it.
-        #
-        # This is a property of requiring a long CONTINUOUS run rather than
-        # a fractional/leaky window, and is not fixed by raising
+        # "Safe at 16 kHz/256" is NOT a grid property -- it is a
+        # confirmation-window-vs-modulation-period boundary that 256
+        # happens to sit just inside of for the ONE AM rate tested (3 Hz).
+        # From first principles: confirmation needs (min_frames + confirm)
+        # hit frames with gaps <= SCENE_CHANGE_MISS_TOLERANCE; at
+        # 256/confirm=12 that window is ~136 ms with a ~24 ms gap budget,
+        # which just clears a 3 Hz half-period (~167 ms) but NOT a 4 Hz
+        # one -- at 512/confirm=10 and 48k/1024/confirm=18 the window is
+        # wider (~240-245 ms) and a 3 Hz half-period already fails it,
+        # which is why those two grids show 100% AM failure while 256
+        # shows 0%. The SAME latent boundary exists at 256; it has simply
+        # not been hit by the one modulation frequency used in this
+        # sweep. Syllabic/babble/wind modulation commonly runs 3-8 Hz,
+        # i.e. partly ABOVE this boundary even at 256 -- consistent with
+        # the pink-noise failure already measured here (1/20 at
+        # confirm=12). Do not read "0/20 at 256" as "safe to enable at
+        # 256"; read it as "not yet shown unsafe at 256, at the one rate
+        # tried." This is a property of requiring a long CONTINUOUS run
+        # rather than a fractional window, and is not fixed by raising
         # SCENE_CHANGE_MISS_TOLERANCE alone (tried up to 5; still fails).
-        # Do NOT enable at ANY grid in production without first (a) testing
-        # against modulation rates up to ~8 Hz, not just 3 Hz, (b) validating
-        # against the full A1-A5 bar including A3, and (c) likely
-        # redesigning the confirmation test itself (e.g. a windowed true-
-        # frame fraction instead of a strict run length).
+        # Measured and reproduced structurally with a 50%-duty AM probe
+        # (see scene_change_confirm_window's docstring, which replaces
+        # this run-length test for the first fire of an episode and does
+        # not have this failure mode, at the cost of weaker false-fire
+        # rejection as the window widens past its matched-k point).
+        #
+        # The acceptance bar previously used to validate confirm_frames
+        # also omitted a registered guard requiring an HF-only rise (e.g.
+        # hiss/wind) to recover within ~0.4 s -- exactly what the
+        # modulated-amplitude case above probes.
+        #
+        # Do NOT enable at ANY grid in production without testing against
+        # modulation rates up to ~8 Hz (not just 3 Hz) and the full
+        # registered acceptance bar, including the ~0.4 s HF-only
+        # recovery guard.
         scene_change_confirm_frames: int = 0,
+        # scene_change_confirm_frames requires an UNBROKEN RUN (up to
+        # SCENE_CHANGE_MISS_TOLERANCE consecutive misses) of hit frames
+        # before confirming. Measured (k_held_sweep, DNS2020 60 files,
+        # 16 kHz/256): any single gap longer than the tolerance restarts
+        # the run, so a step whose hit/miss pattern is scattered rather
+        # than contiguous (ordinary measurement noise over a long required
+        # run, or a modulated/colored source) can fail to accumulate the
+        # run at all. A synthetic 50%-duty-cycle AM probe (depth deep
+        # enough to cross scene_change_threshold on the trough, baseline
+        # at the threshold) reproduces this structurally: the shipped
+        # run-length mechanism at its 16 kHz/256 operating value
+        # (confirm_frames=12) confirms a 3 Hz step but NEVER confirms at
+        # 4-8 Hz within a 300-frame budget; at 16 kHz/512 and 48 kHz/1024
+        # it fails at every rate 3-8 Hz including 3 Hz. The gentler
+        # +-3 dB AM proxy this value was originally validated against
+        # never actually dips the ENERGY half of the trigger below
+        # threshold at all (duty cycle 1.0, measured) -- it was not
+        # exercising this failure mode in the first place.
+        #
+        # scene_change_confirm_window replaces the run-length test for the
+        # FIRST fire of an episode with a trailing-WINDOW true-frame
+        # FRACTION: over the last (scene_change_min_frames +
+        # scene_change_confirm_window) frames, at least
+        # scene_change_confirm_frac of them must be hits (the same
+        # hi_gamma+flatness decision the ordinary trigger already computes
+        # every frame, pushed into a ring buffer every frame regardless of
+        # branch). A scattered or periodic miss pattern only lowers the
+        # window's hit fraction by its duty cycle; it does not restart a
+        # run, so confirmation is RATE independent at a GIVEN duty cycle
+        # (unlike run-length mode, which additionally depends on the
+        # absolute dip duration against a fixed miss tolerance). On the
+        # SAME 50%-duty AM probe, window mode at confirm_frac=0.5 (<= the
+        # stimulus's own duty cycle) confirms at every rate 3-8 Hz within
+        # budget at both grids tried.
+        #
+        # THE REAL LIMIT (measured): confirm_frac is a hard FLOOR on the
+        # average hit fraction the window can ever reach -- waiting
+        # longer or trying a different rate does not help. At
+        # confirm_frac=0.773 (the value matched to legacy's own false-fire
+        # suppression at 16 kHz/256, below), the SAME 50%-duty AM step
+        # NEVER confirms at any rate within 2000 frames, because the
+        # window's achievable hit count caps at ~50% of its size --
+        # strictly below the 77.3% required. A frac high enough to match
+        # legacy's fricative rejection and a duty cycle below that frac
+        # are mutually exclusive; the windowed-fraction mechanism does not
+        # escape that, it only makes the trade-off tunable along a
+        # duty-cycle axis instead of failing outright above a fixed,
+        # grid-dependent rate.
+        #
+        # MEASURED at 16 kHz/256 (k = min_frames + legacy's confirm_frames
+        # op value = 17 held fixed, W = min_frames + confirm_window swept,
+        # DNS2020 60 files, real denoiser, real false-fire log):
+        #   W=17  (frac=1.00, confirm_window=12) -> 98.3% suppression (no
+        #         miss tolerance at all -- stricter than legacy)
+        #   W=22  (frac=0.773, confirm_window=17) -> 93.3% suppression,
+        #         MATCHING legacy confirm_frames=12's 93.3% at the same k,
+        #         while tolerating up to 5 misses anywhere in the window
+        #         instead of legacy's 3 CONSECUTIVE
+        #   W=27  (frac=0.630) -> 91.7%;  W=32 (frac=0.531) -> 86.7%;
+        #         W=37 (frac=0.459) -> 78.3% (suppression degrades as the
+        #         window widens past the matched-k point)
+        # A2 (broadband, <=0.3s) and A3 (HF-only, <=0.4s) existence guards
+        # both pass at all 3 project grids for a sustained step (duty 1.0)
+        # at confirm_window/frac matched to each grid's legacy k -- a
+        # continuous step reaches the required hit count at frame k
+        # regardless of W, so W's cost shows up in false-fire suppression,
+        # not in existence-guard recovery time.
+        #
+        # BUDGET WALL at 16 kHz/512 and 48 kHz/1024 (not a window-mode
+        # deficiency -- this binds scene_change_confirm_frames equally):
+        # legacy's own k there (15 / 23 hit frames) already consumes
+        # ~240-245 ms of the 300 ms A2 budget, leaving ~0 ms of slack for
+        # ANY dip tolerance -- window or run-length -- without lowering k
+        # below legacy's own fricative-rejection strength. Neither
+        # mechanism can hold legacy's suppression AND tolerate a
+        # sub-100%-duty step at those two grids; this was not re-measured
+        # per-grid beyond the arithmetic.
+        #
+        # NOT measured: pink noise (an attempted 1/f probe was a stimulus
+        # bug -- 1/f noise puts negligible energy in the upper half-band
+        # this trigger looks at, so the recovery metric never engaged for
+        # EITHER mechanism; dropped rather than reported); the full
+        # registered A1/A4/A5 bar closed-loop (pause-residual, oracle-gain
+        # ratio, PESQ/STOI) for window mode specifically -- at the W=22
+        # operating point, window mode's first-fire gate is at least as
+        # strict as legacy confirm_frames=12 on any given hit sequence
+        # (same k, and legacy's "3 consecutive" tolerance is a subset of
+        # window's "5 anywhere"), so by that dominance argument A1/A4
+        # cannot be worse than confirm_frames=12's already-recorded
+        # numbers (pause-residual mean 0.154 dB, oracle-gain ratio 0.974)
+        # -- but this was NOT independently re-run and A5 (closed-loop
+        # PESQ/STOI, worst-case files) was not re-run at all.
+        #
+        # RECOMMENDATION (not a shipped default): at 16 kHz/256 only,
+        # confirm_window=17, confirm_frac=0.773 matches legacy's own
+        # fricative-rejection strength with materially better modulation-
+        # rate robustness. Not recommended at 512/48k (budget wall above).
+        # Do NOT enable in production without the A1/A4/A5 closed-loop
+        # re-run and a real (not pink) colored-noise check.
+        #
+        # 0 = off (default); when off, scene_change_confirm_frames
+        # (run-length mode, itself also default 0 = the shipped unguarded
+        # trigger) governs the first-fire gate exactly as before --
+        # bit-exact to shipped behaviour (verified empirically against the
+        # pre-this-change source, 64 configurations x 2000 frames, 0
+        # mismatches): no new state is touched, no new codepath runs.
+        # Mutually exclusive with scene_change_confirm_frames > 0 (window
+        # mode fully replaces the first-fire run-length test, so a nonzero
+        # confirm_frames alongside it would silently be dead code; enforced
+        # at construction).
+        # Re-fires within an already-confirmed episode always use the plain
+        # scene_change_min_frames threshold in BOTH modes, same as today.
+        # See test_scene_change_confirm_window.py.
+        scene_change_confirm_window: int = 0,
+        # Required hit fraction within the trailing
+        # scene_change_confirm_window; only consulted when that window is
+        # > 0. No single value is safe at every grid -- see the
+        # measurements above. 0.773 is the only value this round actually
+        # validated (at 16 kHz/256, confirm_window=17); the default here is
+        # inert unless confirm_window is also set.
+        scene_change_confirm_frac: float = 0.773,
         # IMCRA/MCRA mode switch
         accept_external_spp: bool = True,  # True=IMCRA, False=plain MCRA
         # Direction-aware noise update. None keeps the symmetric recursion.
@@ -223,31 +344,41 @@ class McraNoiseEstimator:
         # passes extra_noise_psd (belt-and-suspenders for callers that forget
         # to gate it).
         #
-        # ENABLE-TIME HAZARD (independent review, measured, not fixed here):
-        # this correction only touches noise_psd. It does NOT correct the
-        # scene-change trigger's hi_gamma (computed on raw power, echo
-        # included) or the S_min/min_buffer stomp a reset performs on fire
-        # (reset() below is unaffected; the per-hop blend inside update()'s
-        # scene-change block is). When the supplied extra explains >~90% of
-        # a bin's rise -- including every over-estimation case, which R² is
-        # known to produce at DT onset -- the scene-change reset's own
-        # action is undone by this correction while its trigger condition
-        # is computed from the uncorrected power, so the trigger never
-        # clears: the reset fires every scene_change_min_frames for the
-        # whole echo episode instead of once. That repeated fire also
-        # re-stomps S_min/min_buffer every time, which (in
-        # accept_external_spp=False mode) collapses the internal SPP gate
-        # to ~0 and holds tilde_alpha_d at its fastest, and it leaves bins
-        # with extra == 0 (e.g. the rest of a full-bandwidth blend) pulled
-        # toward echo-level power every fire with nothing to undo it. This
-        # is a real campaign-measured FS-echo cost pathway (see the commit
-        # this flag's current validation came from), not a theoretical
-        # concern. Do NOT set this True in any config where the
-        # scene-change reset is reachable (every default config has it
-        # reachable) without first fixing the interaction -- e.g. snapshot/
-        # restore S_min and min_buffer on a corrected fire, skip this
-        # correction on frames where the reset just fired, or compute
-        # hi_gamma from echo-corrected power when this flag is on.
+        # SCENE-CHANGE-TRIGGER INTERACTION, FIXED: this correction used to
+        # only touch noise_psd, leaving the scene-change trigger's
+        # hi_gamma computed on raw, echo-included power -- when the
+        # supplied extra explained most of a bin's rise, the reset's own
+        # action was undone by this correction while its trigger condition
+        # (computed from uncorrected power) never cleared, so the reset
+        # could fire every scene_change_min_frames for the whole echo
+        # episode instead of once, re-stomping S_min/min_buffer with
+        # echo-polluted power on every fire. hi_gamma's energy test (not
+        # its flatness test -- see the comment at its computation site)
+        # now uses the SAME echo-corrected power this correction implies,
+        # and a fire's S_min/min_buffer write uses the same correction the
+        # noise_psd write already receives, so this no longer happens:
+        # reproduced on a synthetic sustained 95%-echo-explained rise
+        # (80 fires over 400 frames before this fix, 0 after -- see
+        # test_echo_dominated_rise_no_longer_refires_repeatedly).
+        #
+        # MEASURED on the real AEC-Challenge-2021-blind far-end-singletalk
+        # files this flag's own acceptance round used (20 files, 16 kHz/
+        # 256, through the real AEC+NR pipeline with inject_echo_psd):
+        # genuine scene-change commits are rare on this corpus regardless
+        # -- 1 total across all 20 files, identical before and after this
+        # fix. The pooled-FS AECMOS echo-score CI this flag was rejected
+        # on is UNCHANGED: [-0.0731, -0.0152] vs the prior round's
+        # [-0.0723, -0.0152] at 16 kHz/256 (still FAILS the >= -0.05 CI
+        # lower-bound bar), [-0.0607, -0.0091] vs [-0.0596, -0.0093] at
+        # 16 kHz/512 (also still FAILS). This hazard was real (and is now
+        # fixed) but was NOT the mechanism behind arm 4's FS-echo cost on
+        # this corpus -- that cost comes from the ordinary per-frame
+        # correction itself (holding noise_psd below the echo-inflated
+        # level during sustained far-end-only echo, which lets more
+        # residual echo through the gain stage), independent of whether
+        # any scene-change reset ever fires. Still do NOT set this True in
+        # production: the flag does not clear its acceptance bar, for a
+        # different reason than previously documented here.
         remove_echo_explained_rise: bool = False,
     ):
         self.alpha_s = alpha_s
@@ -286,6 +417,31 @@ class McraNoiseEstimator:
         if scene_change_confirm_frames < 0:
             raise ValueError("scene_change_confirm_frames must be >= 0")
         self.scene_change_confirm_frames = scene_change_confirm_frames
+        if scene_change_confirm_window < 0:
+            raise ValueError("scene_change_confirm_window must be >= 0")
+        if scene_change_confirm_window > 0 and scene_change_confirm_frames > 0:
+            raise ValueError(
+                "scene_change_confirm_window and scene_change_confirm_frames "
+                "are alternative confirmation mechanisms for the first fire "
+                "of an episode and cannot both be enabled -- a nonzero "
+                "confirm_frames would be silently dead code once window "
+                "mode takes over that decision")
+        if not 0.0 < scene_change_confirm_frac <= 1.0:
+            raise ValueError("scene_change_confirm_frac must be in (0, 1]")
+        self.scene_change_confirm_window = scene_change_confirm_window
+        self.scene_change_confirm_frac = scene_change_confirm_frac
+        # Ring buffer of the last _window_size hit/miss decisions (the same
+        # hi_gamma+flatness boolean the ordinary trigger computes every
+        # frame) plus a running count of hits in it, so the window-fraction
+        # test below is O(1) per frame. Only allocated/touched when window
+        # mode is enabled -- bit-exact no-op otherwise.
+        self._window_size = self.scene_change_min_frames + scene_change_confirm_window
+        self._window_required_hits = int(np.ceil(
+            scene_change_confirm_frac * self._window_size))
+        self._window_buf = (np.zeros(self._window_size, dtype=bool)
+                             if scene_change_confirm_window > 0 else None)
+        self._window_ptr = 0
+        self._window_hit_count = 0
         self.scene_change_count = 0
         # Whether the CURRENT contiguous elevated episode has already fired
         # once (see the fricative-guard comment in update()). Cleared
@@ -419,7 +575,25 @@ class McraNoiseEstimator:
         n_freqs = len(power)
         hi_start = n_freqs // 2  # 上半頻段（~4kHz for 16kHz/512FFT）
         hi_power = power[hi_start:]
-        hi_gamma = np.mean(hi_power) / (np.mean(self.noise_psd[hi_start:]) + 1e-10)
+        # When remove_echo_explained_rise is active, the trigger must see
+        # the same echo-corrected power its own post-hoc correction
+        # implies, or it stays blind to echo and never clears while a
+        # bin's rise is echo-explained -- firing every
+        # scene_change_min_frames for the whole echo episode instead of
+        # once (see remove_echo_explained_rise's docstring). Only the
+        # ENERGY test (hi_gamma) is corrected here; flatness a few lines
+        # down stays on the RAW spectrum (shape, not level) -- zeroing
+        # many bins by subtraction can swing the geometric mean through
+        # the 1e-20 floor in _spectral_flatness and falsely veto a genuine
+        # broadband change that happens to co-occur with echo.
+        # extra_noise_psd is 0 (or apply_arm4 False) on every ordinary
+        # frame, so this is a no-op there -- bit-exact to shipped behaviour
+        # unless remove_echo_explained_rise=True AND a caller actually
+        # passes extra_noise_psd.
+        hi_power_for_gamma = (
+            np.maximum(hi_power - extra_noise_psd[hi_start:], 0.0)
+            if apply_arm4 else hi_power)
+        hi_gamma = np.mean(hi_power_for_gamma) / (np.mean(self.noise_psd[hi_start:]) + 1e-10)
 
         # Flatness contains one log per high-band bin.  It cannot affect the
         # decision unless the cheap energy-ratio gate passes, so defer it.
@@ -428,31 +602,61 @@ class McraNoiseEstimator:
         hi_energy_candidate = hi_gamma > self.scene_change_threshold
         hi_flatness = (_spectral_flatness(hi_power)
                        if hi_energy_candidate else 0.0)
+        hit_now = bool(hi_energy_candidate
+                       and hi_flatness > self.scene_change_flatness_threshold)
 
-        if (hi_energy_candidate and
-                hi_flatness > self.scene_change_flatness_threshold):
+        # Windowed-fraction confirmation bookkeeping: push this frame's
+        # hit/miss decision into the trailing ring buffer
+        # on EVERY frame (not just inside the hit branch below), so the
+        # window reflects calendar time, not episode time -- a periodic
+        # modulation's average duty cycle is what the fraction test reads,
+        # regardless of how its individual dips compare to any one
+        # miss-tolerance constant. Skipped entirely when window mode is
+        # off, so this touches no state on the default (off) path.
+        if self.scene_change_confirm_window > 0:
+            evicted = self._window_buf[self._window_ptr]
+            self._window_buf[self._window_ptr] = hit_now
+            self._window_hit_count += int(hit_now) - int(evicted)
+            self._window_ptr = (self._window_ptr + 1) % self._window_size
+
+        if hit_now:
             self.scene_change_count += 1
             self._scene_change_miss_run = 0
-            # Fricative guard: the FIRST reset of a contiguous elevated
-            # episode must additionally hold for scene_change_confirm_frames
-            # beyond the ordinary trigger point (0 = off, identical to the
-            # shipped threshold; see the constructor docstring for the
-            # shape rationale). Once an episode has been confirmed once,
-            # later re-triggers within the SAME episode revert to the
-            # ordinary threshold: the blend below is partial
-            # (scene_change_blend), so a genuine step can need several
-            # back-to-back resets to fully converge, exactly as the shipped
-            # mechanism relies on today -- re-confirming every one of those
-            # would only slow that convergence (and, by letting the
-            # episode's own elevated reading outlast its confirm window,
-            # can even chain into unrelated later speech), without adding
-            # any discriminating power versus a fricative (which never
-            # reaches the first confirmed fire at all).
-            required_frames = (self.scene_change_min_frames
-                                if self._scene_change_confirmed
-                                else self.scene_change_min_frames
-                                + self.scene_change_confirm_frames)
-            if self.scene_change_count >= required_frames:
+            # Fricative guard, two alternative first-fire confirmation
+            # mechanisms (mutually exclusive, validated at construction):
+            #
+            # scene_change_confirm_window > 0 (windowed-fraction mode): the
+            # FIRST reset of an episode additionally requires that at least
+            # scene_change_confirm_frac of the trailing window (sized
+            # min_frames + confirm_window) be hits -- see that param's
+            # docstring for why this replaces the run-length test rather
+            # than layering on top of it.
+            #
+            # otherwise (legacy run-length mode, scene_change_confirm_frames
+            # itself possibly 0 i.e. the shipped unguarded trigger): the
+            # FIRST reset must additionally hold for scene_change_confirm_
+            # frames MORE consecutive frames beyond the ordinary trigger
+            # point.
+            #
+            # Once an episode has been confirmed once (either mode), later
+            # re-triggers within the SAME episode revert to the ordinary
+            # threshold: the blend below is partial (scene_change_blend),
+            # so a genuine step can need several back-to-back resets to
+            # fully converge, exactly as the shipped mechanism relies on
+            # today -- re-confirming every one of those would only slow
+            # that convergence (and, by letting the episode's own elevated
+            # reading outlast its confirm window, can even chain into
+            # unrelated later speech), without adding any discriminating
+            # power versus a fricative (which never reaches the first
+            # confirmed fire at all).
+            if self._scene_change_confirmed:
+                ready = self.scene_change_count >= self.scene_change_min_frames
+            elif self.scene_change_confirm_window > 0:
+                ready = self._window_hit_count >= self._window_required_hits
+            else:
+                ready = self.scene_change_count >= (
+                    self.scene_change_min_frames + self.scene_change_confirm_frames)
+            if ready:
                 # 音樂安全化 tonal veto（stationary mode）：低頻若是 tonal（尖峰、flatness 低）
                 # 則判為音樂 → 不重設噪聲底；只有低頻也平坦（真的換噪聲場）才放行。
                 blocked = False
@@ -463,9 +667,38 @@ class McraNoiseEstimator:
                     # 場景轉換確認：部分重置噪聲估計和最小值追蹤
                     blend = self.scene_change_blend
                     self.noise_psd = blend * self.noise_psd + (1 - blend) * power
-                    self.S_min = self.S.copy()
-                    self.min_buffer[:] = self.S.reshape(1, -1)
+                    # The noise_psd write just above is corrected after the fact
+                    # by the post-hoc block at the end of update() (see
+                    # test_scene_change_write_is_also_corrected), but S_min
+                    # and min_buffer are stomped with self.S HERE and never
+                    # go through that post-hoc path at all -- so without
+                    # this, a corrected fire still leaves the min-tracker
+                    # seeded with echo-polluted power. Use the same
+                    # echo-corrected value consistently with the main write
+                    # whenever arm 4 is active; bit-exact to shipped when
+                    # it isn't.
+                    S_for_reset = (np.maximum(self.S - extra_noise_psd, 0.0)
+                                    if apply_arm4 else self.S)
+                    self.S_min = S_for_reset.copy()
+                    self.min_buffer[:] = S_for_reset.reshape(1, -1)
                     self._scene_change_confirmed = True
+                    if self.scene_change_confirm_window > 0:
+                        # The window's accumulated evidence has just been
+                        # spent on this fire. Without clearing it, a single
+                        # ordinary miss right after a fire (common: the
+                        # reset's own partial blend can itself drop hi_gamma
+                        # below threshold for a frame) clears
+                        # _scene_change_confirmed (see the miss branch
+                        # below) while the window still holds the OLD
+                        # evidence, so the very next hit frame re-enters
+                        # this elif with the window already satisfied and
+                        # fires again immediately -- a second confirmed
+                        # fire with zero new sustained evidence. Re-fires
+                        # within an episode must only happen via the
+                        # ordinary min_frames path, like legacy run-length
+                        # mode's self.scene_change_count = 0 just below.
+                        self._window_buf[:] = False
+                        self._window_hit_count = 0
                 self.scene_change_count = 0
                 self._scene_change_miss_run = 0
         else:
@@ -605,6 +838,10 @@ class McraNoiseEstimator:
         self.scene_change_count = 0
         self._scene_change_confirmed = False
         self._scene_change_miss_run = 0
+        if self._window_buf is not None:
+            self._window_buf[:] = False
+        self._window_ptr = 0
+        self._window_hit_count = 0
 
     def __repr__(self):
         return (f"McraNoiseEstimator(alpha_s={self.alpha_s}, alpha_d={self.alpha_d}, "
