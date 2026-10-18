@@ -136,14 +136,33 @@ def test_negative_window_rejected():
 
 
 def test_bounded_fricative_does_not_fire():
-    """A burst lasting MIN_FRAMES + 10 frames (fricative-shaped, same
-    stimulus as the run-length test) must NOT commit the reset under
-    window mode either."""
+    """A burst strictly shorter than the window's required_hits must NOT
+    commit the reset under window mode: even at a 100%-duty burst, the
+    hit count can never reach required_hits before the burst itself ends.
+
+    Bug found during /code-review: the original version of this test used
+    a MIN_FRAMES+10 = 15-frame burst against confirm_window=16/frac=0.6,
+    i.e. window_size=21/required_hits=ceil(0.6*21)=13 -- 15 > 13, so the
+    burst DID commit a real reset partway through (confirmed noise_psd
+    change at frame 12), and the test's single assertion, checked only
+    after 10 TRAILING QUIET frames, passed anyway because an isolated
+    later miss had already reset _scene_change_confirmed back to False.
+    The test's name and docstring claimed coverage it did not have. Fixed
+    by choosing a burst length strictly below required_hits (so a fire is
+    structurally impossible, not just absent in this one run) and by
+    asserting _scene_change_confirmed is never True at ANY point during
+    the burst, not just at the end."""
     est = _make_estimator(confirm_window=16, confirm_frac=0.6)
+    window_size = MIN_FRAMES + 16
+    required_hits = int(np.ceil(0.6 * window_size))
+    burst_len = required_hits - 1  # 100%-duty burst still can't reach the fraction
     mag = _burst_magnitude()
     quiet = _quiet_magnitude()
-    for _ in range(MIN_FRAMES + 10):
+    for _ in range(burst_len):
         est.update(mag, spp=SPP_HIGH)
+        assert est._scene_change_confirmed is False, (
+            "a burst shorter than required_hits must never fire, "
+            "not even transiently")
     for _ in range(10):
         est.update(quiet, spp=SPP_HIGH)
     assert est._scene_change_confirmed is False, (
@@ -212,9 +231,30 @@ def test_fire_then_isolated_miss_then_hit_does_not_immediately_refire():
     est.update(quiet, spp=SPP_HIGH)  # one isolated miss
     assert est._scene_change_confirmed is False  # miss clears confirmed
 
+    # Bug found during /code-review's post-merge sweep: the original test
+    # re-fed the SAME fixed-level `mag` burst here expecting it to register
+    # as a hit, but the fire itself already blended noise_psd[hi:] toward
+    # HI_LEVEL (scene_change_blend=0.5 default: ~0.5*old + 0.5*50 = ~25.5),
+    # so hi_gamma for that same stimulus drops to ~50/25.5=~1.96, under
+    # scene_change_threshold (10) -- that frame was a MISS, not a hit, for
+    # reasons unrelated to the window-clear fix being tested, so `not
+    # refired` passed trivially (there was no hit at all to re-fire from).
+    # Construct a probe that is guaranteed to register as a hit regardless
+    # of where the fire already moved noise_psd: scale the same flat hi-band
+    # profile (scaling does not change spectral flatness, only level) well
+    # above the CURRENT floor x threshold.
+    probe_level = 20.0 * est.scene_change_threshold * np.mean(est.noise_psd[HI_START:])
+    probe_power = np.ones(N_FREQS)
+    probe_power[HI_START:] = probe_level
+    probe_hit = np.sqrt(probe_power)
+    hi_gamma_probe = (np.mean(probe_power[HI_START:])
+                       / (np.mean(est.noise_psd[HI_START:]) + 1e-10))
+    assert hi_gamma_probe > est.scene_change_threshold, (
+        "test construction error: the probe itself must clear the energy "
+        "threshold, or this test proves nothing")
+
     refired = False
-    pre_fire_noise_hi = est.noise_psd[HI_START:].copy()
-    est.update(mag, spp=SPP_HIGH)  # one hit
+    est.update(probe_hit, spp=SPP_HIGH)  # one GENUINE hit, freshly verified
     if est._scene_change_confirmed:
         refired = True
     assert not refired, (

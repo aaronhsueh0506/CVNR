@@ -234,15 +234,22 @@ class McraNoiseEstimator:
         # duty-cycle axis instead of failing outright above a fixed,
         # grid-dependent rate.
         #
-        # MEASURED at 16 kHz/256 (k = min_frames + legacy's confirm_frames
-        # op value = 17 held fixed, W = min_frames + confirm_window swept,
-        # DNS2020 60 files, real denoiser, real false-fire log):
-        #   W=17  (frac=1.00, confirm_window=12) -> 98.3% suppression (no
-        #         miss tolerance at all -- stricter than legacy)
-        #   W=22  (frac=0.773, confirm_window=17) -> 93.3% suppression,
-        #         MATCHING legacy confirm_frames=12's 93.3% at the same k,
-        #         while tolerating up to 5 misses anywhere in the window
-        #         instead of legacy's 3 CONSECUTIVE
+        # MEASURED at 16 kHz/256 (W = min_frames + confirm_window swept,
+        # required_hits = ceil(frac * W) per the formula below, DNS2020
+        # 60 files, real denoiser, real false-fire log):
+        #   W=17  (frac=1.00, confirm_window=12, required_hits=17) ->
+        #         98.3% suppression (no miss tolerance at all -- stricter
+        #         than legacy)
+        #   W=22  (frac=0.773, confirm_window=17, required_hits=18 --
+        #         ceil(0.773*22)=18, NOT the 17 this round's own narrative
+        #         intended; left uncorrected below as a documentation note,
+        #         not re-measured against the intended 17) -> 93.3%
+        #         suppression, MATCHING legacy confirm_frames=12's 93.3% at
+        #         its own k=17, while tolerating up to 5 misses anywhere in
+        #         the window instead of legacy's 3 CONSECUTIVE (this number
+        #         was measured by running the shipped formula, i.e. against
+        #         the real required_hits=18, not the intended-but-never-
+        #         shipped 17)
         #   W=27  (frac=0.630) -> 91.7%;  W=32 (frac=0.531) -> 86.7%;
         #         W=37 (frac=0.459) -> 78.3% (suppression degrades as the
         #         window widens past the matched-k point)
@@ -279,11 +286,49 @@ class McraNoiseEstimator:
         # PESQ/STOI, worst-case files) was not re-run at all.
         #
         # RECOMMENDATION (not a shipped default): at 16 kHz/256 only,
-        # confirm_window=17, confirm_frac=0.773 matches legacy's own
-        # fricative-rejection strength with materially better modulation-
-        # rate robustness. Not recommended at 512/48k (budget wall above).
+        # confirm_window=17, confirm_frac=0.773 (required_hits=18, see the
+        # measurement note above -- NOT 17 despite that being this round's
+        # original intent) matches legacy's own fricative-rejection
+        # strength with materially better modulation-rate robustness. Not
+        # recommended at 512/48k (budget wall above).
         # Do NOT enable in production without the A1/A4/A5 closed-loop
         # re-run and a real (not pink) colored-noise check.
+        #
+        # THREE FURTHER LIMITATIONS found by an independent post-merge
+        # review sweep (empirically reproduced, not just read), additional
+        # reasons this needs the re-run above before any production use:
+        #  1. Interaction with scene_change_tonal_veto=True: a veto blocks
+        #     the fire (reset() branch) but does NOT clear the window
+        #     buffer/hit-count the way an actual fire does -- only an
+        #     un-vetoed commit resets the window. During a long vetoed
+        #     tonal/music passage the window can sit saturated above
+        #     required_hits for as long as the veto holds; the instant the
+        #     low band stops being tonal for even one frame, the reset
+        #     commits immediately on stale evidence accumulated entirely
+        #     during the veto, with zero fresh sustained evidence. Legacy
+        #     run-length mode does not have this gap (a blocked `ready`
+        #     also resets scene_change_count).
+        #  2. Re-fires within an already-confirmed episode get ZERO miss
+        #     tolerance in window mode, contradicting the "same as today"
+        #     framing elsewhere in this docstring: the miss-tolerance
+        #     branch is gated on scene_change_confirm_frames > 0, which
+        #     construction forces to 0 whenever window mode is active, so
+        #     a single isolated miss during multi-step convergence (e.g.
+        #     under a partial scene_change_blend) hard-resets progress and
+        #     forces a full re-accumulation through the window gate again,
+        #     where legacy mode would have absorbed up to
+        #     SCENE_CHANGE_MISS_TOLERANCE consecutive misses for free.
+        #  3. No validation ties confirm_frac to scene_change_min_frames:
+        #     required_hits = ceil(frac * (min_frames + confirm_window))
+        #     can come out BELOW min_frames itself for a small frac with a
+        #     large confirm_window (e.g. min_frames=5, confirm_window=20,
+        #     frac=0.1 -> required_hits=3 < 5), making window mode fire
+        #     MORE readily than the unguarded baseline trigger -- the
+        #     opposite of what "confirmation" is supposed to do. Not an
+        #     issue at the one validated operating point above
+        #     (confirm_window=17/frac=0.773 -> required_hits=18 > 5), but
+        #     nothing in this class stops a caller from picking a worse
+        #     combination.
         #
         # 0 = off (default); when off, scene_change_confirm_frames
         # (run-length mode, itself also default 0 = the shipped unguarded
@@ -435,11 +480,15 @@ class McraNoiseEstimator:
         # frame) plus a running count of hits in it, so the window-fraction
         # test below is O(1) per frame. Only allocated/touched when window
         # mode is enabled -- bit-exact no-op otherwise.
-        self._window_size = self.scene_change_min_frames + scene_change_confirm_window
-        self._window_required_hits = int(np.ceil(
-            scene_change_confirm_frac * self._window_size))
-        self._window_buf = (np.zeros(self._window_size, dtype=bool)
-                             if scene_change_confirm_window > 0 else None)
+        if scene_change_confirm_window > 0:
+            self._window_size = self.scene_change_min_frames + scene_change_confirm_window
+            self._window_required_hits = int(np.ceil(
+                scene_change_confirm_frac * self._window_size))
+            self._window_buf = np.zeros(self._window_size, dtype=bool)
+        else:
+            self._window_size = 0
+            self._window_required_hits = 0
+            self._window_buf = None
         self._window_ptr = 0
         self._window_hit_count = 0
         self.scene_change_count = 0
