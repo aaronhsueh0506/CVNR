@@ -728,7 +728,10 @@ class McraNoiseEstimator:
                     # it isn't.
                     S_for_reset = (np.maximum(self.S - extra_noise_psd, 0.0)
                                     if apply_arm4 else self.S)
-                    self.S_min = S_for_reset.copy()
+                    # np.maximum already allocates a fresh array -- only the
+                    # `else self.S` branch aliases self.S and needs the copy
+                    # before self.S_min is allowed to diverge from it.
+                    self.S_min = S_for_reset if apply_arm4 else S_for_reset.copy()
                     self.min_buffer[:] = S_for_reset.reshape(1, -1)
                     self._scene_change_confirmed = True
                     if self.scene_change_confirm_window > 0:
