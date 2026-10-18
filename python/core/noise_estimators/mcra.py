@@ -113,10 +113,14 @@ class McraNoiseEstimator:
         # most 15 EXTRA frames (8 ms hop) on frames landing on real speech,
         # whereas a synthetic genuine step (+13.5..+30 dB, white noise)
         # never broke inside a lookahead of 62 frames. Driving the live
-        # estimator end to end (not the frozen probe) at
-        # scene_change_confirm_frames=16 suppressed 98-99% of the DNS2020
-        # false fires across a 14-20 frame sweep, consistent with the probe.
-        # Requiring the condition to additionally hold for
+        # estimator end to end (not the frozen probe) across a 12-20 frame
+        # sweep suppressed 94-99% of the DNS2020 false fires, consistent
+        # with the probe; 12 is the recommended 16 kHz/256 operating value
+        # (see KNOWN LIMITATION below for why 16, the probe-margin value,
+        # is worse on non-white existence steps despite higher suppression:
+        # 93.9% suppression / 0.974 oracle-gain ratio / pause-residual cost
+        # median 0.000, mean 0.154 dB at confirm_frames=12, all comfortably
+        # inside the registered limits). Requiring the condition to additionally hold for
         # `scene_change_confirm_frames` MORE consecutive frames before
         # committing the reset therefore separates the two by shape
         # (sustained vs. self-terminating), not by cooldown after the fact
@@ -137,9 +141,14 @@ class McraNoiseEstimator:
         # itself modulated (e.g. +-3 dB at 3 Hz, a crude babble/wind proxy)
         # or 1/f-colored can dip the trigger condition below threshold for
         # longer than SCENE_CHANGE_MISS_TOLERANCE covers, which can delay
-        # or prevent the first confirmation past the 0.3 s budget --
-        # reproduced at 16 kHz/512 and 48 kHz/1024 (100% of seeds tried) and,
-        # less severely, at 16 kHz/256 (pink noise, ~30%). This is a
+        # or prevent the first confirmation past the 0.3 s budget. At 16
+        # kHz/256, confirm_frames=12 passed white (0/20 seeds), the +-3dB/
+        # 3Hz AM proxy (0/20), and pink noise at a reduced but nonzero rate
+        # (1/20); confirm_frames=16 (the probe-margin value) was WORSE on
+        # pink (6/20) for no suppression benefit worth the risk (93.9% vs
+        # 98.0%). At 16 kHz/512 and 48 kHz/1024 the SAME AM proxy failed
+        # 100% of seeds tried at the operating values below (10, 18) --
+        # those two grids are not recommended for enabling yet. This is a
         # property of requiring a long CONTINUOUS run rather than a
         # fractional/leaky window, and is not fixed by raising
         # SCENE_CHANGE_MISS_TOLERANCE alone (tried up to 5; still fails).
