@@ -147,15 +147,43 @@ class McraNoiseEstimator:
         # (1/20); confirm_frames=16 (the probe-margin value) was WORSE on
         # pink (6/20) for no suppression benefit worth the risk (93.9% vs
         # 98.0%). At 16 kHz/512 and 48 kHz/1024 the SAME AM proxy failed
-        # 100% of seeds tried at the operating values below (10, 18) --
-        # those two grids are not recommended for enabling yet. This is a
-        # property of requiring a long CONTINUOUS run rather than a
-        # fractional/leaky window, and is not fixed by raising
+        # 100% of seeds tried at the operating values below (10, 18).
+        #
+        # CORRECTION (independent review, see 2026-10 campaign notes): "safe
+        # at 16 kHz/256" is NOT a grid property -- it is a confirmation-
+        # window-vs-modulation-period boundary that 256 happens to sit just
+        # inside of for the ONE AM rate tested (3 Hz). From first principles:
+        # confirmation needs (min_frames + confirm) hit frames with gaps
+        # <= SCENE_CHANGE_MISS_TOLERANCE; at 256/confirm=12 that window is
+        # ~136 ms with a ~24 ms gap budget, which just clears a 3 Hz half-
+        # period (~167 ms) but NOT a 4 Hz one -- at 512/confirm=10 and
+        # 48k/1024/confirm=18 the window is wider (~240-245 ms) and a 3 Hz
+        # half-period already fails it, which is why those two grids show
+        # 100% AM failure while 256 shows 0%. The SAME latent boundary exists
+        # at 256; it has simply not been hit by the one modulation frequency
+        # used in this sweep. Syllabic/babble/wind modulation commonly runs
+        # 3-8 Hz, i.e. partly ABOVE this boundary even at 256 -- consistent
+        # with the pink-noise failure already measured here (1/20 at
+        # confirm=12). Do not read "0/20 at 256" as "safe to enable at 256";
+        # read it as "not yet shown unsafe at 256, at the one rate tried."
+        #
+        # The acceptance bar used to validate confirm_frames also OMITTED a
+        # previously-registered guard from this same campaign's noise-
+        # tracker lineage (project_effect_first_survey_2026_10_02.md, NR1B
+        # arm A3: HF-only rise, e.g. hiss/wind, must recover within ~0.4 s)
+        # -- A3 is exactly what the modulated-amplitude case above probes,
+        # and is what sank the earlier V-broadband attempt. This mechanism
+        # has not been judged against the full historical bar, only a
+        # partial reconstruction of it.
+        #
+        # This is a property of requiring a long CONTINUOUS run rather than
+        # a fractional/leaky window, and is not fixed by raising
         # SCENE_CHANGE_MISS_TOLERANCE alone (tried up to 5; still fails).
-        # Do not enable at 16 kHz/512 or 48 kHz/1024 without first widening
-        # this guard's testing to non-white steps and, likely, redesigning
-        # the confirmation test itself (e.g. a windowed true-frame fraction
-        # instead of a strict run length).
+        # Do NOT enable at ANY grid in production without first (a) testing
+        # against modulation rates up to ~8 Hz, not just 3 Hz, (b) validating
+        # against the full A1-A5 bar including A3, and (c) likely
+        # redesigning the confirmation test itself (e.g. a windowed true-
+        # frame fraction instead of a strict run length).
         scene_change_confirm_frames: int = 0,
         # IMCRA/MCRA mode switch
         accept_external_spp: bool = True,  # True=IMCRA, False=plain MCRA
@@ -194,6 +222,32 @@ class McraNoiseEstimator:
         # Default False keeps update() exactly as shipped even if a caller
         # passes extra_noise_psd (belt-and-suspenders for callers that forget
         # to gate it).
+        #
+        # ENABLE-TIME HAZARD (independent review, measured, not fixed here):
+        # this correction only touches noise_psd. It does NOT correct the
+        # scene-change trigger's hi_gamma (computed on raw power, echo
+        # included) or the S_min/min_buffer stomp a reset performs on fire
+        # (reset() below is unaffected; the per-hop blend inside update()'s
+        # scene-change block is). When the supplied extra explains >~90% of
+        # a bin's rise -- including every over-estimation case, which R² is
+        # known to produce at DT onset -- the scene-change reset's own
+        # action is undone by this correction while its trigger condition
+        # is computed from the uncorrected power, so the trigger never
+        # clears: the reset fires every scene_change_min_frames for the
+        # whole echo episode instead of once. That repeated fire also
+        # re-stomps S_min/min_buffer every time, which (in
+        # accept_external_spp=False mode) collapses the internal SPP gate
+        # to ~0 and holds tilde_alpha_d at its fastest, and it leaves bins
+        # with extra == 0 (e.g. the rest of a full-bandwidth blend) pulled
+        # toward echo-level power every fire with nothing to undo it. This
+        # is a real campaign-measured FS-echo cost pathway (see the commit
+        # this flag's current validation came from), not a theoretical
+        # concern. Do NOT set this True in any config where the
+        # scene-change reset is reachable (every default config has it
+        # reachable) without first fixing the interaction -- e.g. snapshot/
+        # restore S_min and min_buffer on a corrected fire, skip this
+        # correction on frames where the reset just fired, or compute
+        # hi_gamma from echo-corrected power when this flag is on.
         remove_echo_explained_rise: bool = False,
     ):
         self.alpha_s = alpha_s
