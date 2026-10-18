@@ -73,6 +73,11 @@ class McraNoiseEstimator:
     # above it. Mirrored by MCRA_NOISE_PSD_INERT in the C port.
     NOISE_PSD_INERT = 1e-20
 
+    # Consecutive miss frames the fricative-confirm guard tolerates without
+    # discarding an in-progress streak (see update()'s scene-change block).
+    # Only consulted when scene_change_confirm_frames > 0.
+    SCENE_CHANGE_MISS_TOLERANCE = 3
+
     def __init__(
         self,
         alpha_s: float = 0.9,
@@ -94,6 +99,64 @@ class McraNoiseEstimator:
         # broadband noise-scene change has a flat low band and still fires.
         scene_change_tonal_veto: bool = False,
         scene_change_lo_flatness_max: float = 0.4,
+        # Fricative guard: a true broadband scene/noise-floor change (fan
+        # turning on, mic moved) keeps hi_gamma+flatness elevated against the
+        # still-stale noise estimate for as long as the estimate stays stale
+        # -- i.e. indefinitely, until the reset itself updates it. A fricative
+        # is bounded in duration (50-150 ms) and its own energy decays within
+        # that span, so the SAME elevated-condition streak that triggers the
+        # reset at scene_change_min_frames breaks on its own shortly after.
+        # Measured on DNS2020 (150 files, no_reverb test set, 16 kHz), with a
+        # FROZEN pre-fire noise floor and no miss tolerance (a lower bound,
+        # not the live streak the shipped guard below actually sees): past
+        # the normal fire point the condition extends a median of 2 and at
+        # most 15 EXTRA frames (8 ms hop) on frames landing on real speech,
+        # whereas a synthetic genuine step (+13.5..+30 dB, white noise)
+        # never broke inside a lookahead of 62 frames. Driving the live
+        # estimator end to end (not the frozen probe) across a 12-20 frame
+        # sweep suppressed 94-99% of the DNS2020 false fires, consistent
+        # with the probe; 12 is the recommended 16 kHz/256 operating value
+        # (see KNOWN LIMITATION below for why 16, the probe-margin value,
+        # is worse on non-white existence steps despite higher suppression:
+        # 93.9% suppression / 0.974 oracle-gain ratio / pause-residual cost
+        # median 0.000, mean 0.154 dB at confirm_frames=12, all comfortably
+        # inside the registered limits). Requiring the condition to additionally hold for
+        # `scene_change_confirm_frames` MORE consecutive frames before
+        # committing the reset therefore separates the two by shape
+        # (sustained vs. self-terminating), not by cooldown after the fact
+        # (that is `V-hold`, tested separately and found to have no effect
+        # because it does not touch the frame that fires the FIRST time)
+        # and not by requiring a second, independent band to also show
+        # elevated energy (that is `V-broadband`, tested and found to
+        # suppress genuine low-pause-depth noise scenes outright because it
+        # is a different, stricter trigger condition rather than a
+        # confirmation of the existing one). 0 = off (default; bit-exact
+        # with the shipped trigger). Not retimed across grids -- like
+        # scene_change_min_frames, it is a hop count validated per grid
+        # (see test_scene_change_confirm_frames.py), not a wall-clock value.
+        #
+        # KNOWN LIMITATION (measured, not resolved): the existence guard
+        # (a genuine step must still recover within ~0.3 s) was validated
+        # above only against WHITE-noise steps. A step whose amplitude is
+        # itself modulated (e.g. +-3 dB at 3 Hz, a crude babble/wind proxy)
+        # or 1/f-colored can dip the trigger condition below threshold for
+        # longer than SCENE_CHANGE_MISS_TOLERANCE covers, which can delay
+        # or prevent the first confirmation past the 0.3 s budget. At 16
+        # kHz/256, confirm_frames=12 passed white (0/20 seeds), the +-3dB/
+        # 3Hz AM proxy (0/20), and pink noise at a reduced but nonzero rate
+        # (1/20); confirm_frames=16 (the probe-margin value) was WORSE on
+        # pink (6/20) for no suppression benefit worth the risk (93.9% vs
+        # 98.0%). At 16 kHz/512 and 48 kHz/1024 the SAME AM proxy failed
+        # 100% of seeds tried at the operating values below (10, 18) --
+        # those two grids are not recommended for enabling yet. This is a
+        # property of requiring a long CONTINUOUS run rather than a
+        # fractional/leaky window, and is not fixed by raising
+        # SCENE_CHANGE_MISS_TOLERANCE alone (tried up to 5; still fails).
+        # Do not enable at 16 kHz/512 or 48 kHz/1024 without first widening
+        # this guard's testing to non-white steps and, likely, redesigning
+        # the confirmation test itself (e.g. a windowed true-frame fraction
+        # instead of a strict run length).
+        scene_change_confirm_frames: int = 0,
         # IMCRA/MCRA mode switch
         accept_external_spp: bool = True,  # True=IMCRA, False=plain MCRA
         # Direction-aware noise update. None keeps the symmetric recursion.
@@ -166,7 +229,16 @@ class McraNoiseEstimator:
         self.scene_change_flatness_threshold = scene_change_flatness_threshold
         self.scene_change_tonal_veto = scene_change_tonal_veto
         self.scene_change_lo_flatness_max = scene_change_lo_flatness_max
+        if scene_change_confirm_frames < 0:
+            raise ValueError("scene_change_confirm_frames must be >= 0")
+        self.scene_change_confirm_frames = scene_change_confirm_frames
         self.scene_change_count = 0
+        # Whether the CURRENT contiguous elevated episode has already fired
+        # once (see the fricative-guard comment in update()). Cleared
+        # whenever the trigger condition breaks, so each new episode is
+        # re-confirmed from scratch.
+        self._scene_change_confirmed = False
+        self._scene_change_miss_run = 0
         self.accept_external_spp = accept_external_spp
 
         # 狀態變量
@@ -306,7 +378,27 @@ class McraNoiseEstimator:
         if (hi_energy_candidate and
                 hi_flatness > self.scene_change_flatness_threshold):
             self.scene_change_count += 1
-            if self.scene_change_count >= self.scene_change_min_frames:
+            self._scene_change_miss_run = 0
+            # Fricative guard: the FIRST reset of a contiguous elevated
+            # episode must additionally hold for scene_change_confirm_frames
+            # beyond the ordinary trigger point (0 = off, identical to the
+            # shipped threshold; see the constructor docstring for the
+            # shape rationale). Once an episode has been confirmed once,
+            # later re-triggers within the SAME episode revert to the
+            # ordinary threshold: the blend below is partial
+            # (scene_change_blend), so a genuine step can need several
+            # back-to-back resets to fully converge, exactly as the shipped
+            # mechanism relies on today -- re-confirming every one of those
+            # would only slow that convergence (and, by letting the
+            # episode's own elevated reading outlast its confirm window,
+            # can even chain into unrelated later speech), without adding
+            # any discriminating power versus a fricative (which never
+            # reaches the first confirmed fire at all).
+            required_frames = (self.scene_change_min_frames
+                                if self._scene_change_confirmed
+                                else self.scene_change_min_frames
+                                + self.scene_change_confirm_frames)
+            if self.scene_change_count >= required_frames:
                 # 音樂安全化 tonal veto（stationary mode）：低頻若是 tonal（尖峰、flatness 低）
                 # 則判為音樂 → 不重設噪聲底；只有低頻也平坦（真的換噪聲場）才放行。
                 blocked = False
@@ -319,9 +411,32 @@ class McraNoiseEstimator:
                     self.noise_psd = blend * self.noise_psd + (1 - blend) * power
                     self.S_min = self.S.copy()
                     self.min_buffer[:] = self.S.reshape(1, -1)
+                    self._scene_change_confirmed = True
                 self.scene_change_count = 0
+                self._scene_change_miss_run = 0
         else:
-            self.scene_change_count = 0
+            # A longer confirm window has proportionally more chances for one
+            # frame's hi_gamma to dip under threshold by ordinary measurement
+            # noise even while a genuine step's energy has not actually
+            # dropped (verified: at scene_change_confirm_frames=20/16kHz-256,
+            # a near-threshold synthetic +13.5 dB step's recovery exceeded
+            # the 0.3s existence guard in 10/20 seeds before this tolerance
+            # was added, 0/20 after). Tolerate up to
+            # SCENE_CHANGE_MISS_TOLERANCE consecutive miss frames without
+            # discarding the streak -- only reset once misses outlast that,
+            # which any real phoneme-to-phoneme gap (tens of ms) still does,
+            # so two separate short fricatives still cannot bridge into one
+            # episode. Only active when the guard itself is enabled, so
+            # scene_change_confirm_frames=0 remains bit-exact with the
+            # shipped hard reset-on-miss.
+            if (self.scene_change_confirm_frames > 0
+                    and self.scene_change_count > 0
+                    and self._scene_change_miss_run < self.SCENE_CHANGE_MISS_TOLERANCE):
+                self._scene_change_miss_run += 1
+            else:
+                self.scene_change_count = 0
+                self._scene_change_miss_run = 0
+                self._scene_change_confirmed = False
 
         # 8. 噪聲更新（SPP 門控）
         # external-gate (accept_external_spp=True): prefer OM-LSA posterior from the
@@ -434,6 +549,8 @@ class McraNoiseEstimator:
         self.is_initialized = False
         self.frame_count = 0
         self.scene_change_count = 0
+        self._scene_change_confirmed = False
+        self._scene_change_miss_run = 0
 
     def __repr__(self):
         return (f"McraNoiseEstimator(alpha_s={self.alpha_s}, alpha_d={self.alpha_d}, "

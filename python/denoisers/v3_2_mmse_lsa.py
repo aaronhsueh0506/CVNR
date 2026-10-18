@@ -123,6 +123,12 @@ class MmseLsaDenoiser(BaseDenoiser):
         stationary_floor_beta: float = 1.0,
         scene_change_tonal_veto: bool = False,
         scene_change_lo_flatness_max: float = 0.4,
+        # Fricative guard: require the scene-change trigger condition to
+        # hold for this many EXTRA consecutive frames beyond
+        # scene_change_min_frames before committing the noise-floor reset.
+        # 0 = off (default; bit-exact). See McraNoiseEstimator's docstring
+        # for the measured rationale and the grid-by-grid validation.
+        scene_change_confirm_frames: int = 0,
         # Experimental WebRTC-style frame/cross-band prior.  Defaults are a
         # strict no-op; the research branch enables these explicitly in the
         # ablation runner rather than changing any shipped preset.
@@ -385,6 +391,7 @@ class MmseLsaDenoiser(BaseDenoiser):
                 scene_change_flatness_threshold=scene_change_flatness_threshold,
                 scene_change_tonal_veto=scene_change_tonal_veto,
                 scene_change_lo_flatness_max=scene_change_lo_flatness_max,
+                scene_change_confirm_frames=scene_change_confirm_frames,
                 accept_external_spp=mcra_accept_external_spp,
                 remove_echo_explained_rise=mcra_remove_echo_explained_rise,
             )
