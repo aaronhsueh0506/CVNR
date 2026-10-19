@@ -22,8 +22,8 @@ paths independently of this directory.
 ## Stationary mode
 
 `python/core/nr_modes.py` keeps the `stationary` content-preservation mode
-(Wiener gain lower bound plus a tonal scene-reset veto). The C library has no
-stationary mode: `anr_apply_stationary()`, the `stationary_floor*` and
-`scene_change_tonal_veto` configuration fields and the `--stationary` command
-line flags are not part of the C API. Python/C parity checks therefore cover
-the `full` mode only, and `tools/parity_nr.py dump` accepts only `--mode full`.
+(Wiener gain lower bound). The C library has no stationary mode:
+`anr_apply_stationary()`, the `stationary_floor*` configuration fields and the
+`--stationary` command line flags are not part of the C API. Python/C parity
+checks therefore cover the `full` mode only, and `tools/parity_nr.py dump`
+accepts only `--mode full`.

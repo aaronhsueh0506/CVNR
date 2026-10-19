@@ -113,8 +113,6 @@ class MmseLsaDenoiser(BaseDenoiser):
         stationary_floor: bool = False,
         stationary_floor_exponent: float = 1.0,
         stationary_floor_beta: float = 1.0,
-        scene_change_tonal_veto: bool = False,
-        scene_change_lo_flatness_max: float = 0.4,
         # Experimental WebRTC-style frame/cross-band prior.  Defaults are a
         # strict no-op; the research branch enables these explicitly in the
         # ablation runner rather than changing any shipped preset.
@@ -375,8 +373,6 @@ class MmseLsaDenoiser(BaseDenoiser):
                 scene_change_min_frames=scene_change_min_frames,
                 scene_change_blend=scene_change_blend,
                 scene_change_flatness_threshold=scene_change_flatness_threshold,
-                scene_change_tonal_veto=scene_change_tonal_veto,
-                scene_change_lo_flatness_max=scene_change_lo_flatness_max,
                 accept_external_spp=mcra_accept_external_spp,
             )
         else:

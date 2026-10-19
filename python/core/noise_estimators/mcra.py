@@ -88,12 +88,6 @@ class McraNoiseEstimator:
         scene_change_min_frames: int = 5,
         scene_change_blend: float = 0.5,
         scene_change_flatness_threshold: float = 0.4,
-        # Music-aware scene-change (for `stationary` NR mode). Default OFF → `full` untouched.
-        # tonal veto: skip the floor-blend when the LOW band is tonal (peaky, low flatness) —
-        # sustained tonal music must not trigger a noise-floor reset, whereas a genuine
-        # broadband noise-scene change has a flat low band and still fires.
-        scene_change_tonal_veto: bool = False,
-        scene_change_lo_flatness_max: float = 0.4,
         # IMCRA/MCRA mode switch
         accept_external_spp: bool = True,  # True=IMCRA, False=plain MCRA
         # Direction-aware noise update. None keeps the symmetric recursion.
@@ -151,8 +145,6 @@ class McraNoiseEstimator:
         self.scene_change_min_frames = scene_change_min_frames
         self.scene_change_blend = scene_change_blend
         self.scene_change_flatness_threshold = scene_change_flatness_threshold
-        self.scene_change_tonal_veto = scene_change_tonal_veto
-        self.scene_change_lo_flatness_max = scene_change_lo_flatness_max
         self.scene_change_count = 0
         self.accept_external_spp = accept_external_spp
 
@@ -282,18 +274,11 @@ class McraNoiseEstimator:
                 hi_flatness > self.scene_change_flatness_threshold):
             self.scene_change_count += 1
             if self.scene_change_count >= self.scene_change_min_frames:
-                # 音樂安全化 tonal veto（stationary mode）：低頻若是 tonal（尖峰、flatness 低）
-                # 則判為音樂 → 不重設噪聲底；只有低頻也平坦（真的換噪聲場）才放行。
-                blocked = False
-                if self.scene_change_tonal_veto:
-                    lo_flatness = _spectral_flatness(power[:hi_start])
-                    blocked = lo_flatness < self.scene_change_lo_flatness_max
-                if not blocked:
-                    # 場景轉換確認：部分重置噪聲估計和最小值追蹤
-                    blend = self.scene_change_blend
-                    self.noise_psd = blend * self.noise_psd + (1 - blend) * power
-                    self.S_min = self.S.copy()
-                    self.min_buffer[:] = self.S.reshape(1, -1)
+                # 場景轉換確認：部分重置噪聲估計和最小值追蹤
+                blend = self.scene_change_blend
+                self.noise_psd = blend * self.noise_psd + (1 - blend) * power
+                self.S_min = self.S.copy()
+                self.min_buffer[:] = self.S.reshape(1, -1)
                 self.scene_change_count = 0
         else:
             self.scene_change_count = 0
