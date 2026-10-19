@@ -125,9 +125,12 @@ class McraNoiseEstimator:
         # suppress genuine low-pause-depth noise scenes outright because it
         # is a different, stricter trigger condition rather than a
         # confirmation of the existing one). 0 = off (default; bit-exact
-        # with the shipped trigger). Not retimed across grids -- like
-        # scene_change_min_frames, it is a hop count validated per grid
-        # (see test_scene_change_confirm_frames.py), not a wall-clock value.
+        # with the shipped trigger). Not retimed across grids BY DESIGN --
+        # UNLIKE scene_change_min_frames (which v3_2_mmse_lsa.py's 'full'
+        # mode DOES retime via retime_frame_count() -- see the retiming
+        # caveat on scene_change_confirm_window below), this is a raw hop
+        # count validated per grid directly against McraNoiseEstimator (see
+        # test_scene_change_confirm_frames.py), not a wall-clock value.
         #
         # KNOWN LIMITATION (measured, not resolved): the existence guard
         # (a genuine step must still recover within ~0.3 s) was validated
@@ -300,6 +303,44 @@ class McraNoiseEstimator:
         # Re-fires within an already-confirmed episode always use the plain
         # scene_change_min_frames threshold in BOTH modes, same as today.
         # See test_scene_change_confirm_window.py.
+        #
+        # NOT REACHABLE FROM ANY SHIPPED CONFIG SURFACE: MmseLsaDenoiser
+        # (denoisers/v3_2_mmse_lsa.py) and process_audio.py only plumb
+        # scene_change_confirm_frames through to this estimator --
+        # confirm_window/confirm_frac have no constructor parameter, CLI
+        # flag, YAML key or NR_MODE_PRESETS entry anywhere in this repo.
+        # Every number below was measured by constructing
+        # McraNoiseEstimator directly, not by running the denoiser/
+        # process_audio config path.
+        #
+        # RETIMING CAVEAT (applies to confirm_frames above too): every
+        # MEASURED/RECOMMENDED number in this file was validated with
+        # scene_change_min_frames=5 passed directly to the estimator (both
+        # test files' MIN_FRAMES=5 constant) -- i.e. UNRETIMED. In
+        # production, MmseLsaDenoiser's 'full' mode retimes the authored
+        # scene_change_min_frames=5 (config/v3_2_config.yaml) via
+        # retime_frame_count() to 7 at 16 kHz/256, 4 at 16 kHz/512, 5 at
+        # 48 kHz/1024 -- confirm_frames/confirm_window are deliberately NOT
+        # retimed themselves. So the required-hit count that actually ships
+        # (k = min_frames + confirm_frames, or ceil(frac * (min_frames +
+        # confirm_window)) for window mode) differs from the k this file's
+        # percentages were measured at, except by coincidence at
+        # 48 kHz/1024:
+        #   16 kHz/256: validated at k=17 / required_hits=18 -> ships at
+        #     k=19 / required_hits=19 (ceil(0.773*24)=19 -- the two
+        #     mechanisms' ships-as thresholds coincide here, which is
+        #     retiming-and-rounding arithmetic, not mechanism identity: the
+        #     "NOT measured" paragraph above already establishes the two
+        #     modes are not nested on a given hit/miss sequence, so an equal
+        #     k does not make them decide alike on every input, only on the
+        #     ones a real false-fire corpus happens to produce).
+        #   16 kHz/512: validated at k=15 -> ships at k=14 (confirm_window
+        #     has no 512 recommendation to compare).
+        #   48 kHz/1024: validated at k=23 -> ships at k=23, unchanged (the
+        #     only grid where authored and retimed min_frames coincide).
+        # The suppression/existence-guard percentages above have not been
+        # re-measured at the ships-as k values; only this arithmetic is
+        # verified.
         scene_change_confirm_window: int = 0,
         # Required hit fraction within the trailing
         # scene_change_confirm_window; only consulted when that window is
