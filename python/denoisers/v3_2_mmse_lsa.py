@@ -117,12 +117,6 @@ class MmseLsaDenoiser(BaseDenoiser):
         # NR strength selects suppression depth only. DD, tracker and gain
         # time constants are shared by every preset.
         strength: str = 'balanced',
-        # Fricative guard: require the scene-change trigger condition to
-        # hold for this many EXTRA consecutive frames beyond
-        # scene_change_min_frames before committing the noise-floor reset.
-        # 0 = off (default; bit-exact). See McraNoiseEstimator's docstring
-        # for the measured rationale and the grid-by-grid validation.
-        scene_change_confirm_frames: int = 0,
         # Experimental WebRTC-style frame/cross-band prior.  Defaults are a
         # strict no-op; the research branch enables these explicitly in the
         # ablation runner rather than changing any shipped preset.
@@ -366,7 +360,6 @@ class MmseLsaDenoiser(BaseDenoiser):
                 scene_change_min_frames=scene_change_min_frames,
                 scene_change_blend=scene_change_blend,
                 scene_change_flatness_threshold=scene_change_flatness_threshold,
-                scene_change_confirm_frames=scene_change_confirm_frames,
                 accept_external_spp=mcra_accept_external_spp,
                 remove_echo_explained_rise=mcra_remove_echo_explained_rise,
             )

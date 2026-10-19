@@ -4,6 +4,36 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [Unreleased] - 2026-10-19 · fricative-guard scene-change-confirmation 收斂（刪除兩個未用機制）
+
+### 移除 (Removed)
+
+- 刪除 `McraNoiseEstimator` 的 `scene_change_confirm_frames`（run-length 版
+  fricative guard）與 `scene_change_confirm_window`／`scene_change_confirm_frac`
+  （windowed-fraction 版）兩個場景轉換「確認」機制；`update()` 的 ready 判定
+  還原成單純的 legacy run-length 形式（`scene_change_count >=
+  scene_change_min_frames`），與 C port（`c_impl/src/mcra_noise_estimator.c`）
+  本來就唯一實作的形式一致。連帶移除只服務這兩個機制的
+  `SCENE_CHANGE_MISS_TOLERANCE`／`_scene_change_miss_run` 容忍計數，以及不再
+  影響任何決策的 `_scene_change_confirmed` 旗標；`v3_2_mmse_lsa.py`／
+  `process_audio.py` 的 `scene_change_confirm_frames` 傳遞參數同步移除。
+- 兩者在建構子都預設 0（關閉）；`v3_2_config.yaml` 根本沒有這兩個鍵，
+  從未進入出廠路徑。`scene_change_confirm_window`／`_frac` 甚至完全不可從
+  `MmseLsaDenoiser`／`process_audio.py` 觸達，只能直接建構
+  `McraNoiseEstimator` 才能啟用。
+- 兩者先前宣稱的「等效」（在真實 pipeline 資料上收斂到同一個所需命中數）
+  已被獨立覆核推翻：在同一組人工合成的 50%-duty-cycle AM 刺激下，
+  windowed-fraction 版（confirm_frac=0.5）在 3–8 Hz 每個速率都能在預算內
+  確認，run-length 版在同一刺激的 4–8 Hz 卻從未確認，證明當時觀察到的
+  一致只是測試語料沒有區分力，不是機制真的等效。
+- `scene_change_confirm_frames` 當年驗證用的 12/10/18（三個 grid）數字所依賴
+  的 DNS2020 語料在本機已不存在，無法重現；且 `v3_2_config.yaml` 的
+  `scene_change_min_frames: 5` 在三個 grid 會 retime 成 7/4/5，驗證數字只是在
+  48 kHz/1024 這一個 grid 剛好與出廠值吻合，並非普遍成立。
+- 以上這條 fricative-guard scene-change-confirmation 線至此收斂結案，不再
+  半途留著缺驗證的旗標；C port（`include/anr_types.h`／
+  `src/mcra_noise_estimator.c`）從未實作過這兩個機制，不受影響。
+
 ## [Unreleased] - 2026-09-19 · standalone NR low-frequency speech preservation
 
 ### 變更 (Changed)

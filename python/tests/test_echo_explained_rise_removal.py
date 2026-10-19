@@ -294,12 +294,17 @@ def test_hi_gamma_uses_corrected_power_directly():
     extra[HI_START_HAZARD:] = extra_hi
     spp = np.full(N_FREQS_HAZARD, 0.3)
 
+    # A fire stomps S_min/min_buffer with the just-smoothed S (hi band well
+    # above noise_floor); if it does NOT fire, S_min stays at its init level
+    # (min_buffer's other rows are still the init fill) -- so S_min's hi
+    # band staying at noise_floor is a direct, mechanism-level probe for
+    # "did not fire" that does not depend on any confirm-only bookkeeping.
     est_off.update(magnitude.copy(), spp=spp)
-    assert est_off._scene_change_confirmed is True, (
+    assert not np.allclose(est_off.S_min[HI_START_HAZARD:], noise_floor), (
         "control: the raw stimulus alone must clear the ordinary trigger")
 
     est_on.update(magnitude.copy(), spp=spp, extra_noise_psd=extra)
-    assert est_on._scene_change_confirmed is False, (
+    assert np.allclose(est_on.S_min[HI_START_HAZARD:], noise_floor), (
         "echo-corrected hi_gamma must NOT clear the trigger when the "
         "corrected power sits just under scene_change_threshold")
 
@@ -325,7 +330,6 @@ def test_s_min_and_min_buffer_corrected_on_arm4_fire():
 
     pre_S = est.S.copy()
     est.update(magnitude.copy(), spp=spp, extra_noise_psd=extra)
-    assert est._scene_change_confirmed is True  # sanity: it did fire
 
     power = magnitude ** 2
     expected_S_for_reset = np.maximum(
