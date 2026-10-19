@@ -353,8 +353,7 @@ class McraNoiseEstimator:
 
         if hit_now:
             self.scene_change_count += 1
-            ready = self.scene_change_count >= self.scene_change_min_frames
-            if ready:
+            if self.scene_change_count >= self.scene_change_min_frames:
                 # 場景轉換確認：部分重置噪聲估計和最小值追蹤
                 blend = self.scene_change_blend
                 self.noise_psd = blend * self.noise_psd + (1 - blend) * power

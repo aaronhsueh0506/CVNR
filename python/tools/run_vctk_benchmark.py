@@ -373,7 +373,10 @@ def main(argv=None):
     _strength = args.strength or _config.get('strength', 'balanced')
     _params = process_audio.apply_strength(_params, _strength)
     _params['strength'] = _strength
-    _mode = args.mode or _config.get('mode', 'full')
+    # --mode is required with a single choice ('full'), so args.mode is always
+    # truthy; unlike --strength (multi-valued), there's no config-fallback case
+    # to cover here.
+    _mode = args.mode
     _params = process_audio.apply_mode(_params, _mode)
     _params['mode'] = _mode
     _params.update({

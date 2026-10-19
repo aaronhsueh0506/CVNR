@@ -252,9 +252,8 @@ class MmseLsaDenoiser(BaseDenoiser):
         # Convert temporal coefficients once at the outer model boundary.
         # Strength presets contain no temporal keys. alpha_d/alpha_g/alpha_decay
         # are authored at 10 ms; alpha_attack is authored at 16 ms.
-        alpha_d_effective = alpha_d if alpha_d is not None else alpha_noise
         alpha_d_effective = retime_ema_alpha(
-            alpha_d_effective, sample_rate, frame_shift
+            alpha_d if alpha_d is not None else alpha_noise, sample_rate, frame_shift
         )
         # alpha_xi is 16ms-native regardless of which strength/mode preset is
         # active: it is documented as "intentionally NOT set" by any strength
