@@ -313,34 +313,46 @@ class McraNoiseEstimator:
         # McraNoiseEstimator directly, not by running the denoiser/
         # process_audio config path.
         #
-        # RETIMING CAVEAT (applies to confirm_frames above too): every
-        # MEASURED/RECOMMENDED number in this file was validated with
-        # scene_change_min_frames=5 passed directly to the estimator (both
-        # test files' MIN_FRAMES=5 constant) -- i.e. UNRETIMED. In
-        # production, MmseLsaDenoiser's 'full' mode retimes the authored
-        # scene_change_min_frames=5 (config/v3_2_config.yaml) via
-        # retime_frame_count() to 7 at 16 kHz/256, 4 at 16 kHz/512, 5 at
+        # RETIMING CAVEAT (applies to confirm_frames above too): the k/W
+        # arithmetic quoted in both params' docstrings (k=17/15/23, W=22
+        # required_hits=18, the "legacy's own k there (15/23 hit frames)"
+        # budget-wall note) is computed with scene_change_min_frames=5 --
+        # i.e. UNRETIMED (both test files also hardcode MIN_FRAMES=5). For
+        # confirm_window this is forced: it has no path through the
+        # denoiser at all (see above), so nothing that measured it could
+        # have used a retimed min_frames. For confirm_frames it is NOT
+        # forced -- confirm_frames IS plumbed through MmseLsaDenoiser, so a
+        # live-estimator DNS2020 sweep run through the denoiser would have
+        # used whatever min_frames the denoiser retimes to; which harness
+        # path actually produced confirm_frames' live-estimator suppression
+        # percentages is not recorded here.
+        #
+        # What IS verifiable from retime_frame_count() alone: MmseLsaDenoiser's
+        # 'full' mode retimes the authored scene_change_min_frames=5
+        # (config/v3_2_config.yaml) to 7 at 16 kHz/256, 4 at 16 kHz/512, 5 at
         # 48 kHz/1024 -- confirm_frames/confirm_window are deliberately NOT
-        # retimed themselves. So the required-hit count that actually ships
-        # (k = min_frames + confirm_frames, or ceil(frac * (min_frames +
-        # confirm_window)) for window mode) differs from the k this file's
-        # percentages were measured at, except by coincidence at
-        # 48 kHz/1024:
-        #   16 kHz/256: validated at k=17 / required_hits=18 -> ships at
-        #     k=19 / required_hits=19 (ceil(0.773*24)=19 -- the two
-        #     mechanisms' ships-as thresholds coincide here, which is
-        #     retiming-and-rounding arithmetic, not mechanism identity: the
-        #     "NOT measured" paragraph above already establishes the two
-        #     modes are not nested on a given hit/miss sequence, so an equal
-        #     k does not make them decide alike on every input, only on the
-        #     ones a real false-fire corpus happens to produce).
-        #   16 kHz/512: validated at k=15 -> ships at k=14 (confirm_window
-        #     has no 512 recommendation to compare).
-        #   48 kHz/1024: validated at k=23 -> ships at k=23, unchanged (the
-        #     only grid where authored and retimed min_frames coincide).
-        # The suppression/existence-guard percentages above have not been
-        # re-measured at the ships-as k values; only this arithmetic is
-        # verified.
+        # retimed themselves. So the k/W arithmetic quoted above (computed at
+        # min_frames=5) is not the required-hit count the denoiser would
+        # actually enforce at the SAME confirm_frames/confirm_window value,
+        # except by coincidence at 48 kHz/1024:
+        #   16 kHz/256: quoted at k=17 / required_hits=18 -- the denoiser
+        #     would enforce k=19 at confirm_frames=12, and required_hits=19
+        #     at confirm_window=17/frac=0.773 (ceil(0.773*24)=19). The two
+        #     mechanisms' denoiser-enforced thresholds coincide here, which
+        #     is retiming-and-rounding arithmetic, not mechanism identity:
+        #     the "NOT measured" paragraph above already establishes the
+        #     two modes are not nested on a given hit/miss sequence, so an
+        #     equal k does not make them decide alike on every input, only
+        #     on the ones a real false-fire corpus happens to produce.
+        #   16 kHz/512: quoted at k=15 -- the denoiser would enforce k=14
+        #     at confirm_frames=10 (confirm_window has no 512 recommendation
+        #     to compare).
+        #   48 kHz/1024: quoted at k=23 -- the denoiser enforces k=23 too,
+        #     unchanged (the only grid where authored and retimed
+        #     min_frames coincide).
+        # Neither mechanism's suppression/existence-guard percentages have
+        # been re-measured at the denoiser-enforced k/required_hits; only
+        # the arithmetic above follows directly from retime_frame_count().
         scene_change_confirm_window: int = 0,
         # Required hit fraction within the trailing
         # scene_change_confirm_window; only consulted when that window is
