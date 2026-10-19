@@ -51,7 +51,9 @@ The C library has no stationary content mode: `anr_apply_stationary()`, the
 and the `--stationary` option of the example programs do not exist. `AnrConfig` is
 160 bytes (180 before the mode was removed) and `anr_get_mem_size()` returns 48 bytes
 less per instance, so callers that build `AnrConfig` field by field or size static
-pools from a fixed constant must be rebuilt. The Python reference has a stationary mode.
+pools from a fixed constant must be rebuilt. The Python reference had a stationary mode
+at the time of this migration; it has since been removed there too (see CHANGELOG.md),
+so the two sides no longer differ on this point.
 
 ## Python directory layout
 
