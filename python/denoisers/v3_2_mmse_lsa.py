@@ -111,16 +111,12 @@ class MmseLsaDenoiser(BaseDenoiser):
         # False keeps the estimator byte-identical even when extra_noise_psd
         # is supplied, matching the shipped behaviour exactly.
         mcra_remove_echo_explained_rise: bool = False,
-        # NR mode ('full' | 'stationary'). Set by nr_modes.apply_mode() upstream; the
-        # stationary-floor / scene-change params below carry the preset. Default 'full' +
-        # all-off → byte-identical shipped V3-2.
+        # NR content-preservation mode. Only 'full' exists; set by
+        # nr_modes.apply_mode() upstream and recorded here for provenance.
         mode: str = 'full',
         # NR strength selects suppression depth only. DD, tracker and gain
         # time constants are shared by every preset.
         strength: str = 'balanced',
-        stationary_floor: bool = False,
-        stationary_floor_exponent: float = 1.0,
-        stationary_floor_beta: float = 1.0,
         # Fricative guard: require the scene-change trigger condition to
         # hold for this many EXTRA consecutive frames beyond
         # scene_change_min_frames before committing the noise-floor reset.
@@ -260,19 +256,12 @@ class MmseLsaDenoiser(BaseDenoiser):
                   + (np.float32(q) - np.float32(SPEECH_PROTECT_ANCHOR_Q))))
 
         # Convert temporal coefficients once at the outer model boundary.
-        # Strength presets contain no temporal keys. The base full-mode
-        # alpha_d/alpha_g/alpha_decay values are authored at 10 ms; the
-        # stationary overlay and alpha_attack are authored at 16 ms.
+        # Strength presets contain no temporal keys. alpha_d/alpha_g/alpha_decay
+        # are authored at 10 ms; alpha_attack is authored at 16 ms.
         alpha_d_effective = alpha_d if alpha_d is not None else alpha_noise
-        if mode == 'stationary':
-            alpha_d_effective = retime_ema_alpha(
-                alpha_d_effective, sample_rate, frame_shift,
-                authored_hop_seconds=_SIXTEEN_MS_HOP_SECONDS,
-            )
-        else:
-            alpha_d_effective = retime_ema_alpha(
-                alpha_d_effective, sample_rate, frame_shift
-            )
+        alpha_d_effective = retime_ema_alpha(
+            alpha_d_effective, sample_rate, frame_shift
+        )
         # alpha_xi is 16ms-native regardless of which strength/mode preset is
         # active: it is documented as "intentionally NOT set" by any strength
         # preset (core/nr_strength.py) -- always the shared base YAML value --
@@ -316,19 +305,9 @@ class MmseLsaDenoiser(BaseDenoiser):
         num_init_frames = retime_frame_count(
             num_init_frames, sample_rate, frame_shift
         )
-        if mode == 'stationary':
-            # scene_change_min_frames=30 for this mode is likewise set
-            # unconditionally by nr_modes.NR_MODE_PRESETS['stationary']
-            # (same 2026-07-05 commit, same 16ms-grid provenance as
-            # alpha_noise above) -- same fix, same C-side mirror.
-            scene_change_min_frames = retime_frame_count(
-                scene_change_min_frames, sample_rate, frame_shift,
-                authored_hop_seconds=_SIXTEEN_MS_HOP_SECONDS,
-            )
-        else:
-            scene_change_min_frames = retime_frame_count(
-                scene_change_min_frames, sample_rate, frame_shift
-            )
+        scene_change_min_frames = retime_frame_count(
+            scene_change_min_frames, sample_rate, frame_shift
+        )
 
         # 創建處理器
         self.processor = FrameProcessor(
@@ -451,9 +430,6 @@ class MmseLsaDenoiser(BaseDenoiser):
             use_asymmetric_smoothing=use_asymmetric_smoothing,
             alpha_attack=alpha_attack,
             alpha_decay=alpha_decay,
-            stationary_floor=stationary_floor,
-            stationary_floor_exponent=stationary_floor_exponent,
-            stationary_floor_beta=stationary_floor_beta,
             spp_protect_floor_db=speech_protect_floor_db,
             spp_protect_threshold=speech_protect_threshold,
             floor_blend=floor_blend,
@@ -746,7 +722,6 @@ class MmseLsaDenoiser(BaseDenoiser):
             'version': 'V3-2',
             'name': 'OMLSA (MMSE-LSA + SPP weighting)',
             'mode': self.mode,
-            'stationary_floor': self.gain_calculator.stationary_floor,
             'sample_rate': self.sample_rate,
             'frame_size': self.processor.frame_size,
             'frame_shift': self.processor.frame_shift,

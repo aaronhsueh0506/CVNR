@@ -301,8 +301,6 @@ MCRA 噪聲估計的瓶頸是每幀掃描 ring buffer（L=32 幀）找最小值�
   4 級深度階梯 g_min = −20 / −25 / −30 / −40 dB（振幅 /20）。所有預設共用 `alpha_xi=0.92`
   （2026-07 musical-noise fix：DD ξ 平滑，壓掉 SPP 抖動＝musical noise；對語音幾乎零成本）。
 
-C 函式庫沒有 stationary 內容保留模式；Python 參考實作仍保留（見 `python/README.md`）。
-
 ### 程式碼整合（freq-domain：caller 自備 FFT / 窗 / OLA）
 
 lib 核心 `anr_process()` 是**頻域 API**：吃 `Complex[n_freqs]` 頻譜、吐

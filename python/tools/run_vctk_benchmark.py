@@ -25,10 +25,6 @@ Usage:
     python3 python/tools/run_vctk_benchmark.py --mode full --strength balanced \\
         --output results/vctk_full_balanced.json
 
-    python3 python/tools/run_vctk_benchmark.py --mode stationary --strength balanced \\
-        --sample-rate 16000 --fft-size 512 \\
-        --output results/vctk_stationary_balanced_fft512.json
-
     python3 python/tools/run_vctk_benchmark.py --mode full --strength aggressive \\
         --cases results/vctk_clean_50.txt --output /tmp/smoke.json --limit 10
 
@@ -62,7 +58,7 @@ DEFAULT_NR_ROOT = TOOL_DIR.parent.parent
 
 DENOISER_VERSION = "V3-2"
 PESQ_SR = 16000  # pesq only supports 8000 (nb) / 16000 (wb); spec wants wb.
-VALID_MODES = ("full", "stationary")
+VALID_MODES = ("full",)
 VALID_STRENGTHS = ("mild", "moderate", "balanced", "aggressive")
 DEFAULT_CLEAN_SUBDIR = "clean_testset_wav"
 DEFAULT_NOISY_SUBDIR = "noisy_testset_wav"
@@ -299,9 +295,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     p.add_argument("--dd-from-gmmse", action=argparse.BooleanOptionalAction,
                    default=None,
                    help="Enable/disable H1 decision-directed feedback; omitted keeps config.")
-    p.add_argument("--stationary-floor-p", type=float, default=None,
-                   help="Enable the Wiener lower bound (xi/(1+xi))^p with this exponent "
-                        "on top of the selected mode. None = off.")
     p.add_argument("--frame-prior-q-max", type=float, default=None,
                    help="Frame-context speech prior on the gain-side SPP: the speech prior "
                         "rises from q to this value as the mean fixed-prior SPP over "
@@ -426,12 +419,6 @@ def main(argv=None):
         _params['noise_gate_lf_hz'] = None
     _params['noise_speech_gate_p'] = args.noise_speech_gate_p
     _params['floor_blend'] = args.floor_blend
-    if args.stationary_floor_p is not None:
-        _params.update({
-            'stationary_floor': True,
-            'stationary_floor_exponent': args.stationary_floor_p,
-            'stationary_floor_beta': 1.0,
-        })
 
     script_path = Path(__file__).resolve()
     script_sha256 = sha256_file(script_path)
@@ -606,7 +593,6 @@ def main(argv=None):
             "noise_gate_max_frac": args.noise_gate_max_frac,
             "makeup_gain": _params.get("makeup_gain"),
             "dd_from_gmmse": _params.get("dd_from_gmmse"),
-            "stationary_floor_p": args.stationary_floor_p,
             "frame_prior_q_max": args.frame_prior_q_max,
             "frame_prior_spp_lo": args.frame_prior_spp_lo,
             "frame_prior_spp_hi": args.frame_prior_spp_hi,

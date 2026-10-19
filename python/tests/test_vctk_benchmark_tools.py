@@ -109,16 +109,16 @@ def test_grid_match_no_mismatch_is_silent():
 
 def test_main_rejects_mismatched_grid_end_to_end(tmp_path):
     records = [make_record("a.wav")]
-    base = write_json(tmp_path / "base.json", make_run_meta(records, mode="full"), records)
-    cand = write_json(tmp_path / "cand.json", make_run_meta(records, mode="stationary"), records)
+    base = write_json(tmp_path / "base.json", make_run_meta(records), records)
+    cand = write_json(tmp_path / "cand.json", make_run_meta(records, strength="aggressive"), records)
     with pytest.raises(SystemExit, match="grid settings differ"):
         compare_mod.main([str(base), str(cand)])
 
 
 def test_main_allow_mismatch_flag_permits_comparison(tmp_path, capsys):
     records = [make_record("a.wav", pesq=3.0, stoi=0.95)]
-    base = write_json(tmp_path / "base.json", make_run_meta(records, mode="full"), records)
-    cand = write_json(tmp_path / "cand.json", make_run_meta(records, mode="stationary"), records)
+    base = write_json(tmp_path / "base.json", make_run_meta(records), records)
+    cand = write_json(tmp_path / "cand.json", make_run_meta(records, strength="aggressive"), records)
     rc = compare_mod.main([str(base), str(cand), "--allow-mismatch"])
     assert rc == 0
     out = capsys.readouterr().out

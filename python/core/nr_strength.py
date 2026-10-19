@@ -1,15 +1,14 @@
 """
 NR STRENGTH presets — suppression depth only.
 
-Orthogonal to the CONTENT axis in `core/nr_modes.py` (`full` | `stationary`). This mirrors the C
+Orthogonal to the CONTENT axis in `core/nr_modes.py`. This mirrors the C
 `anr_config_for_mode` (c_impl/include/anr_types.h): `balanced` == the base
 `config/v3_2_config.yaml` (empty overlay). Every preset shares the same DD,
 noise tracker and gain dynamics; only the four depth controls below differ.
 
 `apply_strength(params, strength)` overlays a preset onto the constructor-param dict built by
 `process_audio.create_denoiser_from_config` (V3-2 branch). It is applied BEFORE `nr_modes.apply_mode`
-so the content mode composes on top of the strength base — mirroring C's
-`config_for_mode(strength)` then `apply_stationary()`.
+so the content mode composes on top of the strength base.
 
 The depth controls are `g_min_db`, fixed speech prior `q`, DD SNR floor
 `xi_min_db`, and `noise_over_subtraction`. Time constants are deliberately not

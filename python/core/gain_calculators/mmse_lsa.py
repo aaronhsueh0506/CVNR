@@ -76,14 +76,6 @@ class MmseLsaGainCalculator:
         # 強制 gain >= spp_protect_floor（線性），避免 OMLSA (1−spp)·log(g_min) 過壓高信心語音。
         spp_protect_floor_db: Optional[float] = None,
         spp_protect_threshold: float = 0.5,
-        # === Stationary-mode Wiener lower bound (the `stationary` NR mode mechanism).
-        # Default OFF → current (`full`) behaviour, byte-identical. When on, the final gain is
-        # floored at the Wiener gain (ξ/(β+ξ))^p; since ξ/(1+ξ)=S/Y this removes exactly the
-        # estimated stationary floor and preserves everything with sustained SNR (speech/music/
-        # transients). ξ is DD-smoothed → no warble.
-        stationary_floor: bool = False,
-        stationary_floor_exponent: float = 1.0,   # p: 1.0 = pure Wiener (gentle); 0.5 = deeper
-        stationary_floor_beta: float = 1.0,        # β: >1 removes slightly more; 1 = remove exactly N
         # Domain of the G_H1 / g_min floor blend: 'log' (shipped OM-LSA,
         # G = G_H1^spp * g_min^(1-spp)), 'sqrt' (amplitude domain as in the
         # Speex preprocessor, G = (spp*sqrt(G_H1) + (1-spp)*sqrt(g_min))^2) or
@@ -122,10 +114,6 @@ class MmseLsaGainCalculator:
                                   if spp_protect_floor_db is not None else None)
         self.spp_protect_threshold = spp_protect_threshold
 
-        # Stationary-mode Wiener lower bound
-        self.stationary_floor = stationary_floor
-        self.stationary_floor_exponent = stationary_floor_exponent
-        self.stationary_floor_beta = stationary_floor_beta
         if floor_blend not in ('log', 'sqrt', 'linear'):
             raise ValueError("floor_blend must be 'log', 'sqrt' or 'linear'")
         self.floor_blend = floor_blend
@@ -223,17 +211,6 @@ class MmseLsaGainCalculator:
             # gain is the fresh array np.clip returned above; raise only the
             # protected bins in place.
             np.maximum(gain, self.spp_protect_floor, out=gain, where=protect_bins)
-
-        # Stationary-mode Wiener lower bound（`stationary` NR mode 的核心機制）。
-        # gain 不得低於 Wiener 增益 (ξ/(β+ξ))^p。因 ξ/(1+ξ)=S/Y，此下界剛好只減掉估到的
-        # 穩態噪聲底：持續高 SNR 的內容（語音/音樂/瞬態）ξ 大 → 下界≈1 → 保留；穩態噪聲
-        # ξ→xi_min → 下界小 → 照壓。ξ 為 DD 平滑 → 無 warble。存入 log_gain_prev 的是「套過
-        # 下界後」的 gain，讓時間平滑從被保護的值出發（與 spp_protect 同一 pattern）。
-        if self.stationary_floor:
-            # g_floor = (ξ/(β+ξ))^p ≤ 1 for β≥1, and gain is already clipped ≤ 1, so a plain
-            # lower bound suffices (no outer min-with-1 needed).
-            g_floor = (xi / (self.stationary_floor_beta + xi)) ** self.stationary_floor_exponent
-            gain = np.maximum(gain, g_floor)
 
         # 保存對數域增益
         self.log_gain_prev = np.log(gain + 1e-10)

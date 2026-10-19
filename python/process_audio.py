@@ -184,12 +184,11 @@ def create_denoiser_from_config(
         version: 版本名稱 (V1, V2, V3, V3-2, V3-3)
         config_dir: 配置文件目錄
         sample_rate: 採樣率
-        mode: NR 內容保留模式 ('full' | 'stationary')，僅 V3-2 有效；
+        mode: NR 內容保留模式，僅 V3-2 有效；目前只有 'full'。
               None 則取 config 的 mode，預設 'full'。
         strength: NR 強度預設 ('mild' | 'balanced' | 'aggressive')，僅 V3-2 有效；
               None 則取 config 的 strength，預設 'balanced'（= base YAML）。
-              強度軸（深度）與 mode 軸（內容保留）正交，先套 strength 再套 mode，
-              C 端只有強度軸（anr_config_for_mode()），沒有 stationary 模式。
+              強度軸（深度）與 mode 軸（內容保留）正交，先套 strength 再套 mode。
 
     Returns:
         降噪器實例
@@ -298,7 +297,7 @@ def create_denoiser_from_config(
         params = build_v3_2_base_params(config, sample_rate, frame_size, frame_shift, fft_size)
 
         # NR strength preset (mild | balanced | aggressive) — the DEPTH axis. Applied FIRST so the
-        # content mode composes on top (Python only; the C library has no stationary mode).
+        # content mode composes on top.
         # 'balanced' == base YAML (empty overlay). Explicit arg wins over config.
         strength = strength or config.get('strength', 'balanced')
         params = apply_strength(params, strength)
@@ -308,8 +307,8 @@ def create_denoiser_from_config(
         # base-YAML values (same rationale as params['mode'] below).
         params['strength'] = strength
 
-        # NR content-preservation mode (full | stationary). Explicit arg wins over config; the
-        # preset overlay sets the stationary levers, then params['mode'] records the choice.
+        # NR content-preservation mode. Explicit arg wins over config;
+        # params['mode'] records the choice.
         mode = mode or config.get('mode', 'full')
         params = apply_mode(params, mode)
         params['mode'] = mode
@@ -655,9 +654,8 @@ def main():
   # 使用自定義配置
   python python/process_audio.py input.wav --config-dir ./my_configs
 
-  # V3-2 強度預設 + 內容保留模式（僅影響 V3-2）
+  # V3-2 強度預設（僅影響 V3-2）
   python python/process_audio.py input.wav --versions V3-2 --nr-mode aggressive
-  python python/process_audio.py music.wav --versions V3-2 --mode stationary
         """
     )
 
@@ -696,8 +694,8 @@ def main():
     parser.add_argument(
         '--mode',
         default=None,
-        choices=['full', 'stationary'],
-        help='V3-2 內容保留模式（內容軸）：full|stationary（默認: full）。stationary 只移除穩態底噪，保留音樂/瞬態'
+        choices=['full'],
+        help='V3-2 內容保留模式（內容軸）：目前僅 full（默認: full）'
     )
 
     parser.add_argument(
