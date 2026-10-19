@@ -323,62 +323,6 @@ def test_window_mode_is_rate_independent_at_a_duty_matched_frac(rate_hz):
         f"duty-matched confirm_frac")
 
 
-def _tonal_veto_hit_magnitude():
-    """A hi-band burst that counts as a scene-change HIT (flat, high energy)
-    combined with a strongly tonal low band (one large spike against a tiny
-    floor -> near-zero spectral flatness) that `scene_change_tonal_veto`
-    rejects as music rather than a genuine noise-floor change."""
-    power = np.full(N_FREQS, 1e-6)
-    power[0] = 1000.0
-    power[HI_START:] = HI_LEVEL
-    return np.sqrt(power)
-
-
-def test_tonal_veto_clears_window_regardless_of_veto():
-    """Bug found by independent review (fixed): the window-buffer reset on
-    a confirmed `ready` sat INSIDE `if not blocked:`, so a VETOED ready left
-    the window's accumulated hit evidence untouched. The very next hit frame
-    could then immediately satisfy `_window_hit_count >= _window_required_
-    hits` again with no NEW sustained evidence -- a vetoed-then-immediate-
-    refire-attempt loop that defeats window mode's entire purpose (fresh
-    evidence required before firing). The reset must be unconditional on
-    `ready`, exactly like legacy run-length mode's `scene_change_count = 0`
-    at the same indent level, regardless of whether the tonal veto blocked
-    the commit."""
-    est = _make_estimator(confirm_window=12, confirm_frac=0.6,
-                           scene_change_tonal_veto=True,
-                           scene_change_lo_flatness_max=0.4)
-    window_size = MIN_FRAMES + 12
-    required_hits = int(np.ceil(0.6 * window_size))
-    mag = _tonal_veto_hit_magnitude()
-
-    # Feed exactly required_hits hit frames (window starts empty, well under
-    # window_size, so no eviction happens yet): the required_hits-th frame
-    # is the one where `ready` first becomes True and gets vetoed, all
-    # within that same update() call -- so hit_count is already back to 0
-    # by the time this call returns if the fix is in place; it is NOT this
-    # function's job to observe the saturated value mid-call.
-    for _ in range(required_hits):
-        est.update(mag, spp=SPP_HIGH)
-    # The tonal veto must have blocked the commit -- no reset happened.
-    assert est._scene_change_confirmed is False
-    # But the fix requires the window to be spent anyway, same as a real
-    # fire would spend it.
-    assert est._window_hit_count == 0, (
-        "a vetoed ready must still clear the window's accumulated evidence "
-        "-- pre-fix this stayed >= required_hits, saturated with stale "
-        "evidence")
-    assert est.scene_change_count == 0
-
-    # A single further hit frame must NOT immediately re-satisfy the
-    # fraction test from stale evidence: it needs required_hits FRESH hits.
-    est.update(mag, spp=SPP_HIGH)
-    assert est._window_hit_count < required_hits, (
-        "one post-veto hit must not already saturate the window again")
-    assert est._scene_change_confirmed is False, (
-        "one post-veto hit must not immediately re-fire")
-
-
 def test_miss_frame_in_window_mode_is_now_tolerated():
     """Bug found by independent review (fixed): the miss-tolerance gate
     checked ONLY `scene_change_confirm_frames > 0`, which construction

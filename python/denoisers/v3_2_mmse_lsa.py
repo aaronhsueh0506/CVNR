@@ -121,8 +121,6 @@ class MmseLsaDenoiser(BaseDenoiser):
         stationary_floor: bool = False,
         stationary_floor_exponent: float = 1.0,
         stationary_floor_beta: float = 1.0,
-        scene_change_tonal_veto: bool = False,
-        scene_change_lo_flatness_max: float = 0.4,
         # Fricative guard: require the scene-change trigger condition to
         # hold for this many EXTRA consecutive frames beyond
         # scene_change_min_frames before committing the noise-floor reset.
@@ -389,8 +387,6 @@ class MmseLsaDenoiser(BaseDenoiser):
                 scene_change_min_frames=scene_change_min_frames,
                 scene_change_blend=scene_change_blend,
                 scene_change_flatness_threshold=scene_change_flatness_threshold,
-                scene_change_tonal_veto=scene_change_tonal_veto,
-                scene_change_lo_flatness_max=scene_change_lo_flatness_max,
                 scene_change_confirm_frames=scene_change_confirm_frames,
                 accept_external_spp=mcra_accept_external_spp,
                 remove_echo_explained_rise=mcra_remove_echo_explained_rise,

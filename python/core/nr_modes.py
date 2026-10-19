@@ -9,8 +9,7 @@ CONTENT-preservation axis:
   stationary  ReSpeaker-like: remove ONLY the stationary noise floor, preserve all
               non-stationary content (speech / music / transients). Realised by the Wiener
               gain lower-bound (see MmseLsaGainCalculator.stationary_floor) plus a slower
-              noise update (so music isn't absorbed into the floor) and a music-aware
-              scene-change (tonal veto).
+              noise update (so music isn't absorbed into the floor).
 
 `apply_mode(params, mode)` overlays a preset onto the constructor-param dict built by
 `process_audio.create_denoiser_from_config` (V3-2 branch). It is also the seam for a future
@@ -18,8 +17,8 @@ AUTO content detector: the detector picks `mode` per-utterance and calls `apply_
 else needs to change.
 
 The keys below are MmseLsaDenoiser constructor kwargs. `alpha_noise` is the mcra noise-update
-rate (`alpha_d`); `stationary_floor*` and `scene_change_tonal_veto`/`scene_change_lo_flatness_max`
-are the new mode levers (all default-off so `full` is untouched).
+rate (`alpha_d`); `stationary_floor*` is the new mode lever (default-off so `full` is
+untouched).
 """
 
 from copy import deepcopy
@@ -43,11 +42,9 @@ NR_MODE_PRESETS = {
         # keep N an honest STATIONARY floor: slow the posterior-gated recursive average so
         # music phrases aren't absorbed (which would collapse ξ and defeat the bound)
         'alpha_noise': 0.95,
-        # music-aware scene-change: percussion can't confirm; tonal (music) low band is vetoed
+        # music-aware scene-change: percussion can't confirm within this many frames
         'scene_change_min_frames': 30,
         'scene_change_flatness_threshold': 0.6,
-        'scene_change_tonal_veto': True,
-        'scene_change_lo_flatness_max': 0.4,
     },
 }
 

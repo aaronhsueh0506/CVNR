@@ -93,12 +93,6 @@ class McraNoiseEstimator:
         scene_change_min_frames: int = 5,
         scene_change_blend: float = 0.5,
         scene_change_flatness_threshold: float = 0.4,
-        # Music-aware scene-change (for `stationary` NR mode). Default OFF → `full` untouched.
-        # tonal veto: skip the floor-blend when the LOW band is tonal (peaky, low flatness) —
-        # sustained tonal music must not trigger a noise-floor reset, whereas a genuine
-        # broadband noise-scene change has a flat low band and still fires.
-        scene_change_tonal_veto: bool = False,
-        scene_change_lo_flatness_max: float = 0.4,
         # Fricative guard: a true broadband scene/noise-floor change (fan
         # turning on, mic moved) keeps hi_gamma+flatness elevated against the
         # still-stale noise estimate for as long as the estimate stays stale
@@ -420,8 +414,6 @@ class McraNoiseEstimator:
         self.scene_change_min_frames = scene_change_min_frames
         self.scene_change_blend = scene_change_blend
         self.scene_change_flatness_threshold = scene_change_flatness_threshold
-        self.scene_change_tonal_veto = scene_change_tonal_veto
-        self.scene_change_lo_flatness_max = scene_change_lo_flatness_max
         if scene_change_confirm_frames < 0:
             raise ValueError("scene_change_confirm_frames must be >= 0")
         self.scene_change_confirm_frames = scene_change_confirm_frames
@@ -680,40 +672,32 @@ class McraNoiseEstimator:
                 ready = self.scene_change_count >= (
                     self.scene_change_min_frames + self.scene_change_confirm_frames)
             if ready:
-                # 音樂安全化 tonal veto（stationary mode）：低頻若是 tonal（尖峰、flatness 低）
-                # 則判為音樂 → 不重設噪聲底；只有低頻也平坦（真的換噪聲場）才放行。
-                blocked = False
-                if self.scene_change_tonal_veto:
-                    lo_flatness = _spectral_flatness(power[:hi_start])
-                    blocked = lo_flatness < self.scene_change_lo_flatness_max
-                if not blocked:
-                    # 場景轉換確認：部分重置噪聲估計和最小值追蹤
-                    blend = self.scene_change_blend
-                    self.noise_psd = blend * self.noise_psd + (1 - blend) * power
-                    # The noise_psd write just above is corrected after the fact
-                    # by the post-hoc block at the end of update() (see
-                    # test_scene_change_write_is_also_corrected), but S_min
-                    # and min_buffer are stomped with self.S HERE and never
-                    # go through that post-hoc path at all -- so without
-                    # this, a corrected fire still leaves the min-tracker
-                    # seeded with echo-polluted power. Use the same
-                    # echo-corrected value consistently with the main write
-                    # whenever arm 4 is active; bit-exact to shipped when
-                    # it isn't.
-                    S_for_reset = (np.maximum(self.S - extra_noise_psd, 0.0)
-                                    if apply_arm4 else self.S)
-                    # np.maximum already allocates a fresh array -- only the
-                    # `else self.S` branch aliases self.S and needs the copy
-                    # before self.S_min is allowed to diverge from it.
-                    self.S_min = S_for_reset if apply_arm4 else S_for_reset.copy()
-                    self.min_buffer[:] = S_for_reset.reshape(1, -1)
-                    self._scene_change_confirmed = True
-                # Any `ready` decision -- committed or vetoed by the tonal
-                # guard above -- spends the window's accumulated evidence:
-                # the next confirmation must be earned with fresh hits, not
-                # the same evidence re-read on a later frame. Unconditional
-                # like legacy run-length mode's self.scene_change_count
-                # reset just below (also unconditional on `blocked`).
+                # 場景轉換確認：部分重置噪聲估計和最小值追蹤
+                blend = self.scene_change_blend
+                self.noise_psd = blend * self.noise_psd + (1 - blend) * power
+                # The noise_psd write just above is corrected after the fact
+                # by the post-hoc block at the end of update() (see
+                # test_scene_change_write_is_also_corrected), but S_min
+                # and min_buffer are stomped with self.S HERE and never
+                # go through that post-hoc path at all -- so without
+                # this, a corrected fire still leaves the min-tracker
+                # seeded with echo-polluted power. Use the same
+                # echo-corrected value consistently with the main write
+                # whenever arm 4 is active; bit-exact to shipped when
+                # it isn't.
+                S_for_reset = (np.maximum(self.S - extra_noise_psd, 0.0)
+                                if apply_arm4 else self.S)
+                # np.maximum already allocates a fresh array -- only the
+                # `else self.S` branch aliases self.S and needs the copy
+                # before self.S_min is allowed to diverge from it.
+                self.S_min = S_for_reset if apply_arm4 else S_for_reset.copy()
+                self.min_buffer[:] = S_for_reset.reshape(1, -1)
+                self._scene_change_confirmed = True
+                # This `ready` decision spends the window's accumulated
+                # evidence: the next confirmation must be earned with fresh
+                # hits, not the same evidence re-read on a later frame.
+                # Unconditional, like legacy run-length mode's
+                # self.scene_change_count reset just below.
                 if self.scene_change_confirm_window > 0:
                     self._window_buf[:] = False
                     self._window_hit_count = 0
