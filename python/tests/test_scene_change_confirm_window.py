@@ -323,6 +323,140 @@ def test_window_mode_is_rate_independent_at_a_duty_matched_frac(rate_hz):
         f"duty-matched confirm_frac")
 
 
+def _tonal_veto_hit_magnitude():
+    """A hi-band burst that counts as a scene-change HIT (flat, high energy)
+    combined with a strongly tonal low band (one large spike against a tiny
+    floor -> near-zero spectral flatness) that `scene_change_tonal_veto`
+    rejects as music rather than a genuine noise-floor change."""
+    power = np.full(N_FREQS, 1e-6)
+    power[0] = 1000.0
+    power[HI_START:] = HI_LEVEL
+    return np.sqrt(power)
+
+
+def test_tonal_veto_clears_window_regardless_of_veto():
+    """Bug found by independent review (fixed): the window-buffer reset on
+    a confirmed `ready` sat INSIDE `if not blocked:`, so a VETOED ready left
+    the window's accumulated hit evidence untouched. The very next hit frame
+    could then immediately satisfy `_window_hit_count >= _window_required_
+    hits` again with no NEW sustained evidence -- a vetoed-then-immediate-
+    refire-attempt loop that defeats window mode's entire purpose (fresh
+    evidence required before firing). The reset must be unconditional on
+    `ready`, exactly like legacy run-length mode's `scene_change_count = 0`
+    at the same indent level, regardless of whether the tonal veto blocked
+    the commit."""
+    est = _make_estimator(confirm_window=12, confirm_frac=0.6,
+                           scene_change_tonal_veto=True,
+                           scene_change_lo_flatness_max=0.4)
+    window_size = MIN_FRAMES + 12
+    required_hits = int(np.ceil(0.6 * window_size))
+    mag = _tonal_veto_hit_magnitude()
+
+    # Feed exactly required_hits hit frames (window starts empty, well under
+    # window_size, so no eviction happens yet): the required_hits-th frame
+    # is the one where `ready` first becomes True and gets vetoed, all
+    # within that same update() call -- so hit_count is already back to 0
+    # by the time this call returns if the fix is in place; it is NOT this
+    # function's job to observe the saturated value mid-call.
+    for _ in range(required_hits):
+        est.update(mag, spp=SPP_HIGH)
+    # The tonal veto must have blocked the commit -- no reset happened.
+    assert est._scene_change_confirmed is False
+    # But the fix requires the window to be spent anyway, same as a real
+    # fire would spend it.
+    assert est._window_hit_count == 0, (
+        "a vetoed ready must still clear the window's accumulated evidence "
+        "-- pre-fix this stayed >= required_hits, saturated with stale "
+        "evidence")
+    assert est.scene_change_count == 0
+
+    # A single further hit frame must NOT immediately re-satisfy the
+    # fraction test from stale evidence: it needs required_hits FRESH hits.
+    est.update(mag, spp=SPP_HIGH)
+    assert est._window_hit_count < required_hits, (
+        "one post-veto hit must not already saturate the window again")
+    assert est._scene_change_confirmed is False, (
+        "one post-veto hit must not immediately re-fire")
+
+
+def test_miss_frame_in_window_mode_is_now_tolerated():
+    """Bug found by independent review (fixed): the miss-tolerance gate
+    checked ONLY `scene_change_confirm_frames > 0`, which construction
+    forces to 0 whenever window mode (`scene_change_confirm_window > 0`) is
+    active (the two are mutually exclusive) -- so window mode got a HARD
+    reset on every single miss frame, with zero miss tolerance, contrary to
+    this module's own documented "tolerate transient dips" design. The gate
+    must also accept `scene_change_confirm_window > 0`."""
+    est = _make_estimator(confirm_window=12, confirm_frac=0.6)
+    mag = _burst_magnitude()
+    quiet = _quiet_magnitude()
+    fired_once = False
+    for _ in range(40):
+        est.update(mag, spp=SPP_HIGH)
+        if est._scene_change_confirmed:
+            fired_once = True
+            break
+    assert fired_once, "setup: must fire once before the tolerance check"
+
+    # A genuine post-fire hit (scaled so the already-blended noise_psd
+    # doesn't turn it into a miss -- same construction as the sibling
+    # refire test above) advances scene_change_count to 1 without
+    # reaching scene_change_min_frames, so `ready` stays False and
+    # `_scene_change_confirmed` stays True from the earlier fire.
+    probe_level = 20.0 * est.scene_change_threshold * np.mean(est.noise_psd[HI_START:])
+    probe_power = np.ones(N_FREQS)
+    probe_power[HI_START:] = probe_level
+    probe_hit = np.sqrt(probe_power)
+    est.update(probe_hit, spp=SPP_HIGH)
+    assert est._scene_change_confirmed is True
+    assert est.scene_change_count == 1
+
+    # One miss: pre-fix this hard-reset immediately (confirm_frames==0 in
+    # window mode). Post-fix it must be tolerated like legacy mode.
+    est.update(quiet, spp=SPP_HIGH)
+    assert est._scene_change_confirmed is True, (
+        "a single isolated miss must be tolerated in window mode, not "
+        "hard-reset -- this is the bug being fixed")
+    assert est.scene_change_count == 1
+    assert est._scene_change_miss_run == 1
+
+    # Two more tolerated misses (SCENE_CHANGE_MISS_TOLERANCE == 3 total).
+    est.update(quiet, spp=SPP_HIGH)
+    est.update(quiet, spp=SPP_HIGH)
+    assert est._scene_change_confirmed is True
+    assert est._scene_change_miss_run == 3
+
+    # The 4th consecutive miss exceeds the tolerance -> hard reset, exactly
+    # as legacy mode already behaves at the same constant.
+    est.update(quiet, spp=SPP_HIGH)
+    assert est._scene_change_confirmed is False
+    assert est.scene_change_count == 0
+    assert est._scene_change_miss_run == 0
+
+
+def test_unsatisfiable_window_rejected_at_construction():
+    """Bug found by independent review (fixed): nothing validated that
+    `_window_required_hits` (= ceil(confirm_frac * (scene_change_min_frames
+    + scene_change_confirm_window))) actually exceeds scene_change_
+    min_frames. A small frac with a large confirm_window can make window
+    mode satisfiable on FEWER hits than the unguarded baseline trigger
+    itself requires, silently defeating the "gather sustained evidence
+    beyond the ordinary trigger" design intent. Construction must now
+    reject any confirm_window/frac combination where required_hits <=
+    scene_change_min_frames."""
+    # window_size = 5 + 20 = 25; ceil(0.1*25) = 3 <= min_frames(5) -> reject.
+    with pytest.raises(ValueError):
+        _make_estimator(confirm_window=20, confirm_frac=0.1)
+    # Exact boundary: ceil(0.2*25) = 5 == min_frames(5) -> still must reject
+    # (achievable with EXACTLY as much evidence as the baseline trigger,
+    # not more).
+    with pytest.raises(ValueError):
+        _make_estimator(confirm_window=20, confirm_frac=0.2)
+    # One hit above the boundary: ceil(0.24*25) = 6 > min_frames(5) -> fine.
+    est = _make_estimator(confirm_window=20, confirm_frac=0.24)
+    assert est._window_required_hits == 6
+
+
 def test_window_mode_cannot_confirm_below_its_own_duty_cycle_floor():
     """The real limit (measured, not a bug): confirm_frac is a hard floor
     on the average hit fraction the window can ever reach -- it does NOT

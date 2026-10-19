@@ -245,11 +245,11 @@ class McraNoiseEstimator:
         #         intended; left uncorrected below as a documentation note,
         #         not re-measured against the intended 17) -> 93.3%
         #         suppression, MATCHING legacy confirm_frames=12's 93.3% at
-        #         its own k=17, while tolerating up to 5 misses anywhere in
-        #         the window instead of legacy's 3 CONSECUTIVE (this number
-        #         was measured by running the shipped formula, i.e. against
-        #         the real required_hits=18, not the intended-but-never-
-        #         shipped 17)
+        #         its own k=17, while tolerating up to 4 misses anywhere in
+        #         the window (22 - required_hits=18) instead of legacy's 3
+        #         CONSECUTIVE (this number was measured by running the
+        #         shipped formula, i.e. against the real required_hits=18,
+        #         not the intended-but-never-shipped 17)
         #   W=27  (frac=0.630) -> 91.7%;  W=32 (frac=0.531) -> 86.7%;
         #         W=37 (frac=0.459) -> 78.3% (suppression degrades as the
         #         window widens past the matched-k point)
@@ -275,15 +275,14 @@ class McraNoiseEstimator:
         # this trigger looks at, so the recovery metric never engaged for
         # EITHER mechanism; dropped rather than reported); the full
         # registered A1/A4/A5 bar closed-loop (pause-residual, oracle-gain
-        # ratio, PESQ/STOI) for window mode specifically -- at the W=22
-        # operating point, window mode's first-fire gate is at least as
-        # strict as legacy confirm_frames=12 on any given hit sequence
-        # (same k, and legacy's "3 consecutive" tolerance is a subset of
-        # window's "5 anywhere"), so by that dominance argument A1/A4
-        # cannot be worse than confirm_frames=12's already-recorded
-        # numbers (pause-residual mean 0.154 dB, oracle-gain ratio 0.974)
-        # -- but this was NOT independently re-run and A5 (closed-loop
-        # PESQ/STOI, worst-case files) was not re-run at all.
+        # ratio, PESQ/STOI) for window mode specifically. Window mode and
+        # legacy run-length mode are NOT nested in either direction on a
+        # given hit/miss sequence -- legacy's N-CONSECUTIVE tolerance and
+        # window's M-ANYWHERE tolerance each accept sequences the other
+        # rejects (e.g. one long gap vs several short gaps totalling more
+        # misses), so neither mode's validated numbers can be inherited
+        # from the other by a dominance argument. A1/A4/A5 for window mode
+        # require their own independent closed-loop run.
         #
         # RECOMMENDATION (not a shipped default): at 16 kHz/256 only,
         # confirm_window=17, confirm_frac=0.773 (required_hits=18, see the
@@ -293,42 +292,6 @@ class McraNoiseEstimator:
         # recommended at 512/48k (budget wall above).
         # Do NOT enable in production without the A1/A4/A5 closed-loop
         # re-run and a real (not pink) colored-noise check.
-        #
-        # THREE FURTHER LIMITATIONS found by an independent post-merge
-        # review sweep (empirically reproduced, not just read), additional
-        # reasons this needs the re-run above before any production use:
-        #  1. Interaction with scene_change_tonal_veto=True: a veto blocks
-        #     the fire (reset() branch) but does NOT clear the window
-        #     buffer/hit-count the way an actual fire does -- only an
-        #     un-vetoed commit resets the window. During a long vetoed
-        #     tonal/music passage the window can sit saturated above
-        #     required_hits for as long as the veto holds; the instant the
-        #     low band stops being tonal for even one frame, the reset
-        #     commits immediately on stale evidence accumulated entirely
-        #     during the veto, with zero fresh sustained evidence. Legacy
-        #     run-length mode does not have this gap (a blocked `ready`
-        #     also resets scene_change_count).
-        #  2. Re-fires within an already-confirmed episode get ZERO miss
-        #     tolerance in window mode, contradicting the "same as today"
-        #     framing elsewhere in this docstring: the miss-tolerance
-        #     branch is gated on scene_change_confirm_frames > 0, which
-        #     construction forces to 0 whenever window mode is active, so
-        #     a single isolated miss during multi-step convergence (e.g.
-        #     under a partial scene_change_blend) hard-resets progress and
-        #     forces a full re-accumulation through the window gate again,
-        #     where legacy mode would have absorbed up to
-        #     SCENE_CHANGE_MISS_TOLERANCE consecutive misses for free.
-        #  3. No validation ties confirm_frac to scene_change_min_frames:
-        #     required_hits = ceil(frac * (min_frames + confirm_window))
-        #     can come out BELOW min_frames itself for a small frac with a
-        #     large confirm_window (e.g. min_frames=5, confirm_window=20,
-        #     frac=0.1 -> required_hits=3 < 5), making window mode fire
-        #     MORE readily than the unguarded baseline trigger -- the
-        #     opposite of what "confirmation" is supposed to do. Not an
-        #     issue at the one validated operating point above
-        #     (confirm_window=17/frac=0.773 -> required_hits=18 > 5), but
-        #     nothing in this class stops a caller from picking a worse
-        #     combination.
         #
         # 0 = off (default); when off, scene_change_confirm_frames
         # (run-length mode, itself also default 0 = the shipped unguarded
@@ -484,6 +447,17 @@ class McraNoiseEstimator:
             self._window_size = self.scene_change_min_frames + scene_change_confirm_window
             self._window_required_hits = int(np.ceil(
                 scene_change_confirm_frac * self._window_size))
+            if self._window_required_hits <= self.scene_change_min_frames:
+                raise ValueError(
+                    "scene_change_confirm_window/scene_change_confirm_frac "
+                    f"requires only {self._window_required_hits} hits out of "
+                    f"a {self._window_size}-frame window, which is <= "
+                    f"scene_change_min_frames ({self.scene_change_min_frames}) "
+                    "-- this configuration can be satisfied on LESS evidence "
+                    "than the unguarded baseline trigger, defeating the "
+                    "confirmation guard's purpose. Raise "
+                    "scene_change_confirm_frac or lower "
+                    "scene_change_confirm_window.")
             self._window_buf = np.zeros(self._window_size, dtype=bool)
         else:
             self._window_size = 0
@@ -734,23 +708,15 @@ class McraNoiseEstimator:
                     self.S_min = S_for_reset if apply_arm4 else S_for_reset.copy()
                     self.min_buffer[:] = S_for_reset.reshape(1, -1)
                     self._scene_change_confirmed = True
-                    if self.scene_change_confirm_window > 0:
-                        # The window's accumulated evidence has just been
-                        # spent on this fire. Without clearing it, a single
-                        # ordinary miss right after a fire (common: the
-                        # reset's own partial blend can itself drop hi_gamma
-                        # below threshold for a frame) clears
-                        # _scene_change_confirmed (see the miss branch
-                        # below) while the window still holds the OLD
-                        # evidence, so the very next hit frame re-enters
-                        # this elif with the window already satisfied and
-                        # fires again immediately -- a second confirmed
-                        # fire with zero new sustained evidence. Re-fires
-                        # within an episode must only happen via the
-                        # ordinary min_frames path, like legacy run-length
-                        # mode's self.scene_change_count = 0 just below.
-                        self._window_buf[:] = False
-                        self._window_hit_count = 0
+                # Any `ready` decision -- committed or vetoed by the tonal
+                # guard above -- spends the window's accumulated evidence:
+                # the next confirmation must be earned with fresh hits, not
+                # the same evidence re-read on a later frame. Unconditional
+                # like legacy run-length mode's self.scene_change_count
+                # reset just below (also unconditional on `blocked`).
+                if self.scene_change_confirm_window > 0:
+                    self._window_buf[:] = False
+                    self._window_hit_count = 0
                 self.scene_change_count = 0
                 self._scene_change_miss_run = 0
         else:
@@ -765,10 +731,14 @@ class McraNoiseEstimator:
             # discarding the streak -- only reset once misses outlast that,
             # which any real phoneme-to-phoneme gap (tens of ms) still does,
             # so two separate short fricatives still cannot bridge into one
-            # episode. Only active when the guard itself is enabled, so
-            # scene_change_confirm_frames=0 remains bit-exact with the
+            # episode. Only active when either confirmation mode is enabled
+            # (legacy run-length's scene_change_confirm_frames, or windowed-
+            # fraction's scene_change_confirm_window -- the two are mutually
+            # exclusive by construction, so at most one of these is nonzero),
+            # so the shipped default (both 0) remains bit-exact with the
             # shipped hard reset-on-miss.
-            if (self.scene_change_confirm_frames > 0
+            if ((self.scene_change_confirm_frames > 0
+                    or self.scene_change_confirm_window > 0)
                     and self.scene_change_count > 0
                     and self._scene_change_miss_run < self.SCENE_CHANGE_MISS_TOLERANCE):
                 self._scene_change_miss_run += 1
