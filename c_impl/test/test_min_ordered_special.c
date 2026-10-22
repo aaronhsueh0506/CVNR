@@ -4,7 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
-#include "../src/mcra_noise_estimator.c"
+#include "../src/noise_estimator.c"
 
 static uint32_t rng = 123;
 
@@ -49,8 +49,8 @@ typedef struct { unsigned long arrays, fast, fallback; } Counts;
 
 static int check(const float* values, int n, const char* what, int trial, Counts* c) {
     float reference = scalar_minimum(values, n);
-    float actual = mcra_min_ordered(values, n);
-    float twin = mcra_min_ordered_scalar(values, n);
+    float actual = noise_estimator_min_ordered(values, n);
+    float twin = skr_min_ordered_scalar(values, n);
     if (to_bits(reference) != to_bits(actual) || to_bits(reference) != to_bits(twin)) {
         fprintf(stderr, "ordered minimum FAIL: class=%s n=%d trial=%d reference=%08x dispatch=%08x scalar=%08x\n",
                 what, n, trial, to_bits(reference), to_bits(actual), to_bits(twin));
@@ -59,13 +59,13 @@ static int check(const float* values, int n, const char* what, int trial, Counts
 #if SK_HAVE_NEON
     {
         float fast = 0.0f;
-        float neon = mcra_min_ordered_neon(values, n);
+        float neon = skr_min_ordered_neon(values, n);
         if (to_bits(neon) != to_bits(reference)) {
             fprintf(stderr, "ordered minimum FAIL: class=%s n=%d trial=%d reference=%08x neon=%08x\n",
                     what, n, trial, to_bits(reference), to_bits(neon));
             return 1;
         }
-        if (mcra_min_ordered_fast_neon(values, n, &fast)) {
+        if (skr_min_ordered_fast_neon(values, n, &fast)) {
             ++c->fast;
             if (to_bits(fast) != to_bits(reference)) {
                 fprintf(stderr, "ordered minimum FAIL: class=%s n=%d trial=%d fast path %08x != %08x\n",

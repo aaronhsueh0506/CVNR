@@ -44,6 +44,17 @@ NR_STRENGTH_PRESETS = {
 }
 
 
+# CLI index -> preset name. The presets above are in the C `AnrMode` order (mild=0, moderate=1,
+# balanced=2, aggressive=3), so the index is the enum value the C tools accept for the same preset.
+_STRENGTH_BY_INDEX = {str(i): name for i, name in enumerate(NR_STRENGTH_PRESETS)}
+
+
+def nr_strength_name(value: str) -> str:
+    """argparse `type=`: map a strength index "0".."3" to its preset name; return any other value
+    unchanged so the parser's `choices` check reports it."""
+    return _STRENGTH_BY_INDEX.get(value, value)
+
+
 def apply_strength(params: dict, strength: str) -> dict:
     """Return a copy of `params` with the NR strength preset overlaid.
 

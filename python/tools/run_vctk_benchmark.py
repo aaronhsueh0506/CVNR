@@ -59,7 +59,7 @@ DEFAULT_NR_ROOT = TOOL_DIR.parent.parent
 DENOISER_VERSION = "V3-2"
 PESQ_SR = 16000  # pesq only supports 8000 (nb) / 16000 (wb); spec wants wb.
 VALID_MODES = ("full",)
-VALID_STRENGTHS = ("mild", "moderate", "balanced", "aggressive")
+VALID_STRENGTHS = ("mild", "moderate", "balanced", "aggressive")   # C AnrMode order: index == enum value
 DEFAULT_CLEAN_SUBDIR = "clean_testset_wav"
 DEFAULT_NOISY_SUBDIR = "noisy_testset_wav"
 
@@ -242,6 +242,12 @@ def discover_cases(clean_dir: Path, noisy_dir: Path, cases_file):
 # Main
 # --------------------------------------------------------------------------
 
+def strength_name(value: str) -> str:
+    """argparse `type=`: map a strength index "0".."3" to its name; return any other value unchanged
+    so the parser's `choices` check reports it. The JSON records always hold the name."""
+    return VALID_STRENGTHS[int(value)] if value in ("0", "1", "2", "3") else value
+
+
 def build_arg_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Run the V3-2 NR denoiser over VCTK+DEMAND and score PESQ/STOI/SI-SDR/segSNR.",
@@ -249,8 +255,8 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--mode", required=True, choices=VALID_MODES,
                    help="NR content-preservation mode.")
-    p.add_argument("--strength", required=True, choices=VALID_STRENGTHS,
-                   help="NR depth preset.")
+    p.add_argument("--strength", required=True, type=strength_name, choices=VALID_STRENGTHS,
+                   help="NR depth preset: mild|moderate|balanced|aggressive or the index 0|1|2|3.")
     p.add_argument("--sample-rate", type=int, default=16000,
                    help="Pipeline sample rate the denoiser runs at (default: 16000).")
     p.add_argument("--fft-size", type=int, default=None,

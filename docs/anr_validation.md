@@ -12,15 +12,13 @@ Numbers in this section were recorded by the evidence files listed below; the
 repository tests reproduce the bit-exact claims on demand (see
 [ANR bit-exact optimization](anr_optimization.md)).
 
-- **Four-way bit-exact stream.** For FFT backend kiss and NE10, each with
-  `SIMD=0` and `SIMD=1`, the optimized build and an independent scalar
+- **Two-way bit-exact stream.** For `SIMD=0` and `SIMD=1` (FFT backend NE10), the optimized build and an independent scalar
   reference build (`-DANR_REFERENCE_KERNELS`) produce identical state and
   gain traces: 164,236,480 trace bytes (111,301 records) over 6,144 hops, plus
   616,800 minimum arrays containing NaN, signed zero, infinity, subnormal and
   random bit patterns, plus the scalar-versus-NEON differential test of every
   kernel. `make test-bit-exact` runs this gate; it compares two builds of the
-  same source tree, per backend. The two FFT backends are not claimed to be
-  bit-exact with each other. "Identical" here and below means identical bits
+  same source tree. "Identical" here and below means identical bits
   except the payload bits of a NaN result; the streams hold no NaN input, and the
   kernel differential test counts a NaN result that differs only in its payload
   separately. With `SIMD=0` both builds of the stream test run the scalar twins and the
@@ -176,8 +174,7 @@ than a plain scalar loop on this host. The per-cell figures are in
   embedded-board, whole-pipeline or other-compiler results. Embedded cycle
   counts are not covered.
 - Bit-exactness (except the payload bits of a NaN result) is established between builds of
-  one backend. The kiss and NE10
-  outputs are separate references.
+  the same source tree with the NE10 FFT backend.
 - The WAV matrix uses 12 development input files and covers only the listed
   strengths and options; it does not prove equality for other inputs.
 - The Python reference and the C library agree numerically, not bitwise.

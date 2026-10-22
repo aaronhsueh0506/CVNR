@@ -158,7 +158,7 @@ int main(void) {
         expect_config_rejected(&cfg, "speech_protect_frame_threshold = NaN", big_buf, BIG_BUF);
 
         cfg = anr_default_config(16000); cfg.alpha_d = NAN;
-        expect_config_rejected(&cfg, "alpha_d (MCRA) = NaN", big_buf, BIG_BUF);
+        expect_config_rejected(&cfg, "alpha_d (noise update) = NaN", big_buf, BIG_BUF);
 
         cfg = anr_default_config(16000); cfg.scene_change_blend = INFINITY;
         expect_config_rejected(&cfg, "scene_change_blend = +Inf", big_buf, BIG_BUF);

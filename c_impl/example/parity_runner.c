@@ -5,7 +5,7 @@
  * drives the C lib anr_process_gain() frame-by-frame (computing the per-bin
  * gain WITHOUT applying it), and writes the C gains to a file. Because both
  * Python and C consume byte-identical input spectra, any gain delta is purely
- * the ported gain / SPP / MCRA arithmetic — FFT differences are excluded.
+ * the ported gain / SPP / noise-tracker arithmetic — FFT differences are excluded.
  *
  * The denoiser is created with the Python V3-2 standalone config (ANR
  * default/balanced) on the sample-rate/grid carried by the NRP2 dump; fft_size
@@ -20,8 +20,9 @@
  *   [n_frames][n_freqs]                                  (2 x int32)
  *   per frame f:  G_c[n_freqs] (float32)
  *
- * Usage: parity_runner <in_spectra.bin> <out_c_gains.bin> [full] [mild|moderate|balanced|aggressive]
- *   The optional mode must be 'full'; the strength defaults to balanced.
+ * Usage: parity_runner <in_spectra.bin> <out_c_gains.bin> [full] [<strength>]
+ *   The optional mode must be 'full'. <strength> is 0|1|2|3 or
+ *   mild|moderate|balanced|aggressive and defaults to balanced.
  */
 
 #include <stdio.h>
@@ -39,7 +40,7 @@
 int main(int argc, char* argv[]) {
     if (argc < 3) {
         fprintf(stderr, "Usage: %s <in_spectra.bin> <out_c_gains.bin> "
-                        "[full] [mild|moderate|balanced|aggressive]\n", argv[0]);
+                        "[full] [0|1|2|3|mild|moderate|balanced|aggressive]\n", argv[0]);
         return 1;
     }
     if (argc >= 4 && strcmp(argv[3], "full") != 0) {
@@ -48,10 +49,9 @@ int main(int argc, char* argv[]) {
     }
     AnrMode nr_mode = ANR_MODE_BALANCED;
     if (argc >= 5) {
-        if (strcmp(argv[4], "mild") == 0)            nr_mode = ANR_MODE_MILD;
-        else if (strcmp(argv[4], "moderate") == 0)   nr_mode = ANR_MODE_MODERATE;
-        else if (strcmp(argv[4], "aggressive") == 0) nr_mode = ANR_MODE_AGGRESSIVE;
-        else                                         nr_mode = ANR_MODE_BALANCED;
+        /* Name or digit 0..3; an unrecognised value keeps the balanced default. */
+        int m = anr_nr_mode_from_name(argv[4]);
+        nr_mode = m >= 0 ? (AnrMode)m : ANR_MODE_BALANCED;
     }
 
     FILE* fin = fopen(argv[1], "rb");

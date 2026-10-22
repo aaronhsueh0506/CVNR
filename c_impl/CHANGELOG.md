@@ -2,6 +2,174 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [Unreleased] · 2026-10-23 · 移除沒有呼叫端的函式與宣告
+
+### 移除 (Removed)
+
+- `noise_estimator.h` 中從未有實作的 `noise_estimator_get_spp()`、`noise_estimator_get_n_freqs()` 與
+  `spp_estimator.h` 的 `spp_get_n_freqs()` 宣告（原本照 header 呼叫會得到 link error）。
+- 零呼叫端的 `noise_estimator_get_internal_spp()`、`noise_estimator_is_initialized()`（含 header 宣告）與
+  `spp_is_initialized()`；要讀 SPP／噪聲底請走 `anr_get_spp()`／`anr_get_noise_psd()`，初始化狀態走
+  `anr_is_initialized()`。
+- 零呼叫端的 `anr_retime_frames_ref()`（double 版；整數版 `anr_retime_frames_ms()` 取代，且 `1e-12` 容差在結果超過約
+  6000 frames 時可能多算 1）。`anr_retime_alpha_ref()` 仍有呼叫端，保留。
+- 只剩測試呼叫的包裝 `noise_estimator_update()`：呼叫端改用 `noise_estimator_update_ex(…, false, 0, 0.0f)`
+  （`test_scene_change_margin.c` 已改）。
+- 只有 `test_anr_kernels.c` 讀取的巨集 `ANR_NOISE_PSD_INERT`：測試改讀 `utility/simd_nr.h` 的
+  `SKR_NOISE_PSD_INERT`（同一個值）。
+- `noise_estimator_update_ex()` 內 `USE_INCREMENTAL_MIN` 重掃支路中永遠不會編譯的
+  `USE_OPTIMIZED_MIN_BUFFER` 分支（該組合已由外層 `#if defined(USE_OPTIMIZED_MIN_BUFFER) && defined(USE_INCREMENTAL_MIN)`
+  走 `noise_estimator_ring_min()`）。
+- 所有保留下來的建置組合輸出不變：`denoise_wav`／`denoise_mem` 在 SIMD=0／1 及
+  `-DUSE_INCREMENTAL_MIN`、`-DUSE_OPTIMIZED_MIN_BUFFER`、`-DUSE_FAST_PERCENTILE` 等組合的輸出 WAV 與清理前逐位元相同。
+
+## [Unreleased] · 2026-10-21
+
+### 變更 (Changed)
+
+- WAV／靜態 runner、benchmark 與 Python/C 對拍 driver 改用 `audio_window.h` 的 `ac_window_build()` 建立 periodic sqrt-Hann;支援格點的窗表與改動前逐位元相同。
+
+## [Unreleased] · 2026-10-20 · S-10 shared-xi 零功率 bin、S-12 hi_gamma epsilon 位置（PY_C_SYNC_AUDIT.md）
+
+### 修復 (Fixed)
+
+- **S-10**（`src/anr.c:gain_prepare_elem`／`gain_prepare_scalar`／`gain_prepare_neon`／
+  `gain_prepare`，出貨預設 `USE_SHARED_XI_RATIO` 才編譯）：新增 `xi` 參數。原本一律用
+  `ratio_out = v_in/(gamma+1e-10f)` 反推 `xi/(1+xi)`；當 bin 功率（近）為 0（數位靜音後、人工歸零
+  的 bin、int16 低電平量化到 0）時 `gamma` 下溢到 float32 的 0，`v_in = xi/(1+xi)*gamma` 連帶也變成
+  精確 0，於是 `0/(0+1e-10f) = 0`，整個 `xi/(1+xi)` 的資訊丟失（實測與 Python 差 0.12–0.43）。改為：
+  `v_in < 1e-10f` 時直接算 `xi/(1+xi)`，不經除法；`v_in >= 1e-10f` 的一般路徑完全不變，逐位元相同。
+  NEON twin（`gain_prepare_neon`）用 `vbsl` 以同一個 `v_in < 1e-10` 遮罩在兩個候選比值之間選擇，和純量
+  版用同一個條件，`c_impl/test/test_anr_kernels.c` 的 scalar-vs-NEON fuzz test（含 NaN/Inf/subnormal/
+  帶正負號的 0）已補上 `xi` 輸入並全過。**效能收尾**：第一版對每 4 個 lane 的向量都無條件多算一次
+  `xi/(1+xi)`（`vdivq`＋`vaddq`）再 `vbsl` 選擇，即使該 4-lane 群組沒有任何 lane 觸發 guard，
+  `bench_anr` 量到 `gain_prepare` 相關欄位比 S-10 之前的建置慢 +0.3%~+3.7%（違反「算量不得高於現況」
+  規則，見下方「效能」小節）；改成先用 `vmaxvq_u32(below_eps)` 做一次水平化判斷（既有程式碼
+  `noise_estimator.c` 已用同類手法），`below_eps` 全 0（該群組沒有 lane 低於 1e-10）時直接用
+  `ratio_div`，跳過 xi 分支的除法與 `vbsl`；只有至少一個 lane 真正觸發 guard 時才算 `ratio_guard` 並
+  `vbsl` 選擇。這純粹是「跳過反正會被蓋掉的計算」，不是新公式：`below_eps` 全 0 時原本的
+  `vbslq_f32(below_eps, ratio_guard, ratio_div)` 本來就會在每個 lane 選 `ratio_div`，所以兩個版本在
+  每一個輸入上逐位元相同。
+- **S-12**（`src/noise_estimator.c` 的 `noise_estimator_update_ex`，scene-change 區段）：
+  `hi_gamma` 原本是 `Σpower / (Σnoise + 1e-10f)`（先加總、epsilon 加在和上），Python
+  （`core/noise_estimators/mcra.py`）是 `mean(power) / (mean(noise) + 1e-10)`（先取均值、epsilon
+  加在均值上），兩者的 epsilon 相對權重差了 `n_hi`（上半頻段 bin 數）倍。改成 C 也先把兩個和各除以
+  `n_hi` 取均值，再對均值做除法，與 Python 對齊。這只是 epsilon 相對位置的改動，不是新模型；均值形式
+  與原本的和形式在 float32 下**不逐位元等價**（直接比較 std-math 建置的 before/after denoise_wav 輸出，
+  int16 peak-5-LSB 低電平輸入下有 3898/114958 個樣本差到 ≤2 LSB）——但這個移動正是修復本身：同一個
+  輸入的 pyc L1（std-math C vs Python）`gain/16k_256/balanced/int16_pk5` 由 max|ΔG| 0.8591 收斂到
+  4.113e-6，代表這 3898 個樣本是**往 Python 靠攏**，不是新引入的漂移。一般語音/VCTK/babble/music/
+  scene_change 語料裡 `hi_gamma` 從未在這個門檻附近翻轉過硬判決，所以輸出逐位元不變。
+
+### 驗證 (Validation)
+
+- `test/pyc_parity_nr.sh`（L1 std-math C vs Python、L2 shipping C vs std-math C）修復前
+  L1_RED_EXPECTED=149、L2_RED_EXPECTED=132；修復後兩者皆為 0（PY_C_SYNC_AUDIT.md 的 S-10／S-11／
+  S-12 全部格子轉綠），`c_impl/test/pyc_parity/expected_red.json` 已移除這兩個 key（只留 S-13 make-up
+  prior，範圍外）；`RESULT: PASS`。代表性數字（修前→修後，L1 = std-math C vs Python）：
+  `int16_pk5`（16k/256/balanced）max|ΔG| 0.8591→4.113e-6；`int16_pk12` 0.8697→9.418e-6；
+  `babble_1e-4` 0.7238→3.964e-6；e2e `scale_1e-4` rms_err −52.70 dB→−138.16 dB。L2（S-10）：
+  `zerobins` max|ΔG| 0.2401→0.003894；`synth_gaps`（16k/256）0.2388→0.006959；e2e `synth_gaps`
+  rms_err −32.20 dB→−69.85 dB。修復後全套 428 scenario 中 L2 最大殘差 0.0969（`int16_pk5`，
+  8k/128/aggressive），仍在既有 fast-math 容差（0.15）內、且與修復前同量級，不是新退步。
+- 一般電平輸入（speech／babble／music／scene_real／scene_up／scene_down／makeup_xi_ctrl 等不涉及
+  S-10/S-11/S-12 的家族）：pyc_parity 的 `max_abs` 在修復前後逐 bit 相同（除了下一條例外）；另外用
+  `denoise_wav` 直接跑 4 組 grid×strength×語料（16k/256 balanced vctk、16k/256 aggressive babble、
+  16k/256 moderate music、16k/512 balanced scene），出貨建置與 std-math 建置的輸出 WAV 修復前後逐
+  byte相同（`cmp` 零差異）。**這 4 組都是 16k 語料，不含 48k 真實錄音；不應據此宣稱所有「一般」真實
+  世界語料都無條件逐位元不變**——見下一條真實錄音的例外。
+  - 例外（真實錄音會撞到 DC／Nyquist）：真實錄音的 DC 或 Nyquist bin 功率剛好落在浮點精確 0 或接近 0
+    時，一樣會觸發 S-10 的 guard。用一支真實的 48 kHz 街頭噪音錄音 `n48_street_0dB.wav`
+    （48kHz/1024，出貨建置，20 秒／960000 samples）驗證：mild 與 moderate 模式下，S-10 修復前後的
+    `denoise_wav` 輸出各只有 1 個樣本差 1 LSB（mild：樣本 820721 差 4→5；moderate：樣本 824992 差
+    175→176；其餘 959999 個樣本逐 byte 相同，`cmp -l` 在每個模式各只報 1 筆）。對應的 instrumentation
+    顯示 guard 在這支
+    錄音裡觸發了兩次：frame=956 的 k=0（DC，`v=7.856e-12`、`gamma=8.641e-11`）與 frame=1583 的
+    k=512（Nyquist，`v=gamma=0.0` 精確零）。
+  - 例外：`babble_1e-4`（−80 dBFS babble，`gain/16k_256/aggressive`）在 **L2**（shipping vs
+    std-math）修復前後差了 ~1e-4 量級（0.002937→0.003278），仍在 L2 green 內（容限 0.15）：這組的
+    `exercises` 註記只列了 L1 的 S-11/S-12，沒列 L2，但 L2 在修復前後確實移動了一點。已用
+    mutation-isolation 建置拆解歸因：只還原 S-10（保留 S-12）得 L2=3.278e-3，等於修復後數值；只還原
+    S-12（保留 S-10）得 L2=2.937e-3，等於修復前數值。結論：這個移動是 **S-12 單獨造成**，與 S-10 無關
+    ——S-12 把 `hi_gamma` 由「先加總再除」改成「先取均值再除」，這個重排在 shipping 建置（fast-math／
+    六個 USE_* 旗標）與 std-math 建置之間的浮點捨入略有差異，只在這個近零電平語料上看得出來；S-10 的
+    guard 對這個 L2 比較沒有可量測的影響。
+- `test-config`／`test-reconfigure`／`test-noise-restart`／`test-scene-change`／`test-api-cpp`／
+  `test-bit-exact` 在 DEBUG=0 SIMD=1（出貨）與 DEBUG=1 SIMD=0（std-math）兩種建置全過；
+  `gain_prepare` scalar-vs-NEON fuzz test 6000 次呼叫、752080 lane 全過（branch-skip 版與之前逐位元
+  相同的 call/lane 統計，0 筆 mismatch）。
+- **效能（branch-skip 優化，驗證 bit-exact 與算量都不退步）**：
+  - bit-exact：`gain_prepare` scalar-vs-NEON fuzz test（同上，6000 calls／752080 lanes）在 branch-skip
+    版與原始版輸出完全相同；`test/pyc_parity_nr.sh` 全套 428 scenario 的 JSON 結果（`L1_GREEN=408`、
+    `L1_RED_EXPECTED=20`、`L2_GREEN=428`，`RESULT: PASS`）在 branch-skip 版與 S-10 原始版之間逐 byte
+    相同（SHA256 一致），不只是「兩邊都 PASS」，是同一份數字。
+  - 算量（`bench_anr --medians 300 30`，出貨建置，24 組交錯量測，取各欄位中位數；host 計時）：
+    branch-skip 版相對 S-10 原始版（每個 4-lane 向量都無條件算 xi 分支）全部 12 欄的中位數都是負的
+    （變快），但顯著性因 grid 而不同：16k256／16k512 共 8 欄 −0.60%~−4.06%，其中 7 欄的 95% CI
+    不含零，是可信的加速；48k1024 的 4 欄 −0.03%~−1.33%，CI 都含零，方向一致但落在量測噪音內，不
+    算可信的加速（A/A 同一支 binary 跑 16 次的噪音底是 −1.35%~+1.67%）。結論：原本的 +0.3%~+3.7%
+    退步已消除、方向反轉，16k 這一半確實量得到效果，48k 這一半只能說「沒有退步」。另外在
+    同一台機器、同一次工作中把 branch-skip 版和「S-10 之前」的基準（`gain_prepare_neon` 還原到單一
+    `vdivq` 的舊形式，與 S-10 之前出貨的程式碼逐位元相同）交錯量測 16 組：branch-skip 版相對這個真正
+    的 S-10-之前基準只差 −1.21%~+1.01%（多數欄位 <0.3%，在 host 計時噪音內），不再像原始 S-10 版那樣
+    全面變慢。
+- 同步 `Audio_ALG/lib/nr/c_impl/src/anr.c`、`noise_estimator.c`、`test/test_anr_kernels.c`，三份
+  逐位元相同；`make test-bit-exact` 在該樹同樣全過。
+
+## [Unreleased] · 2026-10-19 · 移除 `BACKEND=kiss`、噪聲追蹤器 C 符號改名、預設 `L` 改用整數版 retime、NR mode 可寫數字
+
+NR 的輸出逐位元不變：example 的 WAV、`parity_runner` 的 gain、每 hop 內部狀態串流、Python/C 對拍與
+`make test-*` 的判定結果對整理前的基準全部相同（SIMD=0/1）。唯一的文字差異：`test-config` 的標籤
+`alpha_d (MCRA) = NaN` 改為 `alpha_d (noise update) = NaN`（C 檔字串不留上游演算法名），該測試其餘輸出逐字相同。
+
+### 移除 (Removed)
+
+- `BACKEND=kiss`：FFT 只剩 NE10。`Makefile` 只接受 `BACKEND=ne10`，其他值直接報錯；`make help`、
+  連結與 `_cfg_guard` 的 ne10 分支判斷、`print-*` 說明、`python/tools/test_bit_exact.py` 的
+  `--backend` 選項（只剩 `ne10`）、README 與 `docs/` 的 kiss 建置範例一併移除。FFT 後端是建置層，
+  不算演算法；`docs/c_user_manual_zh_TW.md`、`docs/html/nr_c_api.html` 的 `fft_get_mem_size()`
+  表格改成 NE10 的實測值；`anr_get_mem_size()` 欄一併重量（舊表數字比當前程式多 48 B，是先前改動後沒更新），
+  `anr_get_mem_size()` 本身整理前後逐 grid 相同。
+
+### 變更 (Changed)
+
+- 噪聲 PSD 追蹤器去掉上游演算法名稱，檔名與 C 符號改為 `noise_estimator`（函式行為與記憶體配置不變，
+  `anr_get_mem_size()` 與整理前逐 grid 相同；`libanr.a` 的匯出符號只有下表 13 個一對一改名）。
+  板端若直接引用這些符號，照表改：
+
+  | 舊 | 新 |
+  |---|---|
+  | `include/mcra_noise_estimator.h`、`src/mcra_noise_estimator.c` | `include/noise_estimator.h`、`src/noise_estimator.c` |
+  | `McraNoiseEstimator` | `NoiseEstimator` |
+  | `mcra_create` / `_init` / `_destroy` / `_get_mem_size` / `_reset` | `noise_estimator_create` / `_init` / `_destroy` / `_get_mem_size` / `_reset` |
+  | `mcra_accumulate_init_power` / `_init_noise` / `_update` / `_update_ex` | `noise_estimator_accumulate_init_power` / `_init_noise` / `_update` / `_update_ex` |
+  | `mcra_get_noise_psd` / `_get_internal_spp` / `_is_initialized` | `noise_estimator_get_noise_psd` / `_get_internal_spp` / `_is_initialized` |
+  | `mcra_apply_config_scalars`（`anr_internal.h`） | `noise_estimator_apply_config_scalars` |
+  | `MCRA_NOISE_PSD_INERT` | `ANR_NOISE_PSD_INERT` |
+  | 檔內 `mcra_min_ordered*`、`mcra_ring_min*`、`mcra_restart_inert*`、`mcra_vmin_lt`、`mcra_lane_*`、`MCRA_RING_BLOCK` | `noise_estimator_min_ordered*`、`noise_estimator_ring_min*`、`noise_estimator_restart_inert*`、`noise_estimator_vmin_lt`、`noise_estimator_lane_*`、`ANR_RING_MIN_BLOCK` |
+
+  `anr.h`、`anr_types.h` 與 `noise_estimator.{h,c}` 的 MCRA 欄位／檔首註解改寫成描述欄位與函式實際作用。
+  `noise_estimator_get_spp()`、`noise_estimator_get_n_freqs()` 在 header 中仍是只有宣告、沒有實作的符號
+  （整理前的 `mcra_get_spp()`、`mcra_get_n_freqs()` 同況；實作端是 `noise_estimator_get_internal_spp()`），
+  這次只改名、不補實作。`noise_estimator.c` 呼叫的 `audio_common` kernel `sk_mcra_noise_update_f32`
+  同步改名為 `sk_noise_update_f32`（定義在 `audio_common/include/simd_kernels.h`；只改符號與說明註解，
+  運算式與位元結果不變，`anr.o`、`noise_estimator.o`、`spp_estimator.o` 的目的碼與改名前逐位元組相同）。
+- 預設 config 的 `L`（32 frames、16 ms）改用新的整數版 `anr_retime_frames_ms(frames, sample_rate, hop_size,
+  ref_hop_ms)`，以 int64 的 ceiling division 計算（同檔 `anr_retime_frames()` 的作法，另外檢查乘法溢位）。
+  5 個白名單 grid 的結果為 64 / 32 / 64 / 32 / 48，與原本 `double` 版 `anr_retime_frames_ref()` 逐一相同，
+  `AnrConfig` 的全部位元組（5 grid × 4 mode）也相同。另對 frames 1..320 × 參考 hop 1..100 ms × 8 種取樣率
+  × 15 種 hop（384 萬組）比對：結果 ≤ 320 的組合全部相同；有差異的 2805 組結果都 ≥ 6048、且精確值本來就是
+  整數（`double` 版的 `1e-12` 容差小於該量級的浮點誤差，多算 1），超出 `anr_validate_config()` 接受的
+  `L ≤ 320`。`anr_retime_frames_ref()` 的簽章與內容不變（對外 header API 保留），現在沒有呼叫端；
+  Python 的 `retime_frame_count()` 維持浮點，在白名單 grid 上結果與 C 相同。`anr_retime_alpha_ref()`
+  （指數餵進 `powf`）不動。
+- NR 強度參數除了名稱也接受數字 `0`..`3`（`mild`、`moderate`、`balanced`、`aggressive` 依序，等於
+  `AnrMode` 的值）：`anr_nr_mode_from_name()`（向下相容的超集，其他字串與 `NULL` 仍回 -1）、
+  `denoise_wav` / `denoise_mem` 的 `--nr-mode`、`parity_runner` 的強度位置參數；無法辨識的值仍沿用預設
+  `balanced`。Python 的 `process_audio.py --nr-mode`、`run_vctk_benchmark.py --strength` 同樣兩種寫法都收，
+  寫出的 JSON 維持名稱字串；`compare_vctk_benchmark.py` 讀記錄時把數字與名稱正規化後再比較，舊記錄
+  （字串）與新記錄可直接互比。`run_vctk_benchmark.py --mode` 是內容保留軸（只有 `full`），沒有數字寫法。
+
 ## [Unreleased] · 核心 NEON kernel（輸出逐位元不變，NaN 結果的 payload 位元除外）
 
 - MCRA 最小值 ring 的 rescan 與更新、inert-bin 重啟、SPP decision-directed 前段、gain 輸入準備、

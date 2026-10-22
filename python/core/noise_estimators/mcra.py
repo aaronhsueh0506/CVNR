@@ -237,6 +237,11 @@ class McraNoiseEstimator:
         k = ((N - 1) * 30) // 100
         init_psd = np.partition(power_spectrum, k, axis=0)[k]
 
+        # 數值防護（非演算法參數，S-11）：與 C port 的三處 init_psd 下限對齊，
+        # 避免極低電平輸入下 noise_psd 初始化成次正常數/精確 0，讓後續每個消費者
+        # 自己的 1e-10 epsilon 主宰估計值。不是調整 MCRA 的統計行為。
+        init_psd = np.maximum(init_psd, 1e-10)
+
         # 初始化狀態：S、S_min、min_buffer 必須從同一個統計量出發
         # 若 S 用均值而 S_min 用 P30，第一次 update 時 ratio = S/(S_min*delta) 會異常（>>1 或 <<1），
         # 導致 indicator 在純噪聲段誤觸發或誤壓
@@ -286,8 +291,8 @@ class McraNoiseEstimator:
 
         # arm 4: snapshot the pre-update estimate. Captured here (before any of
         # steps 2-8, including the scene-change block) and consumed only after
-        # the entire unmodified recursion below has run — mirrors the C
-        # prototype's own before/after snapshot in res_nr_coupling_probe.c.
+        # the entire unmodified recursion below has run — mirrored the C
+        # prototype's own before/after snapshot in a since-removed probe tool.
         apply_arm4 = self.remove_echo_explained_rise and extra_noise_psd is not None
         previous_noise_psd = self.noise_psd.copy() if apply_arm4 else None
 

@@ -9,9 +9,9 @@
 ## 🪜 先試 Strength Mode（Python + C 都有）
 
 > **命名好的 4 級 strength mode 兩端都有**（2026-07）：
-> - **Python**：`python/core/nr_strength.py`（`create_denoiser_from_config(..., strength=...)`）或 CLI `python/process_audio.py --nr-mode {mild,moderate,balanced,aggressive}`。
+> - **Python**：`python/core/nr_strength.py`（`create_denoiser_from_config(..., strength=...)`）或 CLI `python/process_audio.py --nr-mode {mild,moderate,balanced,aggressive}`（亦可寫 0-3）。
 > - **C**：`anr_config_for_mode(sample_rate, ANR_MODE_MILD|MODERATE|BALANCED|AGGRESSIVE)`（`c_impl/include/anr_types.h`）或 `denoise_wav --nr-mode`。
-> 兩端 4 級 std-math **bit-exact**。g_min_db 為 **audio 振幅 dB（/20）**。
+> 兩端 4 級 std-math **數值對齊，非逐位元相同**。g_min_db 為 **audio 振幅 dB（/20）**。
 > 四級共用同一套 DD、MCRA tracker、gain attack/decay 與低頻語音保護；
 > preset 只改下表四個「抑噪深度」旋鈕。
 

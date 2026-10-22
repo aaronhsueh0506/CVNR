@@ -107,6 +107,33 @@ def test_grid_match_no_mismatch_is_silent():
     assert compare_mod.check_grid_match(run_meta, dict(run_meta), allow_mismatch=False) == []
 
 
+def test_strength_index_and_name_are_the_same_grid_setting():
+    """A record holding the strength index (int or digit string) equals the record holding its name."""
+    for name, index in (("mild", 0), ("moderate", 1), ("balanced", 2), ("aggressive", 3)):
+        base_run = make_run_meta([], strength=name)
+        for stored in (index, str(index)):
+            cand_run = make_run_meta([], strength=stored)
+            assert compare_mod.check_grid_match(base_run, cand_run, allow_mismatch=False) == []
+            assert compare_mod.check_grid_match(cand_run, base_run, allow_mismatch=False) == []
+
+
+def test_strength_index_mismatch_is_reported_by_name():
+    base_run = make_run_meta([], strength="mild")
+    cand_run = make_run_meta([], strength=2)
+    assert compare_mod.check_grid_match(base_run, cand_run, allow_mismatch=True) == [
+        ("strength", "mild", "balanced")]
+
+
+def test_run_cli_accepts_strength_index_and_name():
+    parse = run_mod.build_arg_parser().parse_args
+    for argument, name in (("0", "mild"), ("1", "moderate"), ("2", "balanced"), ("3", "aggressive"),
+                           ("mild", "mild"), ("aggressive", "aggressive")):
+        assert parse(["--mode", "full", "--strength", argument, "--output", "x.json"]).strength == name
+    for bad in ("4", "-1", "02", "loud"):
+        with pytest.raises(SystemExit):
+            parse(["--mode", "full", "--strength", bad, "--output", "x.json"])
+
+
 def test_main_rejects_mismatched_grid_end_to_end(tmp_path):
     records = [make_record("a.wav")]
     base = write_json(tmp_path / "base.json", make_run_meta(records), records)

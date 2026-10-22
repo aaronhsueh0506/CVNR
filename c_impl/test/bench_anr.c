@@ -20,7 +20,8 @@
 #include "anr.h"
 #include "anr_types.h"
 #include "fft_wrapper.h"
-#include "simd_kernels.h"
+#include "audio_window.h"
+#include "utility/simd_kernels.h"
 
 #define MAX_PASSES 4096
 
@@ -74,8 +75,7 @@ static Complex* make_spectra(const AnrConfig* cfg, int hops) {
         }
         x[n] = (float)(400.0 * (double)rng_uniform() + 6000.0 * colour + 2500.0 * burst * voiced);
     }
-    for (int i = 0; i < frame; ++i)
-        window[i] = sqrtf(0.5f - 0.5f * cosf(2.0f * (float)M_PI * (float)i / (float)frame));
+    ac_window_build(window, frame);
     for (int k = 0; k < hops; ++k) {
         for (int i = 0; i < frame; ++i) buffer[i] = x[(long)k * hop + i] * window[i];
         fft_forward(fft, buffer, spectra + (size_t)k * nf);

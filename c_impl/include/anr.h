@@ -22,9 +22,10 @@ typedef struct AnrDenoiser AnrDenoiser;
 /* Allocate a heap instance; returns NULL on invalid config or allocation failure. */
 AnrDenoiser* anr_create(const AnrConfig* config);
 
-/* Caller-owned instance and all MCRA/SPP state use one 16-byte-aligned block. Query bytes once
- * with anr_get_mem_size(config), then supply at least that size to anr_init(). Size and carve
- * order must match. Invalid config, alignment or capacity returns NULL (size query returns 0).
+/* Caller-owned instance and all noise-tracker/SPP state use one 16-byte-aligned block. Query
+ * bytes once with anr_get_mem_size(config), then supply at least that size to anr_init(). Size
+ * and carve order must match. Invalid config, alignment or capacity returns NULL (size query
+ * returns 0).
  */
 size_t anr_get_mem_size(const AnrConfig* config);
 AnrDenoiser* anr_init(void* mem, size_t mem_size,
@@ -42,9 +43,10 @@ int anr_process(AnrDenoiser* self,
                      Complex*         spectrum_out);
 
 /* Compute gain[n_freqs] without applying it. Optional extra_noise_psd[n_freqs] uses the input
- * power scale and augments only the SPP/SNR noise floor (N² + R²); MCRA tracks input power
- * independently. NULL extra_noise_psd selects ordinary NR. NULL gain_out skips the copy;
- * anr_get_gain() still exposes the result. Returns 0 on success, -1 for NULL input/handle.
+ * power scale and augments only the SPP/SNR noise floor (N² + R²); the noise tracker follows
+ * the input power independently. NULL extra_noise_psd selects ordinary NR. NULL gain_out skips
+ * the copy; anr_get_gain() still exposes the result. Returns 0 on success, -1 for NULL
+ * input/handle.
  */
 int anr_process_gain(AnrDenoiser* self,
                           const Complex*   spectrum_in,

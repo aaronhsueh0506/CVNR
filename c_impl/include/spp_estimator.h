@@ -61,9 +61,6 @@ void spp_estimate_ex(
 /* Clear estimator history. */
 void spp_reset(SppEstimator* self);
 
-/* Frequency-bin count. */
-int spp_get_n_freqs(const SppEstimator* self);
-
 #ifdef __cplusplus
 }
 #endif

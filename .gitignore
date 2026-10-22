@@ -42,6 +42,7 @@ ENV/
 # 音頻文件（測試音頻除外）
 *.wav
 !test_*.wav
+c_impl/test/pyc_parity/data/*.wav
 !*_2s_silence.wav
 # test_wav/music/*.wav 為 ablation 測試輸入，已 git add -f 納入版控（*.wav 廣規則擋不住已追蹤檔）
 

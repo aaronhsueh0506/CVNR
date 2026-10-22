@@ -4,6 +4,127 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [Unreleased] — 2026-10-23 — pyc_parity_nr keeps the Python/C parity run only
+
+### Removed
+- `python/tools/pyc_parity_nr.py --compare BEFORE.json AFTER.json` (comparison of two saved result
+  files). `--json` still writes the result of a run.
+
+## [Unreleased] — 2026-10-21 — Shared periodic sqrt-Hann window
+
+### Changed
+- WAV runners, the frozen-input benchmark and the Python/C E2E driver build
+  their periodic sqrt-Hann through audiolib's `audio_window.h`. The shared
+  float32 table is bit-identical to the previous formula; Python/SciPy window
+  construction can round differently. Framing, FFT and OLA stay caller-owned.
+  Matching `Audio_ALG/lib/nr` files are mirrored byte-for-byte.
+
+## [Unreleased] - 2026-10-20 · pyc_parity_nr 容差凍結（取代 Wave-S 準備工作流程的暫定值）
+
+### 變更 (Changed)
+
+- `python/tools/pyc_parity_nr.py` 的 `TOLERANCES` 由「PROVISIONAL」改標為「FROZEN」，8 個常數逐一用
+  S-10/S-11/S-12 修復**之後**的真實樹全量測量（428 scenarios：5 grid × 4 strength × 18 輸入 ×
+  gain/e2e）重新核定，不再沿用 Wave-S 準備工作流程在這些修復落地前量到的舊基準。
+- 只有 1 個常數**維持不變**：`gain L2 max_abs` 維持 1.5e-1（最差 GREEN 9.693e-2，margin 僅
+  1.55x；2× 量測值 1.939e-1 已超過舊數字，所以這是目前資料能撐住的最寬鬆版本、而非收緊後的凍結值，
+  見下方「未關閉的缺口」）。
+- 其餘 7 個常數全部**收緊**：`gain L1 max_abs` 3.0e-3 → **2.0e-3**（最差 GREEN 3.809e-4，margin 5.25x）；
+  `gain L1 p999` 1.0e-4 → **2.0e-5**（最差 GREEN 5.190e-6，margin 3.85x）；`gain L2 p999` 1.5e-2 →
+  **7.0e-3**（最差 GREEN 3.186e-3，margin 2.2x）；`e2e L1 rms_err_db` -90.0 → **-100.0 dB**（最差
+  GREEN -106.48 dB，margin 6.48 dB）；`e2e L1 max_over_peak` 1.0e-4 → **2.0e-5**（最差 GREEN
+  8.439e-6，margin 2.37x）；`e2e L2 rms_err_db` -50.0 → **-55.0 dB**（最差 GREEN -61.15 dB，margin
+  6.15 dB）；`e2e L2 max_over_peak` 7.0e-3 → **6.0e-3**（最差 GREEN 2.620e-3，margin 2.29x）。沒有任何
+  常數被放寬。
+- **驗證沒有任何判定改變**：428 個 scenario × 2 層逐格比對修改前後的 JSON，`verdict` 完全相同
+  （`L1_GREEN=408`／`L1_RED_EXPECTED=20`（僅 S-13，範圍外）／`L2_GREEN=428`，前後皆為
+  `RESULT: PASS`）。修改前與修改後各自連跑兩次皆逐位元相同（`cmp` 確認）。
+- **Gate can-fail 證明（L2，直接量測）**：在 scratch 複本還原 S-10（`src/anr.c:gain_prepare_elem`
+  改回無條件除法，不管 v_in 是否 underflow 到 1e-10 以下），只對 `zerobins`／`int16_pk5`／
+  `int16_pk12` 家族（S-10 會觸發的那些）跑縮小集合：`gain` 側 80 scenarios，凍結後的 `gain L2`
+  容差正確抓到 **14/80** 個 `RED_UNEXPECTED`（例如 `gain/16k_256/balanced/int16_pk5` L2
+  max_abs=0.178、p999=0.105，遠超 7.0e-3）；`e2e` 側另跑 `synth_gaps`／`gap64_500` 家族 40
+  scenarios，抓到 **1/40**（`e2e/16k_256/mild/synth_gaps` L2 rms_err_db=-54.6 > -55.0、
+  max_over_peak=4.283e-3，`RED_UNEXPECTED~`，剛過新門檻）。兩個縮小集合對真實（未還原）的
+  `NR/c_impl` 跑都是全綠（`gain` 80/80 GREEN、`e2e` 該 scenario GREEN），`RESULT: PASS`。證明即使
+  `gain L2 max_abs` 維持原數字（margin 僅 1.55x），這個凍結值仍能抓到 S-10 規模的真實回歸；`e2e L2`
+  的收緊只多抓到 1 格，效果遠比 `gain L2` 弱（e2e 把整段波形的誤差平均掉，S-10 只影響少數 bin）。
+- **Gate can-fail 證明（L1，引用既有量測，非本輪重跑）**：本輪收緊的 4 個 L1 常數（`gain L1
+  max_abs`/`p999`、`e2e L1 rms_err_db`/`max_over_peak`）全部比修復前的舊門檻更嚴，而本檔案上一條
+  S-10/S-11/S-12 entry 已經量過修復前的舊（更鬆）門檻會怎麼判：「修復前 L1_RED_EXPECTED=149」、
+  e2e `scale_1e-4` rms_err 修復前 **-52.70 dB**（遠高於新門檻 -100.0 dB，也遠高於舊門檻
+  -90.0 dB）。既有的舊門檻在這些輸入上已經判紅，收緊後的新門檻只會更早判紅（單調），不需要另外重跑
+  mutation 來證明。
+- **收緊的代價**：e2e/L2 兩個常數收緊後，margin 只剩 harness 自己定義的 0.5–2.0x「marginal」帶邊緣
+  （`e2e L2 rms_err_db` 最差 GREEN -61.15 vs 新門檻 -55.0，ratio≈0.49；`e2e L2 max_over_peak`
+  2.620e-3 vs 6.0e-3，ratio≈0.44），`e2e L1` 與 `gain L2 p999` 亦接近（ratio≈0.42–0.47／0.455）：
+  同一輸入若因建置或平台漂移再變差約 2 倍，就會從「乾淨綠」變成 harness 印出的 `~` marginal
+  標記（不是紅，但值得注意）。凍結前後 marginal 計數維持 2→2（見下）不變，代表今天這批真實資料沒有
+  任何格子因為本次收緊而跨過 marginal 門檻，但上述幾個常數已經不再有本次凍結之前那麼寬的餘裕。
+- **這次凍結沒有關閉的已知缺口**（刻意不在這裡動）：`gain L2`（max_abs 與 p999）仍然把 fast-math
+  近似預算與六個 `USE_*` 優化旗標（包含 S-10 的 NEON twin）混在同一個容差裡，任何一個旗標單獨退步都
+  可能被另一個旗標的餘裕蓋住；上面的 can-fail 證明只驗證了「至少抓得到」，不代表這個混合容差能分辨
+  退步**是哪一個旗標造成的**。`gain L2 max_abs` 目前只有 1.55x margin（兩個真實 scenario 已經落在
+  harness 自己定義的 0.5–2.0x marginal 區間：`gain/16k_512/aggressive/synth_gaps` 0.57x、
+  `gain/8k_128/aggressive/int16_pk5` 0.65x），凍結在原數字上並不是「收緊」，是目前資料能撐住的最
+  寬鬆版本；下一輪若要再收緊，需要先把這 6 個 `USE_*` 旗標跟 fast-math 預算拆開量測。拆分留給未來的
+  工作，這裡只標記不實作。
+
+## [Unreleased] - 2026-10-20 · S-11 低電平 init_psd 數值防護（PY_C_SYNC_AUDIT.md S-10/S-11/S-12 三項 C/Python 對拍修復）
+
+### 修復 (Fixed)
+
+- **S-11**：`python/core/noise_estimators/mcra.py` 的 `McraNoiseEstimator.estimate()` 在算出
+  30th percentile 的 `init_psd` 之後，補一行 `np.maximum(init_psd, 1e-10)`，與 C port
+  （`noise_estimator_init_noise` 三條路徑）既有的 `init_psd < 1e-10f` 下限對齊。這是**數值防護，不是
+  演算法參數**：極低電平輸入（≈ −80 dBFS 以下，或 int16 峰值個位數 LSB）下 30th percentile 可能算出
+  次正常數甚至精確 0，讓後續每個消費者各自的 `+1e-10` epsilon 主宰估計值，而不是 MCRA 本身的統計行為；
+  一般電平輸入下百分位數遠大於 1e-10，`np.maximum` 不生效。只影響 Python；C 不動。
+- 本輪同時修復 C 端 S-10（`src/anr.c:gain_prepare_elem`，γ 近 0 時 shared-xi 除法丟失 xi）與 S-12
+  （`src/noise_estimator.c` 的 scene-change `hi_gamma` 改成先取均值再加 epsilon，與 Python 對齊）；
+  詳見 `c_impl/CHANGELOG.md` 同日條目。S-10/S-11/S-12 的已知落差註記已從
+  `c_impl/test/pyc_parity/expected_red.json` 移除（只剩 S-13 make-up prior，範圍外）。S-10 的 NEON
+  twin（`gain_prepare_neon`）另外用 `vmaxvq_u32` 做一次水平化判斷，只在 4-lane 群組裡真的有 lane
+  觸發 guard 時才算 xi 分支，讓算量不再比 S-10 之前的建置退步（原始版 +0.3%~+3.7%，branch-skip 版相對
+  原始版 −0.21%~−2.80%，相對 S-10 之前的真正基準落在 −1.21%~+1.01% 的量測噪音內）；bit-exact 與算量
+  數字見 `c_impl/CHANGELOG.md`。
+
+### 驗證 (Validation)
+
+- `python/tools/pyc_parity_nr.py`（L1 std-math C vs Python、L2 shipping C vs std-math C，18 輸入×4
+  strength×5 grid×gain/e2e）：修復前 L1_RED_EXPECTED=149、L2_RED_EXPECTED=132；修復後兩者皆為 0（僅
+  S-13 的 20 個 L1 格保持已知紅，範圍外），`RESULT: PASS`。
+- 直接 Python-only 對照（不經 C、不經 pyc harness）：一般電平輸入 `estimate()` 輸出逐位元不變
+  （`max|Δ|=0.0`）；人工構造的低電平＋精確 0 bin 輸入，修復前 `noise_psd.min()=0.0`、修復後
+  `=1e-10`，差值正好等於防護下限，行為符合預期。
+- 既有 `python/tests` 全套 105 項 pytest 全過（SE/NR 與 Audio_ALG/lib/nr 各跑一次）。
+- 影響範圍：只有數位靜音後／部分 bin 精確 0／int16 低電平（個位數 LSB）輸入才會觸發 S-11（Python）；
+  一般語音/VCTK/babble/music/scene 輸入逐位元不變。**但 C 端 S-10 的 guard 範圍更廣**：真實錄音的
+  DC 或 Nyquist bin 功率剛好落在浮點精確 0 或接近 0 時也會觸發，不限於人工構造的低電平輸入——用一支
+  真實的 48kHz 街頭噪音錄音 `n48_street_0dB.wav`（48kHz/1024，出貨建置）驗證，mild／moderate 模式下
+  各只有 1 個樣本差 1 LSB（960000 樣本中的 1 個），詳見 `c_impl/CHANGELOG.md` 的樣本編號與
+  instrumentation；不應再對「一般」真實世界語料宣稱 S-10 無條件逐位元不變。
+- 同步 `Audio_ALG/lib/nr/python/core/noise_estimators/mcra.py`，兩份逐位元相同。
+
+## [Unreleased] - 2026-10-19 · NR 強度參數可寫數字；`BACKEND=kiss` 與 C 端 `mcra_*` 命名移除對 Python 工具的影響
+
+C 端的改動與驗證結果見 `c_impl/CHANGELOG.md` 同日條目（輸出逐位元不變）。Python 演算法與
+`core/noise_estimators/mcra.py` 及其消費端不動，只調整工具與 CLI：
+
+### 變更 (Changed)
+
+- `process_audio.py --nr-mode` 與 `tools/run_vctk_benchmark.py --strength` 除了
+  `mild|moderate|balanced|aggressive`，也接受 `0|1|2|3`（依序對應，等於 C 的 `AnrMode` 值；
+  `core/nr_strength.py` 的 `nr_strength_name()`，`tests/test_nr_strength_index.py` 對照
+  `anr_types.h` 的列舉值）。`run_vctk_benchmark.py` 寫出的 JSON 仍是名稱字串，沒有改格式。
+  `--mode`（內容保留軸，只有 `full`）沒有數字寫法。
+- `tools/compare_vctk_benchmark.py` 比對 `strength` 時把數字與名稱正規化成名稱再比，舊記錄（字串）
+  與含數字的記錄可以互比（`tests/test_vctk_benchmark_tools.py` 新增 3 個案例）。
+- `tools/test_bit_exact.py --backend` 只剩 `ne10`（kiss 後端已移除）；`tools/parity_nr.py`
+  說明裡的建置指令改為不帶 `BACKEND=kiss`。
+- C 端預設 config 的 `L` 改用整數版 `anr_retime_frames_ms()`；Python 的 `retime_frame_count()`
+  （`core/signal_grid.py`）維持浮點，兩者在 5 個白名單 grid 的結果相同（L = 64 / 32 / 64 / 32 / 48）。
+
 ## [Unreleased] - 2026-10-19 · fricative-guard scene-change-confirmation 收斂（刪除兩個未用機制）
 
 ### 移除 (Removed)

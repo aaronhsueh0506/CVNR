@@ -3,12 +3,9 @@
 # =============================================================================
 # FFT backend
 # =============================================================================
-# FFT and fast math come from ../audio_common (prebuilt static archive libaudio_common.a) behind
-# one public API (fft_wrapper.h). BACKEND selects the implementation:
-#
-#   BACKEND=ne10   ARM NEON NE10 FFT (default; embedded deliverable)
-#   BACKEND=kiss   portable KISS FFT (deterministic reference; pass it explicitly for Python<->C
-#                  parity and byte-equal comparisons, e.g. python/tools/parity_nr.py)
+# FFT and fast math come from ../audiolib/common (prebuilt static archive libaudio_common.a) behind
+# one public API (fft_wrapper.h). The NE10 implementation follows the compiler target. BACKEND stays a
+# variable because it names the keyed obj/bin directories and is forwarded to audiolib.
 # =============================================================================
 
 CC  ?= gcc
@@ -16,11 +13,14 @@ CXX ?= c++
 AR      ?= ar
 RANLIB  ?= ranlib
 BACKEND ?= ne10
+ifneq ($(BACKEND),ne10)
+$(error BACKEND must be ne10 (got '$(BACKEND)'): ne10 is the only FFT backend)
+endif
 
 # Announce the resolved backend on every build. print-* goals are skipped: their output is
 # consumed through command substitution and must stay free of extra stdout.
 ifeq ($(filter print-%,$(MAKECMDGOALS)),)
-$(info NR: FFT backend = $(BACKEND) -- switch with `make BACKEND=kiss` or `make BACKEND=ne10`)
+$(info NR: FFT backend = $(BACKEND))
 endif
 
 # CXXFLAGS applies to the C++ API smoke test; the production library is C.
@@ -50,17 +50,17 @@ endif
 # guard-skipped build can never alias a guarded one.
 TOOLCHAIN_CHECK ?= 1
 
-# Publish knobs (full description in audio_common's Makefile). None of them is part of CFG_SIG,
+# Publish knobs (full description in audiolib's Makefile). None of them is part of CFG_SIG,
 # because none changes what is built.
 #   DIST_ROOT                where `make publish` writes releases.
 #   HOSTCC                   host compiler for the atomic symlink-swap helper (never $(CC), which
 #                            may be a cross compiler).
-#   ALLOW_DIRTY_PUBLISH      publish refuses when this checkout or the audio_common checkout
-#                            (AC_DIR) has uncommitted tracked changes; =1 admits them and records
+#   ALLOW_DIRTY_PUBLISH      publish refuses when this checkout or the audiolib checkout
+#                            (COMMON_DIR) has uncommitted tracked changes; =1 admits them and records
 #                            the sha256 of `git diff --binary HEAD` of each dirty checkout.
 #   ALLOW_UNTRACKED_PUBLISH  publish refuses when either checkout has untracked, non-ignored files;
 #                            =1 admits them and records a sha256 over their paths and contents.
-#   A checkout without git identity (missing AC_DIR, not a directory, not a git checkout) is always
+#   A checkout without git identity (missing COMMON_DIR, not a directory, not a git checkout) is always
 #   refused: the attestation could not name its source state.
 #   ATTEST_STAMP             test-only override of the UTC stamp in the attestation file name.
 #                            Attestations are unsigned: they give traceability, not authenticity.
@@ -83,21 +83,18 @@ else
 SIMD_CFLAGS :=
 endif
 
-# Locate audio_common: a sibling of this repo (../../audio_common from c_impl/), or two levels
-# deeper when this repo is a git submodule (Audio_ALG/lib/nr/c_impl/ -> ../../../../audio_common).
-AC_DIR ?= $(firstword $(wildcard ../../audio_common ../../../../audio_common))
+# Locate audiolib: a sibling of this repo (../../audiolib/common from c_impl/), or two levels
+# deeper when this repo is a git submodule (Audio_ALG/lib/nr/c_impl/ -> ../../../../audiolib/common).
+COMMON_DIR ?= $(firstword $(wildcard ../../audiolib/common ../../../../audiolib/common))
 
 CFLAGS = -Wall -Wextra -O2 -std=gnu99
-CFLAGS += -I./include -I./example -I$(AC_DIR)/include
+CFLAGS += -I./include -I./example -I$(COMMON_DIR)/include -I$(COMMON_DIR)
 CFLAGS += $(EXTRA_CFLAGS)
 CFLAGS += $(SIMD_CFLAGS)
 
-# The NE10 archive contains one C++ translation unit, so BACKEND=ne10 links with the C++ driver
-# (all NR sources stay plain C). The driver supplies the C++ runtime. LINK is part of CFG_SIG.
-LINK = $(CC)
-ifeq ($(BACKEND),ne10)
-  LINK = $(CXX)
-endif
+# The NE10 archive contains one C++ translation unit, so linking uses the C++ driver (all NR
+# sources stay plain C). The driver supplies the C++ runtime. LINK is part of CFG_SIG.
+LINK = $(CXX)
 
 # =============================================================================
 # Default optimizations versus DEBUG. DEBUG is resolved before CFG_SIG is computed, so the flag
@@ -129,12 +126,12 @@ endif
 #                           Formula-equivalent only: with approximate math it is not bit-exact to
 #                           the disabled path.
 # USE_SHARED_XI_RATIO       SPP outputs v = xi/(1+xi)*gamma and the gain stage reuses it.
-# USE_OPTIMIZED_MIN_BUFFER  MCRA minimum ring laid out [freq_idx * L + frame_idx] (contiguous per
-#                           frequency) instead of [frame_idx * n_freqs + freq_idx].
+# USE_OPTIMIZED_MIN_BUFFER  Noise-tracker minimum ring laid out [freq_idx * L + frame_idx]
+#                           (contiguous per frequency) instead of [frame_idx * n_freqs + freq_idx].
 # USE_OPTIMIZED_E1          E1(v): test v > 1.0 first and compute log10 once for v <= 1.0.
 # USE_SINGLE_CLAMP          Skip the final [g_min, 1.0] clamp that the log-domain clamp covers.
-# USE_INCREMENTAL_MIN       Track the MCRA minimum incrementally: O(1) on average, a full rescan
-#                           only when the evicted value was the minimum.
+# USE_INCREMENTAL_MIN       Track the noise-tracker minimum incrementally: O(1) on average, a full
+#                           rescan only when the evicted value was the minimum.
 #
 # Common builds:
 #   make debug                                  standard math, no optimizations (closest to Python)
@@ -147,14 +144,14 @@ LDFLAGS = -lm
 LDFLAGS += $(EXTRA_LDFLAGS)
 
 # -Werror opt-in for this repo's own sources (`make WERROR=1`, default off). Every object built
-# here is this repo's code: FFT and fast math are built in audio_common.
+# here is this repo's code: FFT and fast math are built in audiolib.
 WERROR ?= 0
 ifeq ($(WERROR),1)
   CFLAGS += -Werror
 endif
 
 # Keep multiply/add ordering stable in C and the C++ smoke test: no implicit FMA (checked by
-# audio_common/scripts/audit_fp_contract.sh), and audio_common's guarded AArch64 sqrtf calls lower
+# audiolib/common/scripts/audit_fp_contract.sh), and audiolib's guarded AArch64 sqrtf calls lower
 # to FSQRT without an errno-checking libm fallback.
 # FP_POLICY is a plain literal defined here, ahead of the override checks below, so that its
 # origin is final when they query it. It is appended to CFLAGS last: after every other append and
@@ -232,28 +229,28 @@ CFLAGS    += $(FP_POLICY)
 .DEFAULT_GOAL := all
 
 # =============================================================================
-# audio_common resolution (two-phase dispatch)
+# audiolib resolution (two-phase dispatch)
 # =============================================================================
-# Phase 1 (AC_LIB unset): ask audio_common for its archive path (`print-lib-path`, forwarding this
+# Phase 1 (COMMON_LIB unset): ask audiolib for its archive path (`print-lib-path`, forwarding this
 # invocation's BACKEND/SIMD/WERROR/CC/CXX/EXTRA_CFLAGS/NO_STDIO/TOOLCHAIN_CHECK) and re-invoke
-# make with AC_LIB set. Phase 2 (AC_LIB known): the real rules, with $(AC_LIB) as a normal
+# make with COMMON_LIB set. Phase 2 (COMMON_LIB known): the real rules, with $(COMMON_LIB) as a normal
 # prerequisite so that relinking happens iff the archive's mtime advanced. `lib` (libanr.a, no
-# audio_common code) needs neither phase and lives outside the dispatch.
+# audiolib code) needs neither phase and lives outside the dispatch.
 #
 # Under `make -n` the dispatch recipe's sub-makes still run (a recipe that mentions $(MAKE) always
 # executes); -n propagates through MAKEFLAGS, so each child only prints its recipes.
-AC_FWD = BACKEND=$(BACKEND) SIMD=$(SIMD) WERROR=$(WERROR) CC='$(CC)' CXX='$(CXX)' EXTRA_CFLAGS='$(EXTRA_CFLAGS)' NO_STDIO=$(NO_STDIO) TOOLCHAIN_CHECK=$(TOOLCHAIN_CHECK)
+COMMON_FWD = BACKEND=$(BACKEND) SIMD=$(SIMD) WERROR=$(WERROR) CC='$(CC)' CXX='$(CXX)' EXTRA_CFLAGS='$(EXTRA_CFLAGS)' NO_STDIO=$(NO_STDIO) TOOLCHAIN_CHECK=$(TOOLCHAIN_CHECK)
 
-ifeq ($(AC_LIB),)
+ifeq ($(COMMON_LIB),)
 .PHONY: all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-scene-change test-api-cpp bench-anr
 all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-scene-change test-api-cpp bench-anr:
-	+@ac="$$($(MAKE) -s --no-print-directory -C $(AC_DIR) $(AC_FWD) print-lib-path)"; \
-	 test -n "$$ac" || { echo "FATAL: could not resolve audio_common archive path (AC_DIR=$(AC_DIR) -- is audio_common present as a sibling of this repo?)" >&2; exit 1; }; \
-	 $(MAKE) --no-print-directory $@ AC_LIB="$$ac"
+	+@ac="$$($(MAKE) -s --no-print-directory -C $(COMMON_DIR) $(COMMON_FWD) print-lib-path)"; \
+	 test -n "$$ac" || { echo "FATAL: could not resolve audiolib archive path (COMMON_DIR=$(COMMON_DIR) -- is audiolib present as a sibling of this repo?)" >&2; exit 1; }; \
+	 $(MAKE) --no-print-directory $@ COMMON_LIB="$$ac"
 else
-# Producer identity in this repo's CFG_SIG: the last path component of $(AC_LIB)'s directory
-# (for example kiss-2139547423), never the absolute path.
-AC_PRODUCER_SIG := $(notdir $(patsubst %/,%,$(dir $(AC_LIB))))
+# Producer identity in this repo's CFG_SIG: the last path component of $(COMMON_LIB)'s directory
+# (for example ne10-2139547423), never the absolute path.
+COMMON_PRODUCER_SIG := $(notdir $(patsubst %/,%,$(dir $(COMMON_LIB))))
 endif
 
 # Directories. They precede CFG_SIG_PAYLOAD because SRCS references SRC_DIR; OBJ_DIR and BIN_DIR
@@ -268,24 +265,27 @@ BIN_ROOT ?= bin
 OBJ_DIR = $(OBJ_ROOT)/$(BACKEND)-$(CFG_SIG)
 BIN_DIR = $(BIN_ROOT)/$(BACKEND)-$(CFG_SIG)
 
-# Library sources (the gain calculation is in anr.c). FFT and fast math come from audio_common
-# through $(AC_LIB). SRCS is part of CFG_SIG_PAYLOAD: adding or removing a source keys to a fresh
+# Library sources (the gain calculation is in anr.c). FFT and fast math come from audiolib
+# through $(COMMON_LIB). SRCS is part of CFG_SIG_PAYLOAD: adding or removing a source keys to a fresh
 # obj/bin directory.
 SRCS = $(SRC_DIR)/anr.c \
-       $(SRC_DIR)/mcra_noise_estimator.c \
+       $(SRC_DIR)/noise_estimator.c \
        $(SRC_DIR)/spp_estimator.c
 
 # --- Hash-keyed object/binary directories and CFG_SIG ---------------------------
-# obj/<backend>-<sig>/ and bin/<backend>-<sig>/ (design as in audio_common's Makefile): builds that
+# obj/<backend>-<sig>/ and bin/<backend>-<sig>/ (design as in audiolib's Makefile): builds that
 # differ in backend, flags, WERROR, DEBUG or producer never share a directory. The payload covers
 # CC CXX AR RANLIB LINK CFLAGS CXXFLAGS CPPFLAGS LDFLAGS EXTRA_CFLAGS EXTRA_LDFLAGS BACKEND SIMD
-# WERROR NO_STDIO DEBUG TOOLCHAIN_CHECK AC_PRODUCER_SIG and the sorted SRCS.
+# WERROR NO_STDIO DEBUG TOOLCHAIN_CHECK COMMON_PRODUCER_SIG and the sorted SRCS.
 #
-# It is defined after CFLAGS/LDFLAGS are final and AC_PRODUCER_SIG is resolved, and before the
+# It is defined after CFLAGS/LDFLAGS are final and COMMON_PRODUCER_SIG is resolved, and before the
 # first rule that mentions OBJ_DIR or BIN_DIR: Make expands a rule's target list when it parses
 # the rule. The payload is deliberately not $(strip)ped (a false miss is acceptable, a false hit
 # is not). cksum (POSIX) computes the hash.
-CFG_SIG_PAYLOAD := CC=$(CC) CXX=$(CXX) AR=$(AR) RANLIB=$(RANLIB) LINK=$(LINK) CFLAGS=$(CFLAGS) CXXFLAGS=$(CXXFLAGS) CPPFLAGS=$(CPPFLAGS) LDFLAGS=$(LDFLAGS) EXTRA_CFLAGS=$(EXTRA_CFLAGS) EXTRA_LDFLAGS=$(EXTRA_LDFLAGS) BACKEND=$(BACKEND) SIMD=$(SIMD) WERROR=$(WERROR) NO_STDIO=$(NO_STDIO) DEBUG=$(DEBUG) TOOLCHAIN_CHECK=$(TOOLCHAIN_CHECK) AC_PRODUCER_SIG=$(AC_PRODUCER_SIG) SRCS=$(sort $(SRCS))
+# The same CC command can select a different SDK through PATH.
+# Include effective pointer/FP/ISA predefines to avoid cross-ABI cache reuse.
+override CC_TARGET_SIG := $(shell sh $(COMMON_DIR)/scripts/target_abi_signature.sh $(CC) $(CPPFLAGS) $(CFLAGS))
+CFG_SIG_PAYLOAD := CC_TARGET_SIG=$(CC_TARGET_SIG) CC=$(CC) CXX=$(CXX) AR=$(AR) RANLIB=$(RANLIB) LINK=$(LINK) CFLAGS=$(CFLAGS) CXXFLAGS=$(CXXFLAGS) CPPFLAGS=$(CPPFLAGS) LDFLAGS=$(LDFLAGS) EXTRA_CFLAGS=$(EXTRA_CFLAGS) EXTRA_LDFLAGS=$(EXTRA_LDFLAGS) BACKEND=$(BACKEND) SIMD=$(SIMD) WERROR=$(WERROR) NO_STDIO=$(NO_STDIO) DEBUG=$(DEBUG) TOOLCHAIN_CHECK=$(TOOLCHAIN_CHECK) COMMON_PRODUCER_SIG=$(COMMON_PRODUCER_SIG) SRCS=$(sort $(SRCS))
 CFG_SIG := $(shell printf '%s' "$(CFG_SIG_PAYLOAD)" | cksum | cut -d' ' -f1)
 
 EXAMPLE_SRCS = $(EXAMPLE_DIR)/main.c
@@ -298,14 +298,17 @@ EXAMPLE_OBJS = $(patsubst $(EXAMPLE_DIR)/%.c,$(OBJ_DIR)/%.o,$(EXAMPLE_SRCS))
 TARGET = $(BIN_DIR)/denoise_wav
 
 # --- CFG_SIG collision guard and directory creation ----------------------------
-# Same mechanism as audio_common's Makefile.
+# Same mechanism as audiolib's Makefile.
 .PHONY: _cfg_guard
 _cfg_guard:
-	@if [ "$(BACKEND)" = "ne10" ] && [ "$(TOOLCHAIN_CHECK)" = "1" ]; then \
+	@test -n "$(CC_TARGET_SIG)" && test "$(CC_TARGET_SIG)" != unavailable || { \
+	  echo "FATAL: cannot determine compiler target; CC preprocessing with the configured flags must succeed." >&2; \
+	  exit 1; }
+	@if [ "$(TOOLCHAIN_CHECK)" = "1" ]; then \
 	  cc_m="$$($(CC) -dumpmachine 2>/dev/null)"; cxx_m="$$($(CXX) -dumpmachine 2>/dev/null)"; \
 	  if [ -z "$$cc_m" ] || [ "$$cc_m" != "$$cxx_m" ]; then \
 	    echo "FATAL: CC/CXX compile for different targets (CC='$(CC)' -> '$$cc_m', CXX='$(CXX)' -> '$$cxx_m')." >&2; \
-	    echo "  BACKEND=ne10 links a C++ TU (audio_common's NE10 archive); pass the FULL toolchain:" >&2; \
+	    echo "  BACKEND=ne10 links a C++ TU (audiolib's NE10 archive); pass the FULL toolchain:" >&2; \
 	    echo "    make BACKEND=ne10 CC=aarch64-linux-gnu-gcc CXX=aarch64-linux-gnu-g++ AR=aarch64-linux-gnu-ar RANLIB=aarch64-linux-gnu-ranlib" >&2; \
 	    echo "  (TOOLCHAIN_CHECK=0 skips this check; it participates in CFG_SIG.)" >&2; \
 	    exit 1; \
@@ -338,8 +341,8 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c | _cfg_guard
 $(OBJ_DIR)/%.o: $(EXAMPLE_DIR)/%.c | _cfg_guard
 	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
 
-# Static library: denoiser/MCRA/SPP core only; link $(AC_LIB) separately for the FFT backend.
-# No audio_common archive goes into libanr.a, so this rule lives outside the AC_LIB dispatch.
+# Static library: denoiser/noise tracker/SPP core only; link $(COMMON_LIB) separately for the FFT.
+# No audiolib archive goes into libanr.a, so this rule lives outside the COMMON_LIB dispatch.
 LIB_TARGET = $(BIN_DIR)/libanr.a
 
 .PHONY: lib
@@ -353,22 +356,22 @@ $(LIB_TARGET): $(OBJS) | _cfg_guard
 	@echo "Static library built: $@"
 
 # =============================================================================
-# Phase 2 rules, defined once AC_LIB is known. $(AC_LIB): FORCE always re-invokes audio_common's
+# Phase 2 rules, defined once COMMON_LIB is known. $(COMMON_LIB): FORCE always re-invokes audiolib's
 # own build, which touches the archive only if it rebuilt something, so the binaries below
 # relink only then.
 # =============================================================================
-ifneq ($(AC_LIB),)
+ifneq ($(COMMON_LIB),)
 .PHONY: all FORCE
 all: $(TARGET)
 
 FORCE:
 
-$(AC_LIB): FORCE
-	+$(MAKE) -C $(AC_DIR) $(AC_FWD) lib
-	@test -f '$@' || { echo "ERROR: audio_common did not produce $@ (query/build divergence -- supported forwarded controls are BACKEND/SIMD/WERROR/CC/CXX/EXTRA_CFLAGS/NO_STDIO/TOOLCHAIN_CHECK)"; exit 1; }
+$(COMMON_LIB): FORCE
+	+$(MAKE) -C $(COMMON_DIR) $(COMMON_FWD) lib
+	@test -f '$@' || { echo "ERROR: audiolib did not produce $@ (query/build divergence -- supported forwarded controls are BACKEND/SIMD/WERROR/CC/CXX/EXTRA_CFLAGS/NO_STDIO/TOOLCHAIN_CHECK)"; exit 1; }
 
-$(TARGET): $(OBJS) $(EXAMPLE_OBJS) $(AC_LIB) | _cfg_guard
-	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(EXAMPLE_OBJS) $(AC_LIB) $(LDFLAGS)
+$(TARGET): $(OBJS) $(EXAMPLE_OBJS) $(COMMON_LIB) | _cfg_guard
+	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(EXAMPLE_OBJS) $(COMMON_LIB) $(LDFLAGS)
 	@echo "Build complete: $@"
 
 # =============================================================================
@@ -382,28 +385,28 @@ $(TARGET): $(OBJS) $(EXAMPLE_OBJS) $(AC_LIB) | _cfg_guard
 PARITY_TARGET = $(BIN_DIR)/parity_runner
 parity: $(PARITY_TARGET)
 
-$(PARITY_TARGET): $(OBJS) $(OBJ_DIR)/parity_runner.o $(AC_LIB) | _cfg_guard
-	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/parity_runner.o $(AC_LIB) $(LDFLAGS)
+$(PARITY_TARGET): $(OBJS) $(OBJ_DIR)/parity_runner.o $(COMMON_LIB) | _cfg_guard
+	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/parity_runner.o $(COMMON_LIB) $(LDFLAGS)
 	@echo "Build complete: $@"
 
 $(OBJ_DIR)/parity_runner.o: $(EXAMPLE_DIR)/parity_runner.c | _cfg_guard
 	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
 
 # =============================================================================
-# Static-memory build: the engine, MCRA/SPP and FFT take all state from caller-provided memory
-# (no malloc/free on the audio path). Links example/main_mem.c against the same objects as
-# denoise_wav; the heap and static paths are both always compiled in (anr_get_mem_size() and
+# Static-memory build: the engine, noise tracker/SPP and FFT take all state from caller-provided
+# memory (no malloc/free on the audio path). Links example/main_mem.c against the same objects
+# as denoise_wav; the heap and static paths are both always compiled in (anr_get_mem_size() and
 # anr_init()). Honors EXTRA_CFLAGS, e.g.:  make mem EXTRA_CFLAGS="-DUSE_STANDARD_MATH"
-# Both FFT backends are heap-free on the static path (make mem BACKEND=ne10): the handle, work
-# buffers and R2C/C2R twiddle configuration are carved from the caller pool
-# (ne10_fft_init_r2c_float32_ext in audio_common's vendored NE10).
+# The FFT is heap-free on the static path: the handle, work buffers and R2C/C2R twiddle
+# configuration are carved from the caller pool (ne10_fft_init_r2c_float32_ext in audiolib's
+# vendored NE10).
 # =============================================================================
 .PHONY: mem
 MEM_TARGET = $(BIN_DIR)/denoise_mem
 mem: $(MEM_TARGET)
 
-$(MEM_TARGET): $(OBJS) $(OBJ_DIR)/main_mem.o $(AC_LIB) | _cfg_guard
-	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/main_mem.o $(AC_LIB) $(LDFLAGS)
+$(MEM_TARGET): $(OBJS) $(OBJ_DIR)/main_mem.o $(COMMON_LIB) | _cfg_guard
+	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/main_mem.o $(COMMON_LIB) $(LDFLAGS)
 	@echo "Static-memory build complete: $@"
 
 $(OBJ_DIR)/main_mem.o: $(EXAMPLE_DIR)/main_mem.c | _cfg_guard
@@ -432,12 +435,12 @@ test-noise-restart: $(TEST_RESTART_TARGET)
 test-scene-change: $(TEST_SCENE_TARGET)
 	"$(abspath $(TEST_SCENE_TARGET))"
 
-$(TEST_TARGET): $(OBJS) $(OBJ_DIR)/test_config_validation.o $(AC_LIB) | _cfg_guard
-	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/test_config_validation.o $(AC_LIB) $(LDFLAGS)
+$(TEST_TARGET): $(OBJS) $(OBJ_DIR)/test_config_validation.o $(COMMON_LIB) | _cfg_guard
+	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/test_config_validation.o $(COMMON_LIB) $(LDFLAGS)
 	@echo "Build complete: $@"
 
-$(TEST_RECFG_TARGET): $(OBJS) $(OBJ_DIR)/test_reconfigure.o $(AC_LIB) | _cfg_guard
-	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/test_reconfigure.o $(AC_LIB) $(LDFLAGS)
+$(TEST_RECFG_TARGET): $(OBJS) $(OBJ_DIR)/test_reconfigure.o $(COMMON_LIB) | _cfg_guard
+	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/test_reconfigure.o $(COMMON_LIB) $(LDFLAGS)
 	@echo "Build complete: $@"
 
 
@@ -448,8 +451,8 @@ $(OBJ_DIR)/test_reconfigure.o: $(TEST_DIR)/test_reconfigure.c | _cfg_guard
 	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
 
 # Noise-tracker recovery after digital silence (see test/test_noise_restart.c).
-$(TEST_RESTART_TARGET): $(OBJS) $(OBJ_DIR)/test_noise_restart.o $(AC_LIB) | _cfg_guard
-	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/test_noise_restart.o $(AC_LIB) $(LDFLAGS)
+$(TEST_RESTART_TARGET): $(OBJS) $(OBJ_DIR)/test_noise_restart.o $(COMMON_LIB) | _cfg_guard
+	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/test_noise_restart.o $(COMMON_LIB) $(LDFLAGS)
 	@echo "Build complete: $@"
 
 $(OBJ_DIR)/test_noise_restart.o: $(TEST_DIR)/test_noise_restart.c | _cfg_guard
@@ -457,8 +460,8 @@ $(OBJ_DIR)/test_noise_restart.o: $(TEST_DIR)/test_noise_restart.c | _cfg_guard
 
 # Scene-change flatness decision at a threshold margin inside a cubic-exp
 # approximation's error (see test/test_scene_change_margin.c).
-$(TEST_SCENE_TARGET): $(OBJS) $(OBJ_DIR)/test_scene_change_margin.o $(AC_LIB) | _cfg_guard
-	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/test_scene_change_margin.o $(AC_LIB) $(LDFLAGS)
+$(TEST_SCENE_TARGET): $(OBJS) $(OBJ_DIR)/test_scene_change_margin.o $(COMMON_LIB) | _cfg_guard
+	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/test_scene_change_margin.o $(COMMON_LIB) $(LDFLAGS)
 	@echo "Build complete: $@"
 
 $(OBJ_DIR)/test_scene_change_margin.o: $(TEST_DIR)/test_scene_change_margin.c | _cfg_guard
@@ -475,8 +478,8 @@ TEST_PARITY_TARGET = $(BIN_DIR)/test_config_parity
 test-config-parity: $(TEST_PARITY_TARGET)
 	"$(abspath $(TEST_PARITY_TARGET))"
 
-$(TEST_PARITY_TARGET): $(OBJS) $(OBJ_DIR)/test_config_parity.o $(AC_LIB) | _cfg_guard
-	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/test_config_parity.o $(AC_LIB) $(LDFLAGS)
+$(TEST_PARITY_TARGET): $(OBJS) $(OBJ_DIR)/test_config_parity.o $(COMMON_LIB) | _cfg_guard
+	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/test_config_parity.o $(COMMON_LIB) $(LDFLAGS)
 	@echo "Build complete: $@"
 
 $(OBJ_DIR)/test_config_parity.o: $(TEST_DIR)/test_config_parity.c | _cfg_guard
@@ -488,8 +491,8 @@ TEST_CPP_TARGET = $(BIN_DIR)/test_api_cpp
 test-api-cpp: $(TEST_CPP_TARGET)
 	"$(abspath $(TEST_CPP_TARGET))"
 
-$(TEST_CPP_TARGET): $(OBJS) $(OBJ_DIR)/test_api_cpp.o $(AC_LIB) | _cfg_guard
-	$(CXX) $(filter-out -std=gnu99,$(CFLAGS)) $(CXXFLAGS) $(FP_POLICY) -o $@ $(OBJS) $(OBJ_DIR)/test_api_cpp.o $(AC_LIB) $(LDFLAGS)
+$(TEST_CPP_TARGET): $(OBJS) $(OBJ_DIR)/test_api_cpp.o $(COMMON_LIB) | _cfg_guard
+	$(CXX) $(filter-out -std=gnu99,$(CFLAGS)) $(CXXFLAGS) $(FP_POLICY) -o $@ $(OBJS) $(OBJ_DIR)/test_api_cpp.o $(COMMON_LIB) $(LDFLAGS)
 
 $(OBJ_DIR)/test_api_cpp.o: $(TEST_DIR)/test_api_cpp.cpp | _cfg_guard
 	$(CXX) $(filter-out -std=gnu99,$(CFLAGS)) $(CXXFLAGS) -std=c++17 $(FP_POLICY) -MD -MP -c -o $@ $<
@@ -502,8 +505,8 @@ BENCH_ARGS ?=
 bench-anr: $(BENCH_TARGET)
 	"$(abspath $(BENCH_TARGET))" $(BENCH_ARGS)
 
-$(BENCH_TARGET): $(OBJS) $(OBJ_DIR)/bench_anr.o $(AC_LIB) | _cfg_guard
-	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/bench_anr.o $(AC_LIB) $(LDFLAGS)
+$(BENCH_TARGET): $(OBJS) $(OBJ_DIR)/bench_anr.o $(COMMON_LIB) | _cfg_guard
+	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/bench_anr.o $(COMMON_LIB) $(LDFLAGS)
 	@echo "Build complete: $@"
 
 $(OBJ_DIR)/bench_anr.o: $(TEST_DIR)/bench_anr.c | _cfg_guard
@@ -515,25 +518,25 @@ PYTHON ?= python3
 .PHONY: test-bit-exact
 test-bit-exact:
 	$(PYTHON) ../python/tools/test_bit_exact.py --backend $(BACKEND) --simd $(SIMD) \
-	  --ac-dir "$(abspath $(AC_DIR))" --cc "$(CC)" --cxx "$(CXX)"
+	  --ac-dir "$(abspath $(COMMON_DIR))" --cc "$(CC)" --cxx "$(CXX)"
 
 # --- Query targets -----------------------------------------------------------
-# Report THIS invocation's own build identity (empty AC_PRODUCER_SIG unless
-# AC_LIB was explicitly passed in). To get the exact path `make all` (or
-# `make mem`/`parity`/`test-config`) would produce, resolve AC_LIB the same
+# Report THIS invocation's own build identity (empty COMMON_PRODUCER_SIG unless
+# COMMON_LIB was explicitly passed in). To get the exact path `make all` (or
+# `make mem`/`parity`/`test-config`) would produce, resolve COMMON_LIB the same
 # way phase 1 does and pass it explicitly:
-#   ac=$$(make -s -C ../../audio_common BACKEND=$$B print-lib-path)
-#   make -s BACKEND=$$B print-bin-dir AC_LIB="$$ac"
+#   ac=$$(make -s -C ../../audiolib/common BACKEND=$$B print-lib-path)
+#   make -s BACKEND=$$B print-bin-dir COMMON_LIB="$$ac"
 .PHONY: print-bin-dir print-obj-dir print-lib-path
 # print-bin-dir dispatches through the same phase-1 producer resolution as
 # the build goals, so a bare `make -s print-bin-dir` prints the exact
 # directory the binaries are delivered into (NR's binaries only exist in the
-# resolved-producer directory). Passing AC_LIB= explicitly skips the query.
-ifeq ($(AC_LIB),)
+# resolved-producer directory). Passing COMMON_LIB= explicitly skips the query.
+ifeq ($(COMMON_LIB),)
 print-bin-dir:
-	+@ac="$$($(MAKE) -s --no-print-directory -C $(AC_DIR) $(AC_FWD) print-lib-path)"; \
-	 test -n "$$ac" || { echo "FATAL: could not resolve audio_common archive path (AC_DIR=$(AC_DIR))" >&2; exit 1; }; \
-	 $(MAKE) -s --no-print-directory print-bin-dir AC_LIB="$$ac"
+	+@ac="$$($(MAKE) -s --no-print-directory -C $(COMMON_DIR) $(COMMON_FWD) print-lib-path)"; \
+	 test -n "$$ac" || { echo "FATAL: could not resolve audiolib archive path (COMMON_DIR=$(COMMON_DIR))" >&2; exit 1; }; \
+	 $(MAKE) -s --no-print-directory print-bin-dir COMMON_LIB="$$ac"
 else
 print-bin-dir:
 	@echo $(abspath $(BIN_DIR))
@@ -545,12 +548,12 @@ print-lib-path:
 
 # =============================================================================
 # publish: immutable, content-addressed release under $(DIST_ROOT), with the layout and semantics
-# of audio_common's publish (see that Makefile): deterministic MANIFEST, append-only ATTEST/
+# of audiolib's publish (see that Makefile): deterministic MANIFEST, append-only ATTEST/
 # provenance, byte-verified idempotent republish (MANIFEST tampering is detected), a rename-atomic
 # `current` swap through the swapln helper built with $(HOSTCC), and a lock taken before the
 # prerequisite build so that concurrent same-configuration publishes cannot race. `publish` is the
 # locked driver; _publish_impl is internal (calling it directly skips the lock) and goes through
-# the same two-phase AC_LIB dispatch as `all`.
+# the same two-phase COMMON_LIB dispatch as `all`.
 #
 #  - make -n, -q and -t never touch $(DIST_ROOT) or the lock (see the driver below).
 #  - git_commit is the full 40-hex OID. Dirty is computed from `git status --porcelain`; when
@@ -559,12 +562,12 @@ print-lib-path:
 #    link(2): atomic, no clobber). On a name collision (same second, same commit) the sequence
 #    number is bumped and the install retried, at most 999 times; an existing attestation is never
 #    overwritten. Attestations are unsigned: traceability, not authenticity.
-#  - Both checkouts that produced the artifact are checked: this repo and the audio_common
-#    checkout (AC_DIR). Publish refuses when either has uncommitted tracked changes
+#  - Both checkouts that produced the artifact are checked: this repo and the audiolib
+#    checkout (COMMON_DIR). Publish refuses when either has uncommitted tracked changes
 #    (ALLOW_DIRTY_PUBLISH=1 admits them) or untracked, non-ignored files
 #    (ALLOW_UNTRACKED_PUBLISH=1 admits them). The attestation records git_commit, git_dirty,
 #    dirty_diff_sha256, git_untracked and untracked_tree_sha256 for this repo, the same fields
-#    with an audio_common_ prefix for the producer, and both allow_* flags.
+#    with an audiolib_ prefix for the producer, and both allow_* flags.
 #  - untracked_tree_sha256 is a sha256 over sorted fixed-field per-file records computed by
 #    hash_untracked(): "L <sha256(path)> <sha256(readlink)>" for symlinks and
 #    "F <mode> <sha256(path)> <sha256(content)>" for regular files. A path that cannot be hashed
@@ -606,12 +609,12 @@ publish:
 	trap 'rmdir "$(DIST_LOCK)" 2>/dev/null' EXIT INT TERM; \
 	$(MAKE) --no-print-directory _publish_impl
 
-ifeq ($(AC_LIB),)
+ifeq ($(COMMON_LIB),)
 .PHONY: _publish_impl
 _publish_impl:
-	+@ac="$$($(MAKE) -s --no-print-directory -C $(AC_DIR) $(AC_FWD) print-lib-path)"; \
-	 test -n "$$ac" || { echo "FATAL: could not resolve audio_common archive path" >&2; exit 1; }; \
-	 $(MAKE) --no-print-directory _publish_impl AC_LIB="$$ac"
+	+@ac="$$($(MAKE) -s --no-print-directory -C $(COMMON_DIR) $(COMMON_FWD) print-lib-path)"; \
+	 test -n "$$ac" || { echo "FATAL: could not resolve audiolib archive path" >&2; exit 1; }; \
+	 $(MAKE) --no-print-directory _publish_impl COMMON_LIB="$$ac"
 else
 .PHONY: _publish_impl
 _publish_impl: $(PUBLISH_ARTIFACTS)
@@ -648,27 +651,27 @@ _publish_impl: $(PUBLISH_ARTIFACTS)
 	dirty=0; [ -n "$$(git status --porcelain -uno 2>/dev/null)" ] && dirty=1; \
 	unt_list="$$(git ls-files --others --exclude-standard 2>/dev/null)"; \
 	untracked=0; [ -n "$$unt_list" ] && untracked=1; \
-	if [ -n "$(AC_DIR)" ] && [ -d "$(AC_DIR)" ]; then \
-	  ac_commit="$$(git -C $(AC_DIR) rev-parse HEAD 2>/dev/null || echo unknown)"; \
+	if [ -n "$(COMMON_DIR)" ] && [ -d "$(COMMON_DIR)" ]; then \
+	  ac_commit="$$(git -C $(COMMON_DIR) rev-parse HEAD 2>/dev/null || echo unknown)"; \
 	else \
 	  ac_commit=unknown; \
 	fi; \
 	if [ "$$ac_commit" = "unknown" ]; then \
-	  echo "FATAL: publish refused -- audio_common (AC_DIR=$(AC_DIR)) has no git identity here (missing, not a directory, or not a git checkout)." >&2; \
+	  echo "FATAL: publish refused -- audiolib (COMMON_DIR=$(COMMON_DIR)) has no git identity here (missing, not a directory, or not a git checkout)." >&2; \
 	  echo "  Without an identity the attestation cannot name the source state OR enumerate untracked" >&2; \
 	  echo "  content, so NO escape hatch admits this." >&2; \
-	  echo "  Point AC_DIR at a real audio_common checkout (or a scratch clone with a disposable commit)." >&2; \
+	  echo "  Point COMMON_DIR at a real audiolib checkout (or a scratch clone with a disposable commit)." >&2; \
 	  exit 1; \
 	fi; \
-	ac_dirty=0; [ -n "$$(git -C $(AC_DIR) status --porcelain -uno 2>/dev/null)" ] && ac_dirty=1; \
-	ac_unt_list="$$(git -C $(AC_DIR) ls-files --others --exclude-standard 2>/dev/null)"; \
+	ac_dirty=0; [ -n "$$(git -C $(COMMON_DIR) status --porcelain -uno 2>/dev/null)" ] && ac_dirty=1; \
+	ac_unt_list="$$(git -C $(COMMON_DIR) ls-files --others --exclude-standard 2>/dev/null)"; \
 	ac_untracked=0; [ -n "$$ac_unt_list" ] && ac_untracked=1; \
 	adp=0; [ "$(ALLOW_DIRTY_PUBLISH)" = "1" ] && adp=1; \
 	aup=0; [ "$(ALLOW_UNTRACKED_PUBLISH)" = "1" ] && aup=1; \
 	if [ "$$adp" != "1" ] && ( [ "$$dirty" = "1" ] || [ "$$ac_dirty" = "1" ] ); then \
 	  echo "FATAL: publish refused --" >&2; \
 	  [ "$$dirty" = "1" ] && echo "  nr working tree is dirty (uncommitted TRACKED changes)." >&2; \
-	  [ "$$ac_dirty" = "1" ] && echo "  audio_common (AC_DIR=$(AC_DIR)) working tree is dirty (uncommitted TRACKED changes)." >&2; \
+	  [ "$$ac_dirty" = "1" ] && echo "  audiolib (COMMON_DIR=$(COMMON_DIR)) working tree is dirty (uncommitted TRACKED changes)." >&2; \
 	  echo "  Commit (or clone a clean checkout) for a board deliverable, or pass ALLOW_DIRTY_PUBLISH=1" >&2; \
 	  echo "  for a dev publish -- the escape hatch is recorded in the attestation." >&2; \
 	  exit 1; \
@@ -680,15 +683,15 @@ _publish_impl: $(PUBLISH_ARTIFACTS)
 	    printf '%s\n' "$$unt_list" | head -5 | sed 's/^/    /' >&2; \
 	  fi; \
 	  if [ "$$ac_untracked" = "1" ]; then \
-	    echo "  audio_common (AC_DIR=$(AC_DIR)):" >&2; \
+	    echo "  audiolib (COMMON_DIR=$(COMMON_DIR)):" >&2; \
 	    printf '%s\n' "$$ac_unt_list" | head -5 | sed 's/^/    /' >&2; \
 	  fi; \
 	  echo "  Track/remove them for a board deliverable, or pass ALLOW_UNTRACKED_PUBLISH=1 -- the escape" >&2; \
-	  echo "  hatch is recorded in the attestation with (audio_common_)untracked_tree_sha256 over their exact contents." >&2; \
+	  echo "  hatch is recorded in the attestation with (audiolib_)untracked_tree_sha256 over their exact contents." >&2; \
 	  exit 1; \
 	fi; \
 	ddiff=""; [ "$$dirty" = "1" ] && ddiff="$$(git diff --binary HEAD 2>/dev/null | shasum -a 256 | cut -d' ' -f1)"; \
-	ac_ddiff=""; [ "$$ac_dirty" = "1" ] && ac_ddiff="$$(git -C $(AC_DIR) diff --binary HEAD 2>/dev/null | shasum -a 256 | cut -d' ' -f1)"; \
+	ac_ddiff=""; [ "$$ac_dirty" = "1" ] && ac_ddiff="$$(git -C $(COMMON_DIR) diff --binary HEAD 2>/dev/null | shasum -a 256 | cut -d' ' -f1)"; \
 	uhash=""; \
 	if [ "$$untracked" = "1" ]; then \
 	  printf '%s\n' "$$unt_list" | hash_untracked "./" > "$$work/untracked.records"; \
@@ -701,9 +704,9 @@ _publish_impl: $(PUBLISH_ARTIFACTS)
 	fi; \
 	ac_uhash=""; \
 	if [ "$$ac_untracked" = "1" ]; then \
-	  printf '%s\n' "$$ac_unt_list" | hash_untracked "$(AC_DIR)/" > "$$work/ac_untracked.records"; \
+	  printf '%s\n' "$$ac_unt_list" | hash_untracked "$(COMMON_DIR)/" > "$$work/ac_untracked.records"; \
 	  if grep -q '^X ' "$$work/ac_untracked.records"; then \
-	    echo "FATAL: publish refused -- an untracked path in audio_common (AC_DIR=$(AC_DIR)) cannot be hashed deterministically (embedded git checkout / special file / I/O failure) and so cannot enter the provenance record:" >&2; \
+	    echo "FATAL: publish refused -- an untracked path in audiolib (COMMON_DIR=$(COMMON_DIR)) cannot be hashed deterministically (embedded git checkout / special file / I/O failure) and so cannot enter the provenance record:" >&2; \
 	    grep '^X ' "$$work/ac_untracked.records" | sed 's/^X /    /' >&2; \
 	    exit 1; \
 	  fi; \
@@ -711,7 +714,7 @@ _publish_impl: $(PUBLISH_ARTIFACTS)
 	fi; \
 	dateutc="$$(date -u +%Y-%m-%dT%H:%M:%SZ)"; \
 	stamp='$(ATTEST_STAMP)'; [ -n "$$stamp" ] || stamp="$$(date -u +%Y%m%dT%H%M%SZ)"; \
-	$(HOSTCC) -O2 -o "$$work/swapln" $(AC_DIR)/tools/atomic_symlink_swap.c || { echo "FATAL: could not build the atomic symlink-swap helper with HOSTCC=$(HOSTCC) (pass HOSTCC=<host compiler>)" >&2; exit 1; }; \
+	$(HOSTCC) -O2 -o "$$work/swapln" $(COMMON_DIR)/tools/atomic_symlink_swap.c || { echo "FATAL: could not build the atomic symlink-swap helper with HOSTCC=$(HOSTCC) (pass HOSTCC=<host compiler>)" >&2; exit 1; }; \
 	mkdir -p "$(DIST_BACKEND_DIR)"; \
 	rm -rf "$$tmp"; mkdir -p "$$tmp"; \
 	cp $(PUBLISH_ARTIFACTS) "$$tmp/"; \
@@ -723,7 +726,7 @@ _publish_impl: $(PUBLISH_ARTIFACTS)
 	  echo "release_id=$$rel_id"; \
 	  echo "backend=$(BACKEND)"; \
 	  echo "cfg_sig=$(CFG_SIG)"; \
-	  echo "producer_cfg_sig=$(AC_PRODUCER_SIG)"; \
+	  echo "producer_cfg_sig=$(COMMON_PRODUCER_SIG)"; \
 	  echo "cc=$(CC)"; echo "cxx=$(CXX)"; echo "ar=$(AR)"; echo "ranlib=$(RANLIB)"; echo "link=$(LINK)"; \
 	  echo "cflags=$(CFLAGS)"; \
 	  echo "extra_cflags=$(EXTRA_CFLAGS)"; \
@@ -755,10 +758,10 @@ _publish_impl: $(PUBLISH_ARTIFACTS)
 	    [ -n "$$ddiff" ] && echo "dirty_diff_sha256=$$ddiff"; \
 	    echo "git_untracked=$$untracked"; \
 	    [ -n "$$uhash" ] && echo "untracked_tree_sha256=$$uhash"; \
-	    echo "audio_common_git_commit=$$ac_commit"; echo "audio_common_git_dirty=$$ac_dirty"; \
-	    [ -n "$$ac_ddiff" ] && echo "audio_common_dirty_diff_sha256=$$ac_ddiff"; \
-	    echo "audio_common_git_untracked=$$ac_untracked"; \
-	    [ -n "$$ac_uhash" ] && echo "audio_common_untracked_tree_sha256=$$ac_uhash"; \
+	    echo "audiolib_git_commit=$$ac_commit"; echo "audiolib_git_dirty=$$ac_dirty"; \
+	    [ -n "$$ac_ddiff" ] && echo "audiolib_dirty_diff_sha256=$$ac_ddiff"; \
+	    echo "audiolib_git_untracked=$$ac_untracked"; \
+	    [ -n "$$ac_uhash" ] && echo "audiolib_untracked_tree_sha256=$$ac_uhash"; \
 	    echo "date_utc=$$dateutc"; \
 	    echo "allow_dirty_publish=$$adp"; \
 	    echo "allow_untracked_publish=$$aup"; \
@@ -773,6 +776,39 @@ _publish_impl: $(PUBLISH_ARTIFACTS)
 	echo "nr: published $(BACKEND)/$$rel_id -> $(DIST_BACKEND_DIR)/current (attested: $$attest_name)"
 endif
 
+# =============================================================================
+# Python<->C numeric parity tool (test/pyc_parity_nr.sh, ../python/tools/pyc_parity_nr.py).
+# `pyc-parity` builds the tool's two C drivers (pyc_gain_driver, pyc_e2e_driver) with this
+# invocation's flags, the way `parity` builds parity_runner. The script builds the std-math and the
+# shipping configuration, runs the comparison and decides pass/fail; this goal does not run it.
+# =============================================================================
+.PHONY: pyc-parity
+ifeq ($(COMMON_LIB),)
+pyc-parity:
+	+@ac="$$($(MAKE) -s --no-print-directory -C $(COMMON_DIR) $(COMMON_FWD) print-lib-path)"; \
+	 test -n "$$ac" || { echo "FATAL: could not resolve audiolib archive path (COMMON_DIR=$(COMMON_DIR) -- is audiolib present as a sibling of this repo?)" >&2; exit 1; }; \
+	 $(MAKE) --no-print-directory $@ COMMON_LIB="$$ac"
+else
+PYC_PARITY_DIR = $(TEST_DIR)/pyc_parity
+PYC_GAIN_TARGET = $(BIN_DIR)/pyc_gain_driver
+PYC_E2E_TARGET = $(BIN_DIR)/pyc_e2e_driver
+pyc-parity: $(PYC_GAIN_TARGET) $(PYC_E2E_TARGET)
+
+$(PYC_GAIN_TARGET): $(OBJS) $(OBJ_DIR)/pyc_gain_driver.o $(COMMON_LIB) | _cfg_guard
+	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/pyc_gain_driver.o $(COMMON_LIB) $(LDFLAGS)
+	@echo "Build complete: $@"
+
+$(PYC_E2E_TARGET): $(OBJS) $(OBJ_DIR)/pyc_e2e_driver.o $(COMMON_LIB) | _cfg_guard
+	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/pyc_e2e_driver.o $(COMMON_LIB) $(LDFLAGS)
+	@echo "Build complete: $@"
+
+$(OBJ_DIR)/pyc_gain_driver.o: $(PYC_PARITY_DIR)/pyc_gain_driver.c | _cfg_guard
+	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
+
+$(OBJ_DIR)/pyc_e2e_driver.o: $(PYC_PARITY_DIR)/pyc_e2e_driver.c | _cfg_guard
+	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
+endif
+
 # debug delegates to `all` with DEBUG=1 (see "Default optimizations versus DEBUG" above).
 debug:
 	+@$(MAKE) DEBUG=1 all
@@ -784,11 +820,11 @@ clean:
 	@echo "Clean complete"
 
 # Install (copy to /usr/local/bin) -- resolves this invocation's own denoise_wav
-# via the two-phase dispatch (needs AC_LIB), same as `all`.
-ifeq ($(AC_LIB),)
+# via the two-phase dispatch (needs COMMON_LIB), same as `all`.
+ifeq ($(COMMON_LIB),)
 install:
-	+@ac="$$($(MAKE) -s --no-print-directory -C $(AC_DIR) $(AC_FWD) print-lib-path)"; \
-	 $(MAKE) --no-print-directory install AC_LIB="$$ac"
+	+@ac="$$($(MAKE) -s --no-print-directory -C $(COMMON_DIR) $(COMMON_FWD) print-lib-path)"; \
+	 $(MAKE) --no-print-directory install COMMON_LIB="$$ac"
 else
 install: $(TARGET)
 	cp $(TARGET) /usr/local/bin/
@@ -801,10 +837,10 @@ uninstall:
 	@echo "Uninstalled"
 
 # Test with sample file (requires test.wav in current directory)
-ifeq ($(AC_LIB),)
+ifeq ($(COMMON_LIB),)
 test:
-	+@ac="$$($(MAKE) -s --no-print-directory -C $(AC_DIR) $(AC_FWD) print-lib-path)"; \
-	 $(MAKE) --no-print-directory test AC_LIB="$$ac"
+	+@ac="$$($(MAKE) -s --no-print-directory -C $(COMMON_DIR) $(COMMON_FWD) print-lib-path)"; \
+	 $(MAKE) --no-print-directory test COMMON_LIB="$$ac"
 else
 test: $(TARGET)
 	@if [ -f test.wav ]; then \
@@ -843,13 +879,12 @@ help:
 	@echo ""
 	@echo "Build Configurations:"
 	@echo "  make                                          - Standard build (NE10 FFT, ARM NEON, embedded deliverable, fast math - default)"
-	@echo "  make BACKEND=kiss                             - KISS FFT build (portable, bit-reproducible reference)"
-	@echo "  make debug                                    - Debug build (DEBUG=1, matches Python output)"
+	@echo "  make debug                                  - Debug build (DEBUG=1, matches Python output)"
 	@echo "  make EXTRA_CFLAGS=\"-DUSE_FAST_PERCENTILE\"    - Optimized build (all approximations)"
 	@echo "  make WERROR=1                                  - Opt-in: -Werror for this repo's own sources"
 	@echo ""
 	@echo "Objects/binaries live in <OBJ_ROOT>|<BIN_ROOT>/<backend>-<config-hash>/ (default obj/bin) -- switching"
-	@echo "BACKEND, EXTRA_CFLAGS, WERROR, or DEBUG always lands in a fresh directory"
+	@echo "SIMD, EXTRA_CFLAGS, WERROR, or DEBUG always lands in a fresh directory"
 	@echo "automatically; no manual clean needed, and two differently-configured"
 	@echo "builds can run concurrently in this same tree. Run \`make print-bin-dir\`"
 	@echo "(same flags as your build) to locate this invocation's own artifacts, or"

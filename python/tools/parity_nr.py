@@ -43,10 +43,10 @@ Usage:
 
   # 2. (build + run C side -- see c_impl/example/parity_runner.c)
   #    bin/ is keyed bin/<backend>-<config-hash>/;
-  #    include the resolved audio_common archive in the build and path query:
-  ac=$(make -s --no-print-directory -C ../audio_common BACKEND=kiss print-lib-path)
-  make -C c_impl BACKEND=kiss AC_LIB="$ac" parity
-  "$(make -s -C c_impl BACKEND=kiss AC_LIB="$ac" print-bin-dir)"/parity_runner \
+  #    include the resolved audiolib archive in the build and path query:
+  ac=$(make -s --no-print-directory -C ../audiolib/common BACKEND=ne10 print-lib-path)
+  make -C c_impl BACKEND=ne10 COMMON_LIB="$ac" parity
+  "$(make -s -C c_impl BACKEND=ne10 COMMON_LIB="$ac" print-bin-dir)"/parity_runner \
         /tmp/parity_in.bin /tmp/parity_c_gains.bin
 
   # 3. compare

@@ -42,7 +42,7 @@ python python/process_audio.py input.wav --versions V3-2 \
 ```
 
 `--nr-mode` selects suppression depth (`mild`, `moderate`, `balanced`, or
-`aggressive`). All four strengths share the same DD recursion, MCRA tracker,
+`aggressive`; the digits `0`-`3` select the same four in that order). All four strengths share the same DD recursion, MCRA tracker,
 gain dynamics, and low-frequency speech guard; a preset changes only `g_min`,
 the speech-presence prior `q`, the a-priori-SNR floor, and noise
 over-subtraction. This keeps the noise-reduction ladder monotonic instead of
@@ -58,12 +58,12 @@ NEON kernels, three-grid cost measurements, validation and reset behavior.
 `make -C c_impl bench-anr` prints the per-hop cost of the current build.
 
 ```bash
-# NE10/NEON build (embedded deliverable, default backend everywhere). SIMD=1 is the default.
+# NE10/NEON build (embedded deliverable, the only FFT backend). SIMD=1 is the default.
 make -C c_impl WERROR=1
 make -C c_impl SIMD=0 test
 
-# Portable, bit-reproducible reference build (explicit).
-make -C c_impl BACKEND=kiss SIMD=0 WERROR=1
+# Scalar-kernel build.
+make -C c_impl SIMD=0 WERROR=1
 ```
 
 Use `anr_get_mem_size()` followed by `anr_init()` for the

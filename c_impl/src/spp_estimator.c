@@ -1,8 +1,9 @@
 /* Decision-directed per-bin speech-presence probability (Cohen and Berdugo). */
 
 #include "spp_estimator.h"
-#include "fft_wrapper.h"   /* ALIGN16 */
-#include "simd_kernels.h"  /* Bit-exact SIMD exp(-v); requires -ffp-contract=off. */
+#include "fft_wrapper.h"
+#include "utility/mem_align.h"
+#include "utility/simd_kernels.h"  /* Bit-exact SIMD exp(-v); requires -ffp-contract=off. */
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -311,10 +312,6 @@ void spp_reset(SppEstimator* self) {
     memset(self->noise_psd_prev, 0, self->n_freqs * sizeof(float));
 
     self->is_initialized = false;
-}
-
-bool spp_is_initialized(const SppEstimator* self) {
-    return self ? self->is_initialized : false;
 }
 
 #ifdef USE_SHARED_XI_RATIO

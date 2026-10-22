@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "mcra_noise_estimator.h"
+#include "noise_estimator.h"
 #include "anr_types.h"
 
 static int g_fail = 0;
@@ -24,30 +24,30 @@ static int g_fail = 0;
 /* Min and max of the high-band noise PSD after MIN_FRAMES burst frames. */
 static void hi_noise_after_burst(float hi_b, float* min_out, float* max_out) {
     AnrConfig cfg = anr_default_config_for_grid(16000, 512);
-    McraNoiseEstimator* est;
+    NoiseEstimator* est;
     float power[N_FREQS], sum[N_FREQS];
     const float* noise;
     int f, k;
     cfg.scene_change_min_frames = MIN_FRAMES;
-    est = mcra_create(N_FREQS, &cfg);
+    est = noise_estimator_create(N_FREQS, &cfg);
     *min_out = -1.0f; *max_out = -1.0f;
     if (!est) return;
     for (k = 0; k < N_FREQS; ++k) { power[k] = 1.0f; sum[k] = 0.0f; }
     for (f = 0; f < N_INIT; ++f) {
         for (k = 0; k < N_FREQS; ++k) sum[k] += power[k];
-        mcra_accumulate_init_power(est, power, f);
+        noise_estimator_accumulate_init_power(est, power, f);
     }
-    mcra_init_noise(est, sum, N_INIT);
+    noise_estimator_init_noise(est, sum, N_INIT);
     for (k = HI_START; k < HI_START + 64; ++k) power[k] = HI_A;
     for (k = HI_START + 64; k < N_FREQS; ++k) power[k] = hi_b;
-    for (f = 0; f < MIN_FRAMES; ++f) mcra_update(est, power, NULL);
-    noise = mcra_get_noise_psd(est);
+    for (f = 0; f < MIN_FRAMES; ++f) noise_estimator_update_ex(est, power, NULL, false, 0, 0.0f);
+    noise = noise_estimator_get_noise_psd(est);
     *min_out = noise[HI_START]; *max_out = noise[HI_START];
     for (k = HI_START; k < N_FREQS; ++k) {
         if (noise[k] < *min_out) *min_out = noise[k];
         if (noise[k] > *max_out) *max_out = noise[k];
     }
-    mcra_destroy(est);
+    noise_estimator_destroy(est);
 }
 
 int main(void) {

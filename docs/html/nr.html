@@ -22,7 +22,7 @@ pre code{background:none;padding:0}
 </style>
 </head>
 <body>
-<nav><a href="../../../Audio_ALG/docs/html/index.html">index</a><a href="../../../AEC/docs/html/aec.html">aec</a><a href="nr.html">nr</a><a href="../../../audio_common/docs/html/audio_common.html">audio_common</a><a href="../../../AEC/docs/html/aec_c_api.html">AEC API</a><a href="nr_c_api.html">NR API</a><a href="../../../audio_common/docs/html/audio_common_c_api.html">audio_common API</a><a href="../../../Audio_ALG/docs/html/integration_example.html">串接範例</a></nav>
+<nav><a href="../../../Audio_ALG/docs/html/index.html">index</a><a href="../../../AEC/docs/html/aec.html">aec</a><a href="nr.html">nr</a><a href="../../../audiolib/common/docs/html/audio_common.html">audiolib</a><a href="../../../AEC/docs/html/aec_c_api.html">AEC API</a><a href="nr_c_api.html">NR API</a><a href="../../../audiolib/common/docs/html/audio_common_c_api.html">audiolib API</a><a href="../../../Audio_ALG/docs/html/integration_example.html">串接範例</a></nav>
 <h1>NR C library(MMSE-LSA denoiser)— <code>lib/nr/c_impl</code></h1>
 
 <h2>概要</h2>
@@ -91,11 +91,13 @@ if (anr_reconfigure(d, &amp;target) != 0) { /* 幾何不符或 target 無效 */ 
     |                                     |
     ├── !is_initialized(前 num_init_frames 幀)─────────────┐
     |     init_power_sum += power                          |
-    |     mcra_accumulate_init_power()                     |
-    |     滿幀 → mcra_init_noise();  gain[k]=1(直通)       |
+    |     noise_estimator_accumulate_init_power()          |
+    |     滿幀 → noise_estimator_init_noise()              |
+    |     gain[k]=1(直通)                                  |
     |                                                      |
     └── 已初始化:                                          |
-          noise_for_spp = mcra_get_noise_psd() (+ extra ←──┘  ξ=S²/(N²+R²))
+          noise_for_spp = noise_estimator_get_noise_psd()
+                          (+ extra ←───────────────────────┘  ξ=S²/(N²+R²))
              |
           spp_estimate(power, noise_for_spp, gain_prev, enhanced_psd_prev)
              → spp / xi / gamma          (decision-directed a-priori SNR)
@@ -105,7 +107,7 @@ if (anr_reconfigure(d, &amp;target) != 0) { /* 幾何不符或 target 無效 */ 
                + 不對稱 attack/decay 平滑 → gain[k] ∈ [g_min, 1]
                (gain_prev / enhanced_psd_prev 於同一迴圈更新)
              |
-          mcra_update(power, spp)        ← 只吃乾淨 power,R² 不進噪聲追蹤
+          noise_estimator_update_ex(power, spp, …)  ← 只吃乾淨 power,R² 不進噪聲追蹤
              → noise_psd / S / S_min(L 幀最小值追蹤)+ scene-change 偵測
     |
  gain_out(可 NULL;anr_get_gain() 讀同一 buffer)
@@ -137,7 +139,7 @@ caller(合成)  g_total=min(gain,G_res)  同左                      同左
 </table></div>
 
 <h2>State 表(跨呼叫 state;全部由 C struct 保存)</h2>
-<p class="small">存放者一律是 <code>AnrDenoiser</code> struct + 內嵌 <code>McraNoiseEstimator</code>/<code>SppEstimator</code> 子模組,單一 pool(<code>anr_init</code>)或 heap(<code>anr_create</code>)。無 NPU/host 端 state。</p>
+<p class="small">存放者一律是 <code>AnrDenoiser</code> struct + 內嵌 <code>NoiseEstimator</code>/<code>SppEstimator</code> 子模組,單一 pool(<code>anr_init</code>)或 heap(<code>anr_create</code>)。無 NPU/host 端 state。</p>
 <div class="tblwrap"><table>
 <tr><th>state</th><th>shape</th><th>大小(16k/512)</th><th>內容</th></tr>
 <tr><td><code>gain_prev</code>、<code>enhanced_psd_prev</code></td><td>float32[n_freqs] ×2</td><td>2×1,028 B</td><td>decision-directed ξ 的前一幀 state(跨 hop 的核心遞迴)</td></tr>
@@ -154,13 +156,13 @@ caller(合成)  g_total=min(gain,G_res)  同左                      同左
 <h2>延遲與 warm-up</h2>
 <ul>
 <li><b>演算法延遲 = 0 樣本</b>:<code>anr_get_latency()</code> 回 0。頻域增益同 hop 產出;框架延遲(window+FFT / IFFT+OLA,50% overlap 下為 1 hop)由呼叫端的 transform 負擔——mono pipeline 的端到端 1 hop 就來自這層(參見 aec.html 延遲表)。</li>
-<li><b>Warm-up = <code>num_init_frames</code></b>(≈200 ms,格點重定時:16k/256=25 幀、16k/512=13 幀、48k=19 幀,實測):期間累積噪聲底、<b>增益=1 直通</b>(不抑制),滿幀後 <code>mcra_init_noise()</code> 完成初始化,<code>anr_is_initialized()</code> 轉 true。</li>
+<li><b>Warm-up = <code>num_init_frames</code></b>(≈200 ms,格點重定時:16k/256=25 幀、16k/512=13 幀、48k=19 幀,實測):期間累積噪聲底、<b>增益=1 直通</b>(不抑制),滿幀後 <code>noise_estimator_init_noise()</code> 完成初始化,<code>anr_is_initialized()</code> 轉 true。</li>
 <li>MCRA 最小值追蹤窗 L(balanced 實測 64/32/48 幀 ≈ 512 ms)決定噪聲底適應新環境的時間尺度;scene-change 偵測(hi-freq γ + 頻譜平坦度,<code>broadband_threshold&lt;1</code> 時另有寬頻 reset)提供快速路徑。</li>
 </ul>
 
 <h2>相關檔案與測試路徑</h2>
 <ul>
-<li>API:<code>lib/nr/c_impl/include/anr.h</code>、<code>anr_types.h</code>(python/config/preset/驗證全在此);實作:<code>src/anr.c</code>、<code>src/mcra_noise_estimator.c</code>、<code>src/spp_estimator.c</code></li>
+<li>API:<code>lib/nr/c_impl/include/anr.h</code>、<code>anr_types.h</code>(python/config/preset/驗證全在此);實作:<code>src/anr.c</code>、<code>src/noise_estimator.c</code>、<code>src/spp_estimator.c</code></li>
 <li>使用端:<code>pipelines/mono_aec_nr_res/audio_pipeline.c</code>(mono pipeline 的 NR seam;overlay 註解含 2026-08-03 A/B 決策依據)、<code>lib/nr/c_impl/example/main_mem.c</code>(獨立 freq-domain runner,含 <code>build_sqrt_hann()</code>)</li>
 <li>文件:<code>lib/nr/docs/c_user_manual_zh_TW.md</code>、<code>lib/nr/c_impl/README.md</code></li>
 <li>測試(本頁撰寫時實跑):<code>make test-config</code> 186 檢查全過(ALL CHECKS PASSED;config 驗證 + gain-borrow 行為)/ <code>make test-config-parity</code> 3 格點 × 4 strength 的 12 列常數 CSV 輸出,exit 0(供 Python 端 parity 比對)</li>

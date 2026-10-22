@@ -39,15 +39,15 @@
 |---|---|---|
 | `c_impl/include/anr.h` | 建構／處理／reset／查詢 API、`AnrDebugStatus` | 是 |
 | `c_impl/include/anr_types.h` | `AnrConfig`、`AnrMode`、config constructor、`anr_validate_config()` | 是（`anr.h` 已自動含入） |
-| `../audio_common/include/fft_wrapper.h` | `Complex`、`FftHandle`、`fft_*` | 是（`anr.h` 已自動含入，見第 6 節） |
-| `../audio_common/include/mem_align.h` | `ALIGN16` 等對齊巨集 | 否（由 `fft_wrapper.h` 帶入） |
+| `../audiolib/common/include/fft_wrapper.h` | `Complex`、`FftHandle`、`fft_*` | 是（`anr.h` 已自動含入，見第 6 節） |
+| `../audiolib/common/utility/mem_align.h` | `ALIGN16` 等對齊巨集 | 否（`anr.h`/`anr_types.h` 本身不用到；library 內部實作（`anr.c`/`noise_estimator.c`/`spp_estimator.c`）直接 include，不再透過 `fft_wrapper.h` 轉傳；整合者只有自己要操作 `ALIGN16` 時才需要直接 include） |
 
 連結需要的 archive：
 
 | 檔案 | 內容 |
 |---|---|
 | `libanr.a` | denoiser + MCRA + SPP core（本 repo 建置產生） |
-| `libaudio_common.a` | FFT backend 與 fast math（`../audio_common` 建置產生） |
+| `libaudio_common.a` | FFT backend 與 fast math（`../audiolib/common` 建置產生） |
 
 `libanr.a` **不含** FFT，兩個 archive 必須一起連結。
 
@@ -65,7 +65,7 @@ source tree 取用。
 
 ### 0.4 內部子模組
 
-`c_impl/include/mcra_noise_estimator.h` 與 `c_impl/include/spp_estimator.h`
+`c_impl/include/noise_estimator.h` 與 `c_impl/include/spp_estimator.h`
 是 denoiser 內部擁有的子模組介面，**整合者不應直接呼叫**（denoiser 會自行建立、驅動與釋放
 它們；這兩個 header 也有數個宣告在 archive 中並不存在，直接呼叫會得到 link error）。
 
@@ -85,7 +85,7 @@ source tree 取用。
 #include <stdlib.h>
 #include <string.h>
 
-#include "fft_wrapper.h"          /* audio_common: Complex, FftHandle, fft_*  */
+#include "fft_wrapper.h"          /* audiolib: Complex, FftHandle, fft_*  */
 #include "anr.h"
 #include "anr_types.h"
 
@@ -376,8 +376,7 @@ instance 之間不共用可變狀態，可各自在不同 thread 使用。多條
 建置 archive（在 repo 根目錄執行）：
 
 ```bash
-make -C c_impl lib                       # 預設 BACKEND=ne10：NEON backend（目標平台交付組合）
-make -C c_impl BACKEND=kiss lib          # 可攜、逐位元可重現的參考 backend（顯式指定）
+make -C c_impl lib                       # NE10 FFT（NEON，目標平台交付組合）
 make -C c_impl                           # 加建 denoise_wav
 make -C c_impl mem                       # 加建 denoise_mem（static memory 示範）
 make -C c_impl debug                     # standard math、關閉最佳化開關
@@ -401,24 +400,13 @@ make -C c_impl test-config
 make -C c_impl test-config-parity
 ```
 
-連結你自己的程式（預設 NE10 backend 含 C++ TU，用 C++ driver 連結）：
+連結你自己的程式（NE10 含 C++ TU，用 C++ driver 連結）：
 
 ```bash
 c++ -std=gnu99 app.c \
-   -Ic_impl/include -I../audio_common/include \
+   -Ic_impl/include -I../audiolib/common/include \
    $(make -s -C c_impl print-lib-path) \
-   $(make -s -C ../audio_common print-lib-path) \
-   -lm -o app
-```
-
-換成可攜、逐位元可重現的參考 backend 時，兩個 `print-lib-path` 都要帶 `BACKEND=kiss`；
-KISS backend 純 C，可改回 `cc` driver 連結：
-
-```bash
-cc -std=gnu99 app.c \
-   -Ic_impl/include -I../audio_common/include \
-   $(make -s -C c_impl BACKEND=kiss print-lib-path) \
-   $(make -s -C ../audio_common BACKEND=kiss print-lib-path) \
+   $(make -s -C ../audiolib/common print-lib-path) \
    -lm -o app
 ```
 
@@ -426,7 +414,7 @@ cc -std=gnu99 app.c \
 
 ```bash
 ./denoise_wav noisy.wav clean.wav
-./denoise_wav noisy.wav clean.wav --nr-mode mild
+./denoise_wav noisy.wav clean.wav --nr-mode mild      # 或數字 0|1|2|3 = mild|moderate|balanced|aggressive
 ./denoise_wav noisy.wav clean.wav --fft-size 512      # 指定 grid，見 4.1 節
 ./denoise_wav input.wav copy.wav --bypass
 ./denoise_wav noisy.wav clean.wav --debug             # 每秒印一行狀態
@@ -456,7 +444,7 @@ cc -std=gnu99 app.c \
 | `anr_default_config()` / `_for_grid()` / `anr_config_for_mode()` / `_for_mode_grid()` | 以值回傳 `AnrConfig` | **沒有錯誤回傳值**。傳入不支援的 sample rate 時會產生一個 `fft_size == 0` 的無效 config，必須靠 `anr_validate_config()` 才會發現 |
 | `anr_default_fft_size(sample_rate)` | 回傳預設 FFT 尺寸 | 不支援的 sample rate 回傳 **`0`** |
 | `anr_retime_alpha()` / `_alpha_ref()` | 回傳換算後的係數 | 參數越界時**原封不動回傳輸入值**，不報錯 |
-| `anr_retime_frames()` / `_frames_ref()` | 回傳換算後的 frame 數 | 參數無效或結果溢位時回傳 **`0`** |
+| `anr_retime_frames()` / `_frames_ms()` | 回傳換算後的 frame 數 | 參數無效或結果溢位時回傳 **`0`** |
 
 要點：
 
@@ -536,18 +524,17 @@ aggressive −28/0.45/−12/1.3）；上表的時間常數與低頻語音 guard 
 但 `speech_protect_frame_threshold` 的**生效值**為 `value + (q − 0.52)`，隨 preset 的 `q`
 逐級位移（mild 0.61、moderate 0.57、balanced 0.55、aggressive 0.48）。
 
-記憶體需求（KISS backend，預設建置參數，實測 byte 數）：
+記憶體需求（NE10，預設建置參數，實測 byte 數）：
 
 | grid | `anr_get_mem_size()` | 加上 `-DUSE_FAST_PERCENTILE` | `fft_get_mem_size()` |
 |---|---:|---:|---:|
-| 8k/128 | 29 888 | 23 232 | 4 688 |
-| 8k/256 | 35 552 | 28 736 | 8 784 |
-| 16k/256 | 58 304 | 45 248 | 8 784 |
-| 16k/512 | 69 856 | 56 384 | 16 976 |
-| 48k/1024 | 183 616 | 144 512 | 33 360 |
+| 8k/128 | 29 840 | 23 184 | 4 464 |
+| 8k/256 | 35 504 | 28 688 | 8 176 |
+| 16k/256 | 58 256 | 45 200 | 8 176 |
+| 16k/512 | 69 808 | 56 336 | 15 600 |
+| 48k/1024 | 183 568 | 144 464 | 30 448 |
 
-（低頻語音 guard 的 frame 純量狀態讓每個 grid 的 `anr_get_mem_size()` 各多 112 B，
-`fft_get_mem_size()` 不變。）
+（低頻語音 guard 的 frame 純量狀態讓每個 grid 的 `anr_get_mem_size()` 各多 112 B。）
 
 需求量同時受 `fft_size`、`L`、`num_init_frames` 與建置參數影響，上表僅供規劃 pool 大小時
 估算；**正式程式一律以執行時的 `_get_mem_size()` 回傳值為準**。
@@ -604,7 +591,8 @@ MCRA broadband gate 內部用來計數的 `spp > 0.5` 則是另一個分類門�
 
 如果你在某個 grid 上手調出一組係數，想在另一個 grid 上得到相同的實際時間常數，用
 `anr_retime_alpha_ref(alpha, sample_rate, hop_size, ref_hop_seconds)`（平滑係數）與
-`anr_retime_frames_ref(frames, sample_rate, hop_size, ref_hop_seconds)`（frame 計數）；
+`anr_retime_frames_ms(frames, sample_rate, hop_size, ref_hop_ms)`（frame 計數，參考 hop 以整數毫秒給定、
+全程整數運算；預設 config 的 `L` 用這一版）；
 `anr_retime_alpha()` / `anr_retime_frames()` 是 10 ms 參考 hop 的簡寫。
 兩者在參數無效時**不會報錯**（見第 3 節），呼叫前請自行確認輸入。
 
@@ -667,7 +655,7 @@ moderate 0.57、balanced 0.55、aggressive 0.48）。理由是純噪聲幀的語
 ## 6. 依賴附錄：共用 FFT 層
 
 `c_impl/include/anr.h` **直接 `#include "fft_wrapper.h"`**，這個 header 來自
-`../audio_common/include/`。沒有它，NR 的 header 連編譯都過不了；`Complex` 型別、以及
+`../audiolib/common/include/`。沒有它，NR 的 header 連編譯都過不了；`Complex` 型別、以及
 per-hop 必須用到的 FFT，全部由這一層提供。
 
 ### 6.1 `Complex`
@@ -697,17 +685,17 @@ typedef struct {
 
 ### 6.3 `fft_size` 限制：2 的次方，且落在 `[16, 8192]`
 
-兩個 backend 都會拒絕範圍外的值，包含其他 2 的次方（實測：`8` → `fft_get_mem_size` 回 `0`；
+FFT 會拒絕範圍外的值，包含其他 2 的次方（實測：`8` → `fft_get_mem_size` 回 `0`；
 `16384` → `0`；非 2 次方如 `300` → `0`；`16`、`8192` 則正常）。
 
-出貨 grid 的實測需求量（KISS backend）：
+出貨 grid 的實測需求量（NE10）：
 
 | `fft_size` | `fft_get_mem_size()` |
 |---:|---:|
-| 128 | 4 688 |
-| 256 | 8 784 |
-| 512 | 16 976 |
-| 1024 | 33 360 |
+| 128 | 4 464 |
+| 256 | 8 176 |
+| 512 | 15 600 |
+| 1024 | 30 448 |
 
 FFT 的 static memory 與 NR 的是**兩塊獨立的 pool**，各自查詢、各自 16-byte 對齊；
 `anr_get_mem_size()` **不包含** FFT 的需求。

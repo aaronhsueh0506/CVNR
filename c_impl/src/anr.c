@@ -1,14 +1,16 @@
-/* ANR frequency-domain core: power -> MCRA/SPP -> OM-LSA gain -> output spectrum. Caller owns
- * windowing, FFT/IFFT and overlap-add.
+/* ANR frequency-domain core: power -> noise tracker/SPP -> OM-LSA gain -> output spectrum.
+ * Caller owns windowing, FFT/IFFT and overlap-add.
  */
 
 #include "anr.h"
 #include "anr_types.h"
-#include "mcra_noise_estimator.h"
+#include "noise_estimator.h"
 #include "spp_estimator.h"
-#include "fft_wrapper.h"   /* Complex, fft_power, fft_apply_gain, ALIGN16 */
-#include "fast_math.h"
-#include "simd_kernels.h"  /* Bit-exact SIMD math kernels; requires -ffp-contract=off. */
+#include "fft_wrapper.h"   /* Complex, fft_power, fft_apply_gain */
+#include "utility/mem_align.h"
+#include "utility/fast_math.h"
+#include "utility/simd_kernels.h"  /* Bit-exact SIMD math kernels; requires -ffp-contract=off. */
+#include "utility/simd_nr.h"  /* Kernel bodies; ANR_VECTOR dispatch stays local. */
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -26,7 +28,7 @@ struct AnrDenoiser {
     float* power;              /* |X[k]|^2  [n_freqs] */
     float* noise_aug;          /* N²+R² scratch for the unified-gain path */
 
-    McraNoiseEstimator* noise_est;
+    NoiseEstimator* noise_est;
     SppEstimator*       spp_est;
 
     float* spp;
@@ -251,9 +253,9 @@ static void apply_low_band_speech_floor(AnrDenoiser* self,
 }
 
 static void update_noise_estimator(AnrDenoiser* self) {
-    mcra_update_ex(self->noise_est, self->power, self->spp,
-                   self->slow_lf_rise, self->noise_gate_lf_bin,
-                   self->config.alpha_d_speech);
+    noise_estimator_update_ex(self->noise_est, self->power, self->spp,
+                              self->slow_lf_rise, self->noise_gate_lf_bin,
+                              self->config.alpha_d_speech);
 }
 
 static const float* prepare_noise_for_spp(AnrDenoiser* self,
@@ -273,187 +275,27 @@ static const float* prepare_noise_for_spp(AnrDenoiser* self,
 }
 
 /* Gain inputs from the SPP stage: v clamped to [1e-10, 700] (NaN passes through) and the
- * a-priori ratio xi/(1+xi) recovered as v/(gamma + 1e-10). The output arrays must not overlap
+ * a-priori ratio xi/(1+xi) recovered as v/(gamma + 1e-10). When v_in itself underflows below
+ * 1e-10 (near-zero bin power drives gamma, and therefore v = xi/(1+xi)*gamma, to float32 zero),
+ * that division loses xi entirely (0/(0+1e-10) = 0); such bins instead compute xi/(1+xi)
+ * directly from xi, bypassing the shared-xi division. The output arrays must not overlap
  * the inputs.
  */
 #ifdef USE_SHARED_XI_RATIO
-static inline void gain_prepare_elem(float v_in, float gamma, float* v_out,
-                                     float* ratio_out) {
-    float v = v_in;
-    if (v < 1e-10f) v = 1e-10f;
-    if (v > 700.0f) v = 700.0f;
-    *v_out = v;
-    *ratio_out = v_in / (gamma + 1e-10f);
-}
-
-ANR_TWIN void gain_prepare_scalar(const float* v_in, const float* gamma,
-                                  float* v_out, float* ratio_out, int n) {
-    for (int k = 0; k < n; k++)
-        gain_prepare_elem(v_in[k], gamma[k], v_out + k, ratio_out + k);
-}
-
-#if SK_HAVE_NEON
-ANR_TWIN void gain_prepare_neon(const float* v_in, const float* gamma,
-                                float* v_out, float* ratio_out, int n) {
-    const float32x4_t eps = vdupq_n_f32(1e-10f);
-    const float32x4_t v_max = vdupq_n_f32(700.0f);
-    int k = 0;
-    for (; k + 4 <= n; k += 4) {
-        float32x4_t v_raw = vld1q_f32(v_in + k);
-        float32x4_t ratio = vdivq_f32(v_raw, vaddq_f32(vld1q_f32(gamma + k), eps));
-        float32x4_t v = vbslq_f32(vcltq_f32(v_raw, eps), eps, v_raw);
-        v = vbslq_f32(vcgtq_f32(v, v_max), v_max, v);
-        vst1q_f32(v_out + k, v);
-        vst1q_f32(ratio_out + k, ratio);
-    }
-    for (; k < n; k++)
-        gain_prepare_elem(v_in[k], gamma[k], v_out + k, ratio_out + k);
-}
-#endif
-
-static inline void gain_prepare(const float* v_in, const float* gamma,
+/* ANR_VECTOR keeps the independent scalar-reference dispatch. */
+static inline void gain_prepare(const float* v_in, const float* gamma, const float* xi,
                                 float* v_out, float* ratio_out, int n) {
 #if ANR_VECTOR
-    gain_prepare_neon(v_in, gamma, v_out, ratio_out, n);
+    skr_gain_prepare_neon(v_in, gamma, xi, v_out, ratio_out, n);
 #else
-    gain_prepare_scalar(v_in, gamma, v_out, ratio_out, n);
+    skr_gain_prepare_scalar(v_in, gamma, xi, v_out, ratio_out, n);
 #endif
 }
 #endif
 
 #ifdef USE_FAST_GAIN_SMOOTHING
-/* Batched final-gain passes: blend and smooth the log gain, then (after the caller's exp over
- * the clamped log gain) select, store the next-hop state and form the DD power.
- */
-typedef struct {
-    float log_g_min;
-    float g_min;
-    float alpha_attack;
-    float alpha_decay;
-    float prior_lift;
-    bool  cross_band_prior;
-    bool  smooth;          /* smooth against the previous log gain */
-    bool  dd_from_gmmse;
-} FinalGainParams;
-
-/* log_mmse: log(G_H1 + eps) in, blended and smoothed log gain out. emitted: that log gain clamped
- * to [log_g_min, 0], ready for exp(). prev_log is read only when smooth is set.
- */
-static inline void final_blend_elem(const FinalGainParams* g, float posterior, float prev_log,
-                                    float* log_mmse, float* emitted) {
-    float p = posterior;
-    if (g->cross_band_prior) p = lift_spp(p, g->prior_lift);
-    float log_gain = p * *log_mmse + (1.0f - p) * g->log_g_min;
-    if (g->smooth) {
-        float alpha = (log_gain > prev_log) ? g->alpha_attack : g->alpha_decay;
-        log_gain = alpha * prev_log + (1.0f - alpha) * log_gain;
-    }
-    *log_mmse = log_gain;
-    *emitted = (log_gain < g->log_g_min) ? g->log_g_min
-               : (log_gain > 0.0f) ? 0.0f : log_gain;
-}
-
-ANR_TWIN void final_blend_scalar(const FinalGainParams* g,
-                                 const float* posterior, float* log_mmse,
-                                 const float* saved_logs, float* emitted,
-                                 int n) {
-    for (int k = 0; k < n; k++)
-        final_blend_elem(g, posterior[k], g->smooth ? saved_logs[k] : 0.0f, log_mmse + k,
-                         emitted + k);
-}
-
-/* exp_gain: exp() of the clamped log gain in, final gain out. The log gain outside
- * [log_g_min, 0] takes g_min / 1 and the matching saved log gain.
- */
-static inline void final_store_elem(const FinalGainParams* g, float log_gain, float conditional,
-                                    float power, float* exp_gain, float* saved_log,
-                                    float* previous_gain, float* previous_psd) {
-    float gain = *exp_gain;
-    float log_save = log_gain;
-    if (log_gain < g->log_g_min) {
-        gain = g->g_min;
-        log_save = g->log_g_min;
-    } else if (log_gain > 0.0f) {
-        gain = 1.0f;
-        log_save = 0.0f;
-    }
-    *exp_gain = gain;
-    *saved_log = log_save;
-    *previous_gain = gain;
-    float dd_gain = g->dd_from_gmmse ? conditional : gain;
-    *previous_psd = dd_gain * dd_gain * power;
-}
-
-ANR_TWIN void final_store_scalar(const FinalGainParams* g,
-                                 const float* log_gain, float* exp_gain,
-                                 float* saved_logs, float* previous_gain,
-                                 float* previous_psd,
-                                 const float* conditional_gain,
-                                 const float* power, int n) {
-    for (int k = 0; k < n; k++)
-        final_store_elem(g, log_gain[k], conditional_gain[k], power[k], exp_gain + k,
-                         saved_logs + k, previous_gain + k, previous_psd + k);
-}
-
-#if SK_HAVE_NEON
-ANR_TWIN void final_blend_neon(const FinalGainParams* g, const float* posterior,
-                               float* log_mmse, const float* saved_logs, float* emitted,
-                               int n) {
-    const float32x4_t one = vdupq_n_f32(1.0f);
-    const float32x4_t zero = vdupq_n_f32(0.0f);
-    const float32x4_t log_min = vdupq_n_f32(g->log_g_min);
-    const float32x4_t lift = vdupq_n_f32(g->prior_lift);
-    const float32x4_t attack = vdupq_n_f32(g->alpha_attack);
-    const float32x4_t decay = vdupq_n_f32(g->alpha_decay);
-    int k = 0;
-    for (; k + 4 <= n; k += 4) {
-        float32x4_t p = vld1q_f32(posterior + k);
-        if (g->cross_band_prior)
-            p = vaddq_f32(p, vmulq_f32(vmulq_f32(lift, p), vsubq_f32(one, p)));
-        float32x4_t log_gain = vaddq_f32(vmulq_f32(p, vld1q_f32(log_mmse + k)),
-                                         vmulq_f32(vsubq_f32(one, p), log_min));
-        if (g->smooth) {
-            float32x4_t prev = vld1q_f32(saved_logs + k);
-            float32x4_t alpha = vbslq_f32(vcgtq_f32(log_gain, prev), attack, decay);
-            log_gain = vaddq_f32(vmulq_f32(alpha, prev),
-                                 vmulq_f32(vsubq_f32(one, alpha), log_gain));
-        }
-        vst1q_f32(log_mmse + k, log_gain);
-        float32x4_t clamped = vbslq_f32(vcgtq_f32(log_gain, zero), zero, log_gain);
-        vst1q_f32(emitted + k, vbslq_f32(vcltq_f32(log_gain, log_min), log_min, clamped));
-    }
-    for (; k < n; k++)
-        final_blend_elem(g, posterior[k], g->smooth ? saved_logs[k] : 0.0f, log_mmse + k,
-                         emitted + k);
-}
-
-ANR_TWIN void final_store_neon(const FinalGainParams* g, const float* log_gain,
-                               float* exp_gain, float* saved_logs, float* previous_gain,
-                               float* previous_psd, const float* conditional_gain,
-                               const float* power, int n) {
-    const float32x4_t one = vdupq_n_f32(1.0f);
-    const float32x4_t zero = vdupq_n_f32(0.0f);
-    const float32x4_t log_min = vdupq_n_f32(g->log_g_min);
-    const float32x4_t gain_min = vdupq_n_f32(g->g_min);
-    int k = 0;
-    for (; k + 4 <= n; k += 4) {
-        float32x4_t lg = vld1q_f32(log_gain + k);
-        uint32x4_t below = vcltq_f32(lg, log_min);
-        uint32x4_t above = vcgtq_f32(lg, zero);
-        float32x4_t gain = vbslq_f32(below, gain_min,
-                                     vbslq_f32(above, one, vld1q_f32(exp_gain + k)));
-        float32x4_t log_save = vbslq_f32(below, log_min, vbslq_f32(above, zero, lg));
-        vst1q_f32(exp_gain + k, gain);
-        vst1q_f32(saved_logs + k, log_save);
-        vst1q_f32(previous_gain + k, gain);
-        float32x4_t dd = g->dd_from_gmmse ? vld1q_f32(conditional_gain + k) : gain;
-        vst1q_f32(previous_psd + k, vmulq_f32(vmulq_f32(dd, dd), vld1q_f32(power + k)));
-    }
-    for (; k < n; k++)
-        final_store_elem(g, log_gain[k], conditional_gain[k], power[k], exp_gain + k,
-                         saved_logs + k, previous_gain + k, previous_psd + k);
-}
-#endif
+/* Final-gain kernels are in simd_nr.h; calculate_gain selects NEON under
+ * ANR_VECTOR, while the local fallback preserves the scalar reference. */
 #endif
 
 static void calculate_gain(AnrDenoiser* self,
@@ -477,7 +319,7 @@ static void calculate_gain(AnrDenoiser* self,
     /* Prepare clamped v and xi/(1+xi), preserving scalar operation order. */
 #ifdef USE_SHARED_XI_RATIO
     if (v_in != NULL) {
-        gain_prepare(v_in, gamma, v_scratch, xi_ratio_scratch, n_freqs);
+        gain_prepare(v_in, gamma, xi, v_scratch, xi_ratio_scratch, n_freqs);
     } else
 #else
     (void)v_in;
@@ -522,12 +364,12 @@ static void calculate_gain(AnrDenoiser* self,
 
 #if defined(USE_FAST_GAIN_SMOOTHING) && ANR_VECTOR
     {
-        FinalGainParams params = {log_g_min, g_min, alpha_attack, alpha_decay, prior_lift,
-                                  cross_band_prior, self->gain_initialized, dd_from_gmmse};
-        final_blend_neon(&params, spp, v_scratch, self->log_gain_prev, gain_out, n_freqs);
+        SkrFinalGainParams params = {log_g_min, g_min, alpha_attack, alpha_decay, prior_lift,
+                                     cross_band_prior, self->gain_initialized, dd_from_gmmse};
+        skr_final_blend_neon(&params, spp, v_scratch, self->log_gain_prev, gain_out, n_freqs);
         sk_fast_exp_f32(gain_out, gain_out, n_freqs);
-        final_store_neon(&params, v_scratch, gain_out, self->log_gain_prev, self->gain_prev,
-                         self->enhanced_psd_prev, xi_ratio_scratch, self->power, n_freqs);
+        skr_final_store_neon(&params, v_scratch, gain_out, self->log_gain_prev, self->gain_prev,
+                             self->enhanced_psd_prev, xi_ratio_scratch, self->power, n_freqs);
     }
     apply_low_band_speech_floor(self, gain_out);
     self->gain_initialized = true;
@@ -659,11 +501,11 @@ size_t anr_get_mem_size(const AnrConfig* config) {
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* init_power_sum    */
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* log_gain_prev     */
 
-    size_t mcra_sz = mcra_get_mem_size(nf, config);
+    size_t noise_sz = noise_estimator_get_mem_size(nf, config);
     size_t spp_sz  = spp_get_mem_size(nf);
-    if (mcra_sz == 0 || spp_sz == 0) return 0;   /* sub-module rejected the config */
+    if (noise_sz == 0 || spp_sz == 0) return 0;   /* sub-module rejected the config */
 
-    total = ck_add_size(total, mcra_sz);
+    total = ck_add_size(total, noise_sz);
     total = ck_add_size(total, spp_sz);
 
     return MEM_SIZE_INVALID(total) ? 0 : total;
@@ -704,9 +546,9 @@ AnrDenoiser* anr_init(void* mem, size_t mem_size,
     self->log_gain_prev     = (float*)cursor; cursor += arr;
 
     /* Sub-modules carved from the same block (no malloc). */
-    size_t mcra_sz = mcra_get_mem_size(nf, config);
-    self->noise_est = mcra_init(cursor, mcra_sz, nf, config);
-    cursor += mcra_sz;
+    size_t noise_sz = noise_estimator_get_mem_size(nf, config);
+    self->noise_est = noise_estimator_init(cursor, noise_sz, nf, config);
+    cursor += noise_sz;
 
     size_t spp_sz = spp_get_mem_size(nf);
     self->spp_est = spp_init(cursor, spp_sz, nf, config);
@@ -735,7 +577,7 @@ AnrDenoiser* anr_create(const AnrConfig* config) {
 
     self->power             = (float*)calloc(nf, sizeof(float));
     self->noise_aug         = (float*)calloc(nf, sizeof(float));
-    self->noise_est         = mcra_create(nf, config);
+    self->noise_est         = noise_estimator_create(nf, config);
     self->spp_est           = spp_create(nf, config);
     self->spp               = (float*)calloc(nf, sizeof(float));
     self->xi                = (float*)calloc(nf, sizeof(float));
@@ -775,7 +617,7 @@ void anr_destroy(AnrDenoiser* self) {
 
     free(self->power);
     free(self->noise_aug);
-    if (self->noise_est) mcra_destroy(self->noise_est);
+    if (self->noise_est) noise_estimator_destroy(self->noise_est);
     if (self->spp_est)   spp_destroy(self->spp_est);
     free(self->spp);
     free(self->xi);
@@ -822,13 +664,13 @@ int anr_process(AnrDenoiser* self,
             for (int k = 0; k < nf; k++)
                 self->init_power_sum[k] += self->power[k];
 
-            mcra_accumulate_init_power(self->noise_est, self->power,
-                                       self->init_frame_count);
+            noise_estimator_accumulate_init_power(self->noise_est, self->power,
+                                                  self->init_frame_count);
             self->init_frame_count++;
 
             if (self->init_frame_count >= self->config.num_init_frames) {
-                mcra_init_noise(self->noise_est, self->init_power_sum,
-                                self->init_frame_count);
+                noise_estimator_init_noise(self->noise_est, self->init_power_sum,
+                                           self->init_frame_count);
                 self->is_initialized = true;
             }
         }
@@ -840,7 +682,7 @@ int anr_process(AnrDenoiser* self,
             self->enhanced_psd_prev[k] = self->power[k];
         }
     } else {
-        const float* noise_psd = mcra_get_noise_psd(self->noise_est);
+        const float* noise_psd = noise_estimator_get_noise_psd(self->noise_est);
         run_frame_gain_stage(self, prepare_noise_for_spp(self, noise_psd, NULL), !silent);
     }
 
@@ -877,13 +719,13 @@ int anr_process_gain(AnrDenoiser* self,
             for (int k = 0; k < nf; k++)
                 self->init_power_sum[k] += self->power[k];
 
-            mcra_accumulate_init_power(self->noise_est, self->power,
-                                       self->init_frame_count);
+            noise_estimator_accumulate_init_power(self->noise_est, self->power,
+                                                  self->init_frame_count);
             self->init_frame_count++;
 
             if (self->init_frame_count >= self->config.num_init_frames) {
-                mcra_init_noise(self->noise_est, self->init_power_sum,
-                                self->init_frame_count);
+                noise_estimator_init_noise(self->noise_est, self->init_power_sum,
+                                           self->init_frame_count);
                 self->is_initialized = true;
             }
         }
@@ -895,9 +737,11 @@ int anr_process_gain(AnrDenoiser* self,
             self->enhanced_psd_prev[k] = self->power[k];
         }
     } else {
-        const float* noise_psd = mcra_get_noise_psd(self->noise_est);
+        const float* noise_psd = noise_estimator_get_noise_psd(self->noise_est);
 
-        /* Extra PSD augments SPP/SNR noise; MCRA observes raw power, with SPP-gated updates. */
+        /* Extra PSD augments SPP/SNR noise; the noise tracker observes raw power, with
+         * SPP-gated updates.
+         */
         run_frame_gain_stage(self,
                              prepare_noise_for_spp(self, noise_psd, extra_noise_psd),
                              !silent);
@@ -946,7 +790,7 @@ int anr_reconfigure(AnrDenoiser* self, const AnrConfig* target) {
      * configuration changes.
      */
     apply_gain_config_scalars(self, target);
-    mcra_apply_config_scalars(self->noise_est, target);
+    noise_estimator_apply_config_scalars(self->noise_est, target);
     spp_apply_config_scalars(self->spp_est, target);
     self->config = *target;
     update_noise_gate_geometry(self, target);
@@ -974,7 +818,7 @@ int anr_set_mode(AnrDenoiser* self, AnrMode mode) {
 void anr_reset(AnrDenoiser* self) {
     if (!self) return;
 
-    mcra_reset(self->noise_est);
+    noise_estimator_reset(self->noise_est);
     spp_reset(self->spp_est);
     reset_gain_state(self);
 
@@ -1020,7 +864,7 @@ const float* anr_get_spp(const AnrDenoiser* self, int* n_freqs) {
 const float* anr_get_noise_psd(const AnrDenoiser* self, int* n_freqs) {
     if (!self || !self->noise_est) { if (n_freqs) *n_freqs = 0; return NULL; }
     if (n_freqs) *n_freqs = self->n_freqs;
-    return mcra_get_noise_psd(self->noise_est);
+    return noise_estimator_get_noise_psd(self->noise_est);
 }
 
 float anr_get_speech_protect_frame_threshold(const AnrDenoiser* self) {
@@ -1046,7 +890,8 @@ void anr_debug_status(const AnrDenoiser* self, AnrDebugStatus* out) {
     const int n = self->n_freqs;
     const float* gain = self->gain;
     const float* spp  = self->spp;
-    const float* noise_psd = self->noise_est ? mcra_get_noise_psd(self->noise_est) : NULL;
+    const float* noise_psd =
+        self->noise_est ? noise_estimator_get_noise_psd(self->noise_est) : NULL;
     if (n <= 0 || !gain) return;
 
     float gain_sum = 0.0f, spp_sum = 0.0f, noise_sum = 0.0f;

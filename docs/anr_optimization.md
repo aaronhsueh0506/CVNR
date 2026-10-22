@@ -32,7 +32,7 @@ Loops that stay scalar: the speech-evidence sum and the high-band power and nois
 (serial float reductions whose order is part of the result), the integer counters, the
 speech-indicator smoothing, the gain application and the loops that clang already
 vectorizes with the same result. The exponential, logarithm and E1 kernels come from
-`audio_common` and are unchanged.
+`audiolib` and are unchanged.
 
 ## Bit-exact scope
 
@@ -93,7 +93,7 @@ From `c_impl/`, run:
 
 ```sh
 make BACKEND=ne10 SIMD=1 WERROR=1 all lib mem parity test-config test-reconfigure test-noise-restart test-scene-change test-config-parity test-api-cpp test-bit-exact
-make BACKEND=kiss SIMD=0 WERROR=1 test-bit-exact
+make BACKEND=ne10 SIMD=0 WERROR=1 test-bit-exact
 ```
 
 `make test-bit-exact` builds the library twice from the same sources, once with
@@ -125,7 +125,7 @@ code against an independent rule). The scalar twins are covered by comparing the
 per-hop stream hash of the preceding sources with that of the changed sources on the same
 build configuration; run that comparison whenever a scalar twin changes.
 
-Repeat the bit-exact target for both backends and SIMD settings when modifying these
+Repeat the bit-exact target for both SIMD settings with the NE10 backend when modifying these
 kernels. Keep `-ffp-contract=off`; reassociation and fast-math are outside this contract.
 The test script uses the production optimization definitions and does not forward
 arbitrary DEBUG or EXTRA_CFLAGS into the reference build. C++ API, configuration,

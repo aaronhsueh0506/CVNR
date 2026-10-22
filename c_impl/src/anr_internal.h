@@ -3,8 +3,8 @@
 #define ANR_INTERNAL_H
 
 #include "anr_types.h"
-#include "mcra_noise_estimator.h"
-#include "simd_kernels.h"  /* SK_HAVE_NEON */
+#include "noise_estimator.h"
+#include "utility/simd_kernels.h"  /* SK_HAVE_NEON */
 #include "spp_estimator.h"
 
 /* ANR_VECTOR selects the NEON twin of every kernel in this library. Each kernel is a static
@@ -31,11 +31,11 @@
 extern "C" {
 #endif
 
-/* Update MCRA scalars while preserving noise/min-ring/init/scene state. Caller must keep L and
- * num_init_frames unchanged.
+/* Update noise-tracker scalars while preserving noise/min-ring/init/scene state. Caller must
+ * keep L and num_init_frames unchanged.
  */
-void mcra_apply_config_scalars(McraNoiseEstimator* self,
-                               const AnrConfig* config);
+void noise_estimator_apply_config_scalars(NoiseEstimator* self,
+                                          const AnrConfig* config);
 
 /* Update SPP scalars while preserving a-priori-SNR history. */
 void spp_apply_config_scalars(SppEstimator* self,

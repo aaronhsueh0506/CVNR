@@ -27,13 +27,16 @@ static inline bool anr_nr_mode_is_valid(AnrMode mode) {
            mode == ANR_MODE_BALANCED || mode == ANR_MODE_AGGRESSIVE;
 }
 
-/* CLI name/enum conversion. Unknown names return -1. */
+/* CLI string/enum conversion. Accepts a mode name ("mild", "moderate", "balanced",
+ * "aggressive") or the single digit "0".."3" that equals the AnrMode value. Anything else,
+ * including NULL, returns -1.
+ */
 static inline int anr_nr_mode_from_name(const char *name) {
     if (!name) return -1;
-    if (strcmp(name, "mild") == 0)       return ANR_MODE_MILD;
-    if (strcmp(name, "moderate") == 0)   return ANR_MODE_MODERATE;
-    if (strcmp(name, "balanced") == 0)   return ANR_MODE_BALANCED;
-    if (strcmp(name, "aggressive") == 0) return ANR_MODE_AGGRESSIVE;
+    if (strcmp(name, "mild") == 0       || strcmp(name, "0") == 0) return ANR_MODE_MILD;
+    if (strcmp(name, "moderate") == 0   || strcmp(name, "1") == 0) return ANR_MODE_MODERATE;
+    if (strcmp(name, "balanced") == 0   || strcmp(name, "2") == 0) return ANR_MODE_BALANCED;
+    if (strcmp(name, "aggressive") == 0 || strcmp(name, "3") == 0) return ANR_MODE_AGGRESSIVE;
     return -1;
 }
 
@@ -88,7 +91,7 @@ typedef struct {
     float makeup_up_slope;
     float makeup_down_slope;
 
-    // MCRA parameters
+    // Noise tracker: smoothing, minimum window, speech detection
     float alpha_s;          // Time smoothing (0.95)
     float alpha_d;          // Noise update (0.85 at the 16-ms tuning anchor)
     float alpha_p;          // SPP smoothing (0.2)
@@ -97,7 +100,7 @@ typedef struct {
     float delta_db;         // Bias compensation in dB (10.0)
     int num_init_frames;    // Noise initialization (~200 ms, grid-retimed)
 
-    // MCRA scene change detection
+    // Scene-change reset of the noise floor
     float scene_change_threshold_db;     // Hi-freq gamma threshold in dB (10.0)
     int scene_change_min_frames;         // Consecutive duration (~50 ms by default)
     float scene_change_blend;            // Noise reset blend factor (0.5)
@@ -140,21 +143,20 @@ static inline float anr_retime_alpha(float alpha_10ms,
     return anr_retime_alpha_ref(alpha_10ms, sample_rate, hop_size, 0.010);
 }
 
-/* Retime a frame count without shortening duration. Reference seconds must remain double,
- * matching anr_retime_alpha_ref().
+/* Retime a frame count authored at ref_hop_ms milliseconds per hop without shortening duration:
+ * ceil(frames_ref * ref_hop_ms * sample_rate / (1000 * hop_size)) in exact 64-bit integer
+ * arithmetic. Returns 0 for a non-positive argument or a result that does not fit an int.
  */
-static inline int anr_retime_frames_ref(int frames_ref,
-                                             int sample_rate, int hop_size,
-                                             double ref_hop_seconds) {
-    double seconds, frames_d;
-    if (frames_ref <= 0 || sample_rate <= 0 || hop_size <= 0 ||
-        ref_hop_seconds <= 0.0) {
-        return 0;
-    }
-    seconds = (double)frames_ref * ref_hop_seconds;
-    frames_d = ceil(seconds * (double)sample_rate / (double)hop_size - 1e-12);
-    if (frames_d < 1.0) frames_d = 1.0;
-    return frames_d > (double)INT_MAX ? 0 : (int)frames_d;
+static inline int anr_retime_frames_ms(int frames_ref,
+                                            int sample_rate, int hop_size,
+                                            int ref_hop_ms) {
+    if (frames_ref <= 0 || sample_rate <= 0 || hop_size <= 0 || ref_hop_ms <= 0) return 0;
+    int64_t ref_ms = (int64_t)frames_ref * (int64_t)ref_hop_ms;
+    int64_t denominator = (int64_t)1000 * (int64_t)hop_size;
+    if (ref_ms > (INT64_MAX - denominator) / (int64_t)sample_rate) return 0;
+    int64_t numerator = ref_ms * (int64_t)sample_rate;
+    int64_t frames = (numerator + denominator - 1) / denominator;
+    return frames > INT_MAX ? 0 : (int)frames;
 }
 
 /** Convert a frame count authored at 10 ms without shortening real duration. */
@@ -210,17 +212,17 @@ static inline AnrConfig anr_default_config_for_grid(
     config.makeup_up_slope = 1.3f;
     config.makeup_down_slope = 0.3f;
 
-    // MCRA parameters (sync with Python v3_2_config.yaml)
+    // Noise tracker (sync with Python v3_2_config.yaml)
     config.alpha_s = anr_retime_alpha(0.95f, sample_rate, config.hop_size);
     /* 10-ms alpha_d anchor 0.903414 corresponds to 0.85 at a 16-ms hop. */
     config.alpha_d = anr_retime_alpha(0.903414f, sample_rate, config.hop_size);
     config.alpha_p = anr_retime_alpha(0.2f, sample_rate, config.hop_size);
-    // L is authored at 16 ms (32 frames = 512 ms); other MCRA anchors use 10 ms.
-    config.L = anr_retime_frames_ref(32, sample_rate, config.hop_size, 0.016);
+    // L is authored at 16 ms (32 frames = 512 ms); other tracker anchors use 10 ms.
+    config.L = anr_retime_frames_ms(32, sample_rate, config.hop_size, 16);
     config.delta_db = 10.0f;
     config.num_init_frames = anr_retime_frames(20, sample_rate, config.hop_size);
 
-    // MCRA scene change detection
+    // Scene-change reset of the noise floor
     config.scene_change_threshold_db = 10.0f;
     config.scene_change_min_frames = anr_retime_frames(5, sample_rate, config.hop_size);
     config.scene_change_blend = 0.5f;
@@ -426,7 +428,7 @@ static inline bool anr_validate_config(const AnrConfig* config) {
         return false;
     }
 
-    // MCRA smoothing coefficients in [0,1]; delta in power dB.
+    // Noise-tracker smoothing coefficients in [0,1]; delta in power dB.
     if (!isfinite(config->alpha_s) || config->alpha_s < 0.0f || config->alpha_s > 1.0f) {
         return false;
     }

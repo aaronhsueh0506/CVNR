@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "../src/anr.c"
-#include "../src/mcra_noise_estimator.c"
+#include "../src/noise_estimator.c"
 #include "../src/spp_estimator.c"
 
 #if SK_HAVE_NEON
@@ -116,20 +116,23 @@ static int test_size(int trial) {
 
 #ifdef USE_SHARED_XI_RATIO
 static int test_gain_prepare(void) {
-    static float v_in_s[MAX_N + OFFSETS], gamma_s[MAX_N + OFFSETS];
+    static float v_in_s[MAX_N + OFFSETS], gamma_s[MAX_N + OFFSETS], xi_s[MAX_N + OFFSETS];
     static float v_ref[MAX_N], ratio_ref[MAX_N], v_neon[MAX_N], ratio_neon[MAX_N];
+    /* 1e-10f/-1e-10f/0.0f exercise the guard branch (v_in < 1e-10) on both twins. */
     const float edges[] = {1e-10f, 700.0f, 0.0f, -1e-10f, 1.0f};
     Stats stats = {0};
     for (int trial = 0; trial < TRIALS; ++trial) {
         int n = test_size(trial);
         float* v_in = v_in_s + trial % OFFSETS;
         float* gamma = gamma_s + (trial / OFFSETS) % OFFSETS;
+        float* xi = xi_s + (trial / (OFFSETS * OFFSETS)) % OFFSETS;
         for (int i = 0; i < n; ++i) {
             v_in[i] = draw(0.0f, 900.0f, edges, 5);
             gamma[i] = draw(-0.5f, 2000.0f, edges, 5);
+            xi[i] = draw(0.0f, 50.0f, edges, 5);
         }
-        gain_prepare_scalar(v_in, gamma, v_ref, ratio_ref, n);
-        gain_prepare_neon(v_in, gamma, v_neon, ratio_neon, n);
+        skr_gain_prepare_scalar(v_in, gamma, xi, v_ref, ratio_ref, n);
+        skr_gain_prepare_neon(v_in, gamma, xi, v_neon, ratio_neon, n);
         stats.calls++;
         if (compare_arrays("gain_prepare", "v", v_ref, v_neon, n, trial, &stats) ||
             compare_arrays("gain_prepare", "ratio", ratio_ref, ratio_neon, n, trial, &stats))
@@ -141,8 +144,8 @@ static int test_gain_prepare(void) {
 #endif
 
 #ifdef USE_FAST_GAIN_SMOOTHING
-static FinalGainParams random_params(int trial) {
-    FinalGainParams g;
+static SkrFinalGainParams random_params(int trial) {
+    SkrFinalGainParams g;
     g.log_g_min = uniform(-8.0f, -0.5f);
     if (trial % 11 == 0) g.log_g_min = from_bits(SPECIAL_BITS[random_bits() % 8u]);
     g.g_min = expf(g.log_g_min);
@@ -164,7 +167,7 @@ static int test_final_gain(void) {
     Stats blend = {0}, store = {0};
     for (int trial = 0; trial < TRIALS; ++trial) {
         int n = test_size(trial);
-        FinalGainParams g = random_params(trial);
+        SkrFinalGainParams g = random_params(trial);
         float* post = post_s + trial % OFFSETS;
         float* saved = saved_s + (trial / OFFSETS) % OFFSETS;
         float* lg_in = lg_in_s + (trial / 2) % OFFSETS;
@@ -178,14 +181,14 @@ static int test_final_gain(void) {
             power[i] = draw(0.0f, 1e6f, edges, 3);
             exp_ref[i] = exp_neon[i] = draw(0.0f, 1.0f, edges, 3);
         }
-        final_blend_scalar(&g, post, log_ref, saved, em_ref, n);
-        final_blend_neon(&g, post, log_neon, saved, em_neon, n);
+        skr_final_blend_scalar(&g, post, log_ref, saved, em_ref, n);
+        skr_final_blend_neon(&g, post, log_neon, saved, em_neon, n);
         blend.calls++;
         if (compare_arrays("final_blend", "log_gain", log_ref, log_neon, n, trial, &blend) ||
             compare_arrays("final_blend", "emitted", em_ref, em_neon, n, trial, &blend))
             return 1;
-        final_store_scalar(&g, lg_in, exp_ref, sv_ref, pg_ref, pp_ref, cond, power, n);
-        final_store_neon(&g, lg_in, exp_neon, sv_neon, pg_neon, pp_neon, cond, power, n);
+        skr_final_store_scalar(&g, lg_in, exp_ref, sv_ref, pg_ref, pp_ref, cond, power, n);
+        skr_final_store_neon(&g, lg_in, exp_neon, sv_neon, pg_neon, pp_neon, cond, power, n);
         store.calls++;
         if (compare_arrays("final_store", "gain", exp_ref, exp_neon, n, trial, &store) ||
             compare_arrays("final_store", "saved_log", sv_ref, sv_neon, n, trial, &store) ||
@@ -202,7 +205,7 @@ static int test_final_gain(void) {
 static int test_restart_inert(void) {
     static float noise_s[MAX_N + OFFSETS], power_s[MAX_N + OFFSETS];
     static float ref[MAX_N], neon[MAX_N];
-    const float edges[] = {MCRA_NOISE_PSD_INERT, 0.0f, 1e-10f, 1.0f};
+    const float edges[] = {SKR_NOISE_PSD_INERT, 0.0f, 1e-10f, 1.0f};
     Stats stats = {0};
     for (int trial = 0; trial < TRIALS; ++trial) {
         int n = test_size(trial);
@@ -214,8 +217,8 @@ static int test_restart_inert(void) {
             power[i] = draw(0.0f, 1e6f, edges, 4);
             ref[i] = neon[i] = noise[i];
         }
-        mcra_restart_inert_scalar(ref, power, alpha_d, n);
-        mcra_restart_inert_neon(neon, power, alpha_d, n);
+        skr_restart_inert_scalar(ref, power, alpha_d, n);
+        skr_restart_inert_neon(neon, power, alpha_d, n);
         stats.calls++;
         if (compare_arrays("restart_inert", "noise", ref, neon, n, trial, &stats)) return 1;
     }
@@ -294,8 +297,8 @@ static int test_ring_min(void) {
             ring_ref[(size_t)k * L + ring_pos] = draw(0.0f, 100.0f, o_edges, 2);
         }
         memcpy(ring_neon, ring_ref, (size_t)n * L * sizeof(float));
-        mcra_ring_min_scalar(smin_ref_s, s, ring_ref, L, ring_pos, n);
-        mcra_ring_min_neon(smin_neon_s, s, ring_neon, L, ring_pos, n);
+        skr_ring_min_scalar(smin_ref_s, s, ring_ref, L, ring_pos, n);
+        skr_ring_min_neon(smin_neon_s, s, ring_neon, L, ring_pos, n);
         stats.calls++;
         if (compare_arrays("ring_min", "S_min", smin_ref_s, smin_neon_s, n, trial, &stats) ||
             compare_arrays("ring_min", "ring", ring_ref, ring_neon, n * L, trial, &stats))

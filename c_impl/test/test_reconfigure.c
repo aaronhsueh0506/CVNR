@@ -4,7 +4,7 @@
 
 #include "anr.h"
 #include "anr_types.h"
-#include "mcra_noise_estimator.h"
+#include "noise_estimator.h"
 #include "spp_estimator.h"
 #include "fft_wrapper.h"
 

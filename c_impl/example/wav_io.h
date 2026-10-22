@@ -10,15 +10,15 @@
 
 /* Support sibling and Audio_ALG submodule checkouts. */
 #if defined(__has_include)
-#  if __has_include("../../../audio_common/include/wav_io.h")
-#    include "../../../audio_common/include/wav_io.h"
-#  elif __has_include("../../../../../audio_common/include/wav_io.h")
-#    include "../../../../../audio_common/include/wav_io.h"
+#  if __has_include("../../../audiolib/common/include/wav_io.h")
+#    include "../../../audiolib/common/include/wav_io.h"
+#  elif __has_include("../../../../../audiolib/common/include/wav_io.h")
+#    include "../../../../../audiolib/common/include/wav_io.h"
 #  else
-#    error "wav_io.h: cannot locate audio_common/include/wav_io.h -- expected it as a sibling of this repo (SE/audio_common) or two levels up from an Audio_ALG submodule checkout (Audio_ALG/lib/nr -> SE/audio_common)"
+#    error "wav_io.h: cannot locate audiolib/common/include/wav_io.h -- expected it as a sibling of this repo (SE/audiolib/common) or two levels up from an Audio_ALG submodule checkout (Audio_ALG/lib/nr -> SE/audiolib/common)"
 #  endif
 #else
-#  error "wav_io.h: compiler lacks __has_include -- add an explicit #include for audio_common/include/wav_io.h"
+#  error "wav_io.h: compiler lacks __has_include -- add an explicit #include for audiolib/common/include/wav_io.h"
 #endif
 
 #endif // NR_WAV_IO_SHIM_H

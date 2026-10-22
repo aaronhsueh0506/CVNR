@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "../src/anr.c"
-#include "../src/mcra_noise_estimator.c"
+#include "../src/noise_estimator.c"
 #include "../src/spp_estimator.c"
 
 #define STREAM_MAGIC 0x414e5231u

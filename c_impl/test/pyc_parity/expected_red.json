@@ -1,0 +1,32 @@
+{
+ "expected_red": {
+  "S-13": {
+   "L1": [
+    "gain/16k_256/aggressive/makeup",
+    "gain/16k_256/balanced/makeup",
+    "gain/16k_256/mild/makeup",
+    "gain/16k_256/moderate/makeup",
+    "gain/16k_512/aggressive/makeup",
+    "gain/16k_512/balanced/makeup",
+    "gain/16k_512/mild/makeup",
+    "gain/16k_512/moderate/makeup",
+    "gain/48k_1024/aggressive/makeup",
+    "gain/48k_1024/balanced/makeup",
+    "gain/48k_1024/mild/makeup",
+    "gain/48k_1024/moderate/makeup",
+    "gain/8k_128/aggressive/makeup",
+    "gain/8k_128/balanced/makeup",
+    "gain/8k_128/mild/makeup",
+    "gain/8k_128/moderate/makeup",
+    "gain/8k_256/aggressive/makeup",
+    "gain/8k_256/balanced/makeup",
+    "gain/8k_256/mild/makeup",
+    "gain/8k_256/moderate/makeup"
+   ]
+  }
+ },
+ "findings": {
+  "S-13": "PY_C_SYNC_AUDIT.md S-13, layer L1: with makeup_gain on, Python defaults to makeup_prior='spp' while C implements only the xi prior (the makeup_xi_ctrl rows, Python prior 'xi', are green). Remove this entry when the two defaults agree."
+ },
+ "format": 1
+}

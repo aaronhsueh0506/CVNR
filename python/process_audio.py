@@ -68,7 +68,7 @@ from denoisers import (
     PmmseDenoiser,
 )
 from core.nr_modes import apply_mode
-from core.nr_strength import apply_strength
+from core.nr_strength import apply_strength, nr_strength_name
 from core.signal_grid import resolve_signal_grid
 
 
@@ -686,8 +686,10 @@ def main():
     parser.add_argument(
         '--nr-mode',
         default=None,
+        type=nr_strength_name,
         choices=['mild', 'moderate', 'balanced', 'aggressive'],
-        help='V3-2 強度預設（深度軸）：mild|moderate|balanced|aggressive（默認: balanced = base config）'
+        help='V3-2 強度預設（深度軸）：mild|moderate|balanced|aggressive，或對應的數字 0|1|2|3'
+             '（默認: balanced = base config）'
     )
 
     parser.add_argument(

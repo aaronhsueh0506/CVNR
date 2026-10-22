@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Compare current ANR scalar final-gain reference and optimized per-hop bytes.
 
-Run from any directory: python python/tools/test_bit_exact.py --backend kiss --simd 1.
-Builds use one audio_common archive and release FP policy; all scratch is temporary.
+Run from any directory: python python/tools/test_bit_exact.py --simd 1.
+Builds use one audiolib archive and release FP policy; all scratch is temporary.
 """
 import argparse
 import os
@@ -99,16 +99,16 @@ def compare(reference, optimized):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--backend", choices=("kiss", "ne10"), default="ne10")
+    parser.add_argument("--backend", choices=("ne10",), default="ne10")
     parser.add_argument("--simd", choices=(0, 1), type=int, default=1)
     parser.add_argument("--ac-dir", type=Path)
     parser.add_argument("--cc", default=os.environ.get("CC", "cc"))
     parser.add_argument("--cxx", default=os.environ.get("CXX", "c++"))
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
-    common = args.ac_dir.resolve() if args.ac_dir else root.parent / "audio_common"
+    common = args.ac_dir.resolve() if args.ac_dir else root.parent / "audiolib" / "common"
     if not (common / "Makefile").is_file():
-        parser.error("audio_common not found; pass --ac-dir /path/to/audio_common")
+        parser.error("audiolib not found; pass --ac-dir /path/to/audiolib/common")
     producer = ["make", "--no-print-directory", "-C", str(common),
                 f"BACKEND={args.backend}", f"SIMD={args.simd}", "WERROR=1",
                 f"CC={args.cc}", f"CXX={args.cxx}", "DEBUG=0"]
@@ -118,7 +118,8 @@ def main():
         raise RuntimeError(f"producer archive missing: {library}")
     flags = ["-O2", "-std=gnu99", "-Wall", "-Wextra", "-Werror",
              "-ffp-contract=off", "-fno-math-errno",
-             "-I" + str(root / "c_impl/include"), "-I" + str(common / "include")]
+             "-I" + str(root / "c_impl/include"), "-I" + str(common / "include"),
+             "-I" + str(common)]
     flags += ["-D" + define for define in DEFINES]
     if not args.simd:
         flags.append("-DSIMD_KERNELS_FORCE_SCALAR")
@@ -134,8 +135,7 @@ def main():
             obj = scratch / (name + ".o")
             binary = scratch / name
             run(shlex.split(args.cc) + flags + extra + ["-c", str(root / "c_impl/test" / source), "-o", str(obj)])
-            linker = args.cxx if args.backend == "ne10" else args.cc
-            run(shlex.split(linker) + [str(obj), str(library), "-lm", "-o", str(binary)])
+            run(shlex.split(args.cxx) + [str(obj), str(library), "-lm", "-o", str(binary)])
             binaries[name] = binary
         compare(binaries["reference"], binaries["optimized"])
         run([str(binaries["minimum"])])

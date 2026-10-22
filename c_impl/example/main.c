@@ -10,11 +10,8 @@
 #include "anr.h"
 #include "anr_types.h"
 #include "fft_wrapper.h"
+#include "audio_window.h"
 #include "wav_io.h"
-
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
 
 void print_usage(const char* prog) {
     printf("ANR (C implementation, frequency-domain runner)\n");
@@ -27,7 +24,7 @@ void print_usage(const char* prog) {
     printf("\n");
     printf("Options:\n");
     printf("  --bypass       Bypass mode (no processing, copy input to output)\n");
-    printf("  --nr-mode <m>  NR strength: mild|moderate|balanced|aggressive (default: balanced)\n");
+    printf("  --nr-mode <m>  NR strength: 0|1|2|3 or mild|moderate|balanced|aggressive (default: balanced)\n");
     printf("  --debug        Print one anr_debug_status() line per second of audio\n");
     printf("  --fft-size <n> Select project grid (256/512 @16k; 1024 @48k)\n");
     printf("\n");
@@ -43,13 +40,9 @@ void print_usage(const char* prog) {
     printf("  %s noisy.wav clean.wav --bypass\n", prog);
 }
 
-/* Build sqrt(periodic Hann) analysis/synthesis window — bit-matches Python
- * np.sqrt(scipy.signal.windows.hann(N, sym=False)). */
+/* Periodic sqrt-Hann in float32; shared with the streaming front ends. */
 static void build_sqrt_hann(float* w, int N) {
-    for (int n = 0; n < N; n++) {
-        float h = 0.5f - 0.5f * cosf(2.0f * (float)M_PI * (float)n / (float)N);
-        w[n] = sqrtf(h);
-    }
+    ac_window_build(w, N);
 }
 
 /* Read the whole (first-channel) signal into a malloc'd float buffer. */
@@ -92,11 +85,9 @@ int main(int argc, char* argv[]) {
         } else if (strcmp(argv[i], "--fft-size") == 0 && i + 1 < argc) {
             fft_size_override = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--nr-mode") == 0 && i + 1 < argc) {
-            const char *m = argv[++i];
-            if (strcmp(m, "mild") == 0)             nr_mode = ANR_MODE_MILD;
-            else if (strcmp(m, "moderate") == 0)    nr_mode = ANR_MODE_MODERATE;
-            else if (strcmp(m, "aggressive") == 0)  nr_mode = ANR_MODE_AGGRESSIVE;
-            else                                    nr_mode = ANR_MODE_BALANCED;
+            /* Name or digit 0..3; an unrecognised value keeps the balanced default. */
+            int m = anr_nr_mode_from_name(argv[++i]);
+            nr_mode = m >= 0 ? (AnrMode)m : ANR_MODE_BALANCED;
         }
     }
 

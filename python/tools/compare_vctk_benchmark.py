@@ -68,6 +68,21 @@ GATES = {"pesq": -0.005, "stoi": -0.002}
 # not the raw --fft-size CLI arg (which may be None = "library default").
 GRID_KEYS = ("mode", "strength", "sample_rate", "fft_size", "hop_size")
 
+# Strength names in C AnrMode order (index == enum value). Records written by run_vctk_benchmark.py
+# hold the name; a record that holds the index (int or digit string) compares equal to its name.
+STRENGTH_NAMES = ("mild", "moderate", "balanced", "aggressive")
+
+
+def grid_value(run_meta, key):
+    """A run's value for a GRID_KEYS entry, with a strength index normalised to its name."""
+    value = run_meta.get(key)
+    if key == "strength":
+        if type(value) is int and 0 <= value < len(STRENGTH_NAMES):
+            return STRENGTH_NAMES[value]
+        if isinstance(value, str) and value in ("0", "1", "2", "3"):
+            return STRENGTH_NAMES[int(value)]
+    return value
+
 
 def load(path):
     """Load a run_vctk_benchmark.py JSON output.
@@ -101,7 +116,7 @@ def describe_run(tag, run_meta):
     if not run_meta:
         print(f"  {tag}: (no 'run' metadata block in this JSON)")
         return
-    print(f"  {tag}: mode={run_meta.get('mode')} strength={run_meta.get('strength')} "
+    print(f"  {tag}: mode={run_meta.get('mode')} strength={grid_value(run_meta, 'strength')} "
           f"sample_rate={run_meta.get('sample_rate')} fft_size={run_meta.get('fft_size')} "
           f"hop_size={run_meta.get('hop_size')}")
     dirty_note = ""
@@ -134,9 +149,9 @@ def check_grid_match(base_run, cand_run, allow_mismatch):
     """Returns the list of (key, baseline_value, candidate_value) mismatches.
     Raises SystemExit if there are any and allow_mismatch is False."""
     mismatches = [
-        (key, base_run.get(key), cand_run.get(key))
+        (key, grid_value(base_run, key), grid_value(cand_run, key))
         for key in GRID_KEYS
-        if base_run.get(key) != cand_run.get(key)
+        if grid_value(base_run, key) != grid_value(cand_run, key)
     ]
     if mismatches and not allow_mismatch:
         lines = "\n".join(f"    {k}: baseline={bv!r} candidate={cv!r}" for k, bv, cv in mismatches)

@@ -1,6 +1,6 @@
 # ANR — C Implementation (V3-2 主線)
 
-> **基準版本**: v1.12.3（c_impl）。含 ANR 命名與 bit-exact NEON 加速（NaN 結果的 payload 位元除外）；[量測與驗證紀錄](../docs/anr_optimization.md)。共用數學函式仍由 `audio_common/fast_math.h` 提供。
+> **基準版本**: v1.12.3（c_impl）。含 ANR 命名與 bit-exact NEON 加速（NaN 結果的 payload 位元除外）；[量測與驗證紀錄](../docs/anr_optimization.md)。共用數學函式仍由 `audiolib/common/utility/fast_math.h` 提供。
 > **對應 Python**: `python/denoisers/v3_2_mmse_lsa.py`
 
 C 介面、檔名與 archive 已統一為 ANR；[完整改名對照](../docs/anr_migration.md)。
@@ -97,7 +97,7 @@ C 介面、檔名與 archive 已統一為 ANR；[完整改名對照](../docs/anr
 
 ```bash
 make
-make SIMD=0  # 強制 NR 與 audio_common 的所有可選 SIMD 路徑走 scalar
+make SIMD=0  # 強制 NR 與 audiolib 的所有可選 SIMD 路徑走 scalar
 ```
 
 ### 調試版本（關閉所有優化，使用標準數學函數，與 Python 輸出最接近）
@@ -115,8 +115,7 @@ make EXTRA_CFLAGS="-DUSE_FAST_PERCENTILE"
 ### 靜態記憶體版本（嵌入式，零 malloc）
 
 ```bash
-make mem              # → bin/<backend>-<config-hash>/denoise_mem（範例 example/main_mem.c），預設 BACKEND=ne10（嵌入式 deliverable，ARM NEON）
-make mem BACKEND=kiss # 可攜、逐位元可重現的參考 backend（顯式指定）
+make mem              # → bin/<backend>-<config-hash>/denoise_mem（範例 example/main_mem.c），FFT 為 NE10（ARM NEON）
 ```
 
 輸出檔案位於依 backend + 編譯參數雜湊命名的 `bin/<backend>-<config-hash>/` 目錄；
@@ -141,17 +140,17 @@ anr_destroy(d);                                     // no-op（記憶體由呼�
 `anr_destroy()` 在這裡是**真正**的 no-op：`AnrDenoiser` 本身不持有 FFT 或任何
 backend heap 資源（頻域 I/O 由呼叫端自己的 `FftHandle` 負責，見下方完整範例），所以
 static instance 的 destroy 沒有東西要釋放。呼叫端另外持有的 `FftHandle`（`fft_init`）
-的 destroy 也是**真正**的 no-op：KISS backend 零 malloc，NE10 backend 的 R2C/C2R twiddle cfg
-由呼叫端 pool 切出（`audio_common` 的 vendored patch P0001＋P0003 硬化，
+的 destroy 也是**真正**的 no-op：NE10 的 R2C/C2R twiddle cfg
+由呼叫端 pool 切出（`audiolib` 的 vendored patch P0001＋P0003 硬化，
 `ne10_fft_init_r2c_float32_ext`），沒有任何 backend-internal malloc——`fft_destroy()` 對
 pool-owned handle 一律直接 return，呼叫幾次都安全（idempotent）。細節見下方 backend 差異段落，以及
 [`../docs/c_user_manual_zh_TW.md`](../docs/c_user_manual_zh_TW.md)
 第 5 節的 `create_static_nr`/`destroy_static_nr` 完整範例。
 
 演算法與 malloc 版**逐位元相同**（只差配置方式）：`bin/denoise_mem` 輸出與 `bin/denoise_wav`
-byte-for-byte 一致，已對 4 個 preset、KISS 與 NE10 兩個 backend 分別驗證
-（backend 之間不逐位元相同，只比較同一 backend 內 mem vs malloc）。同一機制也覆蓋子模組
-`fft_get_mem_size`/`fft_init`、`mcra_get_mem_size`/`mcra_init`、`spp_get_mem_size`/`spp_init`。
+byte-for-byte 一致，已對 4 個 preset 驗證。同一機制也覆蓋子模組
+`fft_get_mem_size`/`fft_init`、`noise_estimator_get_mem_size`/`noise_estimator_init`、
+`spp_get_mem_size`/`spp_init`。
 
 **零 malloc 保證**：malloc 路徑編譯進同一份 object，用 `nm` 檢查 object 檔**一定會看到**
 `malloc`/`calloc`/`free` 符號——這些符號來自 `_create()`，靜態路徑（`_init()`）在 runtime
@@ -160,22 +159,25 @@ byte-for-byte 一致，已對 4 個 preset、KISS 與 NE10 兩個 backend 分別
 MCRA 的 percentile gather/quickselect 用預先配好的 `percentile_scratch`（in-place quickselect，
 免複製）。`example/main_mem.c` 本身呼叫 `_init()` 系列，執行期同樣 0 malloc。
 
-**FFT 與 fast_math 來自共用的 `../audio_common`**（`make BACKEND=kiss|ne10` 產出
-`libaudio_common.a`，`c_impl/Makefile` 直接連結；本 repo 不含 kiss_fft/NE10 原始碼副本）。
-backend 差異：KISS 與 NE10 都是 **100% 零 malloc**——`audio_common` 的 vendored patch
-P0001（+P0003 硬化）讓 NE10 的 R2C/C2R twiddle cfg 也能從呼叫端 pool 切出
-（`ne10_fft_init_r2c_float32_ext`），handle、work buffer、twiddle cfg 三者都在 pool 內，
-`fft_init()` 到 `fft_destroy()` 全程零 heap；**每幀音訊路徑零 malloc**。此分支已在
-arm64（Apple Silicon）上原生編譯 + 驗證 NE10 版 mem==malloc byte-for-byte（NE10 輸出本身
-跟 KISS 不同屬預期，兩個 backend 不互相比較）。
+**FFT 與 fast_math 來自共用的 `../audiolib/common`**（`make` 產出 `libaudio_common.a`，
+`c_impl/Makefile` 直接連結；本 repo 不含 NE10 原始碼副本）。FFT 唯一後端是 NE10，
+**100% 零 malloc**——`audiolib` 的 vendored patch P0001（+P0003 硬化）讓 NE10 的
+R2C/C2R twiddle cfg 從呼叫端 pool 切出（`ne10_fft_init_r2c_float32_ext`），handle、
+work buffer、twiddle cfg 三者都在 pool 內，`fft_init()` 到 `fft_destroy()` 全程零 heap；
+**每幀音訊路徑零 malloc**。已在 arm64（Apple Silicon）上原生編譯 + 驗證 mem==malloc
+byte-for-byte。
 
-> **Note:** `make` 預設啟用 6 個數學等價優化（100% 相關度），不需要手動指定。
+> **Note:** `make` 預設啟用 6 個已驗證優化（近似數學的誤差依核准預算驗收），不需要手動指定。
+
+這裡的「fast math」指 `fast_math.h` 與 `USE_*` 選項的近似函式，並非編譯器
+`-ffast-math`；後者會被 Makefile 拒絕。std-math C 對 Python 與出貨 C 對
+std-math C 分別用數值容差／核准近似預算驗收，不能將出貨結果宣稱為 Python bit-exact。
 
 ### FP-contraction 統一政策
 
-`-ffp-contract=off -fno-math-errno` 是**橫跨四個 repo 的統一政策**（`audio_common`、
+`-ffp-contract=off -fno-math-errno` 是**橫跨四個 repo 的統一政策**（`audiolib`、
 `NR/c_impl`、`AEC/c_impl`、`Audio_ALG/pipelines`）：每個 Makefile 編譯的每一個
-TU——自己的原始碼**與**vendored 的 KISS/NE10 C/C++ 一律套用這兩個 flag。本 repo
+TU——自己的原始碼**與**vendored 的 NE10 C/C++ 一律套用這兩個 flag。本 repo
 無自己的 C++ TU（`CXXFLAGS` 只是 CFG_SIG payload-coverage 佔位，見 Makefile
 註解），所以只有 `CFLAGS` 需要這個 flag。它被附加在 `CFLAGS` 組裝的**最後一步**
 （`EXTRA_CFLAGS`、DEBUG-vs-預設優化區塊、`WERROR` 全部疊加完之後），確保呼叫端傳
@@ -187,17 +189,29 @@ $ make EXTRA_CFLAGS=-ffast-math
 Makefile:218: *** FP policy conflict: CFLAGS/CXXFLAGS/CPPFLAGS/EXTRA_CFLAGS contains -ffast-math; this repo pins -ffp-contract=off; remove -ffast-math from CFLAGS/CXXFLAGS/CPPFLAGS/EXTRA_CFLAGS.  Stop.
 ```
 
-`../audio_common/scripts/audit_fp_contract.sh` 是 disassembly 等級的驗證：反組譯
-本 repo 的 `anr.o`/`mcra_noise_estimator.o`/`spp_estimator.o`。SIMD=1（AArch64）時這三個
-object 含 NEON 程式碼——`anr.o`、`spp_estimator.o` 與 `mcra_noise_estimator.o` 使用
-`audio_common/simd_kernels.h` 的 exp/EMA kernel，`mcra_noise_estimator.o` 另含
-`mcra_min_ordered` 的 NEON 最小值搜尋——但只用不融合的 vmul/vadd/vsub 與比較/選擇指令，
+`../audiolib/common/scripts/audit_fp_contract.sh` 是 disassembly 等級的驗證：反組譯
+本 repo 的 `anr.o`/`noise_estimator.o`/`spp_estimator.o`。SIMD=1（AArch64）時這三個
+object 含 NEON 程式碼——`anr.o`、`spp_estimator.o` 與 `noise_estimator.o` 使用
+`audiolib/common/utility/simd_kernels.h` 的 exp/EMA kernel，`noise_estimator.o` 另含
+`noise_estimator_min_ordered` 的 NEON 最小值搜尋——但只用不融合的 vmul/vadd/vsub 與比較/選擇指令，
 沒有顯式 `fmaf()`/`fma()`/`vfmaq_f32` 呼叫。SIMD=0（`-DSIMD_KERNELS_FORCE_SCALAR`）時不編入
 這些 NEON intrinsic 路徑，但編譯器的自動向量化仍可能產生向量指令，同樣不含融合指令。若出現任何
 fmadd/fmsub/fnmadd/fnmsub/fmla/fmls 指令即判定失敗——那正是編譯器「自行」融合
 `a*b+c` 的訊號，也正是這個 flag 存在的目的。詳見該腳本 header 的完整 scoping 說明。
 
 ## 編譯開關說明
+
+ARM32／ARM64 由編譯器 target 自動選擇，不需要修改原始碼。共用的手寫 DSP NEON
+kernel 目前限 AArch64；ARM32 走其 C fallback，即使 FFT 本身可使用 ARM32 NEON。
+`SIMD=0` 是 DSP kernel 的純量覆寫，不是 ABI 選擇器。交叉編譯時必須提供同一套
+CC／CXX／AR／RANLIB。靜態 pool 的需求與結構布局屬於該次編譯的 ABI，應在目標版本
+呼叫 `_get_mem_size()`，不可沿用 ARM64 的固定 byte 數或跨 ABI 複製 handle 記憶體。
+
+ARM32 請用 `EXTRA_CFLAGS=-mfpu=neon-vfpv4`（AArch32 ARMv8 核心用 `-mfpu=neon-fp-armv8`），
+不要用單純的 `-mfpu=neon`：沒有硬體 FMA 時，每個明確的 `fmaf()`（含 FFT 功率譜）都會變成
+libm 呼叫，位元結果不變但速度慢很多。ARMv7 Advanced SIMD 會把 subnormal 沖為零並以預設
+NaN 取代 NaN payload，因此 ARM32 上 `SIMD=1` 與 `SIMD=0` 對這類值可能不同；只有 NE10 NEON
+FFT（以及 AEC 在具硬體 FMA 的核心上的 delay matched filter）受影響；NR 本身在 ARM32 為 C。
 
 ### 預設啟用（數學等價，`make` 即啟用）
 
@@ -264,7 +278,7 @@ MCRA 噪聲估計的瓶頸是每幀掃描 ring buffer（L=32 幀）找最小值�
 
 ### 優化 3：迴圈合併
 
-**mcra_noise_estimator.c** — 6 個獨立 for-k 迴圈 → 2 個 + 場景偵測：
+**noise_estimator.c** — 6 個獨立 for-k 迴圈 → 2 個 + 場景偵測：
 - Loop A: S 時間平滑 + min buffer 寫入 + min 追蹤
 - Loop C: SPP indicator + 噪聲更新
 - 場景轉換偵測：高頻 gamma + spectral flatness（迴圈後純量判斷）
@@ -292,12 +306,12 @@ MCRA 噪聲估計的瓶頸是每幀掃描 ring buffer（L=32 幀）找最小值�
 
 ```bash
 ./bin/denoise_wav input.wav output.wav                     # 預設 balanced
-./bin/denoise_wav input.wav output.wav --nr-mode moderate  # 強度：mild|moderate|balanced|aggressive
+./bin/denoise_wav input.wav output.wav --nr-mode moderate  # 強度：mild|moderate|balanced|aggressive（或 0|1|2|3）
 ./bin/denoise_wav input.wav output.wav --bypass            # 不處理，原樣複製
 ```
 
 **強度軸：**
-- `--nr-mode {mild|moderate|balanced|aggressive}`（`anr_config_for_mode`）：全消，越強壓越深。
+- `--nr-mode {mild|moderate|balanced|aggressive}`，或同順序的數字 `0|1|2|3`（`anr_config_for_mode`；`anr_nr_mode_from_name()` 兩種寫法都接受）：全消，越強壓越深。
   4 級深度階梯 g_min = −20 / −25 / −30 / −40 dB（振幅 /20）。所有預設共用 `alpha_xi=0.92`
   （2026-07 musical-noise fix：DD ξ 平滑，壓掉 SPP 抖動＝musical noise；對語音幾乎零成本）。
 
@@ -393,15 +407,15 @@ float64／float32 與數學近似的數值容差檢查，不宣稱 bit-exact。
 python3 ../python/tools/parity_nr.py dump --wav ../test_wav/wav/babble_10dB.wav --out /tmp/parity_in.bin
 
 # 2a. C 端 fast-math（bin 目錄依 build flags 雜湊）
-ac=$(make -s --no-print-directory -C ../../audio_common BACKEND=kiss print-lib-path)
-make DEBUG=0 BACKEND=kiss AC_LIB="$ac" parity
-bin_dir=$(make -s DEBUG=0 BACKEND=kiss AC_LIB="$ac" print-bin-dir)
+ac=$(make -s --no-print-directory -C ../../audiolib/common print-lib-path)
+make DEBUG=0 COMMON_LIB="$ac" parity
+bin_dir=$(make -s DEBUG=0 COMMON_LIB="$ac" print-bin-dir)
 "$bin_dir/parity_runner" /tmp/parity_in.bin /tmp/g_fast.bin
 python3 ../python/tools/parity_nr.py compare --ref /tmp/parity_in.bin --c-gains /tmp/g_fast.bin
 
 # 2b. C 端 standard-math（檢查 float32/float64 殘差）
-make DEBUG=1 BACKEND=kiss AC_LIB="$ac" parity
-bin_dir=$(make -s DEBUG=1 BACKEND=kiss AC_LIB="$ac" print-bin-dir)
+make DEBUG=1 COMMON_LIB="$ac" parity
+bin_dir=$(make -s DEBUG=1 COMMON_LIB="$ac" print-bin-dir)
 "$bin_dir/parity_runner" /tmp/parity_in.bin /tmp/g_debug.bin
 python3 ../python/tools/parity_nr.py compare --ref /tmp/parity_in.bin --c-gains /tmp/g_debug.bin
 ```
@@ -520,11 +534,11 @@ c_impl/
 ├── include/
 │   ├── anr.h    # 主要 API（malloc + 靜態記憶體 create/get_mem_size/init）
 │   ├── anr_types.h       # 配置結構和預設值
-│   ├── mcra_noise_estimator.h # MCRA 噪聲估計
+│   ├── noise_estimator.h      # 噪聲 PSD 追蹤
 │   └── spp_estimator.h        # SPP 估計
 ├── src/
 │   ├── anr.c    # 主模組（含 MMSE-LSA 增益計算）
-│   ├── mcra_noise_estimator.c
+│   ├── noise_estimator.c
 │   └── spp_estimator.c
 ├── example/
 │   ├── main.c                 # 命令列工具（malloc / heap 路徑）
@@ -535,10 +549,10 @@ c_impl/
 ├── README.md                  # 本文件
 └── CHANGELOG.md               # 改動記錄
 
-../audio_common/                # 共用層（本 repo 之外，siblings 目錄）：
-├── include/fft_wrapper.h        #   Complex 型別、FFT heap+靜態記憶體 API、ALIGN16
-├── include/fast_math.h          #   快速數學 (LUT/Taylor exp, minimax log, AArch64 hardware sqrt)
-└── lib/{kiss_fft,ne10}/         #   兩個 FFT backend 的原始碼；`make BACKEND=kiss|ne10 lib`
+../audiolib/common/                # 共用層（本 repo 之外，siblings 目錄）：
+├── include/fft_wrapper.h        #   Complex 型別與 FFT heap/static API；ALIGN16 在 utility/mem_align.h
+├── utility/fast_math.h          #   快速數學 (LUT/Taylor exp, minimax log, AArch64 hardware sqrt)
+└── lib/ne10/                    #   FFT 後端（NE10）的原始碼；`make lib`
                                   #   產出 bin/<backend>-<config-hash>/libaudio_common.a
                                   #   （`make print-lib-path` 取得確切路徑），c_impl 連結它
 ```

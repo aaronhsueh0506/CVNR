@@ -11,11 +11,8 @@
 #include "anr.h"
 #include "anr_types.h"
 #include "fft_wrapper.h"
+#include "audio_window.h"
 #include "wav_io.h"
-
-#ifndef M_PI
-#define M_PI 3.14159265358979323846
-#endif
 
 /* ---- Maximum supported no-padding grid (48 kHz / FFT 1024) -------------- */
 #define MAX_FRAME_SIZE 1024
@@ -23,7 +20,7 @@
 
 /* Aligned pools cover all project grids; runtime size checks guard capacity. */
 #define DENOISER_POOL_BYTES (256 * 1024)   /* covers 513-bin 48 kHz config      */
-#define FFT_POOL_BYTES      ( 48 * 1024)   /* covers 1024-point KISS / NE10     */
+#define FFT_POOL_BYTES      ( 48 * 1024)   /* covers the 1024-point NE10 FFT    */
 
 static uint8_t g_denoiser_pool[DENOISER_POOL_BYTES] __attribute__((aligned(16)));
 static uint8_t g_fft_pool[FFT_POOL_BYTES]           __attribute__((aligned(16)));
@@ -50,19 +47,16 @@ void print_usage(const char* prog) {
     printf("Usage: %s <input.wav> <output.wav> [options]\n\n", prog);
     printf("Options:\n");
     printf("  --bypass       Bypass mode (copy input to output)\n");
-    printf("  --nr-mode <m>  NR strength: mild|moderate|balanced|aggressive (default: balanced)\n");
+    printf("  --nr-mode <m>  NR strength: 0|1|2|3 or mild|moderate|balanced|aggressive (default: balanced)\n");
     printf("  --debug        Print one anr_debug_status() line per second of audio\n\n");
     printf("  --fft-size <n> Select project grid (256/512 @16k; 1024 @48k)\n\n");
     printf("All state is pre-allocated in static memory; no malloc on the audio path.\n");
     printf("Output is byte-identical to denoise_wav (framing 512/256/512, sqrt-Hann).\n");
 }
 
-/* sqrt(periodic Hann) — bit-matches np.sqrt(hann(N, sym=False)). */
+/* Periodic sqrt-Hann in float32; shared with the streaming front ends. */
 static void build_sqrt_hann(float* w, int N) {
-    for (int n = 0; n < N; n++) {
-        float h = 0.5f - 0.5f * cosf(2.0f * (float)M_PI * (float)n / (float)N);
-        w[n] = sqrtf(h);
-    }
+    ac_window_build(w, N);
 }
 
 int main(int argc, char* argv[]) {
@@ -86,11 +80,9 @@ int main(int argc, char* argv[]) {
         } else if (strcmp(argv[i], "--fft-size") == 0 && i + 1 < argc) {
             fft_size_override = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--nr-mode") == 0 && i + 1 < argc) {
-            const char* m = argv[++i];
-            if (strcmp(m, "mild") == 0)             nr_mode = ANR_MODE_MILD;
-            else if (strcmp(m, "moderate") == 0)    nr_mode = ANR_MODE_MODERATE;
-            else if (strcmp(m, "aggressive") == 0)  nr_mode = ANR_MODE_AGGRESSIVE;
-            else                                    nr_mode = ANR_MODE_BALANCED;
+            /* Name or digit 0..3; an unrecognised value keeps the balanced default. */
+            int m = anr_nr_mode_from_name(argv[++i]);
+            nr_mode = m >= 0 ? (AnrMode)m : ANR_MODE_BALANCED;
         }
     }
 
@@ -172,7 +164,7 @@ int main(int argc, char* argv[]) {
     const int fft_size = config.fft_size;
     size_t need_fft      = fft_get_mem_size(fft_size);
     printf("\nStatic memory footprint:\n");
-    printf("  Denoiser+MCRA+SPP: %zu bytes  (pool %d)\n", need_denoiser, DENOISER_POOL_BYTES);
+    printf("  Denoiser+noise+SPP: %zu bytes  (pool %d)\n", need_denoiser, DENOISER_POOL_BYTES);
     printf("  FFT             : %zu bytes  (pool %d)\n", need_fft, FFT_POOL_BYTES);
     if (need_denoiser > sizeof(g_denoiser_pool)) {
         fprintf(stderr, "Error: denoiser needs %zu > pool %zu. Raise DENOISER_POOL_BYTES.\n",
