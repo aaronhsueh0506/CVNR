@@ -4,6 +4,30 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [Unreleased] — 2026-10-24 — Two-tier verification (`make test`, `make test-full`); config parity covers 8 kHz
+
+### Changed
+- `make test` (in `c_impl/`) is now the per-change check: build goals, the C test targets at the current `SIMD`,
+  the pytest suite, and a 220-scenario Python/C parity gate (`test/pyc_parity_nr.sh --only`: all four strengths,
+  no 8 kHz grids, no `scale_1e-3`/`scale_1e-5`/`scale_1e-6`/`int16_pk55`, no make-up rows on 16k/512 and 48k/1024).
+  `make test-full` adds the standalone `test-config-parity`, `test-bit-exact` at the other `SIMD` setting and all
+  428 parity scenarios. The former `test` (denoise `./test.wav`, not a check) is now `make run-sample`.
+- The Python/C effective-config comparison (`test_config_parity.c`, `test_config_parity.py`) covers five grids
+  (8k/128, 8k/256, 16k/256, 16k/512, 48k/1024) instead of three, so an 8 kHz-only configuration error fails in
+  pytest and the 8 kHz parity scenarios are no longer needed in the per-change tier.
+  `test_c_dump_covers_three_grids_and_four_strengths` is renamed `test_c_dump_covers_five_grids_and_four_strengths`.
+- `docs/anr_optimization.md`, `docs/anr_validation.md`, `docs/c_user_manual_zh_TW.md`, `README.md` and
+  `docs/html/nr.html` describe the two tiers. No library code or output change.
+
+## [Unreleased] — 2026-10-24 — Docs describe the library-default `L` and `anr_reconfigure()`
+
+### Changed
+- `README.md`, `c_impl/README.md`, `docs/html/nr.html` and `docs/html/nr_c_api.html` no longer describe an
+  integration-side `L = 150 ms` override or the pipeline `*_set_nr_mode()` setters. An instance built from the
+  canonical preset (library-default `L`) can use `anr_set_mode()`; an instance with caller overrides is re-composed
+  and passed to `anr_reconfigure()`, which refuses a changed `L` or `num_init_frames`. The examples use an unrelated
+  override (`noise_over_subtraction`). No code or output change.
+
 ## [Unreleased] — 2026-10-24 — `alpha_g` / `alpha_decay` wording
 
 ### Changed

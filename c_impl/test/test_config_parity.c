@@ -1,4 +1,4 @@
-/* Dump canonical configs for three grids and four strengths as CSV.
+/* Dump canonical configs for five grids and four strengths as CSV.
  * Consumed by python/tests/test_config_parity.py. */
 #include "anr_types.h"
 
@@ -6,7 +6,7 @@
 
 typedef struct { int sample_rate, fft_size; } Grid;
 static const Grid GRIDS[] = {
-    {16000, 256}, {16000, 512}, {48000, 1024},
+    {8000, 128}, {8000, 256}, {16000, 256}, {16000, 512}, {48000, 1024},
 };
 
 typedef struct { AnrMode mode; const char* name; } Strength;

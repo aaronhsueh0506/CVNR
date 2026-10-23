@@ -72,9 +72,18 @@ Validation scope and its limits are in [anr_validation.md](anr_validation.md).
 From `c_impl/`, run:
 
 ```sh
-make BACKEND=ne10 SIMD=1 WERROR=1 all lib mem parity test-config test-reconfigure test-noise-restart test-scene-change test-shared-startup test-config-parity test-api-cpp test-bit-exact
-make BACKEND=ne10 SIMD=0 WERROR=1 test-bit-exact
+make BACKEND=ne10 SIMD=1 WERROR=1 test
+make BACKEND=ne10 SIMD=1 WERROR=1 test-full
 ```
+
+`test` builds `all lib mem parity`, runs the C test targets (`test-config`, `test-reconfigure`,
+`test-noise-restart`, `test-scene-change`, `test-shared-startup`, `test-api-cpp`, `test-bit-exact`),
+the pytest suite, and the Python/C parity gate (220 of the 428 scenarios: four strengths on the
+16 kHz and 48 kHz grids, without the 8 kHz grids, the `scale_1e-3`/`scale_1e-5`/`scale_1e-6`/`int16_pk55`
+rungs and the make-up rows of the 16k/512 and 48k/1024 grids). The Python/C configuration comparison
+(`python/tests/test_config_parity.py`, five grids x four strengths) runs the `test-config-parity`
+dump from inside pytest. `test-full` adds the standalone `test-config-parity`, `test-bit-exact` at the
+other `SIMD` setting, and all 428 parity scenarios.
 
 `make test-bit-exact` builds the library twice from the same sources, once with
 `-DANR_REFERENCE_KERNELS`, and runs three checks:

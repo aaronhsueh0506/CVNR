@@ -125,15 +125,15 @@ def c_rows():
     return _dump_c_config()
 
 
-def test_c_dump_covers_three_grids_and_four_strengths(c_rows):
+def test_c_dump_covers_five_grids_and_four_strengths(c_rows):
     grids = {(int(r["sample_rate"]), int(r["fft_size"])) for r in c_rows}
     strengths = {r["strength"] for r in c_rows}
-    assert grids == {(16000, 256), (16000, 512), (48000, 1024)}
+    assert grids == {(8000, 128), (8000, 256), (16000, 256), (16000, 512), (48000, 1024)}
     assert strengths == {"mild", "moderate", "balanced", "aggressive"}
 
 
 @pytest.mark.parametrize("sample_rate,fft_size", [
-    (16000, 256), (16000, 512), (48000, 1024),
+    (8000, 128), (8000, 256), (16000, 256), (16000, 512), (48000, 1024),
 ])
 def test_strength_presets_change_depth_only(sample_rate, fft_size):
     """A strength preset must not select a different tracker or dynamics.
@@ -167,7 +167,7 @@ def test_strength_presets_change_depth_only(sample_rate, fft_size):
 
 
 @pytest.mark.parametrize("sample_rate,fft_size", [
-    (16000, 256), (16000, 512), (48000, 1024),
+    (8000, 128), (8000, 256), (16000, 256), (16000, 512), (48000, 1024),
 ])
 @pytest.mark.parametrize("strength", ["mild", "moderate", "balanced", "aggressive"])
 def test_python_c_effective_config_matches(c_rows, sample_rate, fft_size, strength):

@@ -396,7 +396,8 @@ make -C c_impl publish             # 穩定的 dist/<backend>/current/ 交付路
 
 ```bash
 make -C c_impl test-config
-make -C c_impl test-config-parity
+make -C c_impl test          # 每次改動的驗證:C 測試、pytest(含 Python/C 設定對拍)、parity 子集
+make -C c_impl test-full     # 另加兩種 SIMD 的 bit-exact、獨立 config dump 與全部 parity scenario
 ```
 
 連結你自己的程式（NE10 含 C++ TU，用 C++ driver 連結）：

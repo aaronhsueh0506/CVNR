@@ -44,7 +44,7 @@ pre code{background:none;padding:0}
 
 <h2>1. 責任邊界(先看這個)</h2>
 <p>NR 是<b>純頻域</b> MMSE-LSA/OMLSA 降噪核心。它<b>只吃 <code>Complex[n_freqs]</code>、只吐 <code>Complex[n_freqs]</code></b>,不含 window、FFT、IFFT、OLA 或任何 PCM buffer 邏輯——這些全部是呼叫端的責任(<code>NR/c_impl/include/anr.h</code>)。</p>
-<div class="note">如果 application 手上只有 PCM,<b>不要自己補一套 WOLA</b>。直接用 Audio_ALG 的 pipeline(它已經把 window/FFT/OLA/gain fusion 做對了),或照 <a href="../../../Audio_ALG/docs/html/integration_example.html">串接範例</a> 的做法。</div>
+<div class="note">如果 application 手上只有 PCM,<b>不要自己補一套 WOLA</b>。照 Audio_ALG 的 <a href="../../../Audio_ALG/docs/html/integration_example.html">串接範例</a> 與 <code>pipelines</code> 下的範例 main 的做法(它們已經把 window/FFT/OLA/gain fusion 做對了)。</div>
 <p>連結時需要<b>兩個</b> archive:<code>libanr.a</code> 與 <code>libaudio_common.a</code>——NR 自己不含 FFT。</p>
 
 <h3>可以 include 的 header</h3>
@@ -119,7 +119,7 @@ anr_destroy(nr);   /* heap instance 只能呼叫一次,重複呼叫 = double fre
 <pre>/* A. 直接套用,可 in-place */
 if (anr_process(nr, spectrum, spectrum) != 0) { /* NULL handle/buffer */ }
 
-/* B. 只取 gain(pipeline 都走這條) */
+/* B. 只取 gain(串接鏈都走這條) */
 float gain[257];
 if (anr_process_gain(nr, error_spec, extra_noise_psd, gain) != 0) { /* error */ }</pre>
 <div class="tblwrap"><table>
@@ -133,7 +133,7 @@ if (anr_process_gain(nr, error_spec, extra_noise_psd, gain) != 0) { /* error */ 
 <tr><td>初始化期</td><td>前 <code>num_init_frames</code> 個 frame 是 pass-through(gain 全 1.0),同時累積噪聲統計</td></tr>
 </table></div>
 <div class="warn"><b>Aliasing 規則與 FFT 層相反。</b><code>fft_forward()</code>／<code>fft_inverse()</code> 用 <code>restrict</code>,<b>任何</b>重疊(含完全相同指標)都是 UB;NR 這裡卻明確支援完全同一指標。兩層不要套用同一條直覺。</div>
-<div class="note"><b>接 AEC 的 <code>r2</code> 時要先換算尺度。</b><code>AecResContext.r2</code> 是 int16-square scale,直接當 <code>extra_noise_psd</code> 前必須除以 <code>32768²</code>。現有 pipeline 已經處理好,application 不要再複製一份。</div>
+<div class="note"><b>接 AEC 的 <code>r2</code> 時要先換算尺度。</b><code>AecResContext.r2</code> 是 int16-square scale,直接當 <code>extra_noise_psd</code> 前必須除以 <code>32768²</code>。換算方式照 Audio_ALG 的串接範例,application 不要自己另推一份。</div>
 
 <h2>5. 參數設定與效果</h2>
 <p>設定強度的正規做法是選一個 mode,不要逐欄位手調。<code>anr_config_for_mode_grid()</code> 的四級只改 <code>g_min_db</code>、<code>q</code>、<code>xi_min_db</code>、<code>noise_over_subtraction</code>;DD、tracker、gain dynamics 與低頻語音 guard 的<b>組態欄位</b>共用。例外是幀級語音閘 <code>speech_protect_frame_threshold</code>:設定值著作於 balanced 的 <code>q = 0.52</code>,生效值為 <code>value + (q − 0.52)</code>,因此隨 preset 自動位移(mild 0.61 / moderate 0.57 / balanced 0.55 / aggressive 0.48;可用 <code>anr_get_speech_protect_frame_threshold()</code> 讀回)。</p>
@@ -195,14 +195,13 @@ int anr_set_mode(AnrDenoiser *nr, AnrMode mode);</pre>
 <tr><td>回 <code>-1</code></td><td><code>self</code>/<code>target</code> 為 NULL、<code>target</code> 未過 <code>validate_config()</code>、六個幾何欄位任一不符。<b><code>-1</code> 時什麼都沒寫</b></td></tr>
 <tr><td>時序</td><td>在兩個 frame <b>之間</b>呼叫、與 <code>process()</code> 序列化。<b>非 thread-safe</b></td></tr>
 </table></div>
-<div class="warn"><b><code>set_mode()</code> 與 <code>reconfigure()</code> 不可互換。</b><code>set_mode()</code> 組的是<b>裸的 canonical preset</b>,只適用 standalone。兩條出貨 pipeline 的 NR 組態都是「canonical preset <b>加上</b>自己的覆寫」(<code>L</code>／<code>alpha_decay</code>; <code>broadband_threshold</code> 保留 canonical <code>1.0</code>),把 canonical preset 丟給 <code>set_mode()</code> 會因為 <code>L</code> 不同而<b>被拒絕</b>。這正是 <code>audio_pipeline_set_nr_mode()</code>／<code>audio_pipeline_4ch_set_nr_mode()</code> 各自重組完整組態再呼叫 <code>reconfigure()</code> 的原因——application 不要繞過 pipeline setter。</div>
-<pre>/* standalone:直接換 mode */
+<div class="warn"><b><code>set_mode()</code> 與 <code>reconfigure()</code> 不可互換。</b><code>set_mode()</code> 組的是<b>裸的 canonical preset</b>(<code>L</code> 為函式庫預設),組態等於 canonical preset 的實例可直接用。在 canonical preset 上疊了覆寫的實例,交給 <code>set_mode()</code> 時非 pool 欄位的覆寫會被悄悄還原;覆寫的是 <code>L</code> 或 <code>num_init_frames</code> 時則會因 pool 大小不符而<b>被拒絕</b>。這種實例請自己重組完整組態再呼叫 <code>reconfigure()</code>。</div>
+<pre>/* 組態等於 canonical preset:直接換 mode */
 anr_set_mode(nr, ANR_MODE_AGGRESSIVE);
 
 /* 自己疊了覆寫:重組整份,逐字交出去 */
 AnrConfig t = anr_config_for_mode_grid(sr, fft_size, ANR_MODE_AGGRESSIVE);
-t.L                   = anr_retime_frames(150, sr, t.hop_size);
-t.alpha_decay         = t.alpha_g;
+t.noise_over_subtraction = 1.2f;   /* 範例覆寫,每次都要重新疊上去 */
 anr_reconfigure(nr, &amp;t);</pre>
 
 <h3><code>anr_reset()</code></h3>

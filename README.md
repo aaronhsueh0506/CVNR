@@ -79,10 +79,12 @@ The tuning scalars can be swapped on a running instance:
 `anr_set_mode()` composes the canonical config for a strength mode. Nothing is
 reallocated, so the grid and the pool-sizing fields (`L`, `num_init_frames`)
 must match the instance; the noise floor, MCRA ring, SPP history and gain
-smoothing history are preserved. A caller that layers its own overrides on top
-of a preset, as both Audio_ALG pipelines do, must rebuild its whole composition
-and call `anr_reconfigure()`: the bare canonical preset passed to
-`anr_set_mode()` reverts those overrides or is refused when `L` differs.
+smoothing history are preserved. An instance built from the unmodified canonical
+preset for its grid (library-default `L`) can use `anr_set_mode()` directly. A
+caller that layers its own overrides on top of a preset must rebuild its whole
+composition and call `anr_reconfigure()`: the bare canonical preset passed to
+`anr_set_mode()` reverts those overrides, or is refused when the overridden
+fields are `L` or `num_init_frames`.
 Details in [`c_impl/README.md`](c_impl/README.md).
 
 Build outputs are keyed by backend and configuration. `make -C c_impl
@@ -95,9 +97,11 @@ copy an arbitrary file from a `bin/` directory.
 # Python tests, including Python/C effective-config parity.
 python -m pytest
 
-# C validation and configuration parity dump.
-make -C c_impl SIMD=0 test
-make -C c_impl test-config-parity
+# C tests, Python/C configuration parity (five grids) and the numerical parity subset.
+make -C c_impl WERROR=1 test
+# Adds the other SIMD setting's bit-exact check, the standalone configuration dump
+# and every numerical parity scenario (including the 8 kHz grids).
+make -C c_impl WERROR=1 test-full
 
 # Full VCTK+DEMAND benchmark and fail-closed comparison.
 pip install -r python/requirements-dev.txt

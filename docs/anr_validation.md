@@ -28,6 +28,12 @@ Python/C configuration parity are separate make targets. The Python/C gain compa
 is a numerical parity check on float32 gains (absolute error statistics), not
 Python/C bit-exactness.
 
+`make test` runs the C targets at the current `SIMD` setting, the pytest suite (which includes
+the Python/C configuration comparison for the five grids 8k/128, 8k/256, 16k/256, 16k/512 and
+48k/1024) and a 220-scenario subset of the numerical parity check. `make test-full` also runs
+`test-bit-exact` at the other `SIMD` setting and all 428 parity scenarios, including the 8 kHz
+grids; the 8 kHz grids are covered in `make test` by the configuration comparison only.
+
 ## Digital-silence frames
 
 Frames whose bins are all exactly zero do not count toward noise initialization and

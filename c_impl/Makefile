@@ -521,6 +521,40 @@ test-bit-exact:
 	$(PYTHON) ../python/tools/test_bit_exact.py --backend $(BACKEND) --simd $(SIMD) \
 	  --ac-dir "$(abspath $(COMMON_DIR))" --cc "$(CC)" --cxx "$(CXX)"
 
+# --- Aggregate verification ----------------------------------------------------------------
+# test       per-change tier: the build goals, the C test targets at this SIMD setting, pytest and the
+#            parity gate. test-config-parity is not listed on its own: pytest runs it inside
+#            test_config_parity.py and asserts on its output.
+# test-full  test plus the standalone config dump, test-bit-exact at the other SIMD setting (the
+#            SIMD=0 stream comparison is scalar against scalar, so it only guards that build) and
+#            every parity scenario.
+# The gate drops the 8k grids (their config is covered by pytest), the level-scaling rungs beyond
+# scale_1e-4/int16_pk5/int16_pk12 and the make-up rows that duplicate makeup_xi_ctrl; all four
+# strengths stay because a strength-specific gain error is only visible there.
+PYC_PARITY_GATE_ONLY = ^(?!.*/8k_)(?!.*/(scale_1e-3|scale_1e-5|scale_1e-6|int16_pk55)$$)(?!.*/(16k_512|48k_1024)/[^/]+/makeup$$)
+PYC_PARITY_JSON ?= $(OBJ_ROOT)/pyc_parity_nr.json
+SIMD_OTHER = $(if $(filter 0,$(SIMD)),1,0)
+TEST_BUILD_GOALS = all lib mem parity
+TEST_C_GOALS = test-config test-reconfigure test-noise-restart test-scene-change test-shared-startup test-api-cpp test-bit-exact
+# pytest starts its own `make`; a clean make environment keeps that child's stdout to the CSV the
+# test parses. COMMON_DIR travels explicitly because MAKEFLAGS (which carries command-line
+# variables) is dropped.
+TEST_PYTEST = cd .. && env -u MAKEFLAGS -u MFLAGS -u MAKELEVEL COMMON_DIR="$(abspath $(COMMON_DIR))" \
+  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) -m pytest -q -p no:cacheprovider
+
+.PHONY: test test-full
+test:
+	+@$(MAKE) --no-print-directory $(TEST_BUILD_GOALS) $(TEST_C_GOALS)
+	@$(TEST_PYTEST)
+	$(TEST_DIR)/pyc_parity_nr.sh --only '$(PYC_PARITY_GATE_ONLY)' --json "$(PYC_PARITY_JSON)" \
+	  --ac-dir "$(abspath $(COMMON_DIR))" --brief
+
+test-full:
+	+@$(MAKE) --no-print-directory $(TEST_BUILD_GOALS) $(TEST_C_GOALS) test-config-parity
+	+@$(MAKE) --no-print-directory SIMD=$(SIMD_OTHER) test-bit-exact
+	@$(TEST_PYTEST)
+	$(TEST_DIR)/pyc_parity_nr.sh --json "$(PYC_PARITY_JSON)" --ac-dir "$(abspath $(COMMON_DIR))" --brief
+
 # --- Query targets -----------------------------------------------------------
 # Report THIS invocation's own build identity (empty COMMON_PRODUCER_SIG unless
 # COMMON_LIB was explicitly passed in). To get the exact path `make all` (or
@@ -816,13 +850,13 @@ uninstall:
 	rm -f /usr/local/bin/denoise_wav
 	@echo "Uninstalled"
 
-# Test with sample file (requires test.wav in current directory)
+# Denoise ./test.wav into ./test_out.wav with this invocation's own denoise_wav (not a check)
 ifeq ($(COMMON_LIB),)
-test:
+run-sample:
 	+@ac="$$($(MAKE) -s --no-print-directory -C $(COMMON_DIR) $(COMMON_FWD) print-lib-path)"; \
-	 $(MAKE) --no-print-directory test COMMON_LIB="$$ac"
+	 $(MAKE) --no-print-directory run-sample COMMON_LIB="$$ac"
 else
-test: $(TARGET)
+run-sample: $(TARGET)
 	@if [ -f test.wav ]; then \
 		"$(abspath $(TARGET))" test.wav test_out.wav; \
 	else \
@@ -855,7 +889,10 @@ help:
 	@echo "  clean    - Remove build artifacts (dist/ survives -- publish is a deliberate release)"
 	@echo "  install  - Install to /usr/local/bin"
 	@echo "  uninstall - Remove from /usr/local/bin"
-	@echo "  test     - Run test (requires test.wav)"
+	@echo "  test     - Per-change verification: build goals, C tests (this SIMD), pytest incl. Python/C config parity,"
+	@echo "             and the Python/C numeric parity gate (see the aggregate-verification comment)"
+	@echo "  test-full - test, plus test-config-parity, test-bit-exact at the other SIMD setting and all parity scenarios"
+	@echo "  run-sample - Denoise ./test.wav to ./test_out.wav (not a check)"
 	@echo "  help     - Show this help"
 	@echo ""
 	@echo "Build Configurations:"
@@ -882,7 +919,7 @@ help:
 	@echo "After building:"
 	@echo "  ./<BIN_ROOT>/<backend>-<config-hash>/denoise_wav input.wav output.wav (default bin/)"
 
-.PHONY: dirs clean install uninstall test help
+.PHONY: dirs clean install uninstall run-sample help
 dirs: _cfg_guard
 
 # --- Header dependency tracking -----------------------------------------------

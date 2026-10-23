@@ -295,26 +295,24 @@ length、SPP 的 a-priori-SNR 歷史、增益平滑歷史，全部繼續跑。�
 這是刻意的——組態是「preset 加上自己的覆寫」的呼叫端，必須自己重建整份組合再傳進來，
 否則那些覆寫會被悄悄還原回 canonical preset 的值。
 
-**`anr_set_mode()` 只給 standalone 情境**：它替該 mode 組出 canonical 組態、
-交給 `anr_reconfigure()`。回 `0`，或 `-1`（NULL、超出 enum 的 mode、target 被拒）。
+**`anr_set_mode()` 只適用於組態等於 canonical preset 的實例**：它替該 mode 組出 canonical
+組態（`anr_config_for_mode_grid()`，`L` 為函式庫預設）、交給 `anr_reconfigure()`。回 `0`，
+或 `-1`（NULL、超出 enum 的 mode、target 被拒）。
 
-> **不要在 pipeline 實例上用 `anr_set_mode()`。** 兩條出貨 pipeline（mono 與
-> 四麥克風核心）的 NR 組態都是「canonical preset **加上**自己的覆寫」
-> （`L`、`alpha_decay`；`broadband_threshold` 保留 canonical `1.0`）。把裸的
-> canonical preset 交給
-> `anr_set_mode()`，在這種實例上會被**拒絕**（它的 `L` 不同）——這正是兩條
-> pipeline 各自提供 setter（`audio_pipeline_set_nr_mode()` /
-> `audio_pipeline_4ch_set_nr_mode()`）重組完整組態再呼叫 `anr_reconfigure()` 的原因。
+> **對疊了自己覆寫的實例，不要用 `anr_set_mode()`。** 以 `anr_config_for_mode_grid()` 建出、
+> 沒有改動任何欄位的實例，可以直接用 `anr_set_mode()` 換強度。若建立實例時在 canonical
+> preset 上改過欄位，裸的 canonical preset 會把非 pool 欄位的覆寫悄悄還原，而改過 `L` 或
+> `num_init_frames` 時整個呼叫會被**拒絕**（pool 大小不符）。這種實例請自己重組
+> 完整組態再呼叫 `anr_reconfigure()`。
 
 ```c
-/* standalone：直接換強度，噪聲底與平滑歷史保留 */
+/* 組態等於 canonical preset：直接換強度，噪聲底與平滑歷史保留 */
 if (anr_set_mode(denoiser, ANR_MODE_AGGRESSIVE) != 0) { /* 引數不合法 */ }
 
 /* 自己疊了覆寫的呼叫端：重組整份組態再交出去 */
 AnrConfig target = anr_config_for_mode_grid(
     sr, fft_size, ANR_MODE_AGGRESSIVE);
-target.L = anr_retime_frames(150, sr, target.hop_size);
-target.alpha_decay = target.alpha_g;
+target.noise_over_subtraction = 1.2f;   /* 範例覆寫；每次都要重新疊上去 */
 if (anr_reconfigure(denoiser, &target) != 0) { /* 幾何不符或 target 無效 */ }
 ```
 
