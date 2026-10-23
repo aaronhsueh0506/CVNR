@@ -13,17 +13,13 @@
 extern "C" {
 #endif
 
-// Opaque structure
 typedef struct NoiseEstimator NoiseEstimator;
 
-/* Create heap state for n_freqs bins; returns NULL on invalid dimensions or allocation
- * failure.
- */
+/* Heap instance for n_freqs bins; NULL on invalid dimensions or allocation failure. */
 NoiseEstimator* noise_estimator_create(int n_freqs, const AnrConfig* config);
 
-/* Query size, then initialize in caller-owned memory. Buffer must be 16-byte aligned and at
- * least noise_estimator_get_mem_size() bytes; no internal allocation.
- */
+/* Caller-owned memory: 16-byte aligned, at least noise_estimator_get_mem_size() bytes; no
+ * internal allocation. */
 size_t noise_estimator_get_mem_size(int n_freqs, const AnrConfig* config);
 NoiseEstimator* noise_estimator_init(void* mem, size_t mem_size,
                                      int n_freqs, const AnrConfig* config);
@@ -31,21 +27,17 @@ NoiseEstimator* noise_estimator_init(void* mem, size_t mem_size,
 /* Free heap state; static memory remains caller-owned. */
 void noise_estimator_destroy(NoiseEstimator* self);
 
-/* Accumulate power[n_freqs] at frame_idx in [0, num_init_frames). Used for exact
- * initialization unless USE_FAST_PERCENTILE is defined.
- */
+/* Stores power[n_freqs] for init frame frame_idx in [0, num_init_frames); no-op with
+ * USE_FAST_PERCENTILE. */
 void noise_estimator_accumulate_init_power(NoiseEstimator* self, const float* power,
                                            int frame_idx);
 
-/* Initialize from power_sum[n_freqs] and n_frames. Exact path uses the accumulated 30th
- * percentile; USE_FAST_PERCENTILE uses mean * 0.23.
- */
+/* Initializes from power_sum[n_freqs] over n_frames: 30th percentile of the stored rows, or
+ * mean * 0.23 with USE_FAST_PERCENTILE. */
 void noise_estimator_init_noise(NoiseEstimator* self, const float* power_sum, int n_frames);
 
-/* Update with power[n_freqs] and optional external SPP[n_freqs] (NULL selects internal SPP).
- * When slow_lf_rise is true, bins [0, slow_lf_bins) fall normally but rise no faster than
- * alpha_d_speech, protecting weak low-frequency speech.
- */
+/* Updates with power[n_freqs] and optional external SPP[n_freqs] (NULL: internal SPP). With
+ * slow_lf_rise, bins [0, slow_lf_bins) rise no faster than alpha_d_speech. */
 void noise_estimator_update_ex(NoiseEstimator* self,
                                const float* power,
                                const float* spp,

@@ -1,15 +1,10 @@
-"""Python<->C effective-config parity test (2026-08-03).
+"""Python<->C effective-config parity test.
 
-Certifies that Python's canonical NR config composition --
-``process_audio.build_v3_2_base_params()`` -> ``core.nr_strength.apply_strength()``
--> the ``MmseLsaDenoiser`` constructor -- resolves to the SAME effective,
-already-retimed config as the C library's ``anr_config_for_mode_grid()``,
-across every (grid, strength) combination this project ships. Compares actual
-resolved numeric fields, not just "both sides produce finite output" --
-that weaker check would have missed the exact class of bug this project just
-spent a round fixing (Audio_ALG's C pipelines silently overriding the
-canonical alpha_d/alpha_attack back to a stale, worse-measured legacy
-tuning -- see NR/CHANGELOG.md and audio_pipeline.c's matching comment).
+Python's config composition -- ``process_audio.build_v3_2_base_params()`` ->
+``core.nr_strength.apply_strength()`` -> the ``MmseLsaDenoiser`` constructor -- must resolve to
+the same effective, already-retimed config as the C library's ``anr_config_for_mode_grid()``
+for every shipped (grid, strength) combination. The resolved numeric fields are compared,
+not just finite output.
 
 The C side is `c_impl/test/test_config_parity.c`, built and run via
 `make -C c_impl test-config-parity`, which prints one CSV row per
@@ -43,20 +38,15 @@ _DB_TO_LINEAR_FIELDS = {
     "scene_change_threshold_db": "scene_change_threshold",
 }
 
-# Tolerance: C computes in float32, Python in float64: 1e-4 relative +
-# 1e-5 absolute comfortably clears that gap while still catching a genuine
-# provenance/composition mismatch (which is off by 10-40%, not ULPs -- see
-# alpha_d 0.75 vs 0.96 and alpha_attack 0.55 vs 0.38 in this round's A/B).
+# C computes in float32, Python in float64: 1e-4 relative + 1e-5 absolute clears that gap and
+# still catches a composition mismatch, which shows up as a 10-40% difference.
 def _close(a, b):
     return math.isclose(a, b, rel_tol=1e-4, abs_tol=1e-5)
 
 
 def _dump_c_config():
     c_impl_dir = os.path.join(os.path.dirname(_ROOT), "c_impl")
-    # Pin DEBUG=0 explicitly rather than inheriting the caller's shell
-    # environment -- the Makefile hard-rejects any DEBUG value other than
-    # "0"/"1" (including a stray exported DEBUG from an unrelated tool), and
-    # this test has no reason to depend on ambient environment cleanliness.
+    # The Makefile rejects any DEBUG value other than "0"/"1", so do not inherit the caller's.
     env = dict(os.environ, DEBUG="0")
     result = subprocess.run(
         ["make", "test-config-parity"],
@@ -166,9 +156,8 @@ def test_strength_presets_change_depth_only(sample_rate, fft_size):
             f"{sample_rate}Hz/fft={fft_size}: {dict(zip(strengths, values))}"
         )
 
-    # Stronger modes monotonically deepen the gain/SNR floors and lower the
-    # speech-presence prior; over-subtraction rises to balanced and stays at
-    # 1.3 for aggressive (1.5 over-subtracted high-SNR speech).
+    # Stronger modes monotonically deepen the gain/SNR floors and lower the speech-presence
+    # prior; over-subtraction rises to balanced and stays at 1.3 for aggressive.
     assert [configs[s]["g_min_db"] for s in strengths] == [-20, -23, -25, -28]
     assert [configs[s]["q"] for s in strengths] == [0.58, 0.54, 0.52, 0.45]
     assert [configs[s]["xi_min_db"] for s in strengths] == [-10, -10, -10, -12]

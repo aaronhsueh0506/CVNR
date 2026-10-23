@@ -66,7 +66,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core import FrameProcessor                       # noqa: E402
 from utils.audio_io import read_audio                 # noqa: E402
 
-MAGIC_V1 = 0x4E525031  # 'NRP1': legacy header without sample rate
+MAGIC_V1 = 0x4E525031  # 'NRP1': header without sample rate (implicit 16 kHz)
 MAGIC = 0x4E525032     # 'NRP2': grid-aware header with sample rate
 
 

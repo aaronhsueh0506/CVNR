@@ -1,20 +1,7 @@
-"""
-MMSE-LSA Gain Calculator (Log-Spectral Amplitude)
-基於 Ephraim-Malah 1985
+"""MMSE-LSA / OM-LSA gain calculator.
 
-參考文獻:
-    Ephraim, Y., & Malah, D. (1985).
-    "Speech enhancement using a minimum mean-square error log-spectral
-    amplitude estimator."
-    IEEE Trans. ASSP, 33(2), 443-445.
-
-關鍵差異 vs MMSE-STSA:
-    - STSA: 最小化 E[(|X| - |Xhat|)^2] (線性域)
-    - LSA:  最小化 E[(log|X| - log|Xhat|)^2] (對數域)
-
-增益公式 = OM-LSA (Cohen 2002)：在 log 域以 SPP 加權混合
-    G = G_H1^spp × g_min^(1-spp)，  G_H1 = (ξ/(1+ξ)) × exp(0.5 × E1(v))
-此 calculator 一律走 OM-LSA 混合（與 C 埠 anr.c 公式對齊；近似數學的數值 parity 另行以 harness 驗證）。
+G = G_H1^spp * g_min^(1 - spp) in the log domain, with G_H1 = xi / (1 + xi) * exp(0.5 * E1(v))
+(Ephraim and Malah, 1985; Cohen, 2002).
 """
 
 import numpy as np
@@ -22,13 +9,7 @@ from typing import Optional
 
 
 def _exp1_approx(v: np.ndarray) -> np.ndarray:
-    """Published three-segment E1 approximation (Martin et al., 2004, Eq. 17).
-
-    E1 is part of the Ephraim-Malah MMSE-LSA gain.  Keep these published
-    coefficients aligned with the C implementation for paper traceability.
-
-    Shared with SppMmseGainCalculator (imported there).
-    """
+    """Three-segment E1 approximation (Martin et al., 2004, Eq. 17); also used by SppMmseGainCalculator."""
     v = np.maximum(v, 1e-10)
     result = np.zeros_like(v)
     mask1 = v < 0.1
@@ -40,29 +21,13 @@ def _exp1_approx(v: np.ndarray) -> np.ndarray:
     return result
 
 
-# v4.2.1 C-align: E1(v) 一律走 3 段近似（與 C `exp1_approx` 公式對齊）。
-# scipy.special.exp1 路徑已移除——C 端不會鏈結 scipy，保留 scipy 分支只會是 parity footgun。
-
-
 class MmseLsaGainCalculator:
-    """
-    MMSE 對數短時頻譜幅度估計器
+    """OM-LSA gain: log-domain SPP-weighted blend of the MMSE-LSA H1 gain and the g_min floor.
 
-    增益 = OM-LSA (Cohen 2002)：log 域以 SPP 加權混合
-       G = G_H1^spp × g_min^(1-spp)
-       G_H1 = (ξ/(1+ξ)) × exp(0.5 × E1(v))  為 MMSE-LSA 的 H1 增益
-       此 calculator 一律走 OM-LSA 混合（與 C 埠 anr.c 對齊）。
-
-    v1.5.0: 支持非對稱平滑
-    - Attack (增益上升): 使用 alpha_attack (快速響應)
-    - Decay (增益下降): 使用 alpha_decay (慢速抑制 Musical Noise)
-
-    參數:
-        g_min_db: 最小增益 (amplitude dB, /20), -30 到 -50
-        alpha_g: 增益時間平滑因子, 0.6-0.8 (對稱平滑時使用)
-        use_asymmetric_smoothing: 是否使用非對稱平滑 (v1.5.0)
-        alpha_attack: Attack 平滑因子 (增益上升時使用，預設 0.3)
-        alpha_decay: Decay 平滑因子 (增益下降時使用，預設 alpha_g)
+    g_min_db: gain floor in amplitude dB (/20). alpha_g: symmetric gain smoothing; with
+    use_asymmetric_smoothing, alpha_attack applies when the gain rises and alpha_decay (default
+    alpha_g) when it falls. spp_protect_floor_db (optional): bins with spp above
+    spp_protect_threshold keep at least this gain. floor_blend: 'log', 'sqrt' or 'linear'.
     """
 
     def __init__(
@@ -72,33 +37,23 @@ class MmseLsaGainCalculator:
         use_asymmetric_smoothing: bool = True,
         alpha_attack: float = 0.3,
         alpha_decay: float = None,
-        # 語音段保護 floor（NR-review #1，預設關閉）。當 spp > spp_protect_threshold 時
-        # 強制 gain >= spp_protect_floor（線性），避免 OMLSA (1−spp)·log(g_min) 過壓高信心語音。
+        # Optional floor for high-SPP bins: gain >= spp_protect_floor where spp > threshold.
         spp_protect_floor_db: Optional[float] = None,
         spp_protect_threshold: float = 0.5,
-        # Domain of the G_H1 / g_min floor blend: 'log' (shipped OM-LSA,
-        # G = G_H1^spp * g_min^(1-spp)), 'sqrt' (amplitude domain as in the
-        # Speex preprocessor, G = (spp*sqrt(G_H1) + (1-spp)*sqrt(g_min))^2) or
-        # 'linear' (G = spp*G_H1 + (1-spp)*g_min). The two power-domain blends
-        # are bounded below by spp*G_H1 so a bin with real speech evidence is
-        # never pulled to the floor by (1-spp).
+        # Domain of the G_H1 / g_min blend: 'log' (OM-LSA), 'sqrt' (amplitude domain, as in the
+        # Speex preprocessor) or 'linear'.
         floor_blend: str = 'log',
     ):
-        # Amplitude-dB convention (/20): the OM-LSA gain is applied directly to the
-        # magnitude spectrum (enhanced = gain * magnitude, no sqrt), so g_min is an
-        # AMPLITUDE floor. g_min_db=-15 → 10^(-15/20)=0.178 (a true -15 dB amplitude floor).
-        # C anr.c mirrors this. (SNR/power dB elsewhere — xi_min, delta,
-        # scene_change — correctly stay /10 because they ARE power ratios.)
+        # g_min is an amplitude floor (/20): the gain multiplies the magnitude spectrum directly.
+        # SNR and power quantities use /10.
         self.g_min = 10 ** (g_min_db / 20)
         self.log_g_min = np.log(self.g_min + 1e-10)
         self.alpha_g = alpha_g
 
-        # v1.5.0: 非對稱平滑參數
         self.use_asymmetric_smoothing = use_asymmetric_smoothing
         self.alpha_attack = alpha_attack
         self.alpha_decay = alpha_decay if alpha_decay is not None else alpha_g
 
-        # SPP-protected floor
         if (spp_protect_floor_db is not None
                 and (not np.isfinite(spp_protect_floor_db)
                      or spp_protect_floor_db < g_min_db
@@ -133,39 +88,25 @@ class MmseLsaGainCalculator:
         spp_protect_enabled: bool = True,
         spp_protect_mask: Optional[np.ndarray] = None,
     ) -> np.ndarray:
-        """
-        計算 SPP 加權的 MMSE-LSA / OMLSA 增益
+        """OM-LSA gain (n_freqs,) from spp, xi and gamma (each (n_freqs,)).
 
-        參數:
-            spp: 語音存在機率 (n_freqs,)
-            xi: 先驗 SNR (n_freqs,)
-            gamma: 後驗 SNR (n_freqs,)
-            g_min: 最小增益（可選）。可為 float（scalar）或 ndarray（per-bin）
-            alpha_g_override: 對稱平滑 alpha_g 的 per-bin 覆蓋值（可選；預設 None）
-            alpha_attack_override: 非對稱 attack 的 per-bin 覆蓋值
-            alpha_decay_override: 非對稱 decay 的 per-bin 覆蓋值
-            spp_protect_enabled: 是否啟用語音增益下限
-            spp_protect_mask: 可選的 per-bin 保護頻帶遮罩
-
-        返回:
-            gain: 增益 (n_freqs,)
+        g_min: optional scalar or per-bin floor. The alpha_*_override arguments replace the
+        smoothing coefficients per bin; spp_protect_enabled and spp_protect_mask restrict the
+        speech floor.
         """
-        # g_min 支援 scalar 或 per-bin array（可選 per-bin 覆蓋）
+        # g_min may be a scalar or a per-bin array.
         if g_min is None:
             g_min_effective = self.g_min
-            log_g_min_effective = self.log_g_min  # cached at __init__, avoid recompute
+            log_g_min_effective = self.log_g_min
         else:
             g_min_effective = g_min
             log_g_min_effective = np.log(np.asarray(g_min_effective) + 1e-10)
 
-        # 基礎 MMSE 增益
         gain_mmse = self._mmse_gain_base(xi, gamma)
         gain_mmse = np.clip(gain_mmse, g_min_effective, 1.0)
-        # Exposed so a caller can feed the decision-directed a-priori SNR from
-        # the H1 gain (Cohen 2001 eq. 18) instead of the floor-mixed output.
+        # Exposed so a caller can feed the DD a-priori SNR from the H1 gain (Cohen 2001, eq. 18).
         self.last_gain_mmse = gain_mmse
 
-        # 對數域加權 (OMLSA 核心)
         if self.floor_blend == 'linear':
             log_gain = np.log(spp * gain_mmse + (1 - spp) * g_min_effective + 1e-10)
         elif self.floor_blend == 'sqrt':
@@ -175,10 +116,8 @@ class MmseLsaGainCalculator:
             log_gain_mmse = np.log(gain_mmse + 1e-10)
             log_gain = spp * log_gain_mmse + (1 - spp) * log_g_min_effective
 
-        # 對數域時間平滑
         if self.log_gain_prev is not None:
             if self.use_asymmetric_smoothing:
-                # Attack 快 / Decay 慢
                 alpha_attack_eff = (alpha_attack_override
                                     if alpha_attack_override is not None
                                     else self.alpha_attack)
@@ -196,23 +135,18 @@ class MmseLsaGainCalculator:
                                else self.alpha_g)
                 log_gain = alpha_g_eff * self.log_gain_prev + (1 - alpha_g_eff) * log_gain
 
-        # 轉回線性域
         gain = np.exp(log_gain)
 
-        # 限制範圍
         gain = np.clip(gain, g_min_effective, 1.0)
 
-        # SPP-protected floor：語音 bin（spp > threshold）強制 gain >= 保護下限，
-        # 避免深 g_min 透過 (1−spp) 誤壓高信心語音（NR-review #1，預設關閉）。
+        # Speech floor: bins with spp above the threshold keep at least spp_protect_floor.
         if self.spp_protect_floor is not None and spp_protect_enabled:
             protect_bins = spp > self.spp_protect_threshold
             if spp_protect_mask is not None:
                 protect_bins = protect_bins & spp_protect_mask
-            # gain is the fresh array np.clip returned above; raise only the
-            # protected bins in place.
+            # gain is the fresh np.clip result; raise only the protected bins in place.
             np.maximum(gain, self.spp_protect_floor, out=gain, where=protect_bins)
 
-        # 保存對數域增益
         self.log_gain_prev = np.log(gain + 1e-10)
 
         return gain
@@ -222,19 +156,9 @@ class MmseLsaGainCalculator:
         xi: np.ndarray,
         gamma: np.ndarray
     ) -> np.ndarray:
-        """
-        基礎 MMSE 增益公式 (使用指數積分 E1)
-
-        這是 MMSE-LSA 的精確解 (不是近似)
-
-        G = (ξ/(1+ξ)) * exp(0.5 * E1(v))
-
-        其中:
-            v = ξ/(1+ξ) * γ
-            E1(v) = ∫[v to ∞] (e^(-t)/t) dt
-        """
+        """H1 gain xi / (1 + xi) * exp(0.5 * E1(v)) with v = xi / (1 + xi) * gamma."""
         v = (xi / (1 + xi)) * gamma
-        v = np.clip(v, 1e-10, 700)  # 防止溢出
+        v = np.clip(v, 1e-10, 700)
 
         exp1_v = _exp1_approx(v)
 
@@ -243,7 +167,7 @@ class MmseLsaGainCalculator:
         return gain
 
     def reset(self):
-        """重置增益歷史"""
+        """Clears the gain history."""
         self.log_gain_prev = None
         self.last_gain_mmse = None
 
@@ -254,7 +178,6 @@ class MmseLsaGainCalculator:
 
 
 if __name__ == "__main__":
-    # 測試示例：OM-LSA 增益（log 域以 SPP 混合 G_H1 與 g_min）
     print("MMSE-LSA / OM-LSA 增益計算器")
 
     print("\nSPP 對 OM-LSA 增益的影響（固定 ξ=1, γ=2）:")

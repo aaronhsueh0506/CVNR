@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Focused fail-closed tests for run_vctk_benchmark.py / compare_vctk_benchmark.py.
 
-These guard the specific silent-PASS failure modes found in the original
-tools (see compare_vctk_benchmark.py's module docstring for the full
-rationale):
+These guard the silent-PASS failure modes of the comparison (see
+compare_vctk_benchmark.py's module docstring for the rationale):
 
   1. comparing runs with different grid settings (mode/strength/sample_rate/
      fft_size/hop_size) must hard-fail unless --allow-mismatch is passed.
@@ -261,8 +260,8 @@ def test_main_rejects_partial_null_metric_values(tmp_path):
 
 
 def test_main_rejects_all_null_metric_values_n_zero_case(tmp_path):
-    """The exact bug: every case errored/null for a metric -> n=0 compared --
-    must FAIL, never report a vacuous PASS."""
+    """Every case errored/null for a metric -> n=0 compared -- must FAIL, never report a
+    vacuous PASS."""
     records_base = [make_record(f"p{i}.wav") for i in range(3)]
     records_cand = [make_record(f"p{i}.wav") for i in range(3)]
     for r in records_cand:
@@ -347,8 +346,7 @@ def test_run_output_json_has_content_hash_fields_not_bare_paths(tmp_path):
 
 
 def test_describe_run_handles_missing_hash_fields_gracefully(capsys):
-    """Backward compatibility: older JSONs without the new hash fields must
-    not crash describe_run()."""
+    """JSONs without the hash fields must not crash describe_run()."""
     old_style_run = {"mode": "full", "strength": "balanced", "sample_rate": 16000,
                       "fft_size": 256, "hop_size": 128, "n_cases": 1, "n_ok": 1, "n_err": 0}
     compare_mod.describe_run("baseline", old_style_run)  # must not raise

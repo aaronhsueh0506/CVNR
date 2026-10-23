@@ -1,16 +1,7 @@
-"""
-NR content-preservation MODE.
+"""NR content-preservation mode. The only accepted value is 'full' (removes noise and
+noise-like content); it is recorded in benchmark records.
 
-Orthogonal to the C `config_for_mode` STRENGTH axis (MILD/BALANCED/AGGRESSIVE). This was
-the CONTENT-preservation axis; the only mode that ever shipped is 'full' (removes noise
-AND noise-like content, incl. sustained music) — the 'stationary' alternative was removed.
-`mode` stays a recorded constant rather than being deleted outright because
-`run_vctk_benchmark.py`'s `GRID_KEYS` writes it into every benchmark JSON record on disk,
-and dropping the field would break comparability with existing baselines that recorded
-`mode: stationary`.
-
-`apply_mode(params, mode)` is called from `process_audio.create_denoiser_from_config`
-(V3-2 branch); it validates the single accepted value and returns a copy of `params`.
+`apply_mode(params, mode)` validates the mode and returns a copy of `params`.
 """
 
 from copy import deepcopy

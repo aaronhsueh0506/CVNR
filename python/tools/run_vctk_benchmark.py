@@ -1,19 +1,12 @@
 #!/usr/bin/env python3
 """VCTK+DEMAND regression benchmark runner (V3-2 MMSE-LSA).
 
-Replaces the dead regenerate_all_vctk.py / compute_improvement_vctk.py pair:
-both imported deleted modules (regenerate_all / compute_improvement) and both
-hardcoded a "noisy"/"clean" subdirectory layout that does not match the
-actual downloaded dataset at test_wav/vctk_demand/ (which uses
-noisy_testset_wav/ and clean_testset_wav/). Neither exposed --mode/--strength.
-
-This is ONE self-contained, checked-in tool: for every (clean, noisy) pair in
-the dataset it resamples both to the target sample rate, runs the V3-2
-denoiser via create_denoiser_from_config() with an explicit mode/strength/
-fft_size, scores PESQ (wideband, 16 kHz)/STOI/SI-SDR/segSNR against the clean
-reference, and writes one JSON record per file plus run-identifying metadata
-(including the repo's git commit / dirty state) to --output. Compare two such
-JSON files with `tools/compare_vctk_benchmark.py`.
+The dataset lives at test_wav/vctk_demand/ (noisy_testset_wav/ and clean_testset_wav/).
+For every (clean, noisy) pair in it the tool resamples both to the target sample rate, runs the
+V3-2 denoiser with an explicit mode/strength/fft_size, scores PESQ (wideband, 16 kHz)/STOI/SI-SDR/
+segSNR against the clean reference, and writes one JSON record per file plus run-identifying
+metadata (including the repo's git commit / dirty state) to --output. Compare two such JSON files
+with `tools/compare_vctk_benchmark.py`.
 
 Config-directory resolution note: this script never hands the denoiser a bare
 relative path. `--config-dir` defaults to <nr-root>/python/config (nr-root defaults to
@@ -26,7 +19,7 @@ Usage:
         --output results/vctk_full_balanced.json
 
     python3 python/tools/run_vctk_benchmark.py --mode full --strength aggressive \\
-        --cases results/vctk_clean_50.txt --output /tmp/smoke.json --limit 10
+        --cases cases.txt --output /tmp/smoke.json --limit 10
 
 Then:
     python3 python/tools/compare_vctk_benchmark.py baseline.json candidate.json
@@ -106,14 +99,11 @@ def sha256_bytes(data: bytes) -> str:
 
 
 def import_process_audio_module(nr_root: Path):
-    """Import process_audio from nr_root specifically, regardless of what else
-    is already on sys.path or cached in sys.modules (guards against a nested
-    worktree / scratch dir shadowing the real module, the exact failure mode
-    that bit a nested-checkout regression). Returns the module itself (not
-    just create_denoiser_from_config) so callers can also reach
-    load_config/build_v3_2_base_params/apply_strength/apply_mode/
-    resolve_signal_grid/MmseLsaDenoiser -- resolving config+params once per
-    run instead of re-loading the YAML from disk on every case."""
+    """Import process_audio from nr_root specifically, regardless of what else is already on
+    sys.path or cached in sys.modules (guards against a nested worktree / scratch dir shadowing
+    the real module). Returns the module itself so callers can also reach
+    load_config/build_v3_2_base_params/apply_strength/apply_mode/resolve_signal_grid/
+    MmseLsaDenoiser and resolve config+params once per run."""
     nr_root_str = str(nr_root / "python")
     sys.path = [p for p in sys.path if p not in ("", nr_root_str)]
     sys.path.insert(0, nr_root_str)
@@ -159,11 +149,9 @@ def get_git_identity(nr_root: Path) -> dict:
             h.update(_git(nr_root, ["diff", "HEAD"]).encode("utf-8", errors="replace"))
         except Exception:
             pass
-        # Untracked entries: hash their *paths*, not their bytes. This repo's
-        # untracked entries are large downloaded dataset directories (e.g.
-        # test_wav/vctk_demand/), not code -- hashing file content there would
-        # be slow and behaviourally meaningless. Path names are still enough
-        # to tell apart two dirty states that differ only in what's untracked.
+        # Untracked entries: hash their *paths*, not their bytes (they are large dataset
+        # directories); the names still tell apart dirty states that differ only in what is
+        # untracked.
         untracked = sorted(line[3:] for line in status.splitlines() if line.startswith("??"))
         h.update("\n".join(untracked).encode("utf-8"))
         diff_hash = h.hexdigest()[:16]
@@ -364,13 +352,9 @@ def main(argv=None):
     config_dir, config_file = resolve_config_dir(nr_root, args.config_dir, DENOISER_VERSION)
     process_audio = import_process_audio_module(nr_root)
 
-    # Resolve config -> params ONCE per run (mirrors process_audio.
-    # create_denoiser_from_config()'s V3-2 branch exactly), instead of the
-    # previous per-case call that re-opened and re-parsed the YAML from disk
-    # on every one of up to 824 cases while mode/strength/grid never change
-    # within a run. Each case below still gets its own fresh MmseLsaDenoiser
-    # instance (clean streaming state per file), just built directly from
-    # this cached params dict instead of via a full config reload.
+    # Resolve config -> params once per run (mirrors process_audio.create_denoiser_from_config()'s
+    # V3-2 branch). Each case below still gets a fresh MmseLsaDenoiser so streaming state starts
+    # clean per file.
     _config = process_audio.load_config(str(config_file))
     _frame_size, _frame_shift, _fft_size = process_audio.resolve_signal_grid(
         args.sample_rate, args.fft_size)
@@ -379,9 +363,7 @@ def main(argv=None):
     _strength = args.strength or _config.get('strength', 'balanced')
     _params = process_audio.apply_strength(_params, _strength)
     _params['strength'] = _strength
-    # --mode is required with a single choice ('full'), so args.mode is always
-    # truthy; unlike --strength (multi-valued), there's no config-fallback case
-    # to cover here.
+    # --mode is required with a single choice ('full'), so args.mode is always set.
     _mode = args.mode
     _params = process_audio.apply_mode(_params, _mode)
     _params['mode'] = _mode
@@ -444,10 +426,8 @@ def main(argv=None):
     if not stems:
         raise SystemExit("FATAL: no cases to run (empty case list / no matched pairs found).")
 
-    # Case-manifest provenance: if an explicit --cases file was given, hash
-    # its actual bytes (the manifest artifact itself). Otherwise there is no
-    # on-disk manifest -- synthesize one from the final (post --limit) stem
-    # list actually iterated, so two "discovered" runs are still comparable.
+    # Case-manifest provenance: hash the bytes of an explicit --cases file; otherwise synthesize
+    # a manifest from the final (post --limit) stem list so discovered runs stay comparable.
     if args.cases:
         cases_manifest_path = Path(args.cases).resolve()
         cases_manifest_sha256 = sha256_file(cases_manifest_path)

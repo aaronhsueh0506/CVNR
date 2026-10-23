@@ -13,7 +13,6 @@ import tracemalloc
 from typing import Optional, Dict, Any, Callable
 import numpy as np
 
-# 可選依賴
 try:
     import psutil
     PSUTIL_AVAILABLE = True
@@ -45,19 +44,16 @@ class PerformanceProfiler:
         """
         self.enable_memory_trace = enable_memory_trace
 
-        # 時間測量
         self.start_time: Optional[float] = None
         self.end_time: Optional[float] = None
         self.elapsed_time: Optional[float] = None
 
-        # CPU/內存（使用 psutil）
         self.process = None
         self.cpu_percent: Optional[float] = None
         self.memory_before: Optional[float] = None
         self.memory_after: Optional[float] = None
         self.memory_used: Optional[float] = None
 
-        # 內存追蹤（使用 tracemalloc）
         self.memory_current: Optional[float] = None
         self.memory_peak: Optional[float] = None
 
@@ -75,7 +71,6 @@ class PerformanceProfiler:
 
     def start(self):
         """開始性能測量"""
-        # 重置狀態
         self.start_time = None
         self.end_time = None
         self.elapsed_time = None
@@ -86,29 +81,22 @@ class PerformanceProfiler:
         self.memory_current = None
         self.memory_peak = None
 
-        # 開始時間測量
         self.start_time = time.perf_counter()
 
-        # CPU/內存測量（psutil）
         if PSUTIL_AVAILABLE and self.process:
-            # 初始化 CPU 測量
             self.process.cpu_percent()
-            # 記錄起始內存
             self.memory_before = self.process.memory_info().rss / 1024 / 1024  # MB
 
-        # 內存追蹤（tracemalloc）
         if self.enable_memory_trace:
             tracemalloc.start()
 
     def stop(self):
         """結束性能測量"""
-        # 結束時間測量
         self.end_time = time.perf_counter()
 
         if self.start_time is not None:
             self.elapsed_time = self.end_time - self.start_time
 
-        # CPU/內存測量（psutil）
         if PSUTIL_AVAILABLE and self.process:
             self.cpu_percent = self.process.cpu_percent()
             self.memory_after = self.process.memory_info().rss / 1024 / 1024  # MB
@@ -116,7 +104,6 @@ class PerformanceProfiler:
             if self.memory_before is not None:
                 self.memory_used = self.memory_after - self.memory_before
 
-        # 內存追蹤（tracemalloc）
         if self.enable_memory_trace:
             current, peak = tracemalloc.get_traced_memory()
             self.memory_current = current / 1024 / 1024  # MB
@@ -154,22 +141,18 @@ class PerformanceProfiler:
             'elapsed_time_s': self.elapsed_time,
         }
 
-        # RTF
         if audio_duration is not None:
             stats['audio_duration_s'] = audio_duration
             stats['rtf'] = self.calculate_rtf(audio_duration)
 
-        # CPU
         if self.cpu_percent is not None:
             stats['cpu_percent'] = self.cpu_percent
 
-        # 內存（psutil）
         if self.memory_used is not None:
             stats['memory_used_mb'] = self.memory_used
             stats['memory_before_mb'] = self.memory_before
             stats['memory_after_mb'] = self.memory_after
 
-        # 內存（tracemalloc）
         if self.memory_peak is not None:
             stats['memory_current_mb'] = self.memory_current
             stats['memory_peak_mb'] = self.memory_peak
@@ -195,17 +178,14 @@ class PerformanceProfiler:
             print(f"Performance: {algorithm_name}")
             print(f"{'='*60}")
 
-        # 時間
         if stats['elapsed_time_ms'] is not None:
             print(f"Processing time:    {stats['elapsed_time_ms']:8.2f} ms")
 
-        # RTF
         if 'rtf' in stats and stats['rtf'] is not None:
             rtf = stats['rtf']
             print(f"Audio duration:     {stats['audio_duration_s']:8.2f} s")
             print(f"Real-time factor:   {rtf:8.4f}")
 
-            # 評估實時性
             if rtf < 0.3:
                 status = "優秀（可在低功耗設備運行）"
             elif rtf < 0.5:
@@ -216,14 +196,12 @@ class PerformanceProfiler:
                 status = "不合格（無法實時）"
             print(f"Status:             {status}")
 
-        # CPU
         if 'cpu_percent' in stats and stats['cpu_percent'] is not None:
             print(f"CPU usage:          {stats['cpu_percent']:8.1f}%")
         else:
             if not PSUTIL_AVAILABLE:
                 print(f"CPU usage:          N/A (install psutil)")
 
-        # 內存
         if 'memory_used_mb' in stats and stats['memory_used_mb'] is not None:
             print(f"Memory used:        {stats['memory_used_mb']:8.2f} MB")
 
@@ -369,13 +347,11 @@ if __name__ == "__main__":
     print(f"psutil available: {PSUTIL_AVAILABLE}")
     print()
 
-    # 測試性能分析器
     print("Testing PerformanceProfiler...")
 
     def dummy_processing():
         """模擬音頻處理"""
         time.sleep(0.1)  # 模擬 100ms 處理時間
-        # 模擬一些內存分配
         data = np.random.randn(1000000)
         return np.mean(data)
 
@@ -384,10 +360,8 @@ if __name__ == "__main__":
     with profiler:
         result = dummy_processing()
 
-    # 假設處理 2 秒音頻
     profiler.print_stats(audio_duration=2.0, algorithm_name="Dummy Test")
 
-    # 測試理論 FLOPs 計算
     print("\nTheoretical FLOPs Comparison:")
     print("="*60)
 

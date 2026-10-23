@@ -272,11 +272,7 @@ def test_table_is_not_vacuous(table):
     # Guards against a format drift that would make every other check pass over zero rows.
     assert len(table) >= 60, "only %d table rows parsed" % len(table)
     assert sum(len(r.py_tokens) for r in table) >= 60
-    # Lowered from 100 on 2026-10-21 (P3c-NR): 10 twin names legitimately left this
-    # table when their kernel bodies moved out of c_impl/src into the shared
-    # audiolib/common/utility/simd_nr.h (now documented in Audio_ALG's map instead,
-    # AC-SIMD-08) -- not a format drift, see c_python_function_map.md's
-    # gain_prepare/noise_estimator_min_ordered/_ring_min/_restart_inert rows.
+    # Some twin kernels live in audiolib/common/utility/simd_nr.h and are mapped in Audio_ALG's map.
     assert sum(len(r.primary) + len(r.twins) for r in table) >= 80
 
 

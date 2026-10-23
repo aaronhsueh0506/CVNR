@@ -20,7 +20,7 @@ metric is compared it hard-errors (non-zero exit, no verdict printed) if:
   * for any metric, the number of cases with a valid (non-null, non-NaN)
     value in BOTH runs is less than the full matched case count -- catches a
     metric that silently came back null/missing for some or all cases
-    (including the n=0 case, which used to report a vacuous PASS). NOT
+    (including the n=0 case, which must not report a vacuous PASS). NOT
     bypassable.
 
 Only after all of the above hold does it match records by filename and print
@@ -51,17 +51,6 @@ import numpy as np
 
 METRICS = ("pesq", "stoi", "si_sdr", "seg_snr")
 GATES = {"pesq": -0.005, "stoi": -0.002}
-# Known, accepted exception (2026-08-03, see CHANGELOG.md "Audio_ALG C
-# pipeline NR tuning A/B" entry): dropping the legacy alpha_d/alpha_attack
-# override in favour of anr_config_for_mode_grid()'s canonical (B)
-# defaults regresses standalone VCTK+DEMAND STOI by ~-0.026, ~13x past this
-# gate. That comparison was deliberately run and the regression accepted
-# because this NR component is never used standalone in this project (it is
-# always AEC-chained; the AEC-chained 90-case leg favoured B). If a
-# baseline/candidate comparison here is re-litigating exactly that A-vs-B
-# change, a STOI FAIL is expected and already decided -- it is not a new
-# regression. Do NOT loosen this gate to silence it; it must stay strict for
-# any other, still-undecided change.
 # Grid-settings fields that must match between baseline and candidate unless
 # --allow-mismatch is passed. fft_size/hop_size here are the *resolved*
 # values the denoiser actually ran at (run['fft_size'] / run['hop_size']),

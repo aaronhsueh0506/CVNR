@@ -37,9 +37,8 @@ static Complex g_spec_out[MAX_N_FREQS];
 #define MAX_SECONDS 60
 #define MAX_SAMPLES (48000 * MAX_SECONDS)
 static float   g_signal[MAX_SAMPLES];
-/* OLA output can overshoot n_samples by up to HOP-1 samples (out_len is rounded
- * up to a whole number of hops past the last frame) — pad past MAX_SAMPLES so
- * the write loop below never overruns even when n_samples == MAX_SAMPLES. */
+/* The OLA output can overshoot n_samples by up to hop - 1 samples, so it is padded past
+ * MAX_SAMPLES. */
 static float   g_out_ola[MAX_SAMPLES + MAX_FRAME_SIZE];
 
 void print_usage(const char* prog) {
@@ -54,7 +53,7 @@ void print_usage(const char* prog) {
     printf("Output is byte-identical to denoise_wav (framing 512/256/512, sqrt-Hann).\n");
 }
 
-/* Periodic sqrt-Hann in float32; shared with the streaming front ends. */
+/* Periodic sqrt-Hann window. */
 static void build_sqrt_hann(float* w, int N) {
     ac_window_build(w, N);
 }
@@ -146,9 +145,8 @@ int main(int argc, char* argv[]) {
     AnrConfig config = anr_config_for_mode_grid(
         sample_rate, selected_fft, nr_mode);
 
-    /* Reject a sample rate or framing outside the supported grids with a clear message (same
-     * whitelist as main.c); anr_get_mem_size() and anr_init() would also reject it, but with a
-     * generic pool-size error. */
+    /* Reject unsupported grids with a clear message (anr_get_mem_size() would also reject them,
+     * with a generic pool-size error). */
     if (!anr_validate_config(&config)) {
         fprintf(stderr,
                 "Error: unsupported sample rate %d Hz for NR processing "
@@ -191,15 +189,13 @@ int main(int argc, char* argv[]) {
     const char* mode_names[] = {"mild", "moderate", "balanced", "aggressive"};
     printf("  NR mode: %s\n", mode_names[nr_mode]);
 
-    /* 6. Framing (identical rule to main.c / Python FrameProcessor). */
+    /* 6. Framing (as in main.c). */
     int n_frames = (n_samples <= frame_size)
                  ? 1
                  : (n_samples - frame_size + hop - 1) / hop + 1;
     int out_len = (n_frames - 1) * hop + frame_size;
 
-    /* out_len can exceed n_samples by up to HOP-1 samples (last-frame rounding),
-     * so g_out_ola is sized MAX_SAMPLES + FRAME_SIZE, not just MAX_SAMPLES — but
-     * check at runtime too rather than trust the static headroom silently. */
+    /* out_len can exceed n_samples by up to hop - 1 samples; check the capacity at runtime. */
     if (out_len > (int)(sizeof(g_out_ola) / sizeof(float))) {
         fprintf(stderr, "Error: out_len %d > g_out_ola capacity %zu. Raise MAX_SECONDS.\n",
                 out_len, sizeof(g_out_ola) / sizeof(float));

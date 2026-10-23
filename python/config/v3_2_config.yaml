@@ -27,17 +27,13 @@ gain_calculation:
 name: MMSE-LSA
 noise_estimation:
   method: mcra
-  alpha_s: 0.95                # 調優：更高平滑 → 更穩定功率譜估計
-  alpha_d: 0.903414             # 2026-09-03 retune (C3): = 0.85 on the 16 ms grid (0.85^(10/16),
-                                # authored here in the legacy 10 ms domain like its siblings).
-                                # Was 0.7 (= 0.565 at 16 ms): that fast tracking is what hurt speech at
-                                # balanced -- 824-case VCTK+DEMAND STOI 0.868 -> 0.880, SI-SDR 10.84 -> 11.48,
-                                # segSNR 5.00 -> 5.36, PESQ 2.431 -> 2.448 (all four improve).
+  alpha_s: 0.95                # 更高平滑 → 更穩定功率譜估計
+  alpha_d: 0.903414             # = 0.85 on the 16 ms grid (0.85^(10/16)); authored in the 10 ms domain like its siblings.
   alpha_p: 0.2
-  L: 32                        # 最小值窗長 32 幀 × 16ms/hop = 512ms（原 48 幀 = 768ms；hop=256）
+  L: 32                        # 最小值窗長 32 幀 × 16 ms hop = 512 ms
   delta_db: 10.0
   num_init_frames: 20
-  broadband_threshold: 1.0     # 調優：關閉（L=32 已足夠快速追蹤場景轉換）
+  broadband_threshold: 1.0     # 關閉（L=32 已足夠快速追蹤場景轉換）
   scene_change_threshold_db: 10.0  # 場景轉換偵測：高頻段 γ > 10dB 且 flatness 高，連續 5 幀觸發
   scene_change_min_frames: 5
   scene_change_blend: 0.5
@@ -52,13 +48,10 @@ noise_estimation:
 noise_tracking:
   enable: true
 spp:
-  alpha_xi: 0.92                # 2026-07 musical-noise fix: DD ξ-smoothing lever (was 0.88). Damps
-                                # ξ jitter → SPP jitter → the isolated gain peaks = musical noise.
-                                # Shared across all strength presets (mild/balanced/aggressive) via
-                                # core/nr_strength.py; C default_config mirrors this for parity.
+  alpha_xi: 0.92                # DD ξ-smoothing: damps ξ jitter → SPP jitter → isolated gain peaks (musical noise).
+                                # Shared across all strength presets via core/nr_strength.py.
   q: 0.52
   xi_min_db: -10.0
-  # Optional Cohen eq.18 experiment. It is disabled in the product path: the
-  # corpus sweep did not justify changing the validated DD recursion.
+  # Optional Cohen eq.18 variant of the DD recursion; off in the product path.
   dd_from_gmmse: false
 version: 3-2

@@ -18,7 +18,6 @@ import json
 from typing import Dict, List, Any
 import numpy as np
 
-# Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from utils.test_data_generator import TestDataGenerator, generate_sample_speech
@@ -32,7 +31,6 @@ from denoisers import (
     MmseLsaDenoiser,
     PmmseDenoiser
 )
-# V3-4/V4 removed (not better than V3-2)
 
 
 class BenchmarkRunner:
@@ -54,24 +52,21 @@ class BenchmarkRunner:
         self.output_file = output_file
         self.results: Dict[str, Any] = {}
 
-        # 測試參數
         self.sample_rate = 16000
         self.duration = 2.0  # 2 秒測試音頻
 
-        # 創建測試數據生成器
         self.data_generator = TestDataGenerator(
             sample_rate=self.sample_rate
         )
 
     def create_denoisers(self) -> Dict[str, Any]:
-        """創建所有降噪器（V3-4/V4 已移除）"""
+        """創建所有降噪器"""
         return {
             'V1': SpectralSubtractionDenoiser(sample_rate=self.sample_rate),
             'V2': WienerDenoiser(sample_rate=self.sample_rate, enable_noise_tracking=True),
             'V3': SppMmseDenoiser(sample_rate=self.sample_rate),
             'V3-2': MmseLsaDenoiser(sample_rate=self.sample_rate),
             'V3-3': PmmseDenoiser(sample_rate=self.sample_rate),
-            # V3-4/V4 removed (not better than V3-2)
         }
 
     def generate_test_cases(
@@ -122,19 +117,15 @@ class BenchmarkRunner:
         Returns:
             測試結果
         """
-        # 性能測試
         profiler = PerformanceProfiler(enable_memory_trace=True)
 
         with profiler:
             enhanced_audio = denoiser.denoise(noisy_audio)
 
-        # 獲取性能統計
         audio_duration = len(noisy_audio) / self.sample_rate
         perf_stats = profiler.get_stats(audio_duration)
 
-        # 音質測試
         if self.quick_mode:
-            # 快速模式：只測 SNR
             from utils.metrics import calculate_snr_improvement
 
             input_snr, output_snr, snr_improvement = calculate_snr_improvement(
@@ -147,12 +138,10 @@ class BenchmarkRunner:
                 'snr_improvement_db': snr_improvement
             }
         else:
-            # 完整模式：測試所有指標
             quality_stats = evaluate_all_metrics(
                 noisy_audio, clean_audio, enhanced_audio, self.sample_rate
             )
 
-        # 合併結果
         result = {
             'test_case': test_case,
             'denoiser': denoiser_name,
@@ -177,7 +166,6 @@ class BenchmarkRunner:
         Returns:
             完整測試結果
         """
-        # 默認測試參數
         if noise_types is None:
             noise_types = ['white', 'babble', 'car']
 
@@ -187,7 +175,6 @@ class BenchmarkRunner:
             else:
                 snr_levels = [0.0, 5.0, 10.0]  # 完整模式測三個 SNR
 
-        # 生成測試用例
         test_cases = self.generate_test_cases(noise_types, snr_levels)
 
         print("="*70)
@@ -199,24 +186,19 @@ class BenchmarkRunner:
         print(f"Denoisers:    V1, V2, V3, V3-2, V3-3")
         print("="*70)
 
-        # 創建降噪器
         denoisers = self.create_denoisers()
 
-        # 生成乾淨語音信號（所有測試共用）
         clean_audio = generate_sample_speech(
             duration=self.duration,
             sample_rate=self.sample_rate
         )
 
-        # 存儲所有結果
         all_results = {}
 
-        # 遍歷所有測試用例
         for i, test_case in enumerate(test_cases, 1):
             print(f"\n[Test {i}/{len(test_cases)}] {test_case['id']}")
             print("-"*70)
 
-            # 生成噪聲
             if test_case['noise_type'] == 'white':
                 noise = self.data_generator.generate_white_noise(self.duration)
             elif test_case['noise_type'] == 'pink':
@@ -229,14 +211,12 @@ class BenchmarkRunner:
             else:
                 noise = self.data_generator.generate_white_noise(self.duration)
 
-            # 添加噪聲到乾淨語音
             noisy_audio = add_noise(
                 clean_audio,
                 noise,
                 target_snr_db=test_case['target_snr_db']
             )
 
-            # 測試每個降噪器
             for denoiser_name, denoiser in denoisers.items():
                 print(f"  Testing {denoiser_name}...", end=' ', flush=True)
 
@@ -246,11 +226,9 @@ class BenchmarkRunner:
                         test_case, denoiser_name
                     )
 
-                    # 存儲結果
                     key = f"{denoiser_name}_{test_case['id']}"
                     all_results[key] = result
 
-                    # 打印簡要結果
                     rtf = result['performance']['rtf']
                     snr_imp = result['quality']['snr_improvement_db']
                     print(f"RTF: {rtf:.4f}, SNR↑: {snr_imp:+.1f}dB")
@@ -261,7 +239,6 @@ class BenchmarkRunner:
                         'error': str(e)
                     }
 
-        # 保存結果
         self.results = {
             'metadata': {
                 'mode': 'quick' if self.quick_mode else 'full',
@@ -289,11 +266,9 @@ class BenchmarkRunner:
         if not self.results:
             return "No results available"
 
-        # 提取數據
         denoisers = self.results['metadata']['denoisers']
         noise_types = self.results['metadata']['noise_types']
 
-        # 計算各算法的平均性能
         summary = {}
         for denoiser in denoisers:
             rtf_list = []
@@ -321,7 +296,6 @@ class BenchmarkRunner:
                 'stoi_mean': np.mean(stoi_list) if stoi_list else None
             }
 
-        # 生成表格
         lines = []
         lines.append("\n## Benchmark Summary\n")
 
@@ -374,10 +348,8 @@ class BenchmarkRunner:
         print("Benchmark Complete!")
         print("="*70)
 
-        # 打印表格
         print(self.generate_summary_table())
 
-        # 保存表格到文件
         summary_file = self.output_file.replace('.json', '_summary.md')
         with open(summary_file, 'w', encoding='utf-8') as f:
             f.write(self.generate_summary_table())
@@ -427,28 +399,23 @@ def main():
 
     args = parser.parse_args()
 
-    # 確定模式
     if args.full:
         quick_mode = False
     else:
         quick_mode = True  # 默認快速模式
 
-    # 創建基準測試運行器
     runner = BenchmarkRunner(
         quick_mode=quick_mode,
         output_file=args.output
     )
 
-    # 運行基準測試
     runner.run_benchmark(
         noise_types=args.noise_types,
         snr_levels=args.snr_levels
     )
 
-    # 保存結果
     runner.save_results()
 
-    # 打印摘要
     runner.print_summary()
 
 

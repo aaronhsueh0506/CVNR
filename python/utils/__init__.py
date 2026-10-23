@@ -9,12 +9,7 @@ __all__ = [
     'plot_spp_spectrogram', 'plot_spp_comparison'
 ]
 
-# plot_spp_spectrogram/plot_spp_comparison pull in matplotlib (visualization.py),
-# which is not a hard dependency of the package -- pytest auto-collects
-# utils/test_data_generator.py, so an eager `from .visualization import ...`
-# here made matplotlib mandatory just to run algorithm unit tests that never
-# touch plotting. Deferred via module __getattr__ (PEP 562): only imported
-# the first time a caller actually accesses one of these two names.
+# matplotlib is optional: the two plotting functions are imported on first access (PEP 562).
 def __getattr__(name):
     if name in ('plot_spp_spectrogram', 'plot_spp_comparison'):
         from . import visualization

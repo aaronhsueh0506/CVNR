@@ -1,31 +1,20 @@
-# C ANR API migration
+# C ANR API naming and Python layout
 
-The C noise-reduction library uses its function name, **ANR** (adaptive
-noise reduction), rather than its gain-estimation algorithm in public names.
-The rename is complete: the previous names and forwarding wrappers are not
-provided. The Python reference keeps its algorithm names.
-
-| Previous C name | Current C name |
-|---|---|
-| `mmse_lsa_denoiser.h` | `anr.h` |
-| `mmse_lsa_types.h` | `anr_types.h` |
-| `src/mmse_lsa_denoiser.c` | `src/anr.c` |
-| `src/mmse_lsa_internal.h` | `src/anr_internal.h` |
-| `libmmse_lsa.a` | `libanr.a` |
-| `mmse_lsa_*` functions | `anr_*` functions |
-| `MmseLsaDenoiser` | `AnrDenoiser` |
-| `MmseLsaConfig` | `AnrConfig` |
-| `MmseLsaNrMode` | `AnrMode` |
-| `MmseLsaDebugStatus` | `AnrDebugStatus` |
-| `MMSE_LSA_NR_*` strength constants | `ANR_MODE_*` |
-| Other `MMSE_LSA_*` constants | `ANR_*` |
-
-Update includes, types, function calls, constants, source lists, and archive
-link inputs together, then rebuild every consumer. Link `libanr.a` with the
-matching `libaudio_common.a` as before. The frequency-domain API, struct
-fields, supported grids, presets, memory ownership, and streaming semantics
-are unchanged by the rename. Algorithm descriptions identify the
+The C noise-reduction library is named by its function, **ANR** (adaptive
+noise reduction), not by its gain-estimation algorithm. The Python reference
+keeps its algorithm names (`MmseLsaDenoiser`, `McraNoiseEstimator`,
+`MmseLsaGainCalculator`, `SppEstimator`). Algorithm descriptions name the
 MMSE-LSA/OMLSA gain and MCRA/SPP components for technical accuracy.
+
+| Item | C name |
+|---|---|
+| Public headers | `include/anr.h`, `include/anr_types.h` |
+| Sources | `src/anr.c`, `src/anr_internal.h` |
+| Archive | `libanr.a`, linked with the matching `libaudio_common.a` |
+| Types | `AnrDenoiser`, `AnrConfig`, `AnrMode`, `AnrDebugStatus` |
+| Functions | `anr_*` |
+| Strength constants | `ANR_MODE_*` |
+| Other constants | `ANR_*` |
 
 ```c
 #include "anr.h"
@@ -38,37 +27,24 @@ anr_destroy(nr);
 ```
 
 Both C runners, the C regression tests and the Python/C parity tooling use
-this API. Research results and archived documentation record the names of the
-versions they measured. Select artifacts through the Makefile query targets or
-a release manifest; a build directory kept from an earlier version can contain
-artifacts built under the previous names.
-
-## Stationary mode
-
-The C library has no stationary content mode: `anr_apply_stationary()`, the
-`AnrConfig` fields `stationary_floor`, `stationary_floor_exponent`,
-`stationary_floor_beta`, `scene_change_tonal_veto` and `scene_change_lo_flatness_max`,
-and the `--stationary` option of the example programs do not exist. `AnrConfig` is
-160 bytes (180 before the mode was removed) and `anr_get_mem_size()` returns 48 bytes
-less per instance, so callers that build `AnrConfig` field by field or size static
-pools from a fixed constant must be rebuilt. The Python reference had a stationary mode
-at the time of this migration; it has since been removed there too (see CHANGELOG.md),
-so the two sides no longer differ on this point.
+this API. Select build artifacts through the Makefile query targets
+(`print-lib-path`, `print-bin-dir`) or a release manifest, not by guessing a
+`bin/` path.
 
 ## Python directory layout
 
-Python implementation, tools, tests, YAML configuration and requirements
-live under `python/`, matching the adjacent AEC repository layout. Module and
-class names remain unchanged. No Python algorithm is renamed. The repository
-root retains `c_impl/`, `docs/`, `test_wav/` and `results/`.
+Python implementation, tools, tests, YAML configuration and requirements live
+under `python/`, matching the adjacent AEC repository layout. The repository
+root holds `c_impl/`, `docs/` and `test_wav/`; benchmark tools write generated
+outputs to `results/`.
 
-| Previous path | Current path |
+| Path | Content |
 |---|---|
-| `process_audio.py` | `python/process_audio.py` |
-| `core/`, `denoisers/`, `utils/` | `python/core/`, `python/denoisers/`, `python/utils/` |
-| `tools/`, `tests/` | `python/tools/`, `python/tests/` |
-| `config/` | `python/config/` |
-| `requirements*.txt` | `python/requirements*.txt` |
+| `python/process_audio.py` | WAV CLI |
+| `python/core/`, `python/denoisers/`, `python/utils/` | reference implementation |
+| `python/tools/`, `python/tests/` | tools and tests |
+| `python/config/` | YAML configuration |
+| `python/requirements*.txt` | dependencies |
 
 From the repository root:
 

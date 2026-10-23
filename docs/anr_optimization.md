@@ -1,30 +1,28 @@
 # ANR bit-exact optimization
 
-This release keeps the processing and presets of the preceding release. It renames the C
-API and source/archive files to ANR, moves Python reference code into `python/`,
-and accelerates existing C operations without changing any output bit, except the
-payload bits of a NaN result (see [Bit-exact scope](#bit-exact-scope)). See
-[migration](anr_migration.md).
+NEON kernels accelerate the C core without changing any output bit, except the
+payload bits of a NaN result (see [Bit-exact scope](#bit-exact-scope)). C API
+naming is in [anr_migration.md](anr_migration.md).
 
 ## NEON kernels
 
-Each kernel is a pair of static functions in the library sources. The scalar twin
+Each kernel is a pair of static functions, either in the library sources or in
+audiolib `utility/simd_nr.h` (`skr_*`). The scalar twin
 defines the arithmetic and also processes the tail of an array; the NEON twin processes
-four bins at a time. Both keep the operation order of the original loop: separate rounded
-multiply and add (no fused multiply-add), the original divides, ordered compares with a
+four bins at a time. Both keep the scalar loop's operation order: separate rounded
+multiply and add (no fused multiply-add), exact divides, ordered compares with a
 bit select (so a NaN behaves as in the scalar branch), and no reciprocal or square-root
 estimates. The NEON twin returns the same bits as the scalar twin except the payload bits
 of a NaN result. No additional state, allocation or delay is introduced.
 Building with `-DANR_REFERENCE_KERNELS` selects the scalar twins instead (the final-gain
-passes use the per-bin reference loop), which is how one source tree is compared with
-itself.
+passes use the per-bin reference loop), so one source tree can be compared with itself.
 
 | Stage | Kernel |
 |---|---|
-| MCRA minimum ring, rescan | Lane-wise running minima over the row. The result is the ordered minimum whenever the seed vectors hold no NaN and the minimum is not a zero; any other row takes the scalar first-on-tie rule, so NaN, signed zero and ties behave exactly as before. |
+| MCRA minimum ring, rescan | Lane-wise running minima over the row. The result is the ordered minimum whenever the seed vectors hold no NaN and the minimum is not a zero; any other row takes the scalar first-on-tie rule, so NaN, signed zero and ties behave as in the scalar rule. |
 | MCRA minimum ring, update | Compare and select of the incremental minimum on four bins. Bins whose evicted value was the minimum are collected through a lane table without a data-dependent branch and rescanned after each block of 128 bins. |
 | MCRA inert-bin restart | Select between the restart update and the unchanged value. |
-| SPP decision-directed pass | Posterior SNR, a-priori SNR and the exponent argument, with the original three divides. |
+| SPP decision-directed pass | Posterior SNR, a-priori SNR and the exponent argument, with three exact divides. |
 | Gain input preparation | Clamp and divide that produce v and xi/(1+xi). |
 | Final gain | Blend and smoothing of the log gain before the batched exponential, and select and store of the next-hop state after it. |
 
@@ -32,15 +30,14 @@ Loops that stay scalar: the speech-evidence sum and the high-band power and nois
 (serial float reductions whose order is part of the result), the integer counters, the
 speech-indicator smoothing, the gain application and the loops that clang already
 vectorizes with the same result. The exponential, logarithm and E1 kernels come from
-`audiolib` and are unchanged.
+`audiolib`.
 
 ## Bit-exact scope
 
-For every input that holds no NaN, scalar twin, NEON twin and the loops they replace return
+For every input that holds no NaN, scalar twin, NEON twin and the plain per-bin loops return
 identical bits; the same holds for infinities, signed zeros and subnormals. A NaN stays a NaN
-in the same place. Only the payload bits of a NaN result can differ: the NEON final-gain
-blend and store (`final_blend`, `final_store`) did so in about 0.9 % of the calls of a
-random-bit-pattern differential test against the original loops, and no other kernel did.
+in the same place. Only the payload bits of a NaN result can differ, and only in the NEON
+final-gain blend and store (`final_blend`, `final_store`); no other kernel does.
 Every statement below that says "identical" or "bit-exact" carries this exception.
 
 ## Cost
@@ -50,38 +47,21 @@ extra noise PSD on three grids and two strengths. It uses frozen synthetic spect
 fresh instance per pass, five untimed warm-up passes and 30 timed passes of 600 hops, and
 prints median, quartiles and minimum. The figures below are medians in microseconds per
 hop on Apple M4 with the NE10 backend and clang -O2 with the strict FP flags, 12
-alternating runs of the two binaries compared in each table. They describe the host and
-compiler that built the binaries; they are not target-platform figures.
+alternating runs of the two binaries. They describe the host and compiler that built the
+binaries; they are not target-platform figures.
 
-The two tables answer different questions and have different baselines; do not mix them.
-
-**Scalar-twin build to NEON build (36.6 % to 42.7 % less).** The baseline is the same
+**Scalar-twin build to NEON build (38.9 % to 45.0 % less).** The baseline is the same
 source compiled with `EXTRA_CFLAGS=-DANR_REFERENCE_KERNELS` (every kernel runs its scalar
-twin), the comparison the NEON kernels are designed for.
+twin).
 
 | Grid | Strength | `anr_process` | `anr_process_gain` + extra PSD |
 |---|---|---|---|
-| 16 kHz, FFT 256 | balanced | 1.455 → 0.853 (−41.6 %) | 1.391 → 0.827 (−40.8 %) |
-| 16 kHz, FFT 256 | aggressive | 1.459 → 0.852 (−41.7 %) | 1.390 → 0.828 (−40.5 %) |
-| 16 kHz, FFT 512 | balanced | 2.678 → 1.648 (−38.4 %) | 2.507 → 1.588 (−36.6 %) |
-| 16 kHz, FFT 512 | aggressive | 2.717 → 1.655 (−39.2 %) | 2.518 → 1.590 (−36.9 %) |
-| 48 kHz, FFT 1024 | balanced | 5.461 → 3.142 (−42.5 %) | 5.395 → 3.103 (−42.4 %) |
-| 48 kHz, FFT 1024 | aggressive | 5.470 → 3.135 (−42.7 %) | 5.410 → 3.102 (−42.6 %) |
-
-**Before to after this change, same build (39.7 % to 48.6 % less).** The baseline is the
-code before the NEON kernels, both binaries built with the NEON path on. That code already
-had a NEON ordered minimum, which on this host was slower than a plain scalar loop, so
-this reduction is larger than the one above. An independent repetition of the comparison
-gave 38.9 % to 46.6 %.
-
-| Grid | Strength | `anr_process` | `anr_process_gain` + extra PSD |
-|---|---|---|---|
-| 16 kHz, FFT 256 | balanced | 1.607 → 0.831 (−48.3 %) | 1.537 → 0.805 (−47.6 %) |
-| 16 kHz, FFT 256 | aggressive | 1.614 → 0.830 (−48.6 %) | 1.539 → 0.805 (−47.7 %) |
-| 16 kHz, FFT 512 | balanced | 2.768 → 1.647 (−40.5 %) | 2.628 → 1.584 (−39.7 %) |
-| 16 kHz, FFT 512 | aggressive | 2.815 → 1.648 (−41.4 %) | 2.632 → 1.585 (−39.8 %) |
-| 48 kHz, FFT 1024 | balanced | 5.880 → 3.135 (−46.7 %) | 5.806 → 3.099 (−46.6 %) |
-| 48 kHz, FFT 1024 | aggressive | 5.837 → 3.131 (−46.4 %) | 5.796 → 3.096 (−46.6 %) |
+| 16 kHz, FFT 256 | balanced | 1.435 → 0.794 (−44.7 %) | 1.337 → 0.740 (−44.7 %) |
+| 16 kHz, FFT 256 | aggressive | 1.434 → 0.788 (−45.0 %) | 1.337 → 0.740 (−44.7 %) |
+| 16 kHz, FFT 512 | balanced | 2.601 → 1.573 (−39.5 %) | 2.392 → 1.462 (−38.9 %) |
+| 16 kHz, FFT 512 | aggressive | 2.640 → 1.570 (−40.5 %) | 2.402 → 1.460 (−39.2 %) |
+| 48 kHz, FFT 1024 | balanced | 5.297 → 2.952 (−44.3 %) | 5.177 → 2.863 (−44.7 %) |
+| 48 kHz, FFT 1024 | aggressive | 5.314 → 2.936 (−44.8 %) | 5.185 → 2.865 (−44.7 %) |
 
 The scalar twins are compiled by the host compiler, which vectorizes some of them; on a
 compiler or core that does not, the gap to the scalar twins is expected to be larger.
@@ -121,9 +101,8 @@ builds of the same sources, unchanged.
 Under `SIMD=0` no NEON twin is compiled. `test_anr_kernels.c` then reports that it has
 nothing to compare, and the stream comparison sets scalar against scalar, so `test-bit-exact`
 cannot fail on a change of a scalar twin (only the ordered-minimum test still checks scalar
-code against an independent rule). The scalar twins are covered by comparing the
-per-hop stream hash of the preceding sources with that of the changed sources on the same
-build configuration; run that comparison whenever a scalar twin changes.
+code against an independent rule). When a scalar twin changes, compare the per-hop stream
+hash of the sources before and after the edit, built in the same configuration.
 
 Repeat the bit-exact target for both SIMD settings with the NE10 backend when modifying these
 kernels. Keep `-ffp-contract=off`; reassociation and fast-math are outside this contract.
@@ -132,37 +111,33 @@ arbitrary DEBUG or EXTRA_CFLAGS into the reference build. C++ API, configuration
 reconfiguration, silence restart and scene-change regressions are separate make targets.
 Python/C gain comparisons are numerical parity checks, not Python/C bit-exactness.
 
-Digital silence. A frame whose bins are all exactly zero carries no noise
-statistics: it does not count toward noise initialization and does not advance
-the noise tracker. A stream that starts with silence therefore initializes on
-the signal that follows, and a converged noise floor is kept across a silent
-stretch. `make test-noise-restart` covers both, and a stationary tone whose
-first frame is a reduced-power waveform onset after five seconds of silence.
-Streaming reset remains caller-controlled at a new stream or discontinuity.
-Existing scene-change adaptation is retained.
+## Digital silence
 
-The initialization window (`num_init_frames`, about 200 ms at unity gain)
-therefore follows the leading silence instead of being consumed by it: the first
-non-zero frames of such a stream pass unprocessed until the floor is
-initialized, exactly as the first frames of a stream that starts with signal do.
-Streams without an all-zero frame are unaffected by the silence rule.
+A frame whose bins are all exactly zero carries no noise statistics: it does not count
+toward noise initialization and does not advance the noise tracker. A stream that starts
+with silence therefore initializes on the signal that follows, and a converged noise floor
+is kept across a silent stretch. `make test-noise-restart` covers both, and a tone whose
+first frame is a reduced-power waveform onset after five seconds of silence. Streaming
+reset stays caller-controlled at a new stream or discontinuity.
 
-First tracked frame. The first SPP estimate after initialization has no a-priori
-SNR history and uses the direct estimate `max(gamma - 1, xi_min)`, with the same
-floor `xi_min` as the decision-directed estimate of later frames. Without the
-floor, a bin whose posterior SNR is at most 1 gets xi = 0, the MMSE-LSA gain is
-then `g_min` for any SPP, and the first tracked frame sits at the gain floor
-while the following frames settle higher; the log-gain smoothing carries the
-notch into the next two frames. The bypass state left by the initialization
-window (`gain_prev`, `enhanced_psd_prev`) is not read by this first estimate.
-The direct branch is taken by the first estimate and by any call without gain history
-(`gain_prev` NULL), and all of those calls use the same floor. A bin held by the floor
-changes directly in that estimate; the recursive decision-directed, noise-tracker and
-gain-smoothing state can carry the difference into later frames, so the difference may
-continue for some time. Most of the measured difference lies in the first frames; there is
-no guarantee that it decays monotonically.
+The initialization window (`num_init_frames`, about 200 ms at unity gain) follows the
+leading silence instead of being consumed by it: the first non-zero frames of such a stream
+pass unprocessed until the floor is initialized, exactly as the first frames of a stream
+that starts with signal do. A click inside that window is not suppressed.
 
-The unity-gain initialization window itself is unchanged, so a click inside that window is
-not addressed by this change. The Python `SppEstimator` is shared by the V3, V3-2 and V3-3
-denoisers and `compute_spp_batch`, so their first estimates change in the same way; the C
-library mirrors V3-2 only.
+## First tracked frame
+
+The first SPP estimate after initialization has no a-priori SNR history and uses the direct
+estimate `max(gamma - 1, xi_min)`, with the same floor `xi_min` as the decision-directed
+estimate of later frames. Without the floor, a bin whose posterior SNR is at most 1 gets
+xi = 0, the MMSE-LSA gain is then `g_min` for any SPP, and the first tracked frame sits at
+the gain floor while the following frames settle higher; the log-gain smoothing carries the
+notch into the next two frames. The bypass state left by the initialization window
+(`gain_prev`, `enhanced_psd_prev`) is not read by this estimate. The direct branch is taken
+by the first estimate and by any call without gain history (`gain_prev` NULL), always with
+the same floor. The recursive decision-directed, noise-tracker and gain-smoothing state
+carries the effect into later frames; it is not guaranteed to decay monotonically.
+`make test-noise-restart` and `python/tests/test_first_frame_gain.py` cover it.
+
+The Python `SppEstimator` is shared by the V3, V3-2 and V3-3 denoisers and
+`compute_spp_batch`; the C library mirrors V3-2 only.

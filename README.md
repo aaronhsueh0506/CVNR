@@ -29,8 +29,8 @@ reference wrapper.
 
 Python code, YAML configuration, dependencies and tests live in `python/`.
 From the repository root, run the CLI below or set `PYTHONPATH=python` for
-module imports. Audio fixtures and research outputs remain in `test_wav/`
-and `results/`.
+module imports. Audio fixtures are in `test_wav/`; benchmark tools write
+outputs to `results/`.
 
 ```bash
 python3 -m venv .venv
@@ -42,19 +42,21 @@ python python/process_audio.py input.wav --versions V3-2 \
 ```
 
 `--nr-mode` selects suppression depth (`mild`, `moderate`, `balanced`, or
-`aggressive`; the digits `0`-`3` select the same four in that order). All four strengths share the same DD recursion, MCRA tracker,
-gain dynamics, and low-frequency speech guard; a preset changes only `g_min`,
-the speech-presence prior `q`, the a-priori-SNR floor, and noise
-over-subtraction. This keeps the noise-reduction ladder monotonic instead of
-making a stronger preset accidentally track speech as noise. Missing, malformed, or unreadable YAML configuration is fatal;
-the CLI never silently falls back to unrelated defaults.
+`aggressive`; the digits `0`-`3` select the same four in that order). All four
+strengths share the same DD recursion, MCRA tracker, gain dynamics, and
+low-frequency speech guard; a preset changes only `g_min`, the speech-presence
+prior `q`, the a-priori-SNR floor, and noise over-subtraction, so the ladder is
+monotonic and a stronger preset does not track speech as noise. Missing,
+malformed, or unreadable YAML configuration is fatal; the CLI never falls back
+to other defaults.
 
 ## C build and integration
 
-The C API and archive are named ANR. See the [complete C API migration](docs/anr_migration.md)
-for the source, header, type, function, and link-name changes.
-The [bit-exact optimization record](docs/anr_optimization.md) covers the adopted
-NEON kernels, three-grid cost measurements, validation and reset behavior.
+The C API and archive are named ANR; [C API naming and Python layout](docs/anr_migration.md)
+lists the source, header, type, function, and link names.
+[NEON kernels and their bit-exact contract](docs/anr_optimization.md) covers the
+kernels, three-grid cost measurements and reset behavior; what the checks cover
+and their limits are in [docs/anr_validation.md](docs/anr_validation.md).
 `make -C c_impl bench-anr` prints the per-hop cost of the current build.
 
 ```bash
@@ -72,21 +74,20 @@ wrapper. The pool path and heap path share the same processing core; see
 [`c_impl/README.md`](c_impl/README.md) and the
 [C integration manual](docs/c_user_manual_zh_TW.md) for API details.
 
-The tuning scalars can also be swapped on a running instance:
+The tuning scalars can be swapped on a running instance:
 `anr_reconfigure()` takes a caller-composed `AnrConfig` verbatim, and
-`anr_set_mode()` is the standalone convenience that composes the canonical
-config for a strength mode. Nothing is reallocated, so the grid and the two pool-sizing fields
-(`L`, `num_init_frames`) must match the instance; the noise floor, MCRA ring,
-SPP history and gain smoothing history are all preserved. A caller that layers
-its own overrides on top of a preset — as both Audio_ALG pipelines do — must
-rebuild its whole composition and call `anr_reconfigure()`; handing the bare
-canonical preset to `anr_set_mode()` would revert those overrides, or be
-refused outright when the composition changed `L`. Details in
-[`c_impl/README.md`](c_impl/README.md).
+`anr_set_mode()` composes the canonical config for a strength mode. Nothing is
+reallocated, so the grid and the pool-sizing fields (`L`, `num_init_frames`)
+must match the instance; the noise floor, MCRA ring, SPP history and gain
+smoothing history are preserved. A caller that layers its own overrides on top
+of a preset, as both Audio_ALG pipelines do, must rebuild its whole composition
+and call `anr_reconfigure()`: the bare canonical preset passed to
+`anr_set_mode()` reverts those overrides or is refused when `L` differs.
+Details in [`c_impl/README.md`](c_impl/README.md).
 
 Build outputs are keyed by backend and configuration. `make -C c_impl
 publish` creates the immutable release layout and provenance manifest; do not
-copy an arbitrary file from a stale `bin/` directory.
+copy an arbitrary file from a `bin/` directory.
 
 ## Validation
 
@@ -155,11 +156,4 @@ from `python/requirements-dev.txt`.
 | `docs/parameter_tuning.md` | Supported tuning workflow |
 | `docs/archive/` | Historical plans and superseded research documents |
 
-Historical result files under `results/` are evidence snapshots, not current
-defaults. Source headers and the current READMEs take precedence if an archived
-report disagrees.
-
-## C API 與驗證紀錄
-
-C 介面已改名為 ANR，並含逐位元一致的 NEON 核心加速（NaN 結果的 payload 位元除外）；遷移對照見 [anr_migration.md](docs/anr_migration.md)，
-加速與重現指令見 [anr_optimization.md](docs/anr_optimization.md)，驗證範圍與已移出 repo 的證據清單見 [anr_validation.md](docs/anr_validation.md)。
+Source headers and the current READMEs take precedence over `docs/archive/`.

@@ -1,9 +1,4 @@
-"""
-V3: MMSE-STSA Denoiser - MMSE 短時頻譜幅度估計降噪器
-⭐ 重點版本：引入概率軟判決
-v1.5.0: 整合 V3-1，支持 Bessel/E1 公式切換
-v2.6: 添加 Human Voice Band Soft VAD 後處理
-"""
+"""V3: SPP-weighted MMSE denoiser."""
 
 import numpy as np
 import sys
@@ -24,42 +19,15 @@ from core.signal_grid import (
 
 
 class SppMmseDenoiser(BaseDenoiser):
-    """
-    版本 3: MMSE-STSA 降噪器 (Ephraim-Malah 1984)
+    """V3 SPP-weighted MMSE denoiser (Ephraim and Malah, 1984): speech presence probability
+    replaces a hard VAD, with decision-directed a-priori SNR and gain smoothing.
 
-    基於語音存在機率 (Speech Presence Probability) 的軟判決降噪
-    v1.5.0: 整合 V3-1，支持 Bessel 完整版和 E1 簡化版切換
-
-    核心創新:
-        - 使用 SPP 取代硬判決 VAD
-        - Decision Directed 方法估計先驗 SNR
-        - SPP 加權的 MMSE 增益
-        - 時間平滑減少音樂噪聲
-
-    優點:
-        - 軟判決比硬判決更平滑
-        - 音樂噪聲顯著減少
-        - 語音失真很低
-        - 適應性強
-
-    缺點:
-        - 計算複雜度較高
-        - 需要調參
-
-    參數:
-        sample_rate: 採樣率
-        frame_size: 幀長（samples）
-        frame_shift: 幀移（samples）
-        fft_size: FFT 點數
-        alpha_noise: 噪聲平滑因子
-        alpha_xi: 先驗 SNR 平滑因子（0.92-0.98）
-        q: 語音先驗機率（通常 0.5）
-        xi_min_db: 先驗 SNR 下限（dB）
-        g_min_db: 最小增益（dB）
-        alpha_g: 增益時間平滑因子
-        use_full_formula: True=Bessel完整版, False=E1簡化版（默認，推薦）
-        num_init_frames: 初始噪聲估計幀數
-        enable_noise_tracking: 是否啟用噪聲場景追蹤（v1.3.0）
+    The grid is given together or resolved from sample_rate; EMA and frame-count parameters are
+    retimed to it. alpha_noise: noise smoothing; alpha_xi: a-priori SNR smoothing (0.92-0.98);
+    q: speech prior; xi_min_db / g_min_db: SNR and gain floors in dB; alpha_g: gain smoothing;
+    use_full_formula: Bessel MMSE-STSA (True) or the E1 form (False, default); noise_method:
+    'recursive_average' or 'mcra'; mcra_accept_external_spp: MCRA noise gate driven by the
+    external posterior (True) or the internal indicator (False).
     """
 
     def __init__(
@@ -74,21 +42,18 @@ class SppMmseDenoiser(BaseDenoiser):
         xi_min_db: float = -25.0,
         g_min_db: float = -40.0,
         alpha_g: float = 0.7,
-        use_full_formula: bool = False,  # v1.5.0 新增：True=Bessel完整版, False=E1簡化版
+        use_full_formula: bool = False,
         num_init_frames: int = 20,
-        # v2.0 MCRA 噪聲估計參數
-        noise_method: str = 'recursive_average',  # 'recursive_average' 或 'mcra'
-        alpha_s: float = 0.9,       # MCRA 時間平滑因子
-        alpha_p: float = 0.2,       # MCRA SPP 平滑因子
-        L: int = 96,                # MCRA 最小值窗口長度
-        delta_db: float = 5.0,      # MCRA 偏差補償 (dB)
-        broadband_threshold: float = 0.8,  # 寬頻場景轉換偵測閾值
-        scene_change_threshold_db: float = 10.0,  # 場景轉換偵測閾值 (dB)
+        # MCRA noise estimation
+        noise_method: str = 'recursive_average',  # 'recursive_average' or 'mcra'
+        alpha_s: float = 0.9,
+        alpha_p: float = 0.2,
+        L: int = 96,
+        delta_db: float = 5.0,
+        broadband_threshold: float = 0.8,
+        scene_change_threshold_db: float = 10.0,
         scene_change_min_frames: int = 5,
         scene_change_blend: float = 0.5,
-        # IMCRA/MCRA mode: True = IMCRA (use OM-LSA posterior for noise gate,
-        # default for standalone NR); False = plain MCRA (use in AEC pipeline
-        # to prevent residual-echo from freezing noise tracking).
         mcra_accept_external_spp: bool = True,
     ):
         if frame_size is None and frame_shift is None:
@@ -112,7 +77,6 @@ class SppMmseDenoiser(BaseDenoiser):
             scene_change_min_frames, sample_rate, frame_shift
         )
 
-        # 創建處理器
         self.processor = FrameProcessor(
             sample_rate=sample_rate,
             frame_size=frame_size,
@@ -127,7 +91,6 @@ class SppMmseDenoiser(BaseDenoiser):
             window=self.processor.window
         )
 
-        # 創建噪聲估計器（根據配置選擇）
         if noise_method == 'mcra':
             self.noise_estimator = McraNoiseEstimator(
                 alpha_s=alpha_s,
@@ -146,42 +109,27 @@ class SppMmseDenoiser(BaseDenoiser):
             self.noise_estimator = RecursiveAverageNoiseEstimator(
                 alpha=alpha_noise,
                 num_init_frames=num_init_frames,
-                update_during_speech=False  # 不在語音段更新
+                update_during_speech=False
             )
 
-        # 創建 SPP 估計器 ⭐ 核心組件
         self.spp_estimator = SppEstimator(
             alpha=alpha_xi,
             q=q,
             xi_min_db=xi_min_db
         )
 
-        # 創建增益計算器
         self.gain_calculator = SppMmseGainCalculator(
             g_min_db=g_min_db,
             alpha_g=alpha_g,
-            use_full_formula=use_full_formula  # v1.5.0 新增
+            use_full_formula=use_full_formula
         )
 
-        # 存儲上一幀的增益（用於 Decision Directed）
         self.gain_prev = None
 
     def denoise(self, noisy_signal: np.ndarray, return_spp: bool = False):
-        """
-        對帶噪信號進行降噪
-
-        參數:
-            noisy_signal: 帶噪音頻信號 (n_samples,)
-            return_spp: 是否回傳 SPP 矩陣 (用於可視化)
-
-        返回:
-            enhanced_signal: 降噪後的信號 (n_samples,)
-            spp_matrix: (可選) SPP 矩陣 (n_frames, n_freqs)
-        """
-        # 1. 分幀和 FFT
+        """Denoises noisy_signal (n_samples,); with return_spp also returns the SPP matrix (n_frames, n_freqs)."""
         magnitudes, phases, spectra = self.processor.process_signal(noisy_signal)
 
-        # 2. 降噪
         if return_spp:
             enhanced_magnitudes, enhanced_phases, spp_matrix = self.denoise_spectrum(
                 magnitudes, phases, return_spp=True
@@ -189,7 +137,6 @@ class SppMmseDenoiser(BaseDenoiser):
         else:
             enhanced_magnitudes, enhanced_phases = self.denoise_spectrum(magnitudes, phases)
 
-        # 3. 重建信號
         enhanced_signal = self.reconstructor.reconstruct_signal(
             enhanced_magnitudes,
             enhanced_phases,
@@ -206,48 +153,27 @@ class SppMmseDenoiser(BaseDenoiser):
         noisy_phase: np.ndarray,
         return_spp: bool = False
     ):
-        """
-        在頻域進行降噪
-
-        這是 V3 的核心處理流程，展示了 SPP-MMSE 的完整算法
-
-        參數:
-            noisy_magnitude: 帶噪語音幅度譜 (n_frames, n_freqs)
-            noisy_phase: 帶噪語音相位譜 (n_frames, n_freqs)
-            return_spp: 是否回傳 SPP 歷史記錄
-
-        返回:
-            enhanced_magnitude: 降噪後的幅度譜 (n_frames, n_freqs)
-            enhanced_phase: 相位譜（不變）(n_frames, n_freqs)
-            spp_history: (可選) SPP 矩陣 (n_frames, n_freqs)
+        """Denoises magnitude and phase spectra (n_frames, n_freqs); the phase is returned
+        unchanged. With return_spp the SPP history (n_frames, n_freqs) is returned as well.
         """
         n_frames = noisy_magnitude.shape[0]
-        # Reset state so consecutive calls on different audio files start clean.
-        # gain_prev from a previous call would cause inconsistent DD with a fresh
-        # enhanced_psd_prev=None, producing wrong xi estimates on the first frame.
+        # Reset so consecutive calls on different audio start clean.
         self.reset()
 
-        # 步驟 1: 初始化噪聲估計
         self.noise_estimator.estimate(noisy_magnitude)
         num_init = self.noise_estimator.num_init_frames
 
-        # 初始化輸出
         enhanced_magnitude = np.zeros_like(noisy_magnitude)
         spp_history = [] if return_spp else None
         n_freqs = noisy_magnitude.shape[1]
 
-        # v1.5.0: 保存上一幀增強功率譜（用於正確的 DD 計算）
         enhanced_psd_prev = None
 
-        # 步驟 2: 逐幀處理
-        # Mirror V3-2: first num_init frames are passthrough (gain=1), not NR-processed.
-        # This avoids state contamination during init and matches the C streaming behaviour.
+        # The first num_init frames pass through (gain = 1) and seed the DD state.
         for i in range(n_frames):
-            # 2.1 計算當前幀的功率譜密度
             Y_psd = noisy_magnitude[i] ** 2
 
             if i < num_init:
-                # Init phase: passthrough; seed DD state for post-init frames.
                 if return_spp:
                     spp_history.append(np.zeros(n_freqs))
                 enhanced_magnitude[i] = noisy_magnitude[i]
@@ -257,8 +183,6 @@ class SppMmseDenoiser(BaseDenoiser):
 
             noise_psd = self.noise_estimator.noise_psd
 
-            # 2.2 估計 SPP、先驗 SNR 和後驗 SNR ⭐ 核心步驟
-            # v1.5.0: 傳入 enhanced_psd_prev 用於正確的 DD 計算
             spp, xi, gamma = self.spp_estimator.estimate(
                 Y_psd,
                 noise_psd,
@@ -266,27 +190,20 @@ class SppMmseDenoiser(BaseDenoiser):
                 enhanced_psd_prev
             )
 
-            # 收集 SPP 歷史 (用於可視化)
             if return_spp:
                 spp_history.append(spp.copy())
 
-            # 2.3 計算 SPP 加權的 MMSE 增益 ⭐ 核心步驟
             gain = self.gain_calculator.calculate(spp, xi, gamma)
 
-            # 2.4 應用增益
             enhanced_magnitude[i] = gain * noisy_magnitude[i]
 
-            # 2.5 保存增益供下一幀使用（Decision Directed）
             self.gain_prev = gain.copy()
 
-            # v1.5.0: 保存增強功率譜供下一幀 DD 使用
             enhanced_psd_prev = enhanced_magnitude[i] ** 2
 
-            # 2.7 更新噪聲估計（v2.0: 使用 SPP 軟判決）
-            # SPP 高（語音）→ 更新慢，SPP 低（噪聲）→ 正常更新
+            # The SPP slows the noise update where speech is likely.
             self.noise_estimator.update(noisy_magnitude[i], spp=spp)
 
-        # 相位保持不變
         enhanced_phase = noisy_phase
 
         if return_spp:
@@ -294,14 +211,14 @@ class SppMmseDenoiser(BaseDenoiser):
         return enhanced_magnitude, enhanced_phase
 
     def reset(self):
-        """重置降噪器狀態"""
+        """Clears the estimator and gain state."""
         self.noise_estimator.reset()
         self.spp_estimator.reset()
         self.gain_calculator.reset()
         self.gain_prev = None
 
     def get_params(self) -> dict:
-        """獲取參數"""
+        """Returns the configuration as a dict."""
         params = {
             'version': 'V3',
             'name': 'MMSE-STSA',
@@ -318,7 +235,6 @@ class SppMmseDenoiser(BaseDenoiser):
             'use_full_formula': self.gain_calculator.use_full_formula,
             'num_init_frames': self.noise_estimator.num_init_frames
         }
-        # 根據噪聲估計方法添加對應參數
         if self.noise_method == 'mcra':
             params['alpha_s'] = self.noise_estimator.alpha_s
             params['alpha_d'] = self.noise_estimator.alpha_d
@@ -329,12 +245,7 @@ class SppMmseDenoiser(BaseDenoiser):
         return params
 
     def get_spp_statistics(self) -> dict:
-        """
-        獲取 SPP 統計信息（用於分析）
-
-        返回:
-            stats: SPP 統計字典
-        """
+        """Returns SPP and SNR statistics for analysis."""
         if self.spp_estimator.xi_prev is None:
             return {'status': 'not_initialized'}
 

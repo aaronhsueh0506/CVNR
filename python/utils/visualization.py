@@ -15,8 +15,7 @@ def _ensure_parent_dir(output_path):
 
 
 def _imshow_tf(ax, disp, *, cmap, vmin, vmax, extent, cbar_label):
-    """imshow a (freq, time) display matrix as a time-frequency map + attach a colorbar.
-    Shared core of the spectrogram plotters (SPP / gain / noise-PSD)."""
+    """imshow a (freq, time) display matrix as a time-frequency map with a colorbar."""
     im = ax.imshow(disp, aspect='auto', origin='lower', cmap=cmap,
                    vmin=vmin, vmax=vmax, extent=extent)
     plt.colorbar(im, ax=ax, label=cbar_label)
@@ -84,7 +83,6 @@ def plot_spp_comparison(
     duration = n_frames * hop_length / sample_rate
     max_freq = sample_rate / 2
 
-    # 1. Noisy Spectrogram
     noisy_db = 20 * np.log10(noisy_magnitude.T + 1e-10)
     im0 = axes[0].imshow(
         noisy_db, aspect='auto', origin='lower',
@@ -95,7 +93,6 @@ def plot_spp_comparison(
     axes[0].set_ylabel('Frequency (Hz)')
     plt.colorbar(im0, ax=axes[0], label='dB')
 
-    # 2. SPP Map
     im1 = axes[1].imshow(
         spp_matrix.T, aspect='auto', origin='lower',
         cmap='gray_r', vmin=0, vmax=1,
@@ -105,7 +102,6 @@ def plot_spp_comparison(
     axes[1].set_ylabel('Frequency (Hz)')
     plt.colorbar(im1, ax=axes[1], label='SPP')
 
-    # 3. Enhanced Spectrogram
     enhanced_db = 20 * np.log10(enhanced_magnitude.T + 1e-10)
     im2 = axes[2].imshow(
         enhanced_db, aspect='auto', origin='lower',

@@ -56,7 +56,6 @@ def plot_comparison(audio1: np.ndarray, audio2: np.ndarray, sr: int,
 
     所有子圖共用時間軸
     """
-    # 確保長度一致（以較短的為準）
     min_len = min(len(audio1), len(audio2))
     audio1 = audio1[:min_len]
     audio2 = audio2[:min_len]
@@ -64,11 +63,9 @@ def plot_comparison(audio1: np.ndarray, audio2: np.ndarray, sr: int,
     duration = min_len / sr
     time_axis = np.linspace(0, duration, min_len)
 
-    # FFT 參數
     n_fft = 512
     hop_length = 256
 
-    # 計算頻譜圖
     D1 = librosa.stft(audio1, n_fft=n_fft, hop_length=hop_length)
     D2 = librosa.stft(audio2, n_fft=n_fft, hop_length=hop_length)
     D1_db = librosa.amplitude_to_db(np.abs(D1), ref=np.max)
@@ -83,7 +80,6 @@ def plot_comparison(audio1: np.ndarray, audio2: np.ndarray, sr: int,
     gs = GridSpec(4, 2, width_ratios=[1, 0.02], height_ratios=[1, 1, 1.2, 1.2],
                   hspace=0, wspace=0.02)
 
-    # ========== Row 1: Waveform 1 ==========
     ax_wave1 = fig.add_subplot(gs[0, 0])
     ax_wave1.plot(time_axis, audio1, color='#3498DB', linewidth=0.5)
     ax_wave1.set_ylabel(f'{label1}')
@@ -95,7 +91,6 @@ def plot_comparison(audio1: np.ndarray, audio2: np.ndarray, sr: int,
     ax_wave1_cbar = fig.add_subplot(gs[0, 1])
     ax_wave1_cbar.axis('off')
 
-    # ========== Row 2: Waveform 2 ==========
     ax_wave2 = fig.add_subplot(gs[1, 0], sharex=ax_wave1)
     ax_wave2.plot(time_axis, audio2, color='#E74C3C', linewidth=0.5)
     ax_wave2.set_ylabel(f'{label2}')
@@ -105,7 +100,6 @@ def plot_comparison(audio1: np.ndarray, audio2: np.ndarray, sr: int,
     ax_wave2_cbar = fig.add_subplot(gs[1, 1])
     ax_wave2_cbar.axis('off')
 
-    # ========== Row 3: Spectrogram 1 ==========
     ax_spec1 = fig.add_subplot(gs[2, 0], sharex=ax_wave1)
     img1 = librosa.display.specshow(D1_db, sr=sr, hop_length=hop_length,
                                      x_axis='time', y_axis='hz', cmap='magma',
@@ -117,7 +111,6 @@ def plot_comparison(audio1: np.ndarray, audio2: np.ndarray, sr: int,
     ax_spec1_cbar = fig.add_subplot(gs[2, 1])
     fig.colorbar(img1, cax=ax_spec1_cbar, format='%+2.0f dB')
 
-    # ========== Row 4: Spectrogram 2 ==========
     ax_spec2 = fig.add_subplot(gs[3, 0], sharex=ax_wave1)
     img2 = librosa.display.specshow(D2_db, sr=sr, hop_length=hop_length,
                                      x_axis='time', y_axis='hz', cmap='magma',
@@ -128,7 +121,6 @@ def plot_comparison(audio1: np.ndarray, audio2: np.ndarray, sr: int,
     ax_spec2_cbar = fig.add_subplot(gs[3, 1])
     fig.colorbar(img2, cax=ax_spec2_cbar, format='%+2.0f dB')
 
-    # 保存
     plt.savefig(output_path, dpi=150, bbox_inches='tight', facecolor='white')
     plt.close()
     print(f"比較圖已保存: {output_path}")
@@ -141,37 +133,29 @@ def plot_frequency_response(audio1: np.ndarray, audio2: np.ndarray, sr: int,
 
     計算整段音訊的平均功率譜密度 (PSD)，並在同一圖表上比較
     """
-    # 確保長度一致
     min_len = min(len(audio1), len(audio2))
     audio1 = audio1[:min_len]
     audio2 = audio2[:min_len]
 
-    # FFT 參數
     n_fft = 2048
     hop_length = 512
 
-    # 計算 STFT
     D1 = np.abs(librosa.stft(audio1, n_fft=n_fft, hop_length=hop_length))
     D2 = np.abs(librosa.stft(audio2, n_fft=n_fft, hop_length=hop_length))
 
-    # 計算平均功率譜（跨所有幀）
     psd1 = np.mean(D1 ** 2, axis=1)
     psd2 = np.mean(D2 ** 2, axis=1)
 
-    # 轉換為 dB
     psd1_db = 10 * np.log10(psd1 + 1e-10)
     psd2_db = 10 * np.log10(psd2 + 1e-10)
 
-    # 頻率軸
     freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
 
-    # 繪圖
     fig, ax = plt.subplots(figsize=(12, 6))
 
     ax.plot(freqs, psd1_db, color='#3498DB', linewidth=1.5, label=label1, alpha=0.8)
     ax.plot(freqs, psd2_db, color='#E74C3C', linewidth=1.5, label=label2, alpha=0.8)
 
-    # 填充差異區域（可選）
     ax.fill_between(freqs, psd1_db, psd2_db, alpha=0.2, color='gray')
 
     ax.set_xlabel('Frequency (Hz)', fontsize=11)
@@ -182,7 +166,6 @@ def plot_frequency_response(audio1: np.ndarray, audio2: np.ndarray, sr: int,
     ax.legend(loc='upper right', fontsize=10)
     ax.grid(True, alpha=0.3, which='both')
 
-    # Y 軸間隔設為 5 dB
     from matplotlib.ticker import MultipleLocator
     ax.yaxis.set_major_locator(MultipleLocator(5))
 
@@ -220,7 +203,6 @@ def main():
     print("音檔比較工具")
     print("=" * 60)
 
-    # 載入音檔
     print(f"\n載入音檔...")
     print(f"  [{label1}] {args.audio1}")
     audio1, sr = load_audio(args.audio1, args.sr)
@@ -230,7 +212,6 @@ def main():
     audio2, _ = load_audio(args.audio2, args.sr)
     print(f"    長度: {len(audio2)/sr:.2f}s, 採樣率: {sr}Hz")
 
-    # 生成比較圖
     print(f"\n生成圖表...")
 
     comparison_path = f"{args.output}_comparison.png"

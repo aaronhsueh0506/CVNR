@@ -4,8 +4,8 @@ Benchmark Comparison - 公平對標評估系統
 
 對 Speex、RNNoise 和我們的算法使用相同的評估流程，確保公平對比。
 
-關鍵修復:
-1. 移除前 0.5 秒 append 噪聲段（防止評估偏差）
+評估流程:
+1. 移除前 0.5 秒 prepend 噪聲段（防止評估偏差）
 2. 使用 segSNR 作為主要指標（Loizou 2008 推薦）
 3. 計算 fwSegSNR、WSS、PESQ、STOI 等多維度指標
 4. 生成對比表格和詳細報告
@@ -17,7 +17,6 @@ Benchmark Comparison - 公平對標評估系統
 import sys
 import os
 
-# Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
@@ -29,7 +28,6 @@ from typing import Dict, Tuple, Optional
 import warnings
 warnings.filterwarnings('ignore')
 
-# 導入評估指標
 from utils.metrics import (
     calculate_segmental_snr,
     calculate_fw_segsnr,
@@ -60,17 +58,14 @@ class BenchmarkComparison:
         self.clean_path = clean_path
         self.sample_rate = sample_rate
 
-        # 加載 clean 音頻（不跳過！clean.wav 沒有 prepend 噪聲段）
-        # v1.6.0 修復：之前錯誤地對 clean 也跳過 0.5s，導致對齊錯誤
+        # clean.wav 沒有 prepend 噪聲段，不 trim
         self.clean_audio, _ = librosa.load(clean_path, sr=self.sample_rate)
 
     def load_and_trim_audio(self, filepath: str) -> Tuple[np.ndarray, int]:
         """
         加載音頻並移除前 skip_seconds 秒
 
-        這是修復評估偏差的關鍵步驟！
-        prepare_test_audio.py 在音頻前添加了 0.5 秒純噪聲段，
-        如果不移除會導致 segSNR → -∞
+        帶噪測試音頻前面有 0.5 秒純噪聲段，不移除會導致 segSNR → -∞
 
         參數:
             filepath: 音頻文件路徑
@@ -81,7 +76,6 @@ class BenchmarkComparison:
         """
         audio, sr = librosa.load(filepath, sr=self.sample_rate)
 
-        # 移除前 skip_seconds 秒
         skip_samples = int(self.skip_seconds * sr)
         trimmed_audio = audio[skip_samples:]
 
@@ -99,53 +93,42 @@ class BenchmarkComparison:
         參數:
             enhanced_path: 降噪後音頻路徑
             noisy_path: 帶噪音頻路徑
-            has_prepend: 音頻是否有 prepend 噪聲段（V1-V4 有，Speex/RNNoise 沒有）
+            has_prepend: 音頻是否有 prepend 噪聲段（V 系列有，Speex/RNNoise 沒有）
 
         返回:
             metrics: 各項指標的字典
         """
-        # v1.6.0 修復：根據是否有 prepend 決定是否跳過 0.5s
         if has_prepend:
-            # V1-V4：有 prepend，需要跳過
             enhanced, _ = self.load_and_trim_audio(enhanced_path)
             noisy, _ = self.load_and_trim_audio(noisy_path)
         else:
-            # Speex/RNNoise：沒有 prepend，不跳過
             enhanced, _ = librosa.load(enhanced_path, sr=self.sample_rate)
             noisy, _ = librosa.load(noisy_path, sr=self.sample_rate)
 
-        # 對齊長度（取最短）
         min_len = min(len(enhanced), len(self.clean_audio), len(noisy))
         enhanced = enhanced[:min_len]
         clean = self.clean_audio[:min_len]
         noisy = noisy[:min_len]
 
-        # 計算所有指標
         metrics = {}
 
         try:
-            # 1. segSNR (主要指標 - Loizou 2008)
-            # 注意：calculate_segmental_snr(clean, enhanced, ...) 計算 SNR
             input_segsnr = calculate_segmental_snr(clean, noisy, self.sample_rate)
             output_segsnr = calculate_segmental_snr(clean, enhanced, self.sample_rate)
             metrics['input_segSNR'] = input_segsnr
             metrics['output_segSNR'] = output_segsnr
             metrics['segSNR_improvement'] = output_segsnr - input_segsnr
 
-            # 2. fwSegSNR (頻率加權)
             metrics['fwSegSNR'] = calculate_fw_segsnr(enhanced, clean, self.sample_rate)
 
-            # 3. WSS (加權頻譜斜率距離)
             metrics['WSS'] = calculate_wss(enhanced, clean, self.sample_rate)
 
-            # 4. PESQ (參考指標)
             try:
                 metrics['PESQ'] = calculate_pesq(clean, enhanced, self.sample_rate)
             except Exception as e:
                 print(f"  Warning: PESQ calculation failed: {e}")
                 metrics['PESQ'] = None
 
-            # 5. STOI (參考指標)
             try:
                 metrics['STOI'] = calculate_stoi(clean, enhanced, self.sample_rate)
             except Exception as e:
@@ -179,7 +162,6 @@ class BenchmarkComparison:
             snr_levels = [0, 5, 10, 15]
             test_cases = [f"{noise}_{snr}dB" for noise in noise_types for snr in snr_levels]
 
-        # 默認方法列表
         if methods is None:
             methods = ['Speex', 'RNNoise', 'V1', 'V2', 'V3', 'V3-2', 'V3-3', 'V3-4']
 
@@ -198,8 +180,6 @@ class BenchmarkComparison:
             for method in methods:
                 current_test += 1
 
-                # 確定降噪音頻路徑和對應的 noisy 路徑
-                # v1.6.0 修復：區分有/無 prepend 的情況
                 if method == 'Speex':
                     enhanced_path = f"test_wav/wav/benchmark_wav/speex/speexdsp_{test_id}.wav"
                     noisy_path = f"test_wav/wav/{test_id}.wav"  # Speex 使用無 prepend 的 noisy
@@ -209,12 +189,10 @@ class BenchmarkComparison:
                     noisy_path = f"test_wav/wav/{test_id}.wav"  # RNNoise 使用無 prepend 的 noisy
                     has_prepend = False
                 else:
-                    # V1-V4 使用 output 目錄，對應有 prepend 的 noisy
                     enhanced_path = f"output/{method}_{test_id}.wav"
                     noisy_path = f"test_wav/wav/append_silence/{test_id}_prepend.wav"
                     has_prepend = True
 
-                # 檢查文件是否存在
                 if not os.path.exists(enhanced_path):
                     print(f"  [{current_test}/{total_tests}] ⚠️  {method:8s} - Enhanced 文件不存在: {enhanced_path}")
                     continue
@@ -223,7 +201,6 @@ class BenchmarkComparison:
                     print(f"  [{current_test}/{total_tests}] ⚠️  {method:8s} - Noisy 文件不存在: {noisy_path}")
                     continue
 
-                # 評估
                 result_key = f"{method}_{test_id}"
                 metrics = self.evaluate_single_case(enhanced_path, noisy_path, has_prepend=has_prepend)
 
@@ -255,7 +232,6 @@ class BenchmarkComparison:
             markdown: Markdown 格式的表格
             summary: 統計摘要字典
         """
-        # 按方法聚合
         methods_data = {}
         for key, metrics in results.items():
             method = key.split('_')[0]  # 提取方法名
@@ -273,7 +249,6 @@ class BenchmarkComparison:
                 if metric_name in methods_data[method] and value is not None:
                     methods_data[method][metric_name].append(value)
 
-        # 計算平均值和標準差
         summary = {}
         for method, data in methods_data.items():
             summary[method] = {}
@@ -285,7 +260,6 @@ class BenchmarkComparison:
                     summary[method][f'{metric_name}_mean'] = None
                     summary[method][f'{metric_name}_std'] = None
 
-        # 生成 Markdown 表格
         md_lines = []
         md_lines.append("# 算法性能對比（vs Speex & RNNoise）\n")
         md_lines.append(f"**評估條件**: 移除前 {self.skip_seconds}秒 append 噪聲段，所有測試用例平均值\n")
@@ -308,7 +282,6 @@ class BenchmarkComparison:
 
             data = summary[method]
 
-            # 格式化數據
             segsnr_mean = data.get('segSNR_improvement_mean')
             fwsegsnr_mean = data.get('fwSegSNR_mean')
             wss_mean = data.get('WSS_mean')
@@ -357,26 +330,21 @@ class BenchmarkComparison:
         """
         os.makedirs(output_dir, exist_ok=True)
 
-        # 1. JSON 詳細結果
         json_path = os.path.join(output_dir, 'benchmark_comparison.json')
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
         print(f"✓ 詳細結果已保存: {json_path}")
 
-        # 2. Markdown 表格
         markdown, summary = self.generate_summary_table(results)
         md_path = os.path.join(output_dir, 'benchmark_comparison.md')
         with open(md_path, 'w', encoding='utf-8') as f:
             f.write(markdown)
         print(f"✓ 對比表格已保存: {md_path}")
 
-        # 3. CSV 表格
         csv_path = os.path.join(output_dir, 'benchmark_comparison.csv')
         with open(csv_path, 'w', encoding='utf-8') as f:
-            # Header
             f.write("Method,segSNR_improvement,fwSegSNR,WSS,PESQ,STOI\n")
 
-            # Data rows
             for method, data in summary.items():
                 segsnr = data.get('segSNR_improvement_mean', '')
                 fwsegsnr = data.get('fwSegSNR_mean', '')
@@ -388,7 +356,6 @@ class BenchmarkComparison:
 
         print(f"✓ CSV 表格已保存: {csv_path}")
 
-        # 顯示摘要表格
         print(f"\n{markdown}")
 
 
@@ -409,16 +376,13 @@ def main():
 
     args = parser.parse_args()
 
-    # 創建評估器
     comparator = BenchmarkComparison(
         skip_seconds=args.skip_seconds,
         clean_path=args.clean_path
     )
 
-    # 運行評估
     results = comparator.run_full_comparison(methods=args.methods)
 
-    # 保存結果
     comparator.save_results(results, output_dir=args.output_dir)
 
 

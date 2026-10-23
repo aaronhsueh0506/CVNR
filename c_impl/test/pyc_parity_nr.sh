@@ -1,21 +1,18 @@
 #!/bin/bash
 # pyc_parity_nr.sh -- Python<->C numeric parity check for the NR library.
 #
-# Compares the C library with the Python V3-2 reference on fixed inputs, in two layers:
+# Compares the C library with the Python reference on fixed inputs, in two layers:
 #   L1  std-math C (SIMD=0, -DUSE_STANDARD_MATH, none of the six USE_* optimizations) vs Python.
 #       A deviation is a Python<->C sync bug.
 #   L2  shipping C (Makefile default: SIMD=1, fast math, six USE_* flags) vs the std-math C.
-#       This is the accepted fast-math approximation; the tolerance is FROZEN (2026-10-20).
+#       This is the accepted fast-math approximation; its tolerance is fixed.
 # Scenarios: 5 grids (8k/128, 8k/256, 16k/256, 16k/512, 48k/1024) x 4 strengths x inputs (speech in
 # noise, scene change, music, synthetic digital-silence gaps, zeroed bins, level scaling, int16
 # rounding, babble at -80 dBFS, make-up gain on), as gain-level and as end-to-end waveform
 # comparisons. See python/tools/pyc_parity_nr.py for the scenario table, metrics and verdicts.
 #
-# Known gaps from PY_C_SYNC_AUDIT.md are marked EXPECTED_RED in test/pyc_parity/expected_red.json.
-# They may exceed the tolerance without failing the run; an expected-red scenario that turns green
-# fails the run (delete its entry after the fix). S-10 (shared xi ratio at zero-power bins) and
-# S-11/S-12 (low-level init floor and hi_gamma epsilon placement) were fixed 2026-10-20 (see
-# NR/CHANGELOG.md and c_impl/CHANGELOG.md) and no longer have entries. S-13 (make-up prior) remains.
+# Known gaps are listed in test/pyc_parity/expected_red.json. They may exceed the tolerance without
+# failing the run; a listed scenario that turns green fails the run (delete its entry).
 #
 # Exit code: 0 pass, 1 failure (unexpected red / unexpected green / driver error), 2 infrastructure
 # error (missing inputs, bad build flags, build failure).
@@ -75,8 +72,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-# Same hygiene as the regression harness: a stray DEBUG=release or CFLAGS in the caller's environment
-# would otherwise be rejected by (or silently change) the Makefile.
+# A stray DEBUG=release or CFLAGS in the caller's environment would otherwise be rejected by (or
+# silently change) the Makefile.
 export LC_ALL=C TZ=UTC PYTHONHASHSEED=0 PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=1
 unset DEBUG SIMD BACKEND EXTRA_CFLAGS EXTRA_LDFLAGS CFLAGS CXXFLAGS CPPFLAGS LDFLAGS WERROR NO_STDIO \
       TOOLCHAIN_CHECK CC CXX AR RANLIB OBJ_ROOT BIN_ROOT COMMON_DIR COMMON_LIB MAKEFLAGS MFLAGS MAKELEVEL \

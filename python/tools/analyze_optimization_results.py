@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-分析遺傳算法優化結果
-提取 Pareto 最優解，生成對比報告
+分析參數優化結果
+讀取 eval_*.json，依加權分數選出最佳配置，生成優化後的配置文件與對比報告
 """
 
 import json
@@ -23,12 +23,10 @@ def load_evaluation_results(result_dir: Path) -> List[Dict]:
 
 def calculate_weighted_score(metrics: Dict, weights: List[float] = [0.5, 0.3, 0.2]) -> float:
     """計算加權分數"""
-    # 歸一化指標到 [0, 1] 範圍
     pesq_norm = (metrics['pesq'] + 0.3) / 0.6  # 假設範圍 [-0.3, +0.3]
     stoi_norm = (metrics['stoi'] + 0.1) / 0.15  # 假設範圍 [-0.1, +0.05]
     segsnr_norm = (metrics['segsnr'] + 1.0) / 7.0  # 假設範圍 [-1, +6]
 
-    # 限制到 [0, 1]
     pesq_norm = max(0, min(1, pesq_norm))
     stoi_norm = max(0, min(1, stoi_norm))
     segsnr_norm = max(0, min(1, segsnr_norm))
@@ -40,7 +38,6 @@ def analyze_version(version: str, result_dir: Path, weights: List[float]) -> Dic
     """分析單個版本的優化結果"""
     print(f"\n分析 {version}...")
 
-    # 加載結果
     results = load_evaluation_results(result_dir)
     if not results:
         print(f"  ⚠️ 未找到評估結果")
@@ -48,14 +45,11 @@ def analyze_version(version: str, result_dir: Path, weights: List[float]) -> Dic
 
     print(f"  總評估次數: {len(results)}")
 
-    # 計算加權分數
     for r in results:
         r['weighted_score'] = calculate_weighted_score(r['metrics'], weights)
 
-    # 找出最佳配置（加權分數最高）
     best_result = max(results, key=lambda x: x['weighted_score'])
 
-    # 統計
     pesq_values = [r['metrics']['pesq'] for r in results]
     stoi_values = [r['metrics']['stoi'] for r in results]
     segsnr_values = [r['metrics']['segsnr'] for r in results]
@@ -96,18 +90,15 @@ def analyze_version(version: str, result_dir: Path, weights: List[float]) -> Dic
 
 def generate_optimized_config(version: str, best_params: Dict, base_config_path: Path) -> Dict:
     """生成優化後的配置文件"""
-    # 加載基礎配置
     with open(base_config_path, 'r') as f:
         config = yaml.safe_load(f)
 
-    # 更新參數
     for param_name, value in best_params.items():
         if param_name in ['alpha_xi', 'q', 'xi_min_db']:
             config['spp'][param_name] = float(value)
         elif param_name in ['g_min_db', 'alpha_g', 'use_spp_weighting']:
             config['gain_calculation'][param_name] = float(value)
 
-    # 添加優化標記
     config['version'] = f"{config.get('version', version)}-optimized"
     config['name'] = f"{config.get('name', version)} (NSGA-II Optimized)"
 
@@ -164,7 +155,6 @@ def generate_report(analyses: Dict, output_path: Path):
                      f"{stats['segsnr']['min']:+.2f} | {stats['segsnr']['max']:+.2f} |\n")
         report.append("\n")
 
-    # 保存報告
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(''.join(report))
 
@@ -194,7 +184,6 @@ def main():
 
     analyses = {}
 
-    # 分析每個版本
     for version in args.versions:
         result_dir = optimization_dir / f"{version}_{args.timestamp}"
         if not result_dir.exists():
@@ -205,7 +194,6 @@ def main():
         analysis = analyze_version(version, result_dir, args.weights)
         analyses[version] = analysis
 
-        # 生成優化後的配置文件
         if analysis:
             config_name_map = {
                 'V3': 'v3_config.yaml',
@@ -222,14 +210,12 @@ def main():
                     base_config
                 )
 
-                # 保存優化配置
                 output_config = result_dir / f"{version}_optimized.yaml"
                 with open(output_config, 'w', encoding='utf-8') as f:
                     yaml.dump(optimized_config, f, default_flow_style=False, allow_unicode=True)
 
                 print(f"  優化配置已保存: {output_config}")
 
-    # 生成對比報告
     report_path = optimization_dir / f"optimization_report_{args.timestamp}.md"
     generate_report(analyses, report_path)
 

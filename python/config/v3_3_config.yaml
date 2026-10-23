@@ -4,11 +4,9 @@
 #   G_PM = sqrt(v) / (sqrt(π) · γ) · 1 / i0e(v/2)
 #   使用 scipy.special.i0e 避免數值溢出
 #
-# 噪聲估計方法: RecursiveAverage + Bayesian SPP 軟判決
+# 噪聲估計方法: MCRA + Bayesian SPP 軟判決
 #   - SppEstimator 計算語音存在機率
 #   - 語音段自動降低噪聲更新速率
-#
-# Score: 0.5043 (Optuna 500-trial, 2026-01-12)
 
 version: "3.3"
 name: "PMMSE-Wolfe-Godsill"
@@ -21,7 +19,7 @@ audio:
   window_type: hanning
 
 noise_estimation:
-  method: mcra              # v2.2: 改用 MCRA 噪聲估計
+  method: mcra
   alpha_s: 0.8              # 時間平滑因子
   alpha_d: 0.95              # 噪聲更新基礎速率
   alpha_p: 0.2              # SPP 平滑因子
@@ -30,14 +28,14 @@ noise_estimation:
   num_init_frames: 20       # 初始噪聲估計幀數
 
 spp:
-  alpha_xi: 0.90          # Optuna 500-trial (2026-01-12)
-  q: 0.45                 # Optuna 500-trial (2026-01-12)
-  xi_min_db: -19.0        # Optuna 500-trial (2026-01-12)
+  alpha_xi: 0.90
+  q: 0.45
+  xi_min_db: -19.0
 
 gain_calculation:
   method: pmmse               # Wolfe & Godsill β=0.5 公式
-  g_min_db: -28.0             # Optuna 500-trial (2026-01-12); amplitude dB (/20) = old -14 @ /10
-  alpha_g: 0.70               # Optuna 500-trial (2026-01-12)
+  g_min_db: -28.0             # amplitude dB (/20)
+  alpha_g: 0.70
   use_spp_weighting: true
 
 noise_tracking:

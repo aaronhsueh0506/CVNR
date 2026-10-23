@@ -2,8 +2,8 @@
 
 The readable NR implementation, WAV CLI, tools, tests and YAML configuration
 are grouped here. Python retains its MMSE-LSA/OMLSA algorithm names; the C API
-is ANR. See [repository usage](../README.md) and the
-[migration guide](../docs/anr_migration.md).
+is ANR. See [repository usage](../README.md) and
+[C API naming and Python layout](../docs/anr_migration.md).
 
 Run from the repository root:
 
@@ -15,6 +15,6 @@ python3 -m pytest
 ```
 
 `config/` holds Python-only YAML. C presets are in
-`../c_impl/include/anr_types.h`. Datasets and generated research outputs are
-kept in `../test_wav/` and `../results/`; repository-aware tools resolve those
+`../c_impl/include/anr_types.h`. Audio fixtures are in `../test_wav/` and
+benchmark outputs go to `../results/`; repository-aware tools resolve those
 paths independently of this directory.

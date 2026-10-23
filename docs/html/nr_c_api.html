@@ -72,7 +72,7 @@ pre code{background:none;padding:0}
 <tr><td>延遲減半(16 ms vs 32 ms)</td><td>頻率解析度加倍(129→257 bins),低頻噪聲與 tonal 成分分得更開</td></tr>
 <tr><td>每秒處理次數加倍 → CPU 較高</td><td>每秒處理次數減半 → CPU 較低</td></tr>
 <tr><td>對瞬態/起音反應快</td><td>長窗對非穩態噪聲反應較鈍</td></tr>
-<tr><td>記憶體 58,176 B</td><td>記憶體 69,728 B</td></tr>
+<tr><td>記憶體 45,344 B</td><td>記憶體 56,432 B</td></tr>
 </table></div>
 <div class="warn"><b>與 AEC 的 grid 表不完全相同。</b>AEC 不接受 8k/128(它的 8k legacy grid 是 256/128);NR 的 8 kHz 預設卻是 128/64(<code>anr_default_fft_size()</code>,<code>anr_types.h</code>)。<b>串成一條鏈時不要各自呼叫各自的 default,要由上層 resolve 出同一組 <code>(sample_rate, fft_size, hop)</code> 再明確傳給兩邊。</b></div>
 <p>建立後<b>不可</b>中途換 grid:<code>anr_reconfigure()</code> 連 grid 都不給換(<code>anr.c</code>),要換必須 destroy 重建。</p>
@@ -108,7 +108,7 @@ anr_destroy(nr);   /* heap instance 只能呼叫一次,重複呼叫 = double fre
 <tr><td>16k/512</td><td>56,432</td><td>56,336</td><td>13,552</td></tr>
 <tr><td>48k/1024</td><td>144,576</td><td>144,464</td><td>26,352</td></tr>
 </table></div>
-<p class="small">啟動階段的 power 列與最小值 ring 共用同一塊儲存(取兩者較大者),所以預設建置與 <code>USE_FAST_PERCENTILE</code> 只差 percentile scratch。FFT pool 是<b>另一塊</b>,各自查詢、各自 16-byte 對齊。<b>不要把這裡的 byte 數寫死進產品</b>——永遠用當前 config 呼叫 <code>anr_get_mem_size()</code>。只有 <code>fft_size</code>／<code>L</code>／<code>num_init_frames</code> 會改變需求量。</p>
+<p class="small">啟動階段的 power 列與最小值 ring 共用同一塊儲存(取兩者較大者),所以預設建置與 <code>USE_FAST_PERCENTILE</code> 只差 percentile scratch。FFT pool 是<b>另一塊</b>,各自查詢、各自 16-byte 對齊。上表是預設建置(<code>DEBUG=0</code>)、balanced preset 的值;<code>DEBUG=1</code>(標準數學、關閉六項最佳化)的值略小(16k/256 為 44,816 B)。<b>不要把這裡的 byte 數寫死進產品</b>——永遠用當前 config 呼叫 <code>anr_get_mem_size()</code>。只有 <code>fft_size</code>／<code>L</code>／<code>num_init_frames</code> 會改變需求量。</p>
 
 <h2>4. 每-frame 處理入口</h2>
 <div class="tblwrap"><table>
@@ -130,7 +130,7 @@ if (anr_process_gain(nr, error_spec, extra_noise_psd, gain) != 0) { /* error */ 
 <tr><td><code>extra_noise_psd</code></td><td>長度 <code>n_freqs</code>,可為 <code>NULL</code>。非 NULL 時做 echo-as-extra-noise:<code>ξ=S²/(N²+R²)</code>,只餵進 SPP／先驗 SNR；MCRA 噪聲估計仍只用輸入功率更新</td></tr>
 <tr><td><code>gain_out</code></td><td>可傳 <code>NULL</code> 省一次 memcpy,之後用 <code>anr_get_gain()</code> 讀同一份</td></tr>
 <tr><td>回傳值</td><td><code>0</code> 成功;<code>-1</code> 表示必要的 <code>self</code>／<code>spectrum_in</code> 為 NULL。<code>extra_noise_psd</code>／<code>gain_out</code> 傳 NULL <b>是合法用法</b></td></tr>
-<tr><td>初始化期</td><td>前 <code>num_init_frames</code> 個 frame 是 pass-through(gain 全 1.0),同時累積噪聲統計(<code>:505-528,583-602</code>)</td></tr>
+<tr><td>初始化期</td><td>前 <code>num_init_frames</code> 個 frame 是 pass-through(gain 全 1.0),同時累積噪聲統計</td></tr>
 </table></div>
 <div class="warn"><b>Aliasing 規則與 FFT 層相反。</b><code>fft_forward()</code>／<code>fft_inverse()</code> 用 <code>restrict</code>,<b>任何</b>重疊(含完全相同指標)都是 UB;NR 這裡卻明確支援完全同一指標。兩層不要套用同一條直覺。</div>
 <div class="note"><b>接 AEC 的 <code>r2</code> 時要先換算尺度。</b><code>AecResContext.r2</code> 是 int16-square scale,直接當 <code>extra_noise_psd</code> 前必須除以 <code>32768²</code>。現有 pipeline 已經處理好,application 不要再複製一份。</div>
@@ -158,7 +158,7 @@ if (anr_process_gain(nr, error_spec, extra_noise_psd, gain) != 0) { /* error */ 
 <tr><td><code>g_min_db</code></td><td>-25.0</td><td><code>[-80,80]</code> finite</td><td><b>振幅</b> dB(<code>/20</code>)增益下限,四級 preset 的核心差異。調低 → 更乾淨,但處理痕跡與傷語音風險上升</td></tr>
 <tr><td><code>alpha_attack</code></td><td>0.387298</td><td><code>[0,1]</code></td><td>增益「上升」方向平滑。調小 → 起音更清楚,但噪聲易短暫漏出</td></tr>
 <tr><td><code>alpha_decay</code></td><td>0.902789</td><td><code>[0,1]</code></td><td>增益「下降」方向平滑。調大 → musical noise 明顯減少,但尾音拖長。<b>這才是真正生效的增益平滑旋鈕</b></td></tr>
-<tr><td><code class="dead">alpha_g</code></td><td>0.902789</td><td><code>[0,1]</code></td><td class="dead"><b>死旋鈕</b>——會被複製進 instance、會通過驗證,但 <code>calculate_gain()</code> 從不讀它(<code>anr.c</code> 內只有 :93 宣告與 :123 賦值兩處)。四級 preset 剛好把它設成與 <code>alpha_decay</code> 同值,造成「調它好像有效」的錯覺。要調平滑請改 <code>alpha_decay</code></td></tr>
+<tr><td><code class="dead">alpha_g</code></td><td>0.902789</td><td><code>[0,1]</code></td><td class="dead"><b>死旋鈕</b>——會被複製進 instance、會通過驗證,但 <code>calculate_gain()</code> 從不讀它(<code>anr.c</code> 內只有宣告與賦值兩處)。四級 preset 剛好把它設成與 <code>alpha_decay</code> 同值,造成「調它好像有效」的錯覺。要調平滑請改 <code>alpha_decay</code></td></tr>
 <tr><td colspan="4" style="background:#eef5f0"><b>SPP(語音存在機率)</b></td></tr>
 <tr><td><code>q</code></td><td>0.52</td><td>finite,<b>開區間 (0,1)</b>;0 與 1 都被拒</td><td>語音先驗機率,經 <code>prior_ratio=(1-q)/q</code> 進 SPP sigmoid。調大 → 偏 mild、更保語音;調小 → 偏 aggressive、抑噪更深</td></tr>
 <tr><td><code>alpha_xi</code></td><td>0.959166</td><td><code>[0,1]</code></td><td>DD 先驗 SNR 平滑。調大 → 更平滑、musical noise 更少,但起音較鈍</td></tr>
@@ -182,7 +182,7 @@ if (anr_process_gain(nr, error_spec, extra_noise_psd, gain) != 0) { /* error */ 
 
 <h3>為什麼有 retime 系列函式</h3>
 <p>EMA 係數與 frame 計數多半是在某個參考 hop(10 ms 或 16 ms)下調出來的錨點值;不同 grid 的實際 hop 不同(8／16／10.667 ms),原封套用會讓真實時間常數跑掉。<code>anr_retime_alpha()</code>／<code>_retime_frames()</code>(及帶 <code>_ref</code>／<code>_ms</code> 的顯式版本)把「錨點值 + 錨點 hop」換算成當前 grid 的等效值。</p>
-<div class="note">參數越界時它們<b>不報錯</b>:<code>retime_alpha*</code> 原封回傳輸入,<code>retime_frames*</code> 回 <code>0</code>。<code>ref_hop_seconds</code> 刻意用 <code>double</code>——float32 的「16 ms」曾讓 <code>ceil()</code> 階梯多跳一格(16k/512 上 <code>L</code> 從 32 變 33)。<code>anr_retime_frames_ms()</code> 的參考 hop 以整數毫秒 <code>ref_hop_ms</code> 給定,<code>ceil(frames × ms × sample_rate ÷ (1000 × hop))</code> 全程 64-bit 整數運算,預設 config 的 <code>L</code> 用它。</div>
+<div class="note">參數越界時它們<b>不報錯</b>:<code>retime_alpha*</code> 原封回傳輸入,<code>retime_frames*</code> 回 <code>0</code>。<code>ref_hop_seconds</code> 刻意用 <code>double</code>——以 float32 表示「16 ms」會讓 <code>ceil()</code> 階梯多跳一格(16k/512 上 <code>L</code> 從 32 變 33)。<code>anr_retime_frames_ms()</code> 的參考 hop 以整數毫秒 <code>ref_hop_ms</code> 給定,<code>ceil(frames × ms × sample_rate ÷ (1000 × hop))</code> 全程 64-bit 整數運算,預設 config 的 <code>L</code> 用它。</div>
 
 <h2>6. 執行期改強度(不重啟、不重配記憶體)</h2>
 <pre>int anr_reconfigure(AnrDenoiser *nr, const AnrConfig *target);
@@ -195,7 +195,7 @@ int anr_set_mode(AnrDenoiser *nr, AnrMode mode);</pre>
 <tr><td>回 <code>-1</code></td><td><code>self</code>/<code>target</code> 為 NULL、<code>target</code> 未過 <code>validate_config()</code>、六個幾何欄位任一不符。<b><code>-1</code> 時什麼都沒寫</b></td></tr>
 <tr><td>時序</td><td>在兩個 frame <b>之間</b>呼叫、與 <code>process()</code> 序列化。<b>非 thread-safe</b></td></tr>
 </table></div>
-<div class="warn"><b><code>set_mode()</code> 與 <code>reconfigure()</code> 不可互換。</b><code>set_mode()</code> 組的是<b>裸的 canonical preset</b>,只適用 standalone。兩條出貨 pipeline 的 NR 組態都是「canonical preset <b>加上</b>自己的覆寫」(<code>L</code>／<code>alpha_decay</code>; <code>broadband_threshold</code> 保留 canonical <code>1.0</code>),把 canonical preset 丟給 <code>set_mode()</code> 會因為 <code>L</code> 不同而<b>被拒絕</b>。這正是 <code>audio_pipeline_set_nr_mode()</code>／<code>four_aec_nr_res_set_nr_mode()</code> 各自重組完整組態再呼叫 <code>reconfigure()</code> 的原因——application 不要繞過 pipeline setter。</div>
+<div class="warn"><b><code>set_mode()</code> 與 <code>reconfigure()</code> 不可互換。</b><code>set_mode()</code> 組的是<b>裸的 canonical preset</b>,只適用 standalone。兩條出貨 pipeline 的 NR 組態都是「canonical preset <b>加上</b>自己的覆寫」(<code>L</code>／<code>alpha_decay</code>; <code>broadband_threshold</code> 保留 canonical <code>1.0</code>),把 canonical preset 丟給 <code>set_mode()</code> 會因為 <code>L</code> 不同而<b>被拒絕</b>。這正是 <code>audio_pipeline_set_nr_mode()</code>／<code>audio_pipeline_4ch_set_nr_mode()</code> 各自重組完整組態再呼叫 <code>reconfigure()</code> 的原因——application 不要繞過 pipeline setter。</div>
 <pre>/* standalone:直接換 mode */
 anr_set_mode(nr, ANR_MODE_AGGRESSIVE);
 

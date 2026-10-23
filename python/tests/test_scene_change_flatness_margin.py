@@ -5,12 +5,8 @@ scene_change_flatness_threshold.
 The detector fires after scene_change_min_frames consecutive frames with a
 high-band energy ratio above scene_change_threshold_db AND a high-band
 flatness above the threshold, and then blends the noise floor toward the
-frame power. On DNS 2020 clip fileid_63 the reference computed a flatness of
-0.40061 where a cubic exp approximation in the C port gave 0.39991, so the
-two trackers reset on different frames and the outputs diverged for ~120
-frames (16 dB waveform parity). The two synthetic bursts below sit +6e-4 and
--6e-4 from the threshold, inside that approximation's 1.7e-3 relative
-error: the first must fire, the second must not. c_impl/test/
+frame power. The two synthetic bursts below sit +6e-4 and -6e-4 from the
+threshold: the first must fire, the second must not. c_impl/test/
 test_scene_change_margin.c drives the C tracker with the same numbers.
 """
 import os
@@ -25,10 +21,7 @@ from core.noise_estimators.mcra import McraNoiseEstimator, _spectral_flatness  #
 
 N_FREQS = 257          # 16 kHz / FFT 512
 HI_START = 128         # the detector's high band is the upper half
-# 64 bins at HI_A, 65 at HI_B_*. Flatness is scale-free; the level puts the
-# mean log power at 5.52, whose fractional part (0.52, folded to -0.48) is
-# where a cubic Taylor exp over [-0.5, 0.5) is 0.33% low -- five times the
-# margins below (it computed 0.39928 for the frame that must fire).
+# 64 bins at HI_A, 65 at HI_B_*. Flatness is scale-free.
 HI_A = 1200.0
 HI_B_FIRE = 53.02      # flatness 0.400612: +6.1e-4 above the 0.4 threshold
 HI_B_HOLD = 52.68      # flatness 0.399426: -5.7e-4 below it

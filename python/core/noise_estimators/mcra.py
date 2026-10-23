@@ -1,33 +1,11 @@
-"""
-MCRA-based Noise Estimator (MCRA-lite — NOT canonical IMCRA; see NOTE).
+"""MCRA-based noise estimator (minima-controlled recursive averaging, Cohen and Berdugo, 2002).
 
-Minimum-tracking noise-PSD estimation (Cohen & Berdugo 2002). The
-`accept_external_spp` constructor flag selects what drives the noise-update gate:
-
-  accept_external_spp=True  (default — standalone NR):
-    Gate uses the OM-LSA posterior SPP passed in from the denoiser (falling back
-    to the internal min-stat SPP if none is given). The external DD-smoothed
-    posterior gives more reliable per-bin speech protection than the internal
-    binary min-ratio test, and pairs naturally with the OM-LSA gain.
-
-  accept_external_spp=False  (AEC pipeline):
-    Gate always uses the internal min-stat indicator. Use when the caller's
-    OM-LSA posterior is unreliable (e.g. residual echo inflates the posterior in
-    noise-only bins, which would freeze noise tracking).
-
-NOTE — this is MCRA-lite, not canonical IMCRA. It does single-pass minimum
-tracking + a posterior-gated recursive average, but deliberately OMITS IMCRA's
-(Cohen 2003) distinctive additions: the two-iteration minimum smoothing
-(rough-VAD exclusion before the minimum) and the B_min bias compensation.
-Reconnecting the internal minimum-controlled gate as the noise-update driver
-regressed speech (−0.632 PESQ / 824 VCTK) and is intentionally not used.
-
-References:
-    Cohen, I. & Berdugo, B. (2002). "Noise estimation by minima controlled
-    recursive averaging." IEEE Signal Processing Letters, 9(1), 12-15.
-    Cohen, I. (2003). "Noise spectrum estimation in adverse environments:
-    Improved minima controlled recursive averaging." IEEE Trans. Signal
-    Processing, 51(2), 466-475.  (IMCRA — NOT fully implemented here; see NOTE.)
+This is MCRA-lite, not canonical IMCRA (Cohen, 2003): single-pass minimum tracking and a
+posterior-gated recursive average, without IMCRA's two-iteration minimum smoothing or bias
+compensation. `accept_external_spp` selects the noise-update gate: True (default) uses the
+posterior SPP passed in by the denoiser (the internal min-stat SPP if none is given); False always
+uses the internal min-stat indicator, for callers whose posterior is unreliable (for example when
+residual echo inflates it in noise-only bins).
 """
 
 import numpy as np
@@ -35,42 +13,26 @@ from typing import Optional
 
 
 def _spectral_flatness(power_band: np.ndarray) -> float:
-    """Geometric-mean / arithmetic-mean spectral flatness of a power band (∈ (0,1]).
-    ~0.1-0.2 for voiced/tonal content, ~0.5-0.7 for white noise."""
+    """Ratio of the geometric to the arithmetic mean of a power band, in (0, 1]."""
     p = power_band + 1e-20
     return np.exp(np.mean(np.log(p))) / np.mean(p)
 
 
 class McraNoiseEstimator:
-    """
-    MCRA-lite 噪聲估計器（gate 由 accept_external_spp 控制，見 module docstring；非 canonical IMCRA）
+    """MCRA-lite noise estimator.
 
-    演算法步驟：
-    1. 時間平滑：S(k,l) = α_s·S(k,l-1) + (1-α_s)·|Y(k,l)|²
-    2. 最小值追蹤：S_min(k,l) = min{S(k,τ): l-L+1 ≤ τ ≤ l}
-    3. 內部語音指示器：I(k,l) = 1 if S(k,l)/S_min(k,l) > δ else 0
-    4. 內部 SPP 平滑：p(k,l) = α_p·p(k,l-1) + (1-α_p)·I(k,l)
-    5. 噪聲更新 gate：
-         external-gate (accept_external_spp=True):  spp_gate = external OM-LSA posterior (else self.spp)
-         internal-gate (accept_external_spp=False): spp_gate = self.spp
-       α̃_d = α_d + (1-α_d)·spp_gate
-       N(k,l) = α̃_d·N(k,l-1) + (1-α̃_d)·|Y(k,l)|²
+    Per bin: S = alpha_s * S + (1 - alpha_s) * |Y|^2; S_min = minimum of S over the last L frames;
+    I = [S / (S_min * delta) > 1]; p = alpha_p * p + (1 - alpha_p) * I;
+    alpha_tilde = alpha_d + (1 - alpha_d) * p_gate; N = alpha_tilde * N + (1 - alpha_tilde) * |Y|^2.
+    p_gate is the external posterior when accept_external_spp is set and one is passed, else p.
 
-    參數:
-        alpha_s: 時間平滑因子 (0.85-0.95)
-        alpha_d: 噪聲更新基礎速率 (0.70-0.90)
-        alpha_p: 內部 SPP 平滑因子 (0.1-0.3)
-        L: 最小值窗口長度（幀）
-        delta_db: 語音偵測偏差補償（dB）
-        num_init_frames: 初始化幀數
-        accept_external_spp: True = IMCRA mode；False = plain MCRA mode
+    alpha_s: time smoothing (0.85-0.95); alpha_d: base noise update rate (0.70-0.90);
+    alpha_p: SPP smoothing (0.1-0.3); L: minimum window in frames; delta_db: speech detection
+    threshold in dB; num_init_frames: initialization frames.
     """
 
-    # Below this the 1e-10 epsilons in every consumer of noise_psd dominate it
-    # (float32: 1e-10 + N == 1e-10 for N < ~6e-18), so the estimate can no
-    # longer influence anything and, after a signal returns, can no longer be
-    # updated either (see update()). Any real signal scale sits >30 orders
-    # above it. Mirrored by MCRA_NOISE_PSD_INERT in the C port.
+    # Below this the 1e-10 epsilons in every consumer of noise_psd dominate the estimate, which
+    # then cannot be updated either (see update()). Equals SKR_NOISE_PSD_INERT in the C library (audiolib utility/simd_nr.h).
     NOISE_PSD_INERT = 1e-20
 
     def __init__(
@@ -82,85 +44,26 @@ class McraNoiseEstimator:
         delta_db: float = 5.0,
         num_init_frames: int = 20,
         broadband_threshold: float = 0.8,
-        # 場景轉換偵測參數（高頻段 γ + spectral flatness 聯合判斷；
-        # flatness 用於避免語音誤觸發，因語音 flatness 較低）
         scene_change_threshold_db: float = 10.0,
         scene_change_min_frames: int = 5,
         scene_change_blend: float = 0.5,
         scene_change_flatness_threshold: float = 0.4,
-        # IMCRA/MCRA mode switch
-        accept_external_spp: bool = True,  # True=IMCRA, False=plain MCRA
-        # Direction-aware noise update. None keeps the symmetric recursion.
-        # When set, a bin whose power exceeds its current noise estimate (the
-        # rising direction) is blended with this slower base rate instead of
-        # alpha_d, so speech that the posterior only partly flags cannot
-        # ratchet the floor upward; the falling direction keeps alpha_d.
+        accept_external_spp: bool = True,  # True: external-posterior gate; False: internal gate
+        # Direction-aware update: a bin whose power exceeds its estimate blends at this slower
+        # rate instead of alpha_d, so partly flagged speech cannot ratchet the floor up.
         alpha_d_up: Optional[float] = None,
-        # Speech-gated slow update. In a bin whose gating probability exceeds
-        # speech_gate_p the base rate becomes alpha_d_speech and the estimate
-        # may only FALL at the ordinary rate, never rise faster than the slow
-        # one; bins below the gate keep the shipped symmetric update, so the
-        # noise-only steady state is unbiased. None keeps the shipped path.
+        # Speech-gated slow update: where the gating probability exceeds speech_gate_p the base
+        # rate is alpha_d_speech and the estimate may only fall at the ordinary rate.
         alpha_d_speech: Optional[float] = None,
         speech_gate_p: float = 0.2,
-        # Optional frame-level condition on the slow update: it engages only
-        # when the mean gating probability over [gate_bin_start, gate_bin_end)
-        # exceeds frame_gate_p, so bins in a noise-only frame keep the
-        # ordinary symmetric update whatever their individual probability.
+        # Frame-level condition: the slow update needs the mean gating probability over
+        # [gate_bin_start, gate_bin_end) to exceed frame_gate_p.
         frame_gate_p: Optional[float] = None,
         gate_bin_start: int = 0,
         gate_bin_end: Optional[int] = None,
-        # Broadband-onset escape: when more than this fraction of bins is
-        # gated in one frame the rise is a noise-scene change, not speech, and
-        # the ordinary update is kept so a level step is still tracked.
+        # Broadband-onset escape: above this gated fraction the ordinary update is kept.
         slow_mask_max_frac: Optional[float] = None,
-        # arm 4 (R²→tracker decoupling, post-hoc variant): when the caller
-        # passes `extra_noise_psd` into update(), the ordinary (unmodified)
-        # recursion still runs first — this does NOT change tilde_alpha_d or
-        # which spp drives it. Afterward, per bin, the fraction of THIS
-        # frame's positive noise_psd rise that is explainable by the supplied
-        # extra (R²-derived) power is subtracted back out. Only a bin whose
-        # estimate rose AND whose frame power exceeded the pre-update estimate
-        # is touched; a falling bin, or one with no extra power, is untouched.
-        # Default False keeps update() exactly as shipped even if a caller
-        # passes extra_noise_psd (belt-and-suspenders for callers that forget
-        # to gate it).
-        #
-        # SCENE-CHANGE-TRIGGER INTERACTION, FIXED: this correction used to
-        # only touch noise_psd, leaving the scene-change trigger's
-        # hi_gamma computed on raw, echo-included power -- when the
-        # supplied extra explained most of a bin's rise, the reset's own
-        # action was undone by this correction while its trigger condition
-        # (computed from uncorrected power) never cleared, so the reset
-        # could fire every scene_change_min_frames for the whole echo
-        # episode instead of once, re-stomping S_min/min_buffer with
-        # echo-polluted power on every fire. hi_gamma's energy test (not
-        # its flatness test -- see the comment at its computation site)
-        # now uses the SAME echo-corrected power this correction implies,
-        # and a fire's S_min/min_buffer write uses the same correction the
-        # noise_psd write already receives, so this no longer happens:
-        # reproduced on a synthetic sustained 95%-echo-explained rise
-        # (80 fires over 400 frames before this fix, 0 after -- see
-        # test_echo_dominated_rise_no_longer_refires_repeatedly).
-        #
-        # MEASURED on the real AEC-Challenge-2021-blind far-end-singletalk
-        # files this flag's own acceptance round used (20 files, 16 kHz/
-        # 256, through the real AEC+NR pipeline with inject_echo_psd):
-        # genuine scene-change commits are rare on this corpus regardless
-        # -- 1 total across all 20 files, identical before and after this
-        # fix. The pooled-FS AECMOS echo-score CI this flag was rejected
-        # on is UNCHANGED: [-0.0731, -0.0152] vs the prior round's
-        # [-0.0723, -0.0152] at 16 kHz/256 (still FAILS the >= -0.05 CI
-        # lower-bound bar), [-0.0607, -0.0091] vs [-0.0596, -0.0093] at
-        # 16 kHz/512 (also still FAILS). This hazard was real (and is now
-        # fixed) but was NOT the mechanism behind arm 4's FS-echo cost on
-        # this corpus -- that cost comes from the ordinary per-frame
-        # correction itself (holding noise_psd below the echo-inflated
-        # level during sustained far-end-only echo, which lets more
-        # residual echo through the gain stage), independent of whether
-        # any scene-change reset ever fires. Still do NOT set this True in
-        # production: the flag does not clear its acceptance bar, for a
-        # different reason than previously documented here.
+        # Experimental; keep False. Removes the part of the noise rise explained by extra_noise_psd.
         remove_echo_explained_rise: bool = False,
     ):
         self.alpha_s = alpha_s
@@ -185,11 +88,10 @@ class McraNoiseEstimator:
         self.remove_echo_explained_rise = remove_echo_explained_rise
         self.alpha_p = alpha_p
         self.L = L
-        self.delta = 10 ** (delta_db / 10)  # 線性域的 delta
+        self.delta = 10 ** (delta_db / 10)
         self.num_init_frames = num_init_frames
         self.broadband_threshold = broadband_threshold
 
-        # 場景轉換偵測（高頻段 γ + flatness 聯合）
         self.scene_change_threshold = 10 ** (scene_change_threshold_db / 10)
         self.scene_change_min_frames = scene_change_min_frames
         self.scene_change_blend = scene_change_blend
@@ -197,61 +99,42 @@ class McraNoiseEstimator:
         self.scene_change_count = 0
         self.accept_external_spp = accept_external_spp
 
-        # 狀態變量
-        self.noise_psd = None       # 噪聲功率譜密度
-        self.S = None               # 時間平滑後的功率譜
-        self.S_min = None           # 最小值
-        self.min_buffer = None      # 最小值追蹤緩衝區 (L, n_freqs)
+        self.noise_psd = None
+        self.S = None
+        self.S_min = None
+        self.min_buffer = None      # (L, n_freqs) minimum-tracking ring
         self._buf_ptr = 0           # circular-buffer write pointer
-        self.spp = None             # Speech Presence Probability
+        self.spp = None
 
         self.is_initialized = False
         self.frame_count = 0
 
     def estimate(self, magnitude_spectrum: np.ndarray) -> np.ndarray:
-        """
-        初始化噪聲估計
-
-        取前 num_init_frames 幀功率的 30th 百分位數（第 k 小值，與 C quickselect 對齊）
-        作為噪聲估計，避免語音幀導致過高估計。
-
-        參數:
-            magnitude_spectrum: 幅度譜 (n_frames, n_freqs) 或 (n_freqs,)
-
-        返回:
-            noise_psd: 初始噪聲功率譜密度 (n_freqs,)
+        """Initializes the noise PSD (n_freqs,) from the first num_init_frames of the magnitude
+        spectrogram (n_frames, n_freqs) or one frame, using the 30th-percentile power per bin.
         """
         if magnitude_spectrum.ndim == 1:
             magnitude_spectrum = magnitude_spectrum.reshape(1, -1)
 
         n_freqs = magnitude_spectrum.shape[1]
 
-        # 使用前 N 幀初始化
         init_frames = magnitude_spectrum[:self.num_init_frames]
         power_spectrum = init_frames ** 2
 
-        # 使用 30th 百分位數作初始噪聲估計（20th 太低容易過低估計）
-        # v4.2.1 C-align: 改用 k-th 最小值（不做線性插值），與 C quickselect 語義一致。
-        # 原 np.percentile(..., 30) 會在 sorted[k]/sorted[k+1] 之間做線性插值，C 則直接取 sorted[k]。
+        # 30th percentile as the k-th smallest power (no interpolation).
         N = power_spectrum.shape[0]
         k = ((N - 1) * 30) // 100
         init_psd = np.partition(power_spectrum, k, axis=0)[k]
 
-        # 數值防護（非演算法參數，S-11）：與 C port 的三處 init_psd 下限對齊，
-        # 避免極低電平輸入下 noise_psd 初始化成次正常數/精確 0，讓後續每個消費者
-        # 自己的 1e-10 epsilon 主宰估計值。不是調整 MCRA 的統計行為。
+        # Floor against subnormal or zero init values at very low input levels.
         init_psd = np.maximum(init_psd, 1e-10)
 
-        # 初始化狀態：S、S_min、min_buffer 必須從同一個統計量出發
-        # 若 S 用均值而 S_min 用 P30，第一次 update 時 ratio = S/(S_min*delta) 會異常（>>1 或 <<1），
-        # 導致 indicator 在純噪聲段誤觸發或誤壓
         self.noise_psd = init_psd.copy()
-        self.S = self.noise_psd.copy()     # 與 S_min 一致，避免初始 ratio 異常
+        self.S = self.noise_psd.copy()
         self.S_min = self.noise_psd.copy()
         self.spp = np.zeros(n_freqs)
 
-        # 初始化最小值追蹤緩衝區（用 init_psd 填滿）; _buf_ptr starts at last slot
-        # so first update() advances to slot 0.
+        # _buf_ptr starts at the last slot so the first update() writes slot 0.
         self.min_buffer = np.tile(init_psd, (self.L, 1))
         self._buf_ptr = self.L - 1
 
@@ -263,93 +146,51 @@ class McraNoiseEstimator:
     def update(
         self,
         magnitude: np.ndarray,
-        is_speech: Optional[bool] = None,  # 保持接口兼容（MCRA 內部判斷，忽略此參數）
-        spp: Optional[np.ndarray] = None,  # v2.0: 支持外部 SPP（軟判決）
+        is_speech: Optional[bool] = None,  # unused
+        spp: Optional[np.ndarray] = None,  # external SPP (soft decision)
         slow_mask: Optional[np.ndarray] = None,  # per-bin override of the slow-update gate
-        extra_noise_psd: Optional[np.ndarray] = None,  # arm 4: raw per-bin R²-derived
-            # power added upstream THIS frame (same array the caller folded into
-            # the gain-side noise floor); used only post-hoc, see
-            # remove_echo_explained_rise above.
+        extra_noise_psd: Optional[np.ndarray] = None,  # power added upstream this frame
     ) -> np.ndarray:
-        """
-        MCRA 噪聲估計更新
+        """Updates the noise PSD (n_freqs,) from a magnitude frame (n_freqs,).
 
-        參數:
-            magnitude: 當前幀的幅度譜 (n_freqs,)
-            is_speech: 忽略，MCRA 使用 SPP 判斷
-            spp: 外部 SPP 值 (n_freqs,)，可選
-            extra_noise_psd: arm 4 的事後修正用，R² 注入量（可選）
-
-        返回:
-            noise_psd: 更新後的噪聲功率譜密度 (n_freqs,)
+        is_speech is ignored. spp: optional external SPP (n_freqs,). slow_mask: optional per-bin
+        override of the slow-update gate. extra_noise_psd: power added upstream this frame, used
+        only with remove_echo_explained_rise.
         """
         if not self.is_initialized:
             raise RuntimeError("Noise estimator not initialized. Call estimate() first.")
 
-        # 1. 計算當前幀的功率譜
         power = magnitude ** 2
 
-        # arm 4: snapshot the pre-update estimate. Captured here (before any of
-        # steps 2-8, including the scene-change block) and consumed only after
-        # the entire unmodified recursion below has run — mirrored the C
-        # prototype's own before/after snapshot in a since-removed probe tool.
+        # Pre-update snapshot for the remove_echo_explained_rise correction at the end.
         apply_arm4 = self.remove_echo_explained_rise and extra_noise_psd is not None
         previous_noise_psd = self.noise_psd.copy() if apply_arm4 else None
 
-        # 2. 時間平滑
-        # S(k,l) = α_s·S(k,l-1) + (1-α_s)·|Y(k,l)|²
         self.S = self.alpha_s * self.S + (1 - self.alpha_s) * power
 
-        # 3. 更新最小值緩衝區（circular buffer，避免每幀 np.roll 分配）
         self._buf_ptr = (self._buf_ptr + 1) % self.L
         self.min_buffer[self._buf_ptr] = self.S
 
-        # 4. 計算最小值
-        # S_min(k,l) = min{S(k,τ): l-L+1 ≤ τ ≤ l}
         self.S_min = np.min(self.min_buffer, axis=0)
 
-        # 5. 語音指示器（基於最小值比）
-        # I(k,l) = 1 if S(k,l)/S_min(k,l) > δ else 0
-        # 注意：比值大於 delta 表示可能有語音
         ratio = self.S / (self.S_min * self.delta + 1e-10)
         indicator = (ratio > 1.0).astype(float)
 
-        # 6. SPP 平滑
-        # p(k,l) = α_p·p(k,l-1) + (1-α_p)·I(k,l)
         self.spp = self.alpha_p * self.spp + (1 - self.alpha_p) * indicator
 
-        # 7. 場景轉換偵測
-        # 條件：高頻 γ 高 AND 高頻 spectral flatness 高
-        # - 高頻 γ 高：能量突然增加（可能是噪聲或語音）
-        # - Spectral flatness 高：能量分布平坦（噪聲特徵，語音 ~0.1-0.2，白噪聲 ~0.5-0.7）
-        # 兩者同時滿足才觸發，避免語音誤觸發
+        # Scene change: high-band gamma high AND high-band spectral flatness high (speech is
+        # ~0.1-0.2, white noise ~0.5-0.7).
         n_freqs = len(power)
-        hi_start = n_freqs // 2  # 上半頻段（~4kHz for 16kHz/512FFT）
+        hi_start = n_freqs // 2  # upper half of the spectrum
         hi_power = power[hi_start:]
-        # When remove_echo_explained_rise is active, the trigger must see
-        # the same echo-corrected power its own post-hoc correction
-        # implies, or it stays blind to echo and never clears while a
-        # bin's rise is echo-explained -- firing every
-        # scene_change_min_frames for the whole echo episode instead of
-        # once (see remove_echo_explained_rise's docstring). Only the
-        # ENERGY test (hi_gamma) is corrected here; flatness a few lines
-        # down stays on the RAW spectrum (shape, not level) -- zeroing
-        # many bins by subtraction can swing the geometric mean through
-        # the 1e-20 floor in _spectral_flatness and falsely veto a genuine
-        # broadband change that happens to co-occur with echo.
-        # extra_noise_psd is 0 (or apply_arm4 False) on every ordinary
-        # frame, so this is a no-op there -- bit-exact to shipped behaviour
-        # unless remove_echo_explained_rise=True AND a caller actually
-        # passes extra_noise_psd.
+        # With remove_echo_explained_rise the energy test (not the flatness test) sees
+        # echo-corrected power, so the trigger clears while a bin's rise is echo-explained.
         hi_power_for_gamma = (
             np.maximum(hi_power - extra_noise_psd[hi_start:], 0.0)
             if apply_arm4 else hi_power)
         hi_gamma = np.mean(hi_power_for_gamma) / (np.mean(self.noise_psd[hi_start:]) + 1e-10)
 
-        # Flatness contains one log per high-band bin.  It cannot affect the
-        # decision unless the cheap energy-ratio gate passes, so defer it.
-        # This is decision-identical and avoids the log pass on ordinary
-        # frames (the common path on speech and stationary noise).
+        # Flatness costs one log per high-band bin; compute it only when the energy gate passes.
         hi_energy_candidate = hi_gamma > self.scene_change_threshold
         hi_flatness = (_spectral_flatness(hi_power)
                        if hi_energy_candidate else 0.0)
@@ -359,41 +200,21 @@ class McraNoiseEstimator:
         if hit_now:
             self.scene_change_count += 1
             if self.scene_change_count >= self.scene_change_min_frames:
-                # 場景轉換確認：部分重置噪聲估計和最小值追蹤
                 blend = self.scene_change_blend
                 self.noise_psd = blend * self.noise_psd + (1 - blend) * power
-                # The noise_psd write just above is corrected after the fact
-                # by the post-hoc block at the end of update() (see
-                # test_scene_change_write_is_also_corrected), but S_min
-                # and min_buffer are stomped with self.S HERE and never
-                # go through that post-hoc path at all -- so without
-                # this, a corrected fire still leaves the min-tracker
-                # seeded with echo-polluted power. Use the same
-                # echo-corrected value consistently with the main write
-                # whenever arm 4 is active; bit-exact to shipped when
-                # it isn't.
+                # S_min and the ring use the same echo-corrected value as the noise_psd write.
                 S_for_reset = (np.maximum(self.S - extra_noise_psd, 0.0)
                                 if apply_arm4 else self.S)
-                # np.maximum already allocates a fresh array -- only the
-                # `else self.S` branch aliases self.S and needs the copy
-                # before self.S_min is allowed to diverge from it.
                 self.S_min = S_for_reset if apply_arm4 else S_for_reset.copy()
                 self.min_buffer[:] = S_for_reset.reshape(1, -1)
                 self.scene_change_count = 0
         else:
             self.scene_change_count = 0
 
-        # 8. 噪聲更新（SPP 門控）
-        # external-gate (accept_external_spp=True): prefer OM-LSA posterior from the
-        # denoiser — it uses DD-smoothed a priori SNR history, giving more reliable
-        # per-bin speech protection than the internal binary ratio test.
-        # internal-gate (accept_external_spp=False): always use internal indicator.
-        # Use False in AEC pipeline contexts where residual echo inflates the
-        # OM-LSA posterior in noise-only bins and would freeze noise tracking.
+        # Noise update gated by the external posterior or the internal indicator.
         spp_for_update = (spp if (self.accept_external_spp and spp is not None)
                           else self.spp)
 
-        # 寬頻場景轉換偵測（舊方法，broadband_threshold < 1.0 時啟用）
         if self.broadband_threshold < 1.0:
             high_spp_ratio = np.mean(self.spp > 0.5)
             if high_spp_ratio > self.broadband_threshold:
@@ -401,16 +222,12 @@ class McraNoiseEstimator:
                             / (1.0 - self.broadband_threshold))
                 spp_for_update = spp_for_update * scale
 
-        # α̃_d(k,l) = α_d + (1-α_d)·p(k,l)
-        # 當 SPP 高（語音段）時，α̃_d 接近 1，噪聲更新慢
-        # 當 SPP 低（噪聲段）時，α̃_d 接近 α_d，噪聲更新快
         tilde_alpha_d = self.alpha_d + (1 - self.alpha_d) * spp_for_update
 
-        # N(k,l) = α̃_d·N(k,l-1) + (1-α̃_d)·|Y(k,l)|²
         noise_new = tilde_alpha_d * self.noise_psd + (1 - tilde_alpha_d) * power
         if self.alpha_d_up is not None:
-            # Both blends are convex, so the estimate rises exactly when the
-            # frame power exceeds it; only that direction takes the slow rate.
+            # Both blends are convex, so the estimate rises exactly when power exceeds it; only
+            # that direction takes the slow rate.
             tilde_up = self.alpha_d_up + (1 - self.alpha_d_up) * spp_for_update
             noise_up = tilde_up * self.noise_psd + (1 - tilde_up) * power
             noise_new = np.where(power > self.noise_psd, noise_up, noise_new)
@@ -427,10 +244,8 @@ class McraNoiseEstimator:
             if (self.slow_mask_max_frac is not None
                     and np.mean(speechy) > self.slow_mask_max_frac):
                 speechy = np.zeros_like(speechy)
-            # Gated bins take the lower of the slow and ordinary candidates:
-            # a fall keeps the ordinary rate, a rise is held to the slow one.
-            # Only those bins are computed (the product gate covers a few LF
-            # bins); noise_new is a fresh array here, so the write is in place.
+            # Gated bins take the lower of the slow and ordinary candidates (a rise is held to the
+            # slow rate); only those bins are computed.
             if speechy.any():
                 tilde_sp = (self.alpha_d_speech
                             + (1 - self.alpha_d_speech) * spp_for_update[speechy])
@@ -439,33 +254,17 @@ class McraNoiseEstimator:
                 noise_new[speechy] = np.minimum(noise_slow, noise_new[speechy])
         self.noise_psd = noise_new
 
-        # Dead-bin restart. A bin whose N has decayed below NOISE_PSD_INERT
-        # (digital silence for a few seconds: N shrinks by α̃_d every frame with
-        # nothing to pull it up) is numerically inert: every consumer adds
-        # 1e-10 to N, so γ and the min-statistics ratio no longer see it. When
-        # signal returns, γ = |Y|²/1e-10 saturates the posterior at exactly 1.0,
-        # α̃_d becomes exactly 1.0 and the update above is a fixed point -- the
-        # bin never tracks again and its gain stays at ~1. Restart such bins
-        # with the ungated blend (p = 0); no other bin is touched, so streams
-        # that never go numerically dead are bit-identical to before.
+        # Dead-bin restart: a bin whose N decayed below NOISE_PSD_INERT is numerically inert and
+        # would never track again once signal returns (the posterior saturates at 1.0); restart
+        # it with the ungated blend.
         dead = self.noise_psd < self.NOISE_PSD_INERT
         if np.any(dead):
             self.noise_psd[dead] = (self.alpha_d * self.noise_psd[dead]
                                     + (1 - self.alpha_d) * power[dead])
 
-        # arm 4: post-hoc, per-bin subtractive correction. The update above
-        # (steps 2-8 plus the dead-bin restart) ran completely unmodified —
-        # this does not change tilde_alpha_d, the gate, or which spp drove it.
-        # For a bin that rose this frame (tracked > previous) on a frame whose
-        # power also exceeded the pre-update estimate, remove the fraction of
-        # that rise explainable by the supplied extra (R²) power:
-        #   excess = power - previous          (the rise the frame power could cause)
-        #   fraction = min(extra / excess, 1.0) (how much of it extra explains)
-        #   tracked = previous + (tracked - previous) * (1 - fraction)
-        # A bin with no extra power, or one that fell, is untouched. This
-        # corrects where the extra power LANDED in noise_psd; it does not
-        # correct the update RATE itself (tilde_alpha_d still saw whatever spp
-        # it was handed) — a partial fix by design, not a complete one.
+        # remove_echo_explained_rise: for bins that rose this frame, remove the fraction of the
+        # rise explainable by extra_noise_psd. This corrects where the extra power landed, not
+        # the update rate.
         if apply_arm4:
             excess = power - previous_noise_psd
             rising = ((extra_noise_psd > 0.0)
@@ -484,7 +283,7 @@ class McraNoiseEstimator:
         return self.noise_psd
 
     def reset(self):
-        """重置估計器狀態"""
+        """Clears all state."""
         self.noise_psd = None
         self.S = None
         self.S_min = None

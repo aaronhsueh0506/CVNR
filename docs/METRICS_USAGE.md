@@ -31,10 +31,10 @@
 **用途**: 評估整體降噪效果
 
 **計算方法**:
-- 將信號分幀（默認 20ms 幀長，10ms 幀移）
+- 將信號分幀（默認 512 samples 幀長、256 samples 幀移，16 kHz 下為 32 ms／16 ms）
 - 計算每幀的 SNR
 - 對所有幀的 SNR 取平均
-- 裁剪異常值（默認 -15 到 35 dB）
+- 裁剪異常值（默認 -10 到 35 dB）
 - 可選 VAD 過濾靜音幀
 
 **優點**:
@@ -57,9 +57,9 @@
 **用途**: 考慮人耳敏感度的評估
 
 **計算方法**:
-- 類似 segSNR，但對不同頻率加權
+- 類似 segSNR，但對各頻率的 dB SNR 加權平均
 - **300-3000 Hz**: 權重 1.0（語音主要頻段）
-- **< 300 Hz 或 > 3000 Hz**: 權重降低
+- **< 300 Hz**: 權重 0.5；**> 3000 Hz**: 權重遞減（下限 0.3）
 - 更符合人耳對語音的敏感度
 
 **優點**:
@@ -82,9 +82,9 @@
 **用途**: 評估頻譜失真
 
 **計算方法**:
-- 計算 25 個 Bark 頻帶的頻譜斜率
+- 把 512 點對數頻譜的斜率分成 25 組（每組 10 個 bin）
 - 比較乾淨語音和處理後語音的斜率差異
-- 使用感知加權
+- 每組以 Bark 臨界頻帶權重加權
 - 值越小表示失真越小
 
 **優點**:
@@ -134,27 +134,26 @@ from utils.metrics_loizou import composite_measure, print_metrics
 from utils.audio_io import read_audio
 
 # 讀取音頻
-clean_signal, sr = read_audio('test_wav/clean.wav')
+clean_signal, sr = read_audio('test_wav/wav/clean.wav')
 enhanced_signal, sr = read_audio('output/enhanced.wav')
 
 # 計算所有指標
-metrics = composite_measure(
-    clean_signal=clean_signal,
-    processed_signal=enhanced_signal,
-    sample_rate=sr
-)
+metrics = composite_measure(clean_signal, enhanced_signal, sr)
 
 # 打印結果
 print_metrics(metrics)
 ```
 
-**輸出示例**:
+**輸出格式**（數值僅為格式示意）:
 ```
-=== 音頻質量評估指標 ===
-  分段SNR (segSNR):           12.45 dB
-  頻率加權segSNR (fwSegSNR):  11.23 dB
-  加權頻譜斜率 (WSS):          45.67
-  全局SNR (global_SNR):       15.78 dB
+==================================================
+評估結果
+==================================================
+segSNR         :  12.450 dB
+fwSegSNR       :  11.230 dB
+WSS            :  45.670 (越小越好)
+global_SNR     :  15.780 dB
+==================================================
 ```
 
 ### 3.2 單獨計算指標
@@ -203,14 +202,14 @@ print(f"segSNR (no VAD):   {seg_snr_no_vad:.2f} dB")
 ### 3.4 自定義參數
 
 ```python
-# 調整幀長和幀移
+# 調整幀長和幀移（單位為 samples）
 seg_snr = segmental_snr(
     clean_signal,
     enhanced_signal,
     sr,
-    frame_len_ms=30.0,    # 30ms 幀長 (默認 20ms)
-    frame_shift_ms=15.0,  # 15ms 幀移 (默認 10ms)
-    snr_clip_db=(-15.0, 40.0)  # SNR 裁剪範圍
+    frame_len=1024,    # 默認 512
+    frame_shift=512,   # 默認 256
+    snr_clip_db=(-15.0, 40.0)  # SNR 裁剪範圍 (默認 -10, 35)
 )
 
 # 調整 VAD 閾值
@@ -219,7 +218,7 @@ seg_snr = segmental_snr(
     enhanced_signal,
     sr,
     use_vad=True,
-    vad_threshold_db=-35.0  # 更敏感的 VAD (默認 -40dB)
+    vad_threshold_db=-35.0  # 更嚴格的 VAD (默認 -40dB)
 )
 ```
 
@@ -305,8 +304,8 @@ from utils.metrics_loizou import composite_measure, print_metrics
 from denoisers import SppMmseDenoiser
 
 # 1. 讀取音頻
-clean_signal, sr = read_audio('test_wav/clean.wav')
-noisy_signal, sr = read_audio('test_wav/test_noisy.wav')
+clean_signal, sr = read_audio('test_wav/wav/clean.wav')
+noisy_signal, sr = read_audio('test_wav/wav/babble_10dB.wav')
 
 # 2. 降噪處理
 denoiser = SppMmseDenoiser(sample_rate=sr)
@@ -332,26 +331,26 @@ print(f"fwSegSNR 改善:  {metrics['fwSegSNR'] - noisy_metrics['fwSegSNR']:.2f} 
 print(f"WSS 改善:       {noisy_metrics['WSS'] - metrics['WSS']:.2f} (正值=變好)")
 ```
 
-**預期輸出**:
+**輸出格式**（數值僅為格式示意）:
 ```
 === V3 (MMSE-STSA) 降噪效果評估 ===
-=== 音頻質量評估指標 ===
-  分段SNR (segSNR):           12.34 dB
-  頻率加權segSNR (fwSegSNR):  10.89 dB
-  加權頻譜斜率 (WSS):          48.23
-  全局SNR (global_SNR):       15.67 dB
+
+==================================================
+評估結果
+==================================================
+segSNR         :  12.340 dB
+fwSegSNR       :  10.890 dB
+WSS            :  48.230 (越小越好)
+global_SNR     :  15.670 dB
+==================================================
 
 === 原始噪聲信號評估 ===
-=== 音頻質量評估指標 ===
-  分段SNR (segSNR):           2.15 dB
-  頻率加權segSNR (fwSegSNR):  1.23 dB
-  加權頻譜斜率 (WSS):          95.67
-  全局SNR (global_SNR):       5.34 dB
+（同上格式）
 
 === 改善量 ===
-segSNR 改善:    10.19 dB
-fwSegSNR 改善:  9.66 dB
-WSS 改善:       47.44 (正值=變好)
+segSNR 改善:    <數值> dB
+fwSegSNR 改善:  <數值> dB
+WSS 改善:       <數值> (正值=變好)
 ```
 
 ### 5.2 對比多個版本
@@ -359,7 +358,7 @@ WSS 改善:       47.44 (正值=變好)
 ```python
 #!/usr/bin/env python3
 """
-對比 V3, V3-2, V3-3, V3-4 降噪效果
+對比 V3, V3-2, V3-3 降噪效果
 """
 import numpy as np
 from utils.audio_io import read_audio
@@ -368,19 +367,17 @@ from denoisers import (
     SppMmseDenoiser,
     MmseLsaDenoiser,
     PmmseDenoiser,
-    LaplacianMmseDenoiser
 )
 
 # 讀取音頻
-clean, sr = read_audio('test_wav/clean.wav')
-noisy, sr = read_audio('test_wav/test_noisy.wav')
+clean, sr = read_audio('test_wav/wav/clean.wav')
+noisy, sr = read_audio('test_wav/wav/babble_10dB.wav')
 
 # 定義版本
 denoisers = {
     'V3 (MMSE-STSA)': SppMmseDenoiser(sample_rate=sr),
     'V3-2 (MMSE-LSA)': MmseLsaDenoiser(sample_rate=sr),
     'V3-3 (PMMSE)': PmmseDenoiser(sample_rate=sr),
-    'V3-4 (Laplacian-MMSE)': LaplacianMmseDenoiser(sample_rate=sr)
 }
 
 # 評估每個版本
@@ -415,21 +412,20 @@ print(f"\n最佳 segSNR:  {best_segsnr[0]} ({best_segsnr[1]['segSNR']:.2f} dB)")
 print(f"最佳 WSS:     {best_wss[0]} ({best_wss[1]['WSS']:.2f})")
 ```
 
-**預期輸出**:
+**輸出格式**（數值僅為格式示意）:
 ```
 ================================================================================
 MMSE 變體降噪效果對比
 ================================================================================
 版本                        segSNR   fwSegSNR        WSS   global_SNR
 --------------------------------------------------------------------------------
-V3 (MMSE-STSA)               12.34       10.89      48.23        15.67
-V3-2 (MMSE-LSA)              13.12       11.45      42.56        16.23
-V3-3 (PMMSE)                 11.89       10.34      51.78        14.89
-V3-4 (Laplacian-MMSE)        13.56       11.78      39.12        16.78
+V3 (MMSE-STSA)               <數值>      <數值>     <數值>       <數值>
+V3-2 (MMSE-LSA)              <數值>      <數值>     <數值>       <數值>
+V3-3 (PMMSE)                 <數值>      <數值>     <數值>       <數值>
 ================================================================================
 
-最佳 segSNR:  V3-4 (Laplacian-MMSE) (13.56 dB)
-最佳 WSS:     V3-4 (Laplacian-MMSE) (39.12)
+最佳 segSNR:  <版本> (<數值> dB)
+最佳 WSS:     <版本> (<數值>)
 ```
 
 ### 5.3 批量評估
@@ -448,10 +444,10 @@ from denoisers import SppMmseDenoiser
 
 # 測試文件列表
 test_files = [
-    ('test_wav/babble_0dB.wav', 'test_wav/clean.wav'),
-    ('test_wav/babble_10dB.wav', 'test_wav/clean.wav'),
-    ('test_wav/car_0dB.wav', 'test_wav/clean.wav'),
-    ('test_wav/car_10dB.wav', 'test_wav/clean.wav'),
+    ('test_wav/wav/babble_0dB.wav', 'test_wav/wav/clean.wav'),
+    ('test_wav/wav/babble_10dB.wav', 'test_wav/wav/clean.wav'),
+    ('test_wav/wav/car_0dB.wav', 'test_wav/wav/clean.wav'),
+    ('test_wav/wav/car_10dB.wav', 'test_wav/wav/clean.wav'),
 ]
 
 # 降噪器
@@ -547,16 +543,16 @@ assert not np.isinf(enhanced).any(), "Enhanced contains Inf!"
 
 # VAD 測試
 from utils.metrics_loizou import voice_activity_detection
-vad_flags = voice_activity_detection(clean, sr)
+vad_flags = voice_activity_detection(clean, 512, 256)  # signal, frame_len, frame_shift (samples)
 print(f"VAD: {vad_flags.sum()} / {len(vad_flags)} frames are voice")
 ```
 
 ### 6.4 參數調整建議
 
-**幀長和幀移**:
-- 默認 20ms/10ms 適用於大多數情況
-- 更短的幀（10ms）：更精細的時域分辨率
-- 更長的幀（30ms）：更穩定的頻域分析
+**幀長和幀移**（samples）:
+- 默認 512/256 適用於大多數情況
+- 更短的幀：更精細的時域分辨率
+- 更長的幀：更穩定的頻域分析
 
 **VAD 閾值**:
 - 默認 -40dB 適用於一般語音
@@ -564,7 +560,7 @@ print(f"VAD: {vad_flags.sum()} / {len(vad_flags)} frames are voice")
 - 提高閾值（-35dB）：更嚴格的語音檢測
 
 **SNR 裁剪範圍**:
-- 默認 [-15, 35] dB 過濾極端值
+- 默認 [-10, 35] dB 過濾極端值
 - 可根據實際噪聲水平調整
 
 ## 參考文獻

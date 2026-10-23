@@ -33,14 +33,9 @@ Verdicts per scenario and layer
   ERROR                    a driver failed or produced a non-finite value        -> failure
 Exit code 0 = no failure, 1 = failure, 2 = infrastructure error (inputs, build flags, drivers).
 
-The tolerances below are FROZEN (2026-10-20, after S-10/S-11/S-12): chosen from a full measurement
-against the post-fix real trees (428 scenarios, grids 8k128/8k256/16k256/16k512/48k1024,
-PYTHONHASHSEED=0 two-run byte-identical).  See NR/CHANGELOG.md's tolerance-freeze entry for the
-measured worst-GREEN value and margin behind each constant, and for the one constant (gain L2
-max_abs) whose real margin is already thin (0.5-2.0x band) and was left unchanged rather than
-loosened or tightened on no evidence -- that cell mixes the fast-math approximation budget with all
-six USE_* optimization flags (S-10's NEON twin among them) in one tolerance, a known gate blind spot
-this freeze does not close.  The measured numbers are always printed next to the tolerances.
+The tolerances (TOLERANCES) are fixed per scenario kind, layer and metric. The gain L2 max_abs
+tolerance covers the fast-math approximation budget and all six USE_* optimization flags together.
+The measured numbers are always printed next to the tolerances.
 """
 
 import sys
@@ -76,15 +71,9 @@ STRENGTHS = ('mild', 'moderate', 'balanced', 'aggressive')
 GRIDS = ((8000, 128), (8000, 256), (16000, 256), (16000, 512), (48000, 1024))
 LAYERS = ('L1', 'L2')
 
-# ---- FROZEN tolerances (2026-10-20; supersedes the Wave-S-prep provisional cut) ------------------
+# ---- tolerances ---------------------------------------------------------------------------------
 # gain: max|dG| and the 99.9th percentile of |dG| over all frames x bins.
 # e2e : rms of the waveform difference relative to the rms of the reference (dB) and max|dy| / peak.
-# Measured on the post-S-10/S-11/S-12 real tree (428 scenarios): L1 worst-GREEN max_abs/p999 =
-# 3.809e-4 / 5.190e-6 (frozen with ~5x/~4x margin); L2 worst-GREEN max_abs/p999 = 9.693e-2 / 3.186e-3
-# (max_abs frozen UNCHANGED at 1.5e-1 -- 2x the measured value already exceeds the old number, so
-# this is the loosest defensible freeze, not a tightened one; two real scenarios already sit in the
-# harness's own 0.5-2.0x marginal band at this tolerance, see CHANGELOG.md). e2e worst-GREEN
-# rms_err_db/max_over_peak: L1 -106.48 dB / 8.439e-6, L2 -61.15 dB / 2.620e-3.
 TOLERANCES = {
     'gain': {'L1': {'max_abs': 2.0e-3, 'p999': 2.0e-5},
              'L2': {'max_abs': 1.5e-1, 'p999': 7.0e-3}},
@@ -160,14 +149,10 @@ def _zero_band_edit(t0, t1, f0_hz, f1_hz):
 #   tf        audio transform;  edit  spectral edit on the float32 spectra (gain scenarios only)
 #   makeup    make-up gain on in both implementations;  py_prior  Python makeup_prior (None = default)
 #   srs       sample rates the family exists for (default: all);  kinds  'gain' and/or 'e2e'
-#   exercises {layer: finding} the family can expose.  It documents the mechanism, validates
-#             expected_red.json (an entry must name a finding its family exercises on that layer) and
-#             labels --emit-expected-red.  Findings (PY_C_SYNC_AUDIT.md): S-10 USE_SHARED_XI_RATIO at
-#             zero-power bins; S-11/S-12 C-only 1e-10 initial-PSD floor and hi_gamma epsilon placement;
-#             S-13 makeup_prior default.  S-10 and S-11/S-12 were fixed 2026-10-20 (see
-#             NR/CHANGELOG.md and c_impl/CHANGELOG.md) and no longer have expected_red.json entries;
-#             these families stay here to document/validate the mechanism and because some of them
-#             (e.g. int16_pk5/12/18, babble_1e-4) exercise more than one finding.  S-13 remains open.
+#   exercises {layer: finding} the family can expose.  It validates expected_red.json (an entry must
+#             name a finding its family exercises on that layer) and labels --emit-expected-red.
+#             Findings: S-10 USE_SHARED_XI_RATIO at zero-power bins; S-11/S-12 initial-PSD floor and
+#             hi_gamma epsilon placement; S-13 makeup_prior default.
 FAMILIES = (
     dict(name='speech', role='speech', tf=_ident, kinds=('gain', 'e2e'), exercises={}),
     dict(name='babble', role='babble', tf=_ident, kinds=('gain',), srs=(16000, 48000), exercises={}),

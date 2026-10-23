@@ -1,6 +1,4 @@
-"""
-V1: Spectral Subtraction Denoiser - 頻譜減法降噪器
-"""
+"""V1: spectral-subtraction denoiser."""
 
 import numpy as np
 import sys
@@ -21,27 +19,13 @@ from core.signal_grid import (
 
 
 class SpectralSubtractionDenoiser(BaseDenoiser):
-    """
-    版本 1: 頻譜減法降噪器
+    """V1 spectral-subtraction denoiser (Boll, 1979): a fixed noise estimate from the
+    lowest-energy frames, with per-frame gain smoothing. Simple, but prone to musical noise.
 
-    最經典的降噪算法（Boll, 1979）
-
-    優點:
-        - 計算簡單，實時性好
-        - 容易理解和實現
-
-    缺點:
-        - 嚴重的音樂噪聲
-        - 固定的噪聲估計可能不準確
-
-    參數:
-        sample_rate: 採樣率
-        frame_size: 幀長（samples）
-        frame_shift: 幀移（samples）
-        fft_size: FFT 點數
-        alpha: 過減因子（1.5-2.5）
-        beta: 頻譜下限（0.002-0.02）
-        num_init_frames: 初始噪聲估計幀數
+    The grid (frame_size, frame_shift, fft_size) is given together or resolved from sample_rate.
+    alpha: over-subtraction factor (1.5-2.5); beta: spectral floor (0.002-0.02); alpha_smooth:
+    gain smoothing; num_init_frames: frames used for the noise estimate. EMA and frame-count
+    parameters are authored at a 10 ms hop and retimed to the grid.
     """
 
     def __init__(
@@ -69,7 +53,6 @@ class SpectralSubtractionDenoiser(BaseDenoiser):
             alpha_smooth, sample_rate, frame_shift
         )
 
-        # 創建處理器
         self.processor = FrameProcessor(
             sample_rate=sample_rate,
             frame_size=frame_size,
@@ -84,12 +67,10 @@ class SpectralSubtractionDenoiser(BaseDenoiser):
             window=self.processor.window
         )
 
-        # 創建噪聲估計器
         self.noise_estimator = SimpleAverageNoiseEstimator(
             num_init_frames=num_init_frames
         )
 
-        # 創建增益計算器
         self.gain_calculator = SpectralSubtractionGainCalculator(
             alpha=alpha,
             beta=beta,
@@ -99,22 +80,11 @@ class SpectralSubtractionDenoiser(BaseDenoiser):
         self.noise_magnitude = None
 
     def denoise(self, noisy_signal: np.ndarray) -> np.ndarray:
-        """
-        對帶噪信號進行降噪
-
-        參數:
-            noisy_signal: 帶噪音頻信號 (n_samples,)
-
-        返回:
-            enhanced_signal: 降噪後的信號 (n_samples,)
-        """
-        # 1. 分幀和 FFT
+        """Denoises noisy_signal (n_samples,); returns the enhanced signal (n_samples,)."""
         magnitudes, phases, spectra = self.processor.process_signal(noisy_signal)
 
-        # 2. 降噪
         enhanced_magnitudes, enhanced_phases = self.denoise_spectrum(magnitudes, phases)
 
-        # 3. 重建信號
         enhanced_signal = self.reconstructor.reconstruct_signal(
             enhanced_magnitudes,
             enhanced_phases,
@@ -128,49 +98,34 @@ class SpectralSubtractionDenoiser(BaseDenoiser):
         noisy_magnitude: np.ndarray,
         noisy_phase: np.ndarray
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        在頻域進行降噪
-
-        參數:
-            noisy_magnitude: 帶噪語音幅度譜 (n_frames, n_freqs)
-            noisy_phase: 帶噪語音相位譜 (n_frames, n_freqs)
-
-        返回:
-            enhanced_magnitude: 降噪後的幅度譜 (n_frames, n_freqs)
-            enhanced_phase: 相位譜（不變）(n_frames, n_freqs)
-        """
+        """Denoises magnitude and phase spectra (n_frames, n_freqs); the phase is returned unchanged."""
         n_frames = noisy_magnitude.shape[0]
 
-        # 估計噪聲（使用前幾幀）
         noise_psd = self.noise_estimator.estimate(noisy_magnitude)
         self.noise_magnitude = np.sqrt(noise_psd)
 
-        # 對每一幀應用頻譜減法
         enhanced_magnitude = np.zeros_like(noisy_magnitude)
 
         for i in range(n_frames):
-            # 計算增益
             gain = self.gain_calculator.calculate(
                 noisy_magnitude[i],
                 self.noise_magnitude
             )
 
-            # 應用增益
             enhanced_magnitude[i] = gain * noisy_magnitude[i]
 
-        # 相位保持不變
         enhanced_phase = noisy_phase
 
         return enhanced_magnitude, enhanced_phase
 
     def reset(self):
-        """重置降噪器狀態"""
+        """Clears the noise estimator and gain state."""
         self.noise_estimator.reset()
         self.gain_calculator.reset()
         self.noise_magnitude = None
 
     def get_params(self) -> dict:
-        """獲取參數"""
+        """Returns the configuration as a dict."""
         return {
             'version': 'V1',
             'name': 'Spectral Subtraction',

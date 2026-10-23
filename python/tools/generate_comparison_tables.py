@@ -14,7 +14,6 @@ import json
 import argparse
 from typing import Dict, List, Any
 
-# Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
@@ -25,7 +24,6 @@ def calculate_theoretical_flops() -> Dict[str, Dict[str, Any]]:
     Returns:
         各算法的計算複雜度數據
     """
-    # FFT 參數
     fft_size = 512
     num_freq_bins = fft_size // 2 + 1  # 257
 
@@ -77,7 +75,6 @@ def calculate_theoretical_flops() -> Dict[str, Dict[str, Any]]:
         }
     }
 
-    # 格式化 FLOPs 為 K
     for algo in results.values():
         algo['flops_per_frame_k'] = algo['flops_per_frame'] / 1000
 
@@ -232,10 +229,8 @@ def generate_all_tables(theory_only: bool = False) -> str:
     output.append("**對比算法：** V1 頻譜減法、V2 Wiener、V3 SPP-MMSE、RNNoise\n")
     output.append("---\n")
 
-    # 計算理論 FLOPs
     flops_data = calculate_theoretical_flops()
 
-    # 表格 1：理論計算資源（必定生成）
     output.append(generate_table1_theoretical(flops_data))
     output.append("\n---\n")
 
@@ -253,11 +248,9 @@ def generate_all_tables(theory_only: bool = False) -> str:
         output.append(generate_table4_template())
         output.append("\n---\n")
 
-    # 表格 5：綜合對比（雷達圖數據）
     output.append(generate_table5_radar())
     output.append("\n---\n")
 
-    # 參考標準
     output.append("## 參考標準\n")
     output.append("### 實時性標準 (RTF)")
     output.append("- RTF < 0.3：優秀（可在低功耗設備運行）")
@@ -304,10 +297,8 @@ def main():
     print("生成語音降噪算法對比表格")
     print("="*60)
 
-    # 生成表格
     tables_md = generate_all_tables(theory_only=args.theory_only)
 
-    # 保存 Markdown
     output_path = os.path.join(
         os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
         args.output
@@ -317,7 +308,6 @@ def main():
 
     print(f"\n✓ 表格已生成: {output_path}")
 
-    # 保存 FLOPs JSON
     if args.theory_only:
         flops_data = calculate_theoretical_flops()
         flops_json_path = os.path.join(

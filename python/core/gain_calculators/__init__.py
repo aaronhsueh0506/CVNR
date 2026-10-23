@@ -1,6 +1,4 @@
-"""
-Gain Calculators - 增益計算器
-"""
+"""Gain calculators."""
 
 from .spectral_subtraction import SpectralSubtractionGainCalculator
 from .wiener import WienerGainCalculator

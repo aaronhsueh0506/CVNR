@@ -1,10 +1,4 @@
-# V2.2: Wiener Filter with DD + SPP-gated noise update
-# v2.2 更新:
-#   - 使用正確的 Bayesian SPP 估計器（取代 Sigmoid 近似）
-#   - 修正 DD 公式：使用上一幀增強後的幅度和當前噪聲估計
-#   - 改用 MCRA 噪聲估計
-#
-# ΔPESQ: 預期 +0.15~0.25 (修復後)
+# V2: Wiener filter with decision-directed a-priori SNR and an SPP-gated MCRA noise update
 
 version: "2.2"
 name: "Wiener Filter with DD"
@@ -17,7 +11,7 @@ audio:
   window_type: hanning
 
 noise_estimation:
-  method: mcra                # v2.2: 改用 MCRA 噪聲估計
+  method: mcra
   alpha_s: 0.9                # 時間平滑因子
   alpha_d: 0.85               # 噪聲更新基礎速率
   alpha_p: 0.2                # SPP 平滑因子

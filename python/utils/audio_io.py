@@ -41,7 +41,6 @@ def read_audio(
         audio, sample_rate = sf.read(file_path, dtype='float32')
     elif SCIPY_AVAILABLE:
         sample_rate, audio = wavfile.read(file_path)
-        # 轉換為 float32 並歸一化
         if audio.dtype == np.int16:
             audio = audio.astype(np.float32) / 32768.0
         elif audio.dtype == np.int32:
@@ -51,11 +50,9 @@ def read_audio(
     else:
         raise RuntimeError("No audio I/O library available. Install soundfile or scipy.")
 
-    # 轉換為單聲道
     if mono and len(audio.shape) > 1:
         audio = np.mean(audio, axis=1)
 
-    # 重採樣（簡單實現，生產環境建議使用 librosa.resample）
     if target_sr is not None and target_sr != sample_rate:
         warnings.warn(
             f"Resampling from {sample_rate} to {target_sr} Hz. "
@@ -133,7 +130,6 @@ def simple_resample(
     duration = len(audio) / orig_sr
     target_length = int(duration * target_sr)
 
-    # 線性插值
     orig_indices = np.arange(len(audio))
     target_indices = np.linspace(0, len(audio) - 1, target_length)
     resampled = np.interp(target_indices, orig_indices, audio)
@@ -182,23 +178,18 @@ def add_noise(
     返回:
         noisy: 帶噪信號
     """
-    # 確保噪聲長度足夠
     if len(noise) < len(clean):
-        # 重複噪聲
         n_repeats = int(np.ceil(len(clean) / len(noise)))
         noise = np.tile(noise, n_repeats)
 
     noise = noise[:len(clean)]
 
-    # 計算當前功率
     signal_power = np.mean(clean ** 2)
     noise_power = np.mean(noise ** 2)
 
-    # 計算所需的噪聲縮放因子
     target_noise_power = signal_power / (10 ** (target_snr_db / 10))
     noise_scale = np.sqrt(target_noise_power / noise_power)
 
-    # 添加噪聲
     noisy = clean + noise_scale * noise
 
     return noisy

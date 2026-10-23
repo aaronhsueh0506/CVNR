@@ -1,12 +1,10 @@
-"""
-Noise Estimators - 噪聲估計器
-"""
+"""Noise estimators."""
 
 from .simple_average import SimpleAverageNoiseEstimator
 from .recursive_average import RecursiveAverageNoiseEstimator
 from .mcra import McraNoiseEstimator
 
-# IMCRA (accept_external_spp=True) is the default mode; alias for clarity.
+# IMCRA is McraNoiseEstimator with accept_external_spp=True (the default).
 ImcraNoiseEstimator = McraNoiseEstimator
 
 __all__ = [

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-ablate_nr_music.py — committed replacement for the ad-hoc fix_gain ablation.
+ablate_nr_music.py — strength-preset ablation of the V3-2 (OM-LSA) denoiser on music/noise wavs.
 
-Runs the V3-2 (OM-LSA) denoiser on music/noise test wavs across the strength presets
-(mild / balanced / aggressive) plus a few candidate deltas, and for each writes:
+Runs the denoiser across the strength presets (mild / moderate / balanced / aggressive) plus the
+`balanced_old` reference, and for each writes:
   - the enhanced WAV (for listening),
   - a log-magnitude spectrogram PNG (musical noise = isolated speckle / vertical stripes),
   - a metrics row: musical_noise (utils.metrics.detect_musical_noise) + suppression_db.
@@ -13,8 +13,8 @@ energy with tonal artifacts, so it can rank a gentle preset WORSE than an aggres
 EAR + spectrogram; use the number only as a sanity check. suppression_db (<0 = deeper) is the
 depth gauge.
 
-The candidate list includes `balanced_old_axi088` = the pre-fix balanced (alpha_xi 0.88) so the
-2026-07 musical-noise fix (alpha_xi → 0.92) is directly visible/audible against `balanced`.
+`balanced_old` is the balanced preset with alpha_xi 0.88 / alpha_attack 0.3 / alpha_decay 0.88,
+for comparison against `balanced`.
 
 Usage:
   python python/tools/ablate_nr_music.py                         # defaults to the two fix_gain_*.wav
@@ -43,19 +43,17 @@ from denoisers.v3_2_mmse_lsa import MmseLsaDenoiser        # noqa: E402
 SR = 16000
 FRAME, HOP, FFT = 512, 256, 512
 
-# (label, strength_base, delta_overrides). balanced = ear-locked anchor; balanced_old_axi088 is the
-# pre-fix reference; mild_deep / aggressive_smooth are dialing candidates.
+# (label, strength_base, delta_overrides). balanced is the anchor; balanced_old is the reference.
 CANDIDATES = [
-    # genuine pre-fix shipped balanced (alpha_xi 0.88, default asymmetric smoothing) — musical noise
     ('balanced_old', 'balanced', {'alpha_xi': 0.88, 'alpha_attack': 0.3, 'alpha_decay': 0.88}),
     # the shipped 4-preset ladder (values live in core/nr_strength.py; no deltas here)
-    ('mild',       'mild',       {}),   # gentlest (unchanged C-mirror)
-    ('moderate',   'moderate',   {}),   # NEW, between mild and balanced (g_min −25)
-    ('balanced',   'balanced',   {}),   # ear-locked anchor = alpha_xi 0.92 + attack 0.4 / decay 0.92
-    ('aggressive', 'aggressive', {}),   # deepest (= aggressive_smooth: alpha_g 0.85 / decay 0.88)
+    ('mild',       'mild',       {}),   # gentlest
+    ('moderate',   'moderate',   {}),   # between mild and balanced
+    ('balanced',   'balanced',   {}),   # base config
+    ('aggressive', 'aggressive', {}),   # deepest
 ]
 
-# params surfaced in the table (mirrors the user's ablation columns)
+# params surfaced in the table
 REPORT_KEYS = ['g_min_db', 'q', 'xi_min_db', 'alpha_xi', 'alpha_g', 'alpha_attack', 'alpha_decay']
 
 

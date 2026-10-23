@@ -191,13 +191,8 @@ static void check_state_is_preserved(void) {
     inst_close(&in);
 }
 
-/* mutation: prove the section-2 comparison can actually fail.
- *
- * A naive reconfiguration -- one that reused the construction-time helpers
- * instead of the parameters-only halves -- would clear exactly what
- * anr_reset() clears. Doing that by hand here and confirming the same
- * comparison notices is what makes "the noise PSD is untouched" evidence
- * rather than a tautology. */
+/* Mutation check: anr_reset() clears the state a bad reconfiguration would, and the section-2
+ * comparison must notice, so "the noise PSD is untouched" is not vacuous. */
 static void check_state_clearing_is_observable(void) {
     AnrConfig cfg = anr_config_for_mode_grid(16000, 512,
                                                       ANR_MODE_BALANCED);
@@ -275,8 +270,7 @@ static void check_refusal_is_total(void) {
 /* ── 4: a pipeline-shaped config survives (overrides are NOT reverted) ─── */
 
 static void check_pipeline_overrides_survive(void) {
-    /* Exactly what both shipped pipelines compose: preset, then three
-     * overrides on top. */
+    /* A caller-composed config: preset, then L, alpha_decay and broadband_threshold overrides. */
     AnrConfig cfg = anr_config_for_mode_grid(16000, 512,
                                                       ANR_MODE_BALANCED);
     AnrConfig target;
@@ -288,13 +282,12 @@ static void check_pipeline_overrides_survive(void) {
     if (inst_open(&in, &cfg) != 0) { CHECK(0, "pipeline instance created"); return; }
     inst_run(&in, 40, 0x99u);
 
-    /* The WRONG way: the canonical convenience wrapper. Its L is the preset's,
-     * not the pipeline's, so it must refuse rather than silently revert. */
+    /* anr_set_mode() rebuilds the preset, whose L differs: it must refuse, not silently revert. */
     CHECK(anr_set_mode(in.d, ANR_MODE_AGGRESSIVE) == -1,
           "set_mode REFUSES a pipeline-shaped instance instead of silently "
           "reverting its overrides");
 
-    /* The right way: rebuild the pipeline's own composition. */
+    /* Recompose the same overrides on the new preset. */
     target = anr_config_for_mode_grid(16000, 512, ANR_MODE_AGGRESSIVE);
     target.broadband_threshold = 0.8f;
     target.L = cfg.L;
@@ -306,7 +299,7 @@ static void check_pipeline_overrides_survive(void) {
     inst_close(&in);
 }
 
-/* ── 7: the pool byte count never moves ────────────────────────────────── */
+/* ── 5: the pool byte count never moves ────────────────────────────────── */
 
 static void check_pool_size_is_unchanged(void) {
     int g, m;

@@ -23,9 +23,9 @@
 
 輸出：
     在輸出目錄下生成：
-    - input_v1.wav（頻譜減法）
-    - input_v2.wav（Wiener 濾波）
-    - input_v3.wav（SPP-MMSE）
+    - {basename}_{版本小寫}.wav，例如 input_v1.wav（頻譜減法）、input_v2.wav（Wiener 濾波）、
+      input_v3.wav（SPP-MMSE）、input_v3-2.wav（MMSE-LSA）
+    - {basename}_waveforms.png（波形對比圖）、{basename}_{版本小寫}_spp.png（SPP 時頻圖）
 
 配置文件：
     從 config/ 目錄讀取對應版本的 YAML 配置。
@@ -38,10 +38,8 @@ import time
 from typing import Dict
 import numpy as np
 
-# Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-# Matplotlib for plotting
 try:
     import matplotlib.pyplot as plt
     MATPLOTLIB_AVAILABLE = True
@@ -185,23 +183,20 @@ def create_denoiser_from_config(
         sample_rate: 採樣率
         mode: NR 內容保留模式，僅 V3-2 有效；目前只有 'full'。
               None 則取 config 的 mode，預設 'full'。
-        strength: NR 強度預設 ('mild' | 'balanced' | 'aggressive')，僅 V3-2 有效；
+        strength: NR 強度預設 ('mild' | 'moderate' | 'balanced' | 'aggressive')，僅 V3-2 有效；
               None 則取 config 的 strength，預設 'balanced'（= base YAML）。
               強度軸（深度）與 mode 軸（內容保留）正交，先套 strength 再套 mode。
 
     Returns:
         降噪器實例
     """
-    # 加載配置文件 (v1.5.0: 將 V3-2 轉換為 v3_2_config.yaml)
     config_filename = version.lower().replace('-', '_') + "_config.yaml"
     config_file = os.path.join(config_dir, config_filename)
     config = load_config(config_file)
 
-    # Runtime sample rate owns the grid. YAML carries algorithm tunables, but
-    # must not re-introduce the former 20/10 ms padded framing at another rate.
+    # The runtime sample rate owns the grid; the YAML carries only algorithm tunables.
     frame_size, frame_shift, fft_size = resolve_signal_grid(sample_rate, fft_size)
 
-    # 根據版本創建降噪器
     if version == 'V1':
         # V1: Spectral Subtraction
         gain_config = config.get('gain_calculation', {})
@@ -252,7 +247,6 @@ def create_denoiser_from_config(
         gain_config = config.get('gain_calculation', {})
         noise_config = config.get('noise_estimation', {})
 
-        # 基本參數
         params = {
             'sample_rate': sample_rate,
             'frame_size': frame_size,
@@ -267,7 +261,6 @@ def create_denoiser_from_config(
             'use_full_formula': gain_config.get('use_full_formula', False)
         }
 
-        # 噪聲估計方法
         ne_method = noise_config.get('method', 'recursive_average')
         if ne_method == 'mcra':
             params.update({
@@ -295,19 +288,14 @@ def create_denoiser_from_config(
         # V3-2: MMSE-LSA (Ephraim-Malah 1985)
         params = build_v3_2_base_params(config, sample_rate, frame_size, frame_shift, fft_size)
 
-        # NR strength preset (mild | balanced | aggressive) — the DEPTH axis. Applied FIRST so the
-        # content mode composes on top.
-        # 'balanced' == base YAML (empty overlay). Explicit arg wins over config.
+        # Strength (depth axis) is applied first, then the content mode. 'balanced' is the base
+        # YAML (empty overlay). An explicit argument wins over the config.
         strength = strength or config.get('strength', 'balanced')
         params = apply_strength(params, strength)
-        # params['strength'] records the choice so the constructor can tell
-        # apart the strength-preset overlay's post-16ms-grid alpha_noise/
-        # alpha_g/alpha_attack/alpha_decay values from balanced's pre-16ms
-        # base-YAML values (same rationale as params['mode'] below).
+        # params['strength'] and params['mode'] record the choice (reported by get_params()).
         params['strength'] = strength
 
-        # NR content-preservation mode. Explicit arg wins over config;
-        # params['mode'] records the choice.
+        # NR content-preservation mode; an explicit argument wins over the config.
         mode = mode or config.get('mode', 'full')
         params = apply_mode(params, mode)
         params['mode'] = mode
@@ -319,7 +307,6 @@ def create_denoiser_from_config(
         gain_config = config.get('gain_calculation', {})
         noise_config = config.get('noise_estimation', {})
 
-        # 基本參數
         params = {
             'sample_rate': sample_rate,
             'frame_size': frame_size,
@@ -334,7 +321,6 @@ def create_denoiser_from_config(
             'num_init_frames': noise_config.get('num_init_frames', 20)
         }
 
-        # 噪聲估計方法
         ne_method = noise_config.get('method', 'recursive_average')
         if ne_method == 'mcra':
             params.update({
@@ -382,18 +368,15 @@ def plot_waveforms(
     if not MATPLOTLIB_AVAILABLE:
         return
 
-    # 準備數據
     num_versions = len(results) + 1  # +1 for noisy
     duration = len(audio) / sample_rate
     time_axis = np.linspace(0, duration, len(audio))
 
-    # 創建子圖
     fig, axes = plt.subplots(num_versions, 1, figsize=(12, 2.5 * num_versions))
 
     if num_versions == 1:
         axes = [axes]
 
-    # 繪製原始含噪音頻
     axes[0].plot(time_axis, audio, linewidth=0.5, color='gray')
     axes[0].set_title('Noisy (Input)', fontsize=12, fontweight='bold')
     axes[0].set_ylabel('Amplitude')
@@ -406,18 +389,15 @@ def plot_waveforms(
     y_lim = [-y_max * 1.1, y_max * 1.1]
     axes[0].set_ylim(y_lim)
 
-    # 繪製每個版本的降噪結果
     colors = {'V1': '#FF6B6B', 'V2': '#4ECDC4', 'V3': '#45B7D1'}
 
     for idx, (version, result) in enumerate(sorted(results.items()), 1):
         enhanced = result['enhanced']
         color = colors.get(version, '#95A5A6')
 
-        # v1.5.0 修復: 為每個輸出動態生成 time_axis，防止維度不匹配
         time_axis_enhanced = np.linspace(0, duration, len(enhanced))
         axes[idx].plot(time_axis_enhanced, enhanced, linewidth=0.5, color=color)
 
-        # 標題包含處理時間和實時率
         rtf = result['rtf']
         proc_time = result['processing_time'] * 1000
         title = f"{version} Enhanced (RTF: {rtf:.3f}, {proc_time:.1f} ms)"
@@ -427,13 +407,10 @@ def plot_waveforms(
         axes[idx].set_ylim(y_lim)
         axes[idx].grid(True, alpha=0.3)
 
-    # 最後一個子圖顯示 x 軸標籤
     axes[-1].set_xlabel('Time (seconds)')
 
-    # 調整布局
     plt.tight_layout()
 
-    # 保存圖片
     plot_file = os.path.join(output_dir, f"{basename}_waveforms.png")
     plt.savefig(plot_file, dpi=150, bbox_inches='tight')
     print(f"  ✓ Waveform plot: {plot_file}")
@@ -463,12 +440,10 @@ def process_audio_file(
     print("音頻文件降噪處理")
     print("="*70)
 
-    # 檢查輸入文件
     if not os.path.exists(input_file):
         print(f"Error: Input file not found: {input_file}")
         return False
 
-    # 讀取音頻文件
     print(f"\n[1/4] 讀取音頻文件")
     print("-"*70)
     print(f"  輸入文件: {input_file}")
@@ -476,7 +451,6 @@ def process_audio_file(
     try:
         audio, sample_rate = read_audio(input_file)
 
-        # 如果是立體聲，轉換為單聲道
         if len(audio.shape) > 1:
             audio = np.mean(audio, axis=1)
             print(f"  已轉換為單聲道")
@@ -490,14 +464,11 @@ def process_audio_file(
         print(f"Error reading audio file: {e}")
         return False
 
-    # 獲取輸入文件名（無擴展名）
     basename = os.path.splitext(os.path.basename(input_file))[0]
 
-    # 確保輸出目錄存在
     os.makedirs(output_dir, exist_ok=True)
     print(f"  輸出目錄: {output_dir}")
 
-    # 處理每個版本
     print(f"\n[2/4] 創建降噪器")
     print("-"*70)
 
@@ -517,7 +488,6 @@ def process_audio_file(
         print("\nError: No denoisers were created successfully")
         return False
 
-    # 降噪處理
     print(f"\n[3/4] 降噪處理")
     print("-"*70)
 
@@ -541,19 +511,15 @@ def process_audio_file(
 
             processing_time = time.time() - start_time
 
-            # v1.5.1: 確保輸出長度與輸入一致（修復繪圖維度不匹配問題）
+            # Match the input length so the plots line up.
             if len(enhanced) != len(audio):
                 length_diff = len(enhanced) - len(audio)
                 if abs(length_diff) > 0:
-                    # 如果長度不一致，進行修正
                     if len(enhanced) > len(audio):
-                        # 輸出過長，截斷
                         enhanced = enhanced[:len(audio)]
                     else:
-                        # 輸出過短，補零
                         enhanced = np.pad(enhanced, (0, len(audio) - len(enhanced)), mode='constant')
 
-            # 計算實時率
             rtf = processing_time / duration
 
             results[version] = {
@@ -569,7 +535,6 @@ def process_audio_file(
         except Exception as e:
             print(f"✗ Failed: {e}")
 
-    # 保存輸出文件
     print(f"\n[4/6] 保存結果")
     print("-"*70)
 
@@ -584,7 +549,6 @@ def process_audio_file(
         except Exception as e:
             print(f"  ✗ {version}: Failed to save - {e}")
 
-    # 繪製波形圖
     print(f"\n[5/6] 生成波形對比圖")
     print("-"*70)
 
@@ -595,7 +559,6 @@ def process_audio_file(
         if not MATPLOTLIB_AVAILABLE:
             print(f"  提示: 安裝 matplotlib 以生成波形圖: pip install matplotlib")
 
-    # 繪製 SPP 時頻圖（V3 系列）
     print(f"\n[6/6] 生成 SPP 時頻圖")
     print("-"*70)
 
@@ -624,7 +587,6 @@ def process_audio_file(
         if spp_count == 0:
             print(f"  (沒有 V3 系列降噪器，跳過 SPP 圖生成)")
 
-    # 總結
     print("\n" + "="*70)
     print("處理完成")
     print("="*70)
@@ -708,12 +670,10 @@ def main():
 
     args = parser.parse_args()
 
-    # 如果沒有指定 config_dir，使用相對於腳本的路徑
     if args.config_dir is None:
         script_dir = os.path.dirname(os.path.abspath(__file__))
         args.config_dir = os.path.join(script_dir, 'config')
 
-    # 處理音頻文件
     success = process_audio_file(
         args.input_file,
         args.output_dir,
@@ -724,7 +684,6 @@ def main():
         fft_size=args.fft_size,
     )
 
-    # 返回退出碼
     sys.exit(0 if success else 1)
 
 

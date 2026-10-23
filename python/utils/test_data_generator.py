@@ -78,17 +78,14 @@ class TestDataGenerator:
             # 隨機基頻（模擬不同說話人）
             f0 = np.random.uniform(80, 250)  # 基頻範圍
 
-            # 添加基頻和諧波
             for harmonic in range(1, 6):
                 freq = f0 * harmonic
                 amplitude = 1.0 / harmonic
                 phase = np.random.uniform(0, 2 * np.pi)
                 noise += amplitude * np.sin(2 * np.pi * freq * t + phase)
 
-        # 添加一些隨機性
         noise += 0.1 * np.random.randn(n_samples)
 
-        # 歸一化
         noise = noise / np.max(np.abs(noise))
 
         return noise.astype(np.float32)
@@ -115,7 +112,6 @@ class TestDataGenerator:
         """
         duration = len(clean_speech) / self.sample_rate
 
-        # 生成或使用噪聲
         if noise_signal is not None:
             noise = noise_signal
         elif noise_type == 'white':
@@ -127,7 +123,6 @@ class TestDataGenerator:
         else:
             raise ValueError(f"Unknown noise type: {noise_type}")
 
-        # 添加噪聲到語音
         noisy_speech = add_noise(clean_speech, noise, target_snr_db)
 
         return noisy_speech, noise[:len(clean_speech)]
@@ -176,7 +171,6 @@ class TestDataGenerator:
                     'target_snr': snr_db
                 }
 
-                # 保存文件（如果指定了輸出目錄）
                 if output_dir is not None:
                     import os
                     os.makedirs(output_dir, exist_ok=True)
@@ -193,9 +187,7 @@ class TestDataGenerator:
 
 def download_noizeus_corpus(output_dir: str = './data/noizeus') -> None:
     """
-    下載 NOIZEUS corpus
-
-    注意：這需要網絡連接和 wget 或 requests 庫
+    NOIZEUS corpus 的手動下載說明（只印出網址與目標目錄，不下載）
 
     參數:
         output_dir: 輸出目錄
@@ -242,20 +234,17 @@ def generate_sample_speech(
     # 基頻調製（模擬語調變化）
     f0_modulation = f0 * (1 + 0.1 * np.sin(2 * np.pi * 3 * t))
 
-    # 生成諧波
     speech = np.zeros(n_samples)
     for harmonic in range(1, 11):
         amplitude = 1.0 / harmonic ** 1.5
         speech += amplitude * np.sin(2 * np.pi * harmonic * f0_modulation * t)
 
-    # 添加振幅包絡（模擬音節）
     envelope = 0.5 * (1 + np.sin(2 * np.pi * 4 * t))
     speech = speech * envelope
 
     # 添加共振峰（簡化）
     try:
         from scipy import signal
-        # 簡單的低通濾波器
         b, a = signal.butter(4, 3000 / (sample_rate / 2), btype='low')
         speech = signal.filtfilt(b, a, speech)
     except ImportError:
@@ -263,7 +252,6 @@ def generate_sample_speech(
         window_size = 5
         speech = np.convolve(speech, np.ones(window_size)/window_size, mode='same')
 
-    # 歸一化
     speech = speech / np.max(np.abs(speech)) * 0.8
 
     return speech.astype(np.float32)

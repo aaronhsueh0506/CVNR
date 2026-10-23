@@ -4,6 +4,57 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [Unreleased] — 2026-10-23 — Creation guards; sources and docs condensed
+
+### Fixed
+- `noise_estimator_create` refuses `L <= 0` and, in the non-fast-percentile build, `num_init_frames <= 0`, as the
+  pool path already did.
+
+### Changed
+- `process_init_or_gain`, `noise_estimator_ring_rows`, `noise_estimator_seed_bin` and `noise_estimator_seed_from_mean`
+  replace duplicated blocks; outputs are bit-identical.
+- Pool sizes in `docs/html/nr.html`, `nr_c_api.html` and `c_impl/README.md` are the measured values of the default
+  build (16 kHz/256: 45,344 B; `DEBUG=1` builds are smaller). Development-process wording is removed from comments in
+  `c_impl`, `python` and `docs`.
+
+
+## [Unreleased] — 2026-10-23 — Source comments condensed
+
+### Removed
+- Tracked `results/` outputs: `loizou_evaluation.*`, `benchmark_comparison.md`, `metrics_by_snr/*.csv` and
+  `plot_results.py` are regenerated into `results/` by `python/tools/{comprehensive_evaluation,benchmark_comparison,
+  generate_csv_results}.py`; `v4_diagnosis_report.md`, `v4_validation_report.md` and `next_steps_recommendations.md`
+  were one-off reports and remain in git history.
+
+### Changed
+- Comments and docstrings in `c_impl/{src,include,example}` and `python/{core,denoisers}` are reduced to
+  short contracts; code, identifiers and string literals are unchanged. Design records that existed only
+  in comments:
+  - `anr_retime_*` / `retime_*`: reference durations stay in double precision, because float rounding can
+    change a frame-count `ceil()` at an integer boundary.
+  - The 16 ms anchor (`_SIXTEEN_MS_HOP_SECONDS`) is a real duration, independent of the default grid
+    (the default grid moved from the 16 ms hop to the 8 ms hop on 2026-08-02). Constants tuned at a 16 ms
+    hop (`alpha_xi` 0.92, `alpha_attack`, `L` = 32) retime from it; retiming `alpha_xi` from the 10 ms
+    reference would give about 0.875 at a 16 ms grid and undo the musical-noise fix.
+  - `McraNoiseEstimator` is MCRA-lite: IMCRA's two-iteration minimum smoothing and bias compensation are
+    omitted. Driving the update with the internal minimum-controlled gate cost 0.632 PESQ on VCTK (824
+    files), so the external posterior is the default; the internal gate stays for pipelines where residual
+    echo inflates the posterior.
+  - `remove_echo_explained_rise` stays off: on the 20-file AEC-2021 blind far-end single-talk set the
+    pooled AECMOS echo-score CI is [-0.0731, -0.0152] at 16 kHz/256 and [-0.0607, -0.0091] at 16 kHz/512,
+    failing the -0.05 lower-bound bar. The cost comes from holding `noise_psd` below the echo-inflated
+    level, not from scene-change refires; the scene-change trigger and reset write use the same corrected
+    power (a sustained 95 % echo-explained rise refired 80 times in 400 frames before, 0 after).
+  - Dead-bin restart: a bin whose noise estimate decays below `NOISE_PSD_INERT` (1e-20) is inert because
+    consumers add 1e-10; once signal returns the posterior saturates at 1.0 and the update becomes a
+    fixed point, so such bins restart with the ungated blend.
+  - The noise tracker sees the fixed-prior SPP; feeding back the cross-band-lifted SPP forms a positive
+    loop that freezes the noise estimate.
+  - The scene-change energy gate applies its epsilon to the per-bin mean, not the raw sum, so its weight
+    does not shrink by `n_hi`.
+  - `mode` ('full') stays a recorded constant because benchmark JSON records carry it; dropping it would
+    break comparability with baselines that recorded `mode: stationary`.
+
 ## [Unreleased] — 2026-10-23 — pyc_parity_nr keeps the Python/C parity run only
 
 ### Removed

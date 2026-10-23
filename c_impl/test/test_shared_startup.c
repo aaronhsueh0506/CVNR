@@ -222,6 +222,22 @@ static void check_shared_ignores_startup_calls(void) {
 }
 #endif
 
+/* A tracker cannot be built from a zero-length ring or an empty startup window. */
+static void check_rejects_degenerate_geometry(void) {
+    AnrConfig cfg = anr_default_config_for_grid(16000, 512);
+    int nf = 512 / 2 + 1;
+    cfg.L = 0;
+    CHECK(!noise_estimator_create(nf, &cfg), "create accepts L=0");
+    CHECK(!noise_estimator_create_shared_startup(nf, &cfg), "shared create accepts L=0");
+#ifndef USE_FAST_PERCENTILE
+    cfg = anr_default_config_for_grid(16000, 512);
+    cfg.num_init_frames = 0;
+    CHECK(!noise_estimator_create(nf, &cfg), "create accepts num_init_frames=0");
+    CHECK(!noise_estimator_create_shared_startup(nf, &cfg),
+          "shared create accepts num_init_frames=0");
+#endif
+}
+
 int main(void) {
     const int rates[] = {8000, 8000, 16000, 16000, 48000};
     const int sizes[] = {128, 256, 256, 512, 1024};
@@ -239,6 +255,7 @@ int main(void) {
     }
     check_standalone_reinit(0);
     check_standalone_reinit(1);
+    check_rejects_degenerate_geometry();
 #ifndef USE_FAST_PERCENTILE
     check_shared_ignores_startup_calls();
 #endif

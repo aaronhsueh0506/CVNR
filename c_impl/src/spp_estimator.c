@@ -3,14 +3,13 @@
 #include "spp_estimator.h"
 #include "fft_wrapper.h"
 #include "utility/mem_align.h"
-#include "utility/simd_kernels.h"  /* Bit-exact SIMD exp(-v); requires -ffp-contract=off. */
+#include "utility/simd_kernels.h"  /* Requires -ffp-contract=off. */
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
 #include "anr_internal.h"
 
-// Internal structure
 struct SppEstimator {
     int n_freqs;
 
@@ -23,15 +22,13 @@ struct SppEstimator {
     float* gamma_prev;  // Previous frame a posteriori SNR
     float* noise_psd_prev;  // Previous frame noise PSD (for DD xi_dd_term1)
 
-    // Preallocated transient scratch[n_freqs]. v is replaced in-place by exp(-v); term_xi
-    // stays separate until the final SPP pass.
-    float* v_scratch;         // v[k] = ξ/(1+ξ)·γ -> fast_exp_neg(v[k]), in place
+    // Per-call scratch [n_freqs]; v is replaced in place by exp(-v).
+    float* v_scratch;         // v[k] = ξ/(1+ξ)·γ -> exp(-v[k]), in place
     float* term_xi_scratch;   // term_xi[k] = 1+ξ[k]
 
     bool is_initialized;
 
-    bool is_static;      // 1 == placed via spp_init() (caller-owned memory);
-                         // 0 == heap instance from spp_create() (owns its mallocs)
+    bool is_static;      // true: caller-owned memory; false: heap
 };
 
 /* Update tuning scalars without clearing SNR history. */
@@ -50,15 +47,12 @@ void spp_apply_config_scalars(SppEstimator* self,
     self->xi_min = powf(10.0f, config->xi_min_db / 10.0f);
 }
 
-/* Shared scalar initialization; caller zeroes arrays. */
 static void spp_init_scalars(SppEstimator* self, int n_freqs,
                              const AnrConfig* config) {
     self->n_freqs = n_freqs;
     spp_apply_config_scalars(self, config);
     self->is_initialized = false;
 }
-
-/* Static allocation. */
 
 size_t spp_get_mem_size(int n_freqs) {
     /* Checked dimensions and saturating size arithmetic; invalid totals return 0. */
@@ -100,8 +94,6 @@ SppEstimator* spp_init(void* mem, size_t mem_size,
     return self;
 }
 
-/* Heap allocation. */
-
 SppEstimator* spp_create(int n_freqs, const AnrConfig* config) {
     if (n_freqs <= 0 || !config) return NULL;
 
@@ -111,11 +103,9 @@ SppEstimator* spp_create(int n_freqs, const AnrConfig* config) {
     spp_init_scalars(self, n_freqs, config);
     self->is_static = false;
 
-    // Allocate state arrays
     self->gamma_prev = (float*)calloc(n_freqs, sizeof(float));
     self->noise_psd_prev = (float*)calloc(n_freqs, sizeof(float));
 
-    // Allocate per-call scratch (see struct SppEstimator comment)
     self->v_scratch         = (float*)calloc(n_freqs, sizeof(float));
     self->term_xi_scratch   = (float*)calloc(n_freqs, sizeof(float));
 
@@ -140,10 +130,9 @@ void spp_destroy(SppEstimator* self) {
     free(self);
 }
 
-/* Decision-directed pass over bins [0, n) once the estimator holds history: posterior SNR gamma,
- * a-priori SNR xi = max(alpha*enhanced_prev/noise_prev + (1-alpha)*max(gamma-1, 0), xi_min), and
- * the exponent argument v = xi/(1+xi)*gamma with its 1+xi companion. v_out may be NULL.
- */
+/* One bin of the decision-directed update: gamma, xi = max(alpha * enhanced_prev / noise_prev +
+ * (1 - alpha) * max(gamma - 1, 0), xi_min), and v = xi / (1 + xi) * gamma with 1 + xi. v_out may be
+ * NULL. */
 static inline void spp_dd_elem(const SppEstimator* self, float power, float noise,
                                float enhanced_prev, float noise_prev, float* gamma_out,
                                float* xi_out, float* v_out, float* v_scratch,
@@ -218,10 +207,8 @@ static inline void spp_dd(SppEstimator* self, const float* power, const float* n
 #endif
 }
 
-/* Pass 1 of the SPP estimate: gamma, xi, and the staged v / 1+xi for the exponential pass.
- * The decision-directed form with history takes the kernel above; the first frame and the
- * gain-only fallback keep the plain loop. v_out may be NULL.
- */
+/* Pass 1 of the SPP estimate: gamma, xi and the staged v and 1 + xi for the exponential pass.
+ * v_out may be NULL. */
 static void spp_prepare(SppEstimator* self, const float* Y_psd, const float* noise_psd,
                         const float* gain_prev, const float* enhanced_psd_prev, float* xi_out,
                         float* gamma_out, float* v_out) {
@@ -240,11 +227,9 @@ static void spp_prepare(SppEstimator* self, const float* Y_psd, const float* noi
         return;
     }
     for (int k = 0; k < n_freqs; k++) {
-        // Posterior SNR: gamma = power / noise.
         float gamma = Y_psd[k] / (noise_psd[k] + 1e-10f);
         gamma_out[k] = gamma;
 
-        // Decision-directed a-priori SNR.
         float xi;
         if (!self->is_initialized || gain_prev == NULL) {
             // First frame: direct estimate with the same floor as the DD path.
@@ -259,14 +244,12 @@ static void spp_prepare(SppEstimator* self, const float* Y_psd, const float* noi
         }
         xi_out[k] = xi;
 
-        // v = xi/(1+xi) * gamma; retain term_xi for SPP.
         float term_xi = 1.0f + xi;
         float v = xi / term_xi * gamma;
         if (v_out) v_out[k] = v;
         term_xi_scratch[k] = term_xi;
         v_scratch[k] = v;
 
-        // Save for next frame
         self->gamma_prev[k] = gamma;
     }
 }
@@ -288,13 +271,12 @@ void spp_estimate(
     float* v_scratch = self->v_scratch;
     float* term_xi_scratch = self->term_xi_scratch;
 
-    // Compute gamma/xi and stage v, term_xi for the SIMD pass.
     spp_prepare(self, Y_psd, noise_psd, gain_prev, enhanced_psd_prev, xi_out, gamma_out, NULL);
 
-    // exp(-v) in-place; the kernel supports exact aliasing.
+    // exp(-v) in place.
     sk_fast_exp_neg_f32(v_scratch, v_scratch, n_freqs);
 
-    // Pass 3 (scalar): SPP = 1 / (1 + prior_ratio × (1+ξ) × exp(-v)).
+    // spp = 1 / (1 + prior_ratio * (1 + xi) * exp(-v))
     for (int k = 0; k < n_freqs; k++) {
         spp_out[k] = 1.0f / (1.0f + prior_ratio * term_xi_scratch[k] * v_scratch[k]);
     }
@@ -333,13 +315,12 @@ void spp_estimate_ex(
     float* v_scratch = self->v_scratch;
     float* term_xi_scratch = self->term_xi_scratch;
 
-    // Compute gamma/xi and stage v, term_xi for the SIMD pass.
     spp_prepare(self, Y_psd, noise_psd, gain_prev, enhanced_psd_prev, xi_out, gamma_out, v_out);
 
-    // exp(-v) in-place; the kernel supports exact aliasing.
+    // exp(-v) in place.
     sk_fast_exp_neg_f32(v_scratch, v_scratch, n_freqs);
 
-    // Pass 3 (scalar): SPP = 1 / (1 + prior_ratio × term_xi × exp_neg_v).
+    // spp = 1 / (1 + prior_ratio * (1 + xi) * exp(-v))
     for (int k = 0; k < n_freqs; k++) {
         spp_out[k] = 1.0f / (1.0f + prior_ratio * term_xi_scratch[k] * v_scratch[k]);
     }

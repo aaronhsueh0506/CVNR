@@ -1,24 +1,10 @@
-/**
- * parity_runner.c — C side of the Python<->C NR parity harness.
+/* Offline gain runner: reads per-frame complex spectra from a binary file, computes each
+ * frame's per-bin gain with anr_process_gain() (the gain is not applied) and writes the gains.
  *
- * Reads the per-frame complex input spectra dumped by python/tools/parity_nr.py,
- * drives the C lib anr_process_gain() frame-by-frame (computing the per-bin
- * gain WITHOUT applying it), and writes the C gains to a file. Because both
- * Python and C consume byte-identical input spectra, any gain delta is purely
- * the ported gain / SPP / noise-tracker arithmetic — FFT differences are excluded.
- *
- * The denoiser is created with the Python V3-2 standalone config (ANR
- * default/balanced) on the sample-rate/grid carried by the NRP2 dump; fft_size
- * is derived from n_freqs (n_freqs = fft_size/2 + 1).
- *
- * Input file layout (little-endian, from parity_nr.py 'dump'):
- *   [magic=0x4e525032][n_frames][n_freqs][sample_rate]   (4 x int32)
- *   per frame f:  X_re[n_freqs] (float32), X_im[n_freqs] (float32)
- *   per frame f:  G_py[n_freqs] (float32)                (ignored here)
- *
- * Output file layout (this program):
- *   [n_frames][n_freqs]                                  (2 x int32)
- *   per frame f:  G_c[n_freqs] (float32)
+ * Input (little-endian): int32 magic 'NRP2' (0x4e525032; 'NRP1' = implicit 16 kHz), n_frames,
+ * n_freqs and, for 'NRP2', sample_rate; then per frame X_re[n_freqs], X_im[n_freqs] (float32).
+ * Trailing data is ignored. fft_size = (n_freqs - 1) * 2.
+ * Output: int32 n_frames, n_freqs; then per frame gain[n_freqs] (float32).
  *
  * Usage: parity_runner <in_spectra.bin> <out_c_gains.bin> [full] [<strength>]
  *   The optional mode must be 'full'. <strength> is 0|1|2|3 or
@@ -89,12 +75,9 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    /* n_freqs = fft_size/2 + 1  ->  fft_size = (n_freqs - 1) * 2 */
     int fft_size = (n_freqs - 1) * 2;
 
-    /* Build the production V3-2 config on the exact Python signal grid.  Sample
-     * rate controls retimed EMA/count parameters even though spectra are supplied
-     * directly, so it is part of the parity contract. */
+    /* The sample rate selects the retimed EMA and frame-count parameters. */
     AnrConfig config = anr_config_for_mode_grid(
         sample_rate, fft_size, nr_mode);
 

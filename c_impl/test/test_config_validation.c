@@ -241,9 +241,7 @@ int main(void) {
             CHECK(anr_validate_config(&def), msg);
         }
 
-        /* The alternate 16-kHz/256 grid must preserve preset wall-clock
-         * constants too; mutating only fft/frame/hop after construction is
-         * not a supported construction path. */
+        /* Every supported grid keeps the preset wall-clock constants. */
         {
             const int grid_sr[] = {8000, 8000, 16000, 16000, 48000};
             const int grid_fft[] = {128, 256, 256, 512, 1024};
@@ -281,9 +279,8 @@ int main(void) {
             }
         }
 
-        /* AEC-chain caller overlay (Audio_ALG pipelines' audio_pipeline.c
-         * derive_dims_and_configs(): L=150, alpha_d=0.95, alpha_attack=0.3,
-         * alpha_decay=alpha_g) must also validate for every strength preset. */
+        /* A caller overlay on each preset (L = 150 frames at 10 ms retimed, alpha_d 0.95,
+         * alpha_attack 0.3, alpha_decay = alpha_g) must also validate. */
         for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
             AnrConfig aec_chain = anr_config_for_mode(16000, modes[i]);
             aec_chain.L = anr_retime_frames(

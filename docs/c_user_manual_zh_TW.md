@@ -40,7 +40,7 @@
 | `c_impl/include/anr.h` | 建構／處理／reset／查詢 API、`AnrDebugStatus` | 是 |
 | `c_impl/include/anr_types.h` | `AnrConfig`、`AnrMode`、config constructor、`anr_validate_config()` | 是（`anr.h` 已自動含入） |
 | `../audiolib/common/include/fft_wrapper.h` | `Complex`、`FftHandle`、`fft_*` | 是（`anr.h` 已自動含入，見第 6 節） |
-| `../audiolib/common/utility/mem_align.h` | `ALIGN16` 等對齊巨集 | 否（`anr.h`/`anr_types.h` 本身不用到；library 內部實作（`anr.c`/`noise_estimator.c`/`spp_estimator.c`）直接 include，不再透過 `fft_wrapper.h` 轉傳；整合者只有自己要操作 `ALIGN16` 時才需要直接 include） |
+| `../audiolib/common/utility/mem_align.h` | `ALIGN16` 等對齊巨集 | 否（`anr.h`/`anr_types.h` 本身不用到；library 內部實作（`anr.c`/`noise_estimator.c`/`spp_estimator.c`）直接 include；整合者只有自己要操作 `ALIGN16` 時才需要直接 include） |
 
 連結需要的 archive：
 
@@ -67,7 +67,7 @@ source tree 取用。
 
 `c_impl/include/noise_estimator.h` 與 `c_impl/include/spp_estimator.h`
 是 denoiser 內部擁有的子模組介面，**整合者不應直接呼叫**（denoiser 會自行建立、驅動與釋放
-它們；這兩個 header 也有數個宣告在 archive 中並不存在，直接呼叫會得到 link error）。
+它們）。
 
 ---
 
@@ -75,8 +75,7 @@ source tree 取用。
 
 ### 1.1 最短的可編譯整合
 
-以下整份程式碼可存成 `nr_stream.c`，直接編譯通過（已用
-`-std=gnu99 -Wall -Wextra -Werror` 對現行 header 實際編譯驗證）。
+以下整份程式碼可存成 `nr_stream.c`，以 `-std=gnu99 -Wall -Wextra -Werror` 直接編譯通過。
 上層每次餵入一個 `hop_size` 的 float PCM block、取回同長度的輸出。
 
 ```c
@@ -517,7 +516,7 @@ c++ -std=gnu99 app.c \
 `noise_over_subtraction = 1.4`、`delta_db = 10.0`、`scene_change_threshold_db = 10.0`、
 `scene_change_blend = 0.5`、`scene_change_flatness_threshold = 0.4`、`broadband_threshold = 1.0`、
 `speech_protect_floor = true`（`speech_protect_floor_db = -15.0`、`speech_protect_threshold = 0.0`、
-`speech_protect_frame_threshold = 0.55`）、`speech_aware_noise_tracking = true`（驗證範圍：DNS／VCTK／板端無明顯 regression；尚未以長時間低 F0 有聲語音證明它實際改善 50–300 Hz 噪聲底的漂移）（`noise_gate_xi_db = 3.0`、
+`speech_protect_frame_threshold = 0.55`）、`speech_aware_noise_tracking = true`（`noise_gate_xi_db = 3.0`、
 `noise_gate_lf_hz = 300.0`、`noise_gate_frame_frac = 0.5`）。四級 strength preset 只改 `g_min_db / q / xi_min_db /
 noise_over_subtraction`（mild −20/0.58/−10/1.2、moderate −23/0.54/−10/1.3、balanced −25/0.52/−10/1.4、
 aggressive −28/0.45/−12/1.3）；上表的時間常數與低頻語音 guard 的**設定值**四級共用，
@@ -533,8 +532,6 @@ aggressive −28/0.45/−12/1.3）；上表的時間常數與低頻語音 guard 
 | 16k/256 | 45 344 | 45 200 | 7 152 |
 | 16k/512 | 56 432 | 56 336 | 13 552 |
 | 48k/1024 | 144 576 | 144 464 | 26 352 |
-
-（低頻語音 guard 的 frame 純量狀態讓每個 grid 的 `anr_get_mem_size()` 各多 112 B。）
 
 整合 denoiser 內的噪聲追蹤器把「啟動階段的 power 列」與「最小值 ring」放在同一塊記憶體（取兩者
 較大者）：啟動列在 `noise_estimator_init_noise()` 取完 30th percentile 後就不再被讀，ring 要等

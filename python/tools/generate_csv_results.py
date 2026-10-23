@@ -2,7 +2,7 @@
 """
 生成 CSV 格式的評估結果
 
-從 compute_improvement.py 的輸出生成方便繪圖的 CSV 文件：
+生成方便繪圖的 CSV 文件：
 - Methods × SNR 樞紐表格式
 - 每個指標獨立的 CSV 文件
 - 適合直接用 pandas/matplotlib/seaborn 繪圖
@@ -16,7 +16,6 @@ from typing import Dict, List
 import sys
 import os
 
-# 添加父目錄到 path（為了導入 compute_improvement）
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 
@@ -43,7 +42,7 @@ def aggregate_by_snr(
     按 SNR 級別聚合指標
 
     參數:
-        all_results: compute_improvement.py 的輸出結果
+        all_results: 各方法的評估結果
         metric_key: 指標名稱（如 'segSNR', 'PESQ'）
         source: 'improvement', 'enhanced_metrics', 'noisy_metrics'
 
@@ -53,7 +52,6 @@ def aggregate_by_snr(
     methods = list(all_results.keys())
     snr_levels = ['0dB', '5dB', '10dB', '15dB']
 
-    # 創建空 DataFrame
     df = pd.DataFrame(index=methods, columns=snr_levels)
 
     for method in methods:
@@ -61,17 +59,11 @@ def aggregate_by_snr(
         if len(results) == 0:
             continue
 
-        # 按 SNR 分組
         snr_grouped = {snr: [] for snr in snr_levels}
 
         for result in results:
-            # 從測試用例名稱提取 SNR
-            # 注意: compute_improvement.py 沒有保存測試用例名稱，需要推斷
-            # 我們假設結果順序與 test_cases 一致，或者從文件路徑提取
-            # 這裡簡化處理：按順序分配到不同 SNR（3種噪音 × 4個SNR = 12個測試）
             pass
 
-        # 計算每個 SNR 的平均值
         for snr in snr_levels:
             if len(snr_grouped[snr]) > 0:
                 df.loc[method, snr] = np.mean(snr_grouped[snr])
@@ -82,19 +74,14 @@ def aggregate_by_snr(
 def generate_csv_from_results(results_dir: str = 'results'):
     """
     從評估結果生成 CSV 文件
-
-    注意: 由於 compute_improvement.py 沒有保存 SNR 級別信息，
-    這裡使用簡化方案：直接運行 compute_improvement.py 並收集結果
     """
     print("=" * 80)
     print("CSV 報告生成工具")
     print("=" * 80)
 
-    # 創建輸出目錄
     output_dir = Path(results_dir) / 'metrics_by_snr'
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # 導入並運行 compute_improvement
     print("\n正在運行評估...")
     from compute_improvement import (
         our_methods, benchmark_methods, test_cases,
@@ -102,27 +89,21 @@ def generate_csv_from_results(results_dir: str = 'results'):
     )
     import os
 
-    # 收集結果（按 SNR 分組）
     all_results_by_snr = {}
 
-    # 噪音類型和 SNR 級別
     noise_types = ['babble', 'car', 'street']
     snr_levels = ['0dB', '5dB', '10dB', '15dB']
 
-    # 為每個方法創建數據結構
     for method in our_methods + benchmark_methods:
         all_results_by_snr[method] = {snr: [] for snr in snr_levels}
 
-    # 評估每個測試用例
     for test_id in test_cases:
-        # 解析 SNR 級別
         noise_type, snr = parse_test_case_name(test_id)
         if snr not in snr_levels:
             continue
 
         print(f"  處理: {test_id}")
 
-        # Clean 參考
         clean_path = "test_wav/wav/clean.wav"
         noisy_path_v1_v4 = f"test_wav/wav/append_silence/{test_id}_prepend.wav"
         noisy_path_benchmark = f"test_wav/wav/{test_id}.wav"
@@ -130,7 +111,6 @@ def generate_csv_from_results(results_dir: str = 'results'):
         if not os.path.exists(clean_path):
             continue
 
-        # 評估我們的方法
         for method in our_methods:
             enhanced_path = f"denoised_original/{method}_{test_id}.wav"
             if not os.path.exists(enhanced_path):
@@ -149,7 +129,6 @@ def generate_csv_from_results(results_dir: str = 'results'):
             except Exception as e:
                 print(f"    ✗ {method}: {e}")
 
-        # 評估基準方法
         for method in benchmark_methods:
             if method == 'Speex':
                 enhanced_path = f"test_wav/wav/benchmark_wav/speex/speexdsp_{test_id}.wav"
@@ -174,7 +153,6 @@ def generate_csv_from_results(results_dir: str = 'results'):
             except Exception as e:
                 print(f"    ✗ {method}: {e}")
 
-    # 生成 CSV 文件
     print("\n" + "=" * 80)
     print("生成 CSV 文件...")
     print("=" * 80)
@@ -192,7 +170,6 @@ def generate_csv_from_results(results_dir: str = 'results'):
     ]
 
     for csv_name, source_key, metric_key, description in metrics_to_export:
-        # 創建 DataFrame
         data = []
 
         for method in our_methods + benchmark_methods:
@@ -204,7 +181,6 @@ def generate_csv_from_results(results_dir: str = 'results'):
                     row[snr] = None
                     continue
 
-                # 提取指標值
                 values = []
                 for r in results:
                     try:
@@ -214,13 +190,11 @@ def generate_csv_from_results(results_dir: str = 'results'):
                     except (KeyError, TypeError):
                         pass
 
-                # 計算平均值
                 if len(values) > 0:
                     row[snr] = np.mean(values)
                 else:
                     row[snr] = None
 
-            # 計算整體平均
             valid_values = [row[snr] for snr in snr_levels if row[snr] is not None]
             if len(valid_values) > 0:
                 row['Average'] = np.mean(valid_values)
@@ -229,14 +203,11 @@ def generate_csv_from_results(results_dir: str = 'results'):
 
             data.append(row)
 
-        # 轉為 DataFrame
         df = pd.DataFrame(data)
 
-        # 設置列順序
         columns = ['Method'] + snr_levels + ['Average']
         df = df[columns]
 
-        # 保存 CSV
         csv_path = output_dir / f"{csv_name}.csv"
         df.to_csv(csv_path, index=False, float_format='%.4f')
         print(f"  ✅ {description}: {csv_path}")
@@ -262,7 +233,6 @@ def generate_csv_from_results(results_dir: str = 'results'):
                     row[snr] = None
                     continue
 
-                # 計算 delta
                 deltas = []
                 for r in results:
                     try:
@@ -282,7 +252,6 @@ def generate_csv_from_results(results_dir: str = 'results'):
                 else:
                     row[snr] = None
 
-            # 計算整體平均
             valid_values = [row[snr] for snr in snr_levels if row[snr] is not None]
             if len(valid_values) > 0:
                 row['Average'] = np.mean(valid_values)
@@ -303,7 +272,6 @@ def generate_csv_from_results(results_dir: str = 'results'):
     print(f"✅ 所有 CSV 文件已保存到: {output_dir}")
     print("=" * 80)
 
-    # 生成繪圖示例腳本
     generate_plot_example(output_dir)
 
 
@@ -424,7 +392,6 @@ if __name__ == '__main__':
     with open(plot_script, 'w', encoding='utf-8') as f:
         f.write(script_content)
 
-    # 添加執行權限
     import stat
     st = os.stat(plot_script)
     os.chmod(plot_script, st.st_mode | stat.S_IEXEC)

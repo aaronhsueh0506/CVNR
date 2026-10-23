@@ -10,15 +10,13 @@
 extern "C" {
 #endif
 
-// Opaque structure
 typedef struct SppEstimator SppEstimator;
 
 /* Create heap state for n_freqs bins using alpha_xi, q and xi_min_db; returns NULL on error. */
 SppEstimator* spp_create(int n_freqs, const AnrConfig* config);
 
-/* Query size, then initialize in caller-owned memory. Buffer must be 16-byte aligned and at
- * least spp_get_mem_size() bytes; no internal allocation.
- */
+/* Caller-owned memory: 16-byte aligned, at least spp_get_mem_size() bytes; no internal
+ * allocation. */
 size_t spp_get_mem_size(int n_freqs);
 SppEstimator* spp_init(void* mem, size_t mem_size,
                        int n_freqs, const AnrConfig* config);
@@ -26,10 +24,9 @@ SppEstimator* spp_init(void* mem, size_t mem_size,
 /* Free heap state; static memory remains caller-owned. */
 void spp_destroy(SppEstimator* self);
 
-/* Estimate SPP, a-priori SNR xi and posterior SNR gamma. All arrays have n_freqs entries.
- * Y_psd/noise_psd and output arrays are required. gain_prev/enhanced_psd_prev may be NULL;
- * enhanced PSD selects the DD power estimate, otherwise gain² * previous gamma is used.
- */
+/* Estimates SPP, a-priori SNR xi and posterior SNR gamma; all arrays hold n_freqs entries and only
+ * gain_prev/enhanced_psd_prev may be NULL (enhanced PSD selects the DD power, else gain^2 * the
+ * previous gamma). */
 void spp_estimate(
     SppEstimator* self,
     const float* Y_psd,
@@ -42,9 +39,7 @@ void spp_estimate(
 );
 
 #ifdef USE_SHARED_XI_RATIO
-/* Extended estimate also writes v = ξ/(1+ξ) * gamma when v_out is non-NULL, allowing gain
- * calculation to reuse the ratio.
- */
+/* As spp_estimate(); also writes v = xi/(1+xi) * gamma to v_out when it is non-NULL. */
 void spp_estimate_ex(
     SppEstimator* self,
     const float* Y_psd,

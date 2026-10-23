@@ -50,20 +50,14 @@ endif
 # guard-skipped build can never alias a guarded one.
 TOOLCHAIN_CHECK ?= 1
 
-# Publish knobs (full description in audiolib's Makefile). None of them is part of CFG_SIG,
-# because none changes what is built.
+# Publish knobs (full description in audiolib's Makefile); none is part of CFG_SIG.
 #   DIST_ROOT                where `make publish` writes releases.
-#   HOSTCC                   host compiler for the atomic symlink-swap helper (never $(CC), which
-#                            may be a cross compiler).
-#   ALLOW_DIRTY_PUBLISH      publish refuses when this checkout or the audiolib checkout
-#                            (COMMON_DIR) has uncommitted tracked changes; =1 admits them and records
-#                            the sha256 of `git diff --binary HEAD` of each dirty checkout.
-#   ALLOW_UNTRACKED_PUBLISH  publish refuses when either checkout has untracked, non-ignored files;
-#                            =1 admits them and records a sha256 over their paths and contents.
-#   A checkout without git identity (missing COMMON_DIR, not a directory, not a git checkout) is always
-#   refused: the attestation could not name its source state.
+#   HOSTCC                   host compiler for the symlink-swap helper (never $(CC), which may be a
+#                            cross compiler).
+#   ALLOW_DIRTY_PUBLISH      =1 admits uncommitted tracked changes in this or the audiolib checkout.
+#   ALLOW_UNTRACKED_PUBLISH  =1 admits untracked, non-ignored files in either checkout.
+#   Both are recorded in the attestation; a checkout without git identity is always refused.
 #   ATTEST_STAMP             test-only override of the UTC stamp in the attestation file name.
-#                            Attestations are unsigned: they give traceability, not authenticity.
 DIST_ROOT ?= dist
 HOSTCC    ?= cc
 ALLOW_DIRTY_PUBLISH ?= 0
@@ -119,7 +113,7 @@ endif
 # USE_STANDARD_MATH         libm expf/logf/sqrtf/log10f/powf instead of the fast LUT/Taylor exp,
 #                           minimax log and target sqrt. Selected by `make debug` (DEBUG=1), which
 #                           also drops the six USE_* optimizations below;
-#                           EXTRA_CFLAGS="-DUSE_STANDARD_MATH" keeps them (README parity procedure).
+#                           EXTRA_CFLAGS="-DUSE_STANDARD_MATH" keeps them.
 # USE_FAST_PERCENTILE       Initial noise floor from mean * 0.23 instead of the exact 30th
 #                           percentile (saves only the quickselect scratch: the startup rows share
 #                           the minimum ring's storage in the denoiser's tracker).
@@ -184,22 +178,18 @@ FP_INPUT_FLAGS := $(CFLAGS) $(CXXFLAGS) $(CPPFLAGS)
 # FP-semantic check stays on the compile flags: -Ofast and friends mean nothing to the linker.
 SHELL_SAFE_INPUT_FLAGS := $(FP_INPUT_FLAGS) $(LDFLAGS)
 
-# Make cannot parse shell quoting. EXTRA_CFLAGS="'-Ofast'" is stored with its quote characters,
-# so a whole-word $(filter) does not see -Ofast, yet the shell strips the quotes and the compiler
-# receives it. The same holds for quote-split tokens ("-O'f'ast") and for @response-file
-# arguments. The supported external input is therefore plain, unquoted, whitespace-separated argv
-# tokens; anything else is rejected before the conflict check runs.
-#
-# The check is an allow-list: a deny-list misses globs, tilde, redirection and process
-# substitution. Make has no regex function, so it shells out to grep -E with the text embedded
-# single-quoted. Inside single quotes every character is literal except a single quote, so a
-# Make-native single-quote test comes first and gates the shell embedding.
+# Make cannot parse shell quoting: EXTRA_CFLAGS="'-Ofast'" keeps its quote characters, so the
+# whole-word $(filter) misses -Ofast while the shell strips the quotes and the compiler sees it.
+# The supported input is therefore plain, unquoted, whitespace-separated argv tokens, enforced by
+# an allow-list (a deny-list misses globs, tilde, redirection and process substitution). Make has
+# no regex function, so it shells out to grep -E with the text single-quoted; a Make-native
+# single-quote test comes first and gates that embedding.
 ifneq ($(findstring ',$(SHELL_SAFE_INPUT_FLAGS)),)
 $(error FP policy conflict: CFLAGS/CXXFLAGS/CPPFLAGS/LDFLAGS/EXTRA_CFLAGS/EXTRA_LDFLAGS contains a single-quote character; this repo requires plain, unquoted, whitespace-separated compiler/linker argv tokens built only from the allowed character set (see the allow-list below) -- a single quote specifically must be rejected by this Make-native check BEFORE the allow-list's own $(shell) call can safely single-quote-embed the rest of the text)
 endif
 
 # The allow-list: letters, digits, underscore, dot, slash, equals, comma, plus, minus and space
-# (the token separator). It covers every flag this Makefile uses (-O0/-O2, -Wall/-Wextra,
+# (the token separator). It covers every flag this Makefile uses (-O2, -Wall/-Wextra,
 # -std=gnu99, -I paths, the USE_* defines, -lm), value-carrying defines (-DNAME=value) and linker
 # pass-through such as -Wl,-rpath,dir. LC_ALL=C pins the bracket ranges to ASCII order. The
 # expression is FP_ALLOWED_CHARS_RE, defined near the top of this file.
@@ -277,14 +267,11 @@ SRCS = $(SRC_DIR)/anr.c \
 # obj/<backend>-<sig>/ and bin/<backend>-<sig>/ (design as in audiolib's Makefile): builds that
 # differ in backend, flags, WERROR, DEBUG or producer never share a directory. The payload covers
 # CC CXX AR RANLIB LINK CFLAGS CXXFLAGS CPPFLAGS LDFLAGS EXTRA_CFLAGS EXTRA_LDFLAGS BACKEND SIMD
-# WERROR NO_STDIO DEBUG TOOLCHAIN_CHECK COMMON_PRODUCER_SIG and the sorted SRCS.
-#
-# It is defined after CFLAGS/LDFLAGS are final and COMMON_PRODUCER_SIG is resolved, and before the
-# first rule that mentions OBJ_DIR or BIN_DIR: Make expands a rule's target list when it parses
-# the rule. The payload is deliberately not $(strip)ped (a false miss is acceptable, a false hit
-# is not). cksum (POSIX) computes the hash.
-# The same CC command can select a different SDK through PATH.
-# Include effective pointer/FP/ISA predefines to avoid cross-ABI cache reuse.
+# WERROR NO_STDIO DEBUG TOOLCHAIN_CHECK COMMON_PRODUCER_SIG, the sorted SRCS and CC_TARGET_SIG (the
+# effective pointer/FP/ISA predefines, since one CC command can select a different SDK via PATH).
+# It is defined after the flags are final and before the first rule that mentions OBJ_DIR or
+# BIN_DIR, because Make expands a rule's target list at parse time. The payload is not $(strip)ped
+# (a false miss is acceptable, a false hit is not).
 override CC_TARGET_SIG := $(shell sh $(COMMON_DIR)/scripts/target_abi_signature.sh $(CC) $(CPPFLAGS) $(CFLAGS))
 CFG_SIG_PAYLOAD := CC_TARGET_SIG=$(CC_TARGET_SIG) CC=$(CC) CXX=$(CXX) AR=$(AR) RANLIB=$(RANLIB) LINK=$(LINK) CFLAGS=$(CFLAGS) CXXFLAGS=$(CXXFLAGS) CPPFLAGS=$(CPPFLAGS) LDFLAGS=$(LDFLAGS) EXTRA_CFLAGS=$(EXTRA_CFLAGS) EXTRA_LDFLAGS=$(EXTRA_LDFLAGS) BACKEND=$(BACKEND) SIMD=$(SIMD) WERROR=$(WERROR) NO_STDIO=$(NO_STDIO) DEBUG=$(DEBUG) TOOLCHAIN_CHECK=$(TOOLCHAIN_CHECK) COMMON_PRODUCER_SIG=$(COMMON_PRODUCER_SIG) SRCS=$(sort $(SRCS))
 CFG_SIG := $(shell printf '%s' "$(CFG_SIG_PAYLOAD)" | cksum | cut -d' ' -f1)
@@ -463,8 +450,8 @@ $(TEST_RESTART_TARGET): $(OBJS) $(OBJ_DIR)/test_noise_restart.o $(COMMON_LIB) | 
 $(OBJ_DIR)/test_noise_restart.o: $(TEST_DIR)/test_noise_restart.c | _cfg_guard
 	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
 
-# Scene-change flatness decision at a threshold margin inside a cubic-exp
-# approximation's error (see test/test_scene_change_margin.c).
+# Scene-change flatness decision just above and below the threshold (see
+# test/test_scene_change_margin.c).
 $(TEST_SCENE_TARGET): $(OBJS) $(OBJ_DIR)/test_scene_change_margin.o $(COMMON_LIB) | _cfg_guard
 	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/test_scene_change_margin.o $(COMMON_LIB) $(LDFLAGS)
 	@echo "Build complete: $@"
@@ -561,49 +548,28 @@ print-lib-path:
 	@echo $(abspath $(LIB_TARGET))
 
 # =============================================================================
-# publish: immutable, content-addressed release under $(DIST_ROOT), with the layout and semantics
-# of audiolib's publish (see that Makefile): deterministic MANIFEST, append-only ATTEST/
-# provenance, byte-verified idempotent republish (MANIFEST tampering is detected), a rename-atomic
-# `current` swap through the swapln helper built with $(HOSTCC), and a lock taken before the
-# prerequisite build so that concurrent same-configuration publishes cannot race. `publish` is the
-# locked driver; _publish_impl is internal (calling it directly skips the lock) and goes through
-# the same two-phase COMMON_LIB dispatch as `all`.
-#
-#  - make -n, -q and -t never touch $(DIST_ROOT) or the lock (see the driver below).
-#  - git_commit is the full 40-hex OID. Dirty is computed from `git status --porcelain`; when
-#    dirty, dirty_diff_sha256 is the sha256 of `git diff --binary HEAD`.
-#  - An attestation is installed with the swapln helper's --excl-install mode (temporary file and
-#    link(2): atomic, no clobber). On a name collision (same second, same commit) the sequence
-#    number is bumped and the install retried, at most 999 times; an existing attestation is never
-#    overwritten. Attestations are unsigned: traceability, not authenticity.
-#  - Both checkouts that produced the artifact are checked: this repo and the audiolib
-#    checkout (COMMON_DIR). Publish refuses when either has uncommitted tracked changes
-#    (ALLOW_DIRTY_PUBLISH=1 admits them) or untracked, non-ignored files
-#    (ALLOW_UNTRACKED_PUBLISH=1 admits them). The attestation records git_commit, git_dirty,
-#    dirty_diff_sha256, git_untracked and untracked_tree_sha256 for this repo, the same fields
-#    with an audiolib_ prefix for the producer, and both allow_* flags.
-#  - untracked_tree_sha256 is a sha256 over sorted fixed-field per-file records computed by
-#    hash_untracked(): "L <sha256(path)> <sha256(readlink)>" for symlinks and
-#    "F <mode> <sha256(path)> <sha256(content)>" for regular files. A path that cannot be hashed
-#    (embedded git checkout, special file, I/O failure) yields an X record and publish refuses,
-#    so the hash is never silently empty.
-#  - A checkout without git identity is refused before its dirty/untracked flags are computed.
+# publish: immutable, content-addressed release under $(DIST_ROOT), same layout and semantics as
+# audiolib's publish (see that Makefile): deterministic MANIFEST, append-only ATTEST/ provenance,
+# rename-atomic `current` swap through the swapln helper built with $(HOSTCC), and a lock taken
+# before the prerequisite build. `publish` is the locked driver; _publish_impl is internal and goes
+# through the same two-phase COMMON_LIB dispatch as `all`. Both checkouts (this repo and COMMON_DIR)
+# must have a git identity and be clean unless ALLOW_DIRTY_PUBLISH / ALLOW_UNTRACKED_PUBLISH admit
+# them; the attestation records each checkout's commit and dirty / untracked state. Attestations
+# are unsigned: traceability, not authenticity.
 # =============================================================================
 PUBLISH_ARTIFACTS = $(LIB_TARGET) $(TARGET)
 DIST_BACKEND_DIR  = $(DIST_ROOT)/$(BACKEND)
 DIST_LOCK         = $(DIST_ROOT)/.lock.$(BACKEND)
 
 .PHONY: publish _publish_impl
-# Dry-run guard. The recipe mentions $(MAKE), so GNU make runs it under -n, -q and -t as well. The
-# word scan of MAKEFLAGS below keeps all three free of side effects (no DIST_ROOT, lock, stage,
-# helper, MANIFEST or ATTEST writes, no mtime changes):
-#   -t  print a note and exit 0 without recursing (recursing would apply touch semantics to the
-#       objects and the delivered archive and binary). Checked first: in `make -nt publish` t wins.
-#   -q  exit 1 (question mode; publish is phony, so it always would run).
+# Dry-run guard. The recipe mentions $(MAKE), so GNU make runs it under -n, -q and -t as well; the
+# word scan of MAKEFLAGS below keeps all three free of side effects (no DIST_ROOT, lock, stage or
+# MANIFEST/ATTEST writes):
+#   -t  print a note and exit 0 (recursing would apply touch semantics to the outputs).
+#   -q  exit 1 (publish is phony, so it would always run).
 #   -n  recurse into _publish_impl only; the child inherits -n and merely prints its commands.
-# MAKEFLAGS parsing: bundled short flags may be the first word ("n", "sn") or separate dashed
-# words; long options start with "--"; a literal "--" ends the flags, and command-line variable
-# overrides (which can contain n, q or t, as in BACKEND=ne10) are skipped explicitly.
+# Bundled short flags may be the first word ("n", "sn") or separate dashed words; "--" ends the
+# flags; command-line variable overrides (which can contain n, q or t) are skipped.
 publish:
 	+@has_n=0; has_q=0; has_t=0; \
 	for w in $(MAKEFLAGS); do \

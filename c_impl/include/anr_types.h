@@ -21,16 +21,14 @@ typedef enum {
     ANR_MODE_AGGRESSIVE = 3    // Deepest noise removal (g_min -28)
 } AnrMode;
 
-/* Runtime mode whitelist; reject invalid enum values before preset lookup. */
+/* True for a defined AnrMode value. */
 static inline bool anr_nr_mode_is_valid(AnrMode mode) {
     return mode == ANR_MODE_MILD || mode == ANR_MODE_MODERATE ||
            mode == ANR_MODE_BALANCED || mode == ANR_MODE_AGGRESSIVE;
 }
 
-/* CLI string/enum conversion. Accepts a mode name ("mild", "moderate", "balanced",
- * "aggressive") or the single digit "0".."3" that equals the AnrMode value. Anything else,
- * including NULL, returns -1.
- */
+/* Parses a mode name ("mild", "moderate", "balanced", "aggressive") or the digit "0".."3";
+ * returns the AnrMode value, or -1 for anything else (including NULL). */
 static inline int anr_nr_mode_from_name(const char *name) {
     if (!name) return -1;
     if (strcmp(name, "mild") == 0       || strcmp(name, "0") == 0) return ANR_MODE_MILD;
@@ -50,10 +48,8 @@ static inline const char *anr_nr_mode_name(AnrMode mode) {
     }
 }
 
-/* Frame speech gate = configured threshold + (q - ANR_SPEECH_PROTECT_ANCHOR_Q). This keeps the
- * margin above the noise-only SPP prior consistent across strengths; the anchor leaves the
- * configured value bit-exact.
- */
+/* Frame speech gate = configured threshold + (q - ANR_SPEECH_PROTECT_ANCHOR_Q), which keeps the
+ * margin above the noise-only SPP prior the same across strengths. */
 #define ANR_SPEECH_PROTECT_ANCHOR_Q 0.52f
 
 /* ANR configuration. Grid and pool dimensions are fixed for an instance. */
@@ -86,7 +82,7 @@ typedef struct {
     float noise_gate_lf_hz;            // Protected low-frequency range
     float noise_gate_frame_frac;       // Required fraction of speech bins
     bool  makeup_gain;                 // Post-OM-LSA frame scalar
-    float makeup_prior_xi_db;         // C make-up uses noise_gate_xi_db; field mirrors Python.
+    float makeup_prior_xi_db;         // Reserved; make-up uses noise_gate_xi_db
     float makeup_blim;
     float makeup_up_slope;
     float makeup_down_slope;
@@ -95,10 +91,9 @@ typedef struct {
     float alpha_s;          // Time smoothing (0.95)
     float alpha_d;          // Noise update (0.85 at the 16-ms tuning anchor)
     float alpha_p;          // SPP smoothing (0.2)
-    int L;                  // Minimum tracking window: 32 frames at the 16-ms
-                            // anchor (~512 ms), grid-retimed
+    int L;                  // Min-tracking window, frames (32 at the 16 ms anchor)
     float delta_db;         // Bias compensation in dB (10.0)
-    int num_init_frames;    // Noise initialization (~200 ms, grid-retimed)
+    int num_init_frames;    // Noise initialization, frames (~200 ms)
 
     // Scene-change reset of the noise floor
     float scene_change_threshold_db;     // Hi-freq gamma threshold in dB (10.0)
@@ -109,7 +104,7 @@ typedef struct {
 
     // Gain parameters
     float g_min_db;         // Minimum gain in amplitude dB, /20 (-25.0)
-    float alpha_g;          // Python config parity only; C gain path uses alpha_attack/decay.
+    float alpha_g;          // Unused by the gain path (alpha_attack/alpha_decay apply)
     float alpha_attack;     // Asymmetric attack (0.15 at the 16-ms anchor)
     float alpha_decay;      // Asymmetric decay (0.88 = alpha_g)
 } AnrConfig;
@@ -123,9 +118,7 @@ static inline int anr_default_fft_size(int sample_rate) {
          : (sample_rate == 8000) ? 128 : 0;
 }
 
-/* Retime an EMA coefficient from ref_hop_seconds to this hop. Keep the reference duration in
- * double precision: float rounding can change frame-count ceil() at an integer boundary.
- */
+/* Retimes an EMA coefficient authored per ref_hop_seconds to this hop. */
 static inline float anr_retime_alpha_ref(float alpha_ref,
                                                int sample_rate, int hop_size,
                                                double ref_hop_seconds) {
@@ -143,10 +136,9 @@ static inline float anr_retime_alpha(float alpha_10ms,
     return anr_retime_alpha_ref(alpha_10ms, sample_rate, hop_size, 0.010);
 }
 
-/* Retime a frame count authored at ref_hop_ms milliseconds per hop without shortening duration:
- * ceil(frames_ref * ref_hop_ms * sample_rate / (1000 * hop_size)) in exact 64-bit integer
- * arithmetic. Returns 0 for a non-positive argument or a result that does not fit an int.
- */
+/* Retimes a frame count authored at ref_hop_ms per hop to this hop, rounding up so the duration
+ * is not shortened (exact 64-bit arithmetic). Returns 0 for a non-positive argument or int
+ * overflow. */
 static inline int anr_retime_frames_ms(int frames_ref,
                                             int sample_rate, int hop_size,
                                             int ref_hop_ms) {
@@ -188,7 +180,6 @@ static inline AnrConfig anr_default_config_for_grid(
 
     // SPP anchors: alpha_xi and LF tracking use 16 ms.
     config.alpha_xi = anr_retime_alpha_ref(0.92f, sample_rate, config.hop_size, 0.016);
-                                 // DD ξ smoothing shared by all strengths.
     config.q = 0.52f;
     config.xi_min_db = -10.0f;
     config.cross_band_speech_prior = false;
@@ -212,7 +203,7 @@ static inline AnrConfig anr_default_config_for_grid(
     config.makeup_up_slope = 1.3f;
     config.makeup_down_slope = 0.3f;
 
-    // Noise tracker (sync with Python v3_2_config.yaml)
+    // Noise tracker
     config.alpha_s = anr_retime_alpha(0.95f, sample_rate, config.hop_size);
     /* 10-ms alpha_d anchor 0.903414 corresponds to 0.85 at a 16-ms hop. */
     config.alpha_d = anr_retime_alpha(0.903414f, sample_rate, config.hop_size);
@@ -229,7 +220,7 @@ static inline AnrConfig anr_default_config_for_grid(
     config.scene_change_flatness_threshold = 0.4f;
     config.broadband_threshold = 1.0f;   // <1.0 enables broadband scene reset; 1.0 == disabled.
 
-    // Gain parameters (sync with Python v3_2_config.yaml)
+    // Gain parameters
     config.g_min_db = -25.0f;
     config.alpha_g = anr_retime_alpha(0.88f, sample_rate, config.hop_size);
     // alpha_attack uses the 16-ms anchor; alpha_g/alpha_decay use 10 ms.
@@ -270,7 +261,6 @@ static inline AnrConfig anr_config_for_mode_grid(
         config.g_min_db = -28.0f;
         config.q = 0.45f;
         config.xi_min_db = -12.0f;
-        /* Aggressive over-subtraction factor. */
         config.noise_over_subtraction = 1.3f;
         break;
 
@@ -310,18 +300,15 @@ static inline void anr_apply_cross_band_speech_experiment(
     config->cross_band_speech_prior_alpha = 0.90f;
 }
 
-/* Construction/reconfiguration validation: supported grid, bounded dimensions, and finite
- * tunables in valid ranges. Query/create/init use this gate before size arithmetic. Returns
- * true only for a usable configuration.
- */
 static inline bool anr_finite_in_range(float v, float lo, float hi) {
     return isfinite(v) && v >= lo && v <= hi;
 }
 
+/* True when config is a supported grid with every tunable finite and in range; the
+ * constructors and anr_reconfigure() apply it before any size arithmetic. */
 static inline bool anr_validate_config(const AnrConfig* config) {
     if (!config) return false;
 
-    // Supported sample rates.
     if (config->sample_rate != 8000 &&
         config->sample_rate != 16000 &&
         config->sample_rate != 48000) {
@@ -335,7 +322,6 @@ static inline bool anr_validate_config(const AnrConfig* config) {
         return false;
     }
 
-    // Positive power-of-two FFT within the size bound.
     if (config->fft_size <= 0 || config->fft_size > 8192 ||
         (config->fft_size & (config->fft_size - 1)) != 0) {
         return false;
@@ -356,15 +342,12 @@ static inline bool anr_validate_config(const AnrConfig* config) {
         return false;
     }
 
-    // Bound tracker and initialization storage.
     if (config->L <= 0 || config->L > 320) {
         return false;
     }
     if (config->num_init_frames <= 0 || config->num_init_frames > 200) {
         return false;
     }
-
-    // Tunables must be finite and remain in their valid ranges.
 
     // SPP: alpha in [0,1], q strictly in (0,1), xi floor in power dB.
     if (!isfinite(config->alpha_xi) || config->alpha_xi < 0.0f || config->alpha_xi > 1.0f) {

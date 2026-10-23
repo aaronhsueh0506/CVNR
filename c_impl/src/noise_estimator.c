@@ -7,8 +7,8 @@
 #include "utility/fast_math.h"
 #include "fft_wrapper.h"
 #include "utility/mem_align.h"
-#include "utility/simd_kernels.h"  /* Non-fused, bit-exact SIMD EMA/noise kernels; requires -ffp-contract=off. */
-#include "utility/simd_nr.h"  /* Kernel bodies; ANR_VECTOR dispatch stays local. */
+#include "utility/simd_kernels.h"  /* Requires -ffp-contract=off. */
+#include "utility/simd_nr.h"
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
@@ -16,7 +16,6 @@
 #include <float.h>
 #include "anr_internal.h"
 
-// Internal structure
 struct NoiseEstimator {
     int n_freqs;
     int L;              // Min tracking window length
@@ -32,21 +31,14 @@ struct NoiseEstimator {
     float* S_min;       // Minimum tracked values
     float* spp;         // Internal SPP (for min tracking)
 
-    // Minimum tracking buffer [L * n_freqs]
+    // Minimum-tracking ring [L * n_freqs]; frequency-major with USE_OPTIMIZED_MIN_BUFFER, else frame-major
 #ifdef USE_OPTIMIZED_MIN_BUFFER
-    // Frequency-major layout: min_buffer[freq_idx * L + frame_idx]
-    // All L values for the same frequency are contiguous (better cache locality)
 #else
-    // Frame-major layout: min_buffer[frame_idx * n_freqs + freq_idx]
 #endif
     float* min_buffer;
     int ring_idx;       // Current write position in ring buffer
 
-    // Scratch [n_freqs] for the vectorized log pass in spectral_flatness()
-    // and the hi-freq scene-change flatness computation -- both are
-    // log-sum-exp geometric means over disjoint sub-ranges of `power`
-    // within one noise_estimator_update_ex() call, never used concurrently, so one
-    // n_freqs-sized buffer (the largest either call needs) covers both.
+    // Scratch [n_freqs] for the log pass of spectral_flatness().
     float* flatness_scratch;
 
     bool is_initialized;
@@ -60,26 +52,18 @@ struct NoiseEstimator {
     float broadband_threshold;              // Broadband scene-reset gate (<1.0 enables)
 
 #ifndef USE_FAST_PERCENTILE
-    // Buffer for exact percentile calculation during initialization
-    // Layout: init_power_buffer[frame_idx * n_freqs + freq_idx]
-    // In the shared-startup layout this is min_buffer itself: the init rows are dead once
-    // noise_estimator_init_noise() has consumed them, and the ring is not read before that.
+    // Init rows [frame_idx * n_freqs + freq_idx]; in the shared-startup layout this is min_buffer.
     float* init_power_buffer;
     int num_init_frames;    // Max number of init frames (from config)
-    // Per-bin gather + quickselect scratch [num_init_frames] — pre-allocated so
-    // the exact-percentile init path never calls malloc (matters on the static
-    // memory path).
+    // Per-bin quickselect scratch [num_init_frames]; preallocated so init never allocates.
     float* percentile_scratch;
 #endif
 
-    bool is_static;      // 1 == placed via noise_estimator_init() (caller-owned memory);
-                         // 0 == heap instance from noise_estimator_create() (owns its mallocs)
+    bool is_static;      // true: caller-owned memory; false: heap
 };
 
-/* Geometric/arithmetic mean flatness of power[start:end], with +1e-20. Use standard expf at
- * the hard decision threshold. scratch holds end-start floats; SIMD log runs in-place. Both
- * reductions retain increasing-bin scalar order for bit-exactness.
- */
+/* Ratio of the geometric to the arithmetic mean of power[start:end] (+1e-20 per bin); expf is
+ * used at the hard decision threshold. scratch holds end-start floats. */
 static float spectral_flatness(const float* power, int start, int end, float* scratch) {
     int n = end - start;
     float arith_sum = 0.0f;
@@ -117,7 +101,6 @@ static void noise_estimator_reset_noise_floor(NoiseEstimator* self, const float*
 #endif
 }
 
-/* Shared scalar initialization; caller zeroes arrays. */
 /* Update only tuning scalars; preserve tracker state. L and num_init_frames must already match
  * allocated geometry.
  */
@@ -142,7 +125,6 @@ void noise_estimator_apply_config_scalars(NoiseEstimator* self,
 }
 
 #ifdef USE_OPTIMIZED_MIN_BUFFER
-/* ANR_VECTOR keeps the independent scalar-reference dispatch. */
 ANR_TWIN float noise_estimator_min_ordered(const float* values, int n) {
 #if ANR_VECTOR
     return skr_min_ordered_neon(values, n);
@@ -162,30 +144,30 @@ static void noise_estimator_init_scalars(NoiseEstimator* self, int n_freqs,
     self->scene_change_count = 0;
 }
 
-/* Static allocation. */
+/* Rows of the minimum ring's region: L, or under shared startup at least num_init_frames. */
+static size_t noise_estimator_ring_rows(const AnrConfig* config, bool shared_startup) {
+    size_t rows = (size_t)config->L;
+#ifndef USE_FAST_PERCENTILE
+    if (shared_startup && (size_t)config->num_init_frames > rows)
+        rows = (size_t)config->num_init_frames;
+#else
+    (void)shared_startup;
+#endif
+    return rows;
+}
 
-/* shared_startup places the init rows and the minimum ring in one region of the larger of the
- * two. Only the integrated denoiser may use it: it accumulates solely before initialization and
- * re-accumulates every row after a reset, so the rows never need to outlive the ring's first
- * write. The standalone API keeps separate buffers because callers may accumulate or
- * re-initialize at any time.
- */
+/* shared_startup places the init rows and the minimum ring in one region (the larger of the
+ * two). Only the integrated denoiser uses it: it accumulates before initialization only and
+ * re-accumulates every row after a reset. */
 static size_t noise_estimator_mem_size_impl(int n_freqs, const AnrConfig* config,
                                             bool shared_startup) {
-    /* Check dimensions and saturating size arithmetic before allocation. */
     if (n_freqs <= 0 || !config) return 0;
     if (config->L <= 0) return 0;
 #ifndef USE_FAST_PERCENTILE
     if (config->num_init_frames <= 0) return 0;
 #endif
 
-    size_t ring_rows = (size_t)config->L;
-#if !defined(USE_FAST_PERCENTILE)
-    if (shared_startup && (size_t)config->num_init_frames > ring_rows)
-        ring_rows = (size_t)config->num_init_frames;
-#else
-    (void)shared_startup;
-#endif
+    size_t ring_rows = noise_estimator_ring_rows(config, shared_startup);
 
     size_t total = ALIGN16(sizeof(NoiseEstimator));
     total = ck_field_size(total, (size_t)n_freqs, sizeof(float));   /* noise_psd  */
@@ -229,11 +211,7 @@ static NoiseEstimator* noise_estimator_init_impl(void* mem, size_t mem_size, int
     noise_estimator_init_scalars(self, n_freqs, config);
     self->is_static = true;
 
-    size_t ring_rows = (size_t)self->L;
-#ifndef USE_FAST_PERCENTILE
-    if (shared_startup && (size_t)self->num_init_frames > ring_rows)
-        ring_rows = (size_t)self->num_init_frames;
-#endif
+    size_t ring_rows = noise_estimator_ring_rows(config, shared_startup);
 
     self->noise_psd  = (float*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(float));
     self->S          = (float*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(float));
@@ -268,11 +246,13 @@ NoiseEstimator* noise_estimator_init_shared_startup(void* mem, size_t mem_size, 
     return noise_estimator_init_impl(mem, mem_size, n_freqs, config, true);
 }
 
-/* Heap allocation. */
-
 static NoiseEstimator* noise_estimator_create_impl(int n_freqs, const AnrConfig* config,
                                                    bool shared_startup) {
     if (n_freqs <= 0 || !config) return NULL;
+    if (config->L <= 0) return NULL;
+#ifndef USE_FAST_PERCENTILE
+    if (config->num_init_frames <= 0) return NULL;
+#endif
 
     NoiseEstimator* self = (NoiseEstimator*)calloc(1, sizeof(NoiseEstimator));
     if (!self) return NULL;
@@ -280,21 +260,13 @@ static NoiseEstimator* noise_estimator_create_impl(int n_freqs, const AnrConfig*
     noise_estimator_init_scalars(self, n_freqs, config);
     self->is_static = false;
 
-    size_t ring_rows = (size_t)self->L;
-#ifndef USE_FAST_PERCENTILE
-    if (shared_startup && (size_t)self->num_init_frames > ring_rows)
-        ring_rows = (size_t)self->num_init_frames;
-#else
-    (void)shared_startup;
-#endif
+    size_t ring_rows = noise_estimator_ring_rows(config, shared_startup);
 
-    // Allocate state arrays
     self->noise_psd = (float*)calloc(n_freqs, sizeof(float));
     self->S = (float*)calloc(n_freqs, sizeof(float));
     self->S_min = (float*)calloc(n_freqs, sizeof(float));
     self->spp = (float*)calloc(n_freqs, sizeof(float));
 
-    // Allocate min tracking buffer
     self->min_buffer = (float*)calloc(ring_rows * n_freqs, sizeof(float));
     self->flatness_scratch = (float*)calloc(n_freqs, sizeof(float));
 
@@ -305,7 +277,6 @@ static NoiseEstimator* noise_estimator_create_impl(int n_freqs, const AnrConfig*
     }
 
 #ifndef USE_FAST_PERCENTILE
-    // Allocate buffer for exact percentile calculation + its quickselect scratch
     self->init_power_buffer = shared_startup
         ? self->min_buffer
         : (float*)calloc(self->num_init_frames * n_freqs, sizeof(float));
@@ -363,11 +334,9 @@ void noise_estimator_accumulate_init_power(NoiseEstimator* self, const float* po
 
 /* Partition around the midpoint pivot; returns its final index. */
 static int quickselect_partition(float* arr, int left, int right) {
-    // Midpoint pivot.
     int mid = left + (right - left) / 2;
     float pivot = arr[mid];
 
-    // Move pivot to end
     float tmp = arr[mid];
     arr[mid] = arr[right];
     arr[right] = tmp;
@@ -382,7 +351,6 @@ static int quickselect_partition(float* arr, int left, int right) {
         }
     }
 
-    // Move pivot to its final place
     tmp = arr[store_idx];
     arr[store_idx] = arr[right];
     arr[right] = tmp;
@@ -419,7 +387,6 @@ static float calculate_percentile(float* data, int n, int p) {
     if (n <= 0) return 0.0f;
     if (n == 1) return data[0];
 
-    // k = floor((n-1) * p / 100)
     int k = ((n - 1) * p) / 100;
 
     return quickselect(data, n, k);
@@ -431,9 +398,26 @@ void noise_estimator_accumulate_init_power(NoiseEstimator* self, const float* po
     (void)self;
     (void)power;
     (void)frame_idx;
-    // No-op when using fast approximation
 }
 #endif
+
+/* Seed bin k of every tracker array from its initial noise estimate. */
+static void noise_estimator_seed_bin(NoiseEstimator* self, int k, float init_psd) {
+    if (init_psd < 1e-10f) init_psd = 1e-10f;
+    self->noise_psd[k] = init_psd;
+    self->S[k] = init_psd;
+    self->S_min[k] = init_psd;
+    self->spp[k] = 0.0f;
+}
+
+/* Low-memory empirical stand-in for the configured 30th percentile. */
+static void noise_estimator_seed_from_mean(NoiseEstimator* self, const float* power_sum,
+                                           int n_frames) {
+    for (int k = 0; k < self->n_freqs; k++) {
+        float avg_power = power_sum[k] / (float)n_frames;
+        noise_estimator_seed_bin(self, k, avg_power * 0.23f);
+    }
+}
 
 void noise_estimator_init_noise(NoiseEstimator* self, const float* power_sum, int n_frames) {
     if (!self || !power_sum || n_frames <= 0) return;
@@ -445,60 +429,29 @@ void noise_estimator_init_noise(NoiseEstimator* self, const float* power_sum, in
     int n_freqs = self->n_freqs;
 
 #ifdef USE_FAST_PERCENTILE
-    // Low-memory empirical stand-in for the configured 30th percentile.
-    for (int k = 0; k < n_freqs; k++) {
-        float avg_power = power_sum[k] / (float)n_frames;
-        float init_psd = avg_power * 0.23f;
-
-        if (init_psd < 1e-10f) init_psd = 1e-10f;
-
-        self->noise_psd[k] = init_psd;
-        self->S[k] = init_psd;
-        self->S_min[k] = init_psd;
-        self->spp[k] = 0.0f;
-    }
+    noise_estimator_seed_from_mean(self, power_sum, n_frames);
 #else
-    // Exact 30th percentile using quickselect
-    // Requires init_power_buffer to be filled via noise_estimator_accumulate_init_power()
+    // Exact 30th percentile per bin (quickselect over the stored init rows).
 
-    // Per-bin gather + quickselect scratch — pre-allocated, no malloc.
     float* freq_powers = self->percentile_scratch;
     if (!freq_powers) {
         // Fallback to approximation if the scratch is unavailable
-        for (int k = 0; k < n_freqs; k++) {
-            float avg_power = power_sum[k] / (float)n_frames;
-            float init_psd = avg_power * 0.23f;  // Approximate 30th percentile
-            if (init_psd < 1e-10f) init_psd = 1e-10f;
-            self->noise_psd[k] = init_psd;
-            self->S[k] = init_psd;
-            self->S_min[k] = init_psd;
-            self->spp[k] = 0.0f;
-        }
+        noise_estimator_seed_from_mean(self, power_sum, n_frames);
     } else {
         for (int k = 0; k < n_freqs; k++) {
-            // Collect power values for this frequency bin across all frames
             for (int f = 0; f < n_frames; f++) {
                 freq_powers[f] = self->init_power_buffer[f * n_freqs + k];
             }
 
             // Exact 30th percentile
-            float init_psd = calculate_percentile(freq_powers, n_frames, 30);
-
-            if (init_psd < 1e-10f) init_psd = 1e-10f;
-
-            self->noise_psd[k] = init_psd;
-            self->S[k] = init_psd;
-            self->S_min[k] = init_psd;
-            self->spp[k] = 0.0f;
+            noise_estimator_seed_bin(self, k, calculate_percentile(freq_powers, n_frames, 30));
         }
-        // no free — percentile_scratch is owned by the estimator
     }
 #endif
 
-    // Fill min_buffer with initial noise estimate. This must follow the percentile pass above:
-    // a shared-startup region still holds the init rows until every bin has been read.
+    // Seed the minimum ring with the initial noise. Runs after the percentile pass: a shared
+    // region holds the init rows until every bin has been read.
 #ifdef USE_OPTIMIZED_MIN_BUFFER
-    // Frequency-major layout: [freq_idx * L + frame_idx]
     for (int k = 0; k < n_freqs; k++) {
         float* freq_buf = &self->min_buffer[k * self->L];
         for (int l = 0; l < self->L; l++) {
@@ -506,7 +459,6 @@ void noise_estimator_init_noise(NoiseEstimator* self, const float* power_sum, in
         }
     }
 #else
-    // Frame-major layout: [frame_idx * n_freqs + freq_idx]
     for (int l = 0; l < self->L; l++) {
         for (int k = 0; k < n_freqs; k++) {
             self->min_buffer[l * n_freqs + k] = self->noise_psd[k];
@@ -519,7 +471,6 @@ void noise_estimator_init_noise(NoiseEstimator* self, const float* power_sum, in
 }
 
 #if defined(USE_OPTIMIZED_MIN_BUFFER) && defined(USE_INCREMENTAL_MIN)
-/* Shared four-bin ring kernel; ANR_VECTOR dispatch stays local. */
 static inline void noise_estimator_ring_min(float* s_min, const float* s, float* ring,
                                             int L, int ring_pos, int n) {
 #if ANR_VECTOR
@@ -530,7 +481,6 @@ static inline void noise_estimator_ring_min(float* s_min, const float* s, float*
 }
 #endif
 
-/* ANR_VECTOR keeps the independent scalar-reference dispatch. */
 static inline void noise_estimator_restart_inert(float* noise, const float* power,
                                                  float alpha_d, int n) {
 #if ANR_VECTOR
@@ -555,7 +505,7 @@ void noise_estimator_update_ex(NoiseEstimator* self,
     float alpha_p = self->alpha_p;
     float delta = self->delta;
 
-    // Time EMA; preserve non-fused scalar operation order.
+    // Time-smoothed power.
     sk_ema_f32(self->S, power, alpha_s, 1.0f - alpha_s, n_freqs);
 
     // Ring update and incremental minima.
@@ -566,7 +516,6 @@ void noise_estimator_update_ex(NoiseEstimator* self,
     for (int k = 0; k < n_freqs; k++) {
         float new_S = self->S[k];
 
-        // Read old value before overwriting, then write new value
 #ifdef USE_OPTIMIZED_MIN_BUFFER
         float* buf_ptr = &self->min_buffer[k * L + ring_pos];
 #else
@@ -580,11 +529,9 @@ void noise_estimator_update_ex(NoiseEstimator* self,
 #ifdef USE_INCREMENTAL_MIN
         // Incremental min tracking: O(1) average, O(L) worst case
         if (new_S <= self->S_min[k]) {
-            // New value is the minimum
             self->S_min[k] = new_S;
         } else if (old_val <= self->S_min[k] * (1.0f + 1e-6f)) {
             // Evicted value was (approximately) the minimum — must rescan
-            // USE_OPTIMIZED_MIN_BUFFER together with USE_INCREMENTAL_MIN takes the ring-min path above.
             float min_val = FLT_MAX;
             for (int l = 0; l < L; l++) {
                 float val = self->min_buffer[l * n_freqs + k];
@@ -592,9 +539,7 @@ void noise_estimator_update_ex(NoiseEstimator* self,
             }
             self->S_min[k] = min_val;
         }
-        // else: S_min unchanged
 #else
-        // Full scan: always find minimum over all L frames
 #ifdef USE_OPTIMIZED_MIN_BUFFER
         {
             float* freq_buf = &self->min_buffer[k * L];
@@ -615,28 +560,22 @@ void noise_estimator_update_ex(NoiseEstimator* self,
     }
 #endif
 
-    // Advance ring index
     self->ring_idx = (self->ring_idx + 1) % L;
 
     // Speech-indicator smoothing precedes scene resets and the noise update.
     for (int k = 0; k < n_freqs; k++) {
-        // Speech indicator: I(k,l) = 1 if S(k,l)/(S_min(k,l)·δ) > 1
         float ratio = self->S[k] / (self->S_min[k] * delta + 1e-10f);
         float indicator = (ratio > 1.0f) ? 1.0f : 0.0f;
 
-        // SPP smoothing: p(k,l) = α_p·p(k,l-1) + (1-α_p)·I(k,l)
         self->spp[k] = alpha_p * self->spp[k] + (1.0f - alpha_p) * indicator;
     }
 
     // Scene detection uses the pre-update noise floor.
     {
-        int hi_start = n_freqs / 2;  // Upper half (~4kHz for 16kHz/512FFT)
+        int hi_start = n_freqs / 2;  // upper half of the spectrum
 
-        /* Check the energy gate before the more expensive flatness calculation. The epsilon is
-         * applied to the per-bin mean (matching Python's mean/(mean+eps)), not to the raw sum;
-         * summing first and dividing by n_hi after would let the epsilon's effective weight
-         * shrink by a factor of n_hi relative to Python.
-         */
+        /* The cheap energy gate runs before the flatness calculation; the epsilon is applied to
+         * the per-bin mean, not the raw sum. */
         float hi_power_sum = 0.0f;
         float hi_noise_sum = 0.0f;
         for (int k = hi_start; k < n_freqs; k++) {
@@ -683,8 +622,7 @@ void noise_estimator_update_ex(NoiseEstimator* self,
         }
     }
 
-    // After scene resets: alpha_tilde = alpha_d + (1-alpha_d)*(spp*bb_scale); apply the
-    // non-fused noise EMA.
+    // alpha_tilde = alpha_d + (1 - alpha_d) * spp * bb_scale, applied after scene resets.
     int slow_end = slow_lf_rise ? slow_lf_bins : 0;
     if (slow_end < 0) slow_end = 0;
     if (slow_end > n_freqs) slow_end = n_freqs;

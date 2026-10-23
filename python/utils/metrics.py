@@ -19,7 +19,6 @@ Note:
 import numpy as np
 from typing import Tuple, Optional
 
-# Optional dependencies
 try:
     from pesq import pesq as pesq_score
     PESQ_AVAILABLE = True
@@ -70,21 +69,17 @@ def calculate_snr_improvement(
     Returns:
         (input_snr_db, output_snr_db, snr_improvement_db)
     """
-    # Ensure same length
     min_len = min(len(noisy), len(clean), len(enhanced))
     noisy = noisy[:min_len]
     clean = clean[:min_len]
     enhanced = enhanced[:min_len]
 
-    # Calculate input SNR
     input_noise = noisy - clean
     input_snr = calculate_snr(clean, input_noise)
 
-    # Calculate output SNR
     output_noise = enhanced - clean
     output_snr = calculate_snr(clean, output_noise)
 
-    # SNR improvement
     snr_improvement = output_snr - input_snr
 
     return input_snr, output_snr, snr_improvement
@@ -120,7 +115,6 @@ def calculate_pesq(
         print("Warning: PESQ not available. Install with: pip install pesq")
         return None
 
-    # Ensure same length
     min_len = min(len(clean), len(enhanced))
     clean = clean[:min_len]
     enhanced = enhanced[:min_len]
@@ -168,7 +162,6 @@ def calculate_stoi(
         print("Warning: STOI not available. Install with: pip install pystoi")
         return None
 
-    # Ensure same length
     min_len = min(len(clean), len(enhanced))
     clean = clean[:min_len]
     enhanced = enhanced[:min_len]
@@ -209,12 +202,10 @@ def calculate_segmental_snr(
         - Frame SNRs are clipped to [-10, 35] dB to avoid outliers
         - Typical range: 5-20 dB for good denoising
     """
-    # Ensure same length
     min_len = min(len(clean), len(enhanced))
     clean = clean[:min_len]
     enhanced = enhanced[:min_len]
 
-    # Calculate number of frames
     num_frames = (len(clean) - frame_size) // hop_size + 1
 
     if num_frames < 1:
@@ -222,7 +213,6 @@ def calculate_segmental_snr(
         noise = enhanced - clean
         return calculate_snr(clean, noise)
 
-    # Calculate frame-by-frame SNR
     frame_snrs = []
 
     for i in range(num_frames):
@@ -235,29 +225,23 @@ def calculate_segmental_snr(
         clean_frame = clean[start:end]
         enhanced_frame = enhanced[start:end]
 
-        # Calculate frame power
         signal_power = np.mean(clean_frame ** 2)
 
-        # Skip silent frames
         if signal_power < 1e-10:
             continue
 
-        # Calculate noise for this frame
         noise_frame = enhanced_frame - clean_frame
         noise_power = np.mean(noise_frame ** 2)
 
-        # Calculate frame SNR
         if noise_power < 1e-10:
             frame_snr = 35.0  # Very high SNR (clipped)
         else:
             frame_snr = 10 * np.log10(signal_power / noise_power)
 
-        # Clip to avoid outliers
         frame_snr = np.clip(frame_snr, -10.0, 35.0)
 
         frame_snrs.append(frame_snr)
 
-    # Return mean of all frame SNRs
     if len(frame_snrs) == 0:
         return 0.0  # No valid frames
 
@@ -288,13 +272,10 @@ def calculate_segmental_snr_improvement(
     Returns:
         (input_segsnr_db, output_segsnr_db, segsnr_improvement_db)
     """
-    # Calculate input segSNR (noisy vs clean)
     input_segsnr = calculate_segmental_snr(clean, noisy, frame_size, hop_size)
 
-    # Calculate output segSNR (enhanced vs clean)
     output_segsnr = calculate_segmental_snr(clean, enhanced, frame_size, hop_size)
 
-    # Calculate improvement
     segsnr_improvement = output_segsnr - input_segsnr
 
     return input_segsnr, output_segsnr, segsnr_improvement
@@ -327,19 +308,16 @@ def calculate_fw_segsnr(
         - Typical range: 5-25 dB for good denoising
         - More perceptually relevant than plain segSNR
     """
-    # Ensure same length
     min_len = min(len(clean), len(enhanced))
     clean = clean[:min_len]
     enhanced = enhanced[:min_len]
 
-    # Calculate number of frames
     num_frames = (len(clean) - frame_size) // hop_size + 1
 
     if num_frames < 1:
         # Fall back to regular segSNR
         return calculate_segmental_snr(clean, enhanced, frame_size, hop_size)
 
-    # FFT size
     nfft = frame_size
     num_freqs = nfft // 2 + 1
 
@@ -348,7 +326,6 @@ def calculate_fw_segsnr(
     freqs = np.fft.rfftfreq(nfft, 1.0 / sample_rate)
     weights = np.ones(num_freqs)
 
-    # Apply frequency weighting
     for i, f in enumerate(freqs):
         if 1000 <= f <= 4000:
             weights[i] = 2.0  # Double weight for critical band
@@ -357,10 +334,8 @@ def calculate_fw_segsnr(
         else:
             weights[i] = 1.0  # Normal weight
 
-    # Normalize weights
     weights = weights / np.sum(weights)
 
-    # Calculate frame-by-frame weighted SNR
     frame_snrs = []
     window = np.hanning(frame_size)
 
@@ -374,26 +349,20 @@ def calculate_fw_segsnr(
         clean_frame = clean[start:end] * window
         enhanced_frame = enhanced[start:end] * window
 
-        # Calculate frame power
         signal_power_time = np.mean(clean_frame ** 2)
 
-        # Skip silent frames
         if signal_power_time < 1e-10:
             continue
 
-        # FFT
         clean_fft = np.fft.rfft(clean_frame, n=nfft)
         enhanced_fft = np.fft.rfft(enhanced_frame, n=nfft)
 
-        # Power spectra
         clean_psd = np.abs(clean_fft) ** 2
         noise_psd = np.abs(enhanced_fft - clean_fft) ** 2
 
-        # Apply frequency weighting
         clean_psd_weighted = clean_psd * weights
         noise_psd_weighted = noise_psd * weights
 
-        # Calculate weighted SNR
         total_signal_power = np.sum(clean_psd_weighted)
         total_noise_power = np.sum(noise_psd_weighted)
 
@@ -402,12 +371,10 @@ def calculate_fw_segsnr(
         else:
             frame_snr = 10 * np.log10(total_signal_power / total_noise_power)
 
-        # Clip to avoid outliers
         frame_snr = np.clip(frame_snr, -10.0, 35.0)
 
         frame_snrs.append(frame_snr)
 
-    # Return mean of all frame SNRs
     if len(frame_snrs) == 0:
         return 0.0
 
@@ -444,18 +411,15 @@ def calculate_wss(
         - 60-80: Fair
         - > 80: Poor
     """
-    # Ensure same length
     min_len = min(len(clean), len(enhanced))
     clean = clean[:min_len]
     enhanced = enhanced[:min_len]
 
-    # Calculate number of frames
     num_frames = (len(clean) - frame_size) // hop_size + 1
 
     if num_frames < 1:
         return 100.0  # Poor quality indicator
 
-    # FFT size
     nfft = frame_size
     num_freqs = nfft // 2 + 1
 
@@ -474,10 +438,8 @@ def calculate_wss(
             else:
                 bark_weights[i] = 0.5  # Less important
 
-    # Normalize
     bark_weights = bark_weights / np.sum(bark_weights)
 
-    # Calculate frame-by-frame WSS
     frame_wss = []
     window = np.hanning(frame_size)
 
@@ -491,29 +453,23 @@ def calculate_wss(
         clean_frame = clean[start:end] * window
         enhanced_frame = enhanced[start:end] * window
 
-        # Skip silent frames
         if np.mean(clean_frame ** 2) < 1e-10:
             continue
 
-        # FFT
         clean_fft = np.fft.rfft(clean_frame, n=nfft)
         enhanced_fft = np.fft.rfft(enhanced_frame, n=nfft)
 
-        # Power spectra (in dB)
         clean_psd_db = 10 * np.log10(np.abs(clean_fft) ** 2 + 1e-10)
         enhanced_psd_db = 10 * np.log10(np.abs(enhanced_fft) ** 2 + 1e-10)
 
-        # Calculate spectral slopes (differences between adjacent bins)
         clean_slope = np.diff(clean_psd_db)
         enhanced_slope = np.diff(enhanced_psd_db)
 
-        # Weighted spectral slope distance
         slope_diff = (clean_slope - enhanced_slope) ** 2
         weighted_diff = slope_diff * bark_weights[:-1]  # Weights for N-1 bins
 
         frame_wss.append(np.sum(weighted_diff))
 
-    # Return mean WSS
     if len(frame_wss) == 0:
         return 100.0
 
@@ -545,21 +501,17 @@ def calculate_lsd(
         - 2-3 dB: Fair
         - > 3 dB: Poor
     """
-    # Ensure same length
     min_len = min(len(clean), len(enhanced))
     clean = clean[:min_len]
     enhanced = enhanced[:min_len]
 
-    # Calculate spectrograms
     clean_spec = _stft(clean, frame_size, hop_size)
     enhanced_spec = _stft(enhanced, frame_size, hop_size)
 
-    # Ensure same number of frames
     min_frames = min(clean_spec.shape[1], enhanced_spec.shape[1])
     clean_spec = clean_spec[:, :min_frames]
     enhanced_spec = enhanced_spec[:, :min_frames]
 
-    # Calculate LSD
     # LSD = sqrt(mean((20*log10(|Enhanced|/|Clean|))^2))
     ratio = enhanced_spec / (clean_spec + 1e-10)
     log_ratio = 20 * np.log10(ratio + 1e-10)
@@ -610,16 +562,12 @@ def detect_musical_noise(
         This measures the variance of spectral changes between frames.
         Higher values indicate more "tonal" artifacts (musical noise).
     """
-    # Calculate spectrogram
     spec = _stft(enhanced, frame_size, hop_size)
 
-    # Calculate frame-to-frame spectral difference
     diff = np.diff(spec, axis=1)
 
-    # Calculate variance across frequency bins
     variance = np.var(diff, axis=0)
 
-    # Average variance
     musical_noise_score = np.mean(variance)
 
     return float(musical_noise_score)
@@ -637,17 +585,13 @@ def _stft(signal: np.ndarray, frame_size: int, hop_size: int) -> np.ndarray:
     Returns:
         Magnitude spectrogram (freq_bins x num_frames)
     """
-    # Create Hanning window
     window = np.hanning(frame_size)
 
-    # Calculate number of frames
     num_frames = (len(signal) - frame_size) // hop_size + 1
 
-    # Initialize spectrogram
     num_freq_bins = frame_size // 2 + 1
     spectrogram = np.zeros((num_freq_bins, num_frames))
 
-    # Process each frame
     for i in range(num_frames):
         start = i * hop_size
         end = start + frame_size
@@ -686,7 +630,6 @@ def evaluate_all_metrics(
     """
     results = {}
 
-    # Segmental SNR metrics (PRIMARY for traditional algorithms)
     input_segsnr, output_segsnr, segsnr_improvement = calculate_segmental_snr_improvement(
         noisy, clean, enhanced
     )
@@ -694,7 +637,6 @@ def evaluate_all_metrics(
     results['output_segsnr_db'] = output_segsnr
     results['segsnr_improvement_db'] = segsnr_improvement
 
-    # Global SNR metrics
     input_snr, output_snr, snr_improvement = calculate_snr_improvement(
         noisy, clean, enhanced
     )
@@ -702,19 +644,15 @@ def evaluate_all_metrics(
     results['output_snr_db'] = output_snr
     results['snr_improvement_db'] = snr_improvement
 
-    # PESQ (reference only for traditional algorithms)
     pesq_result = calculate_pesq(clean, enhanced, fs)
     results['pesq'] = pesq_result
 
-    # STOI (reference only for traditional algorithms)
     stoi_result = calculate_stoi(clean, enhanced, fs)
     results['stoi'] = stoi_result
 
-    # LSD
     lsd_result = calculate_lsd(clean, enhanced)
     results['lsd_db'] = lsd_result
 
-    # Musical noise
     musical_noise = detect_musical_noise(enhanced)
     results['musical_noise'] = musical_noise
 
@@ -734,19 +672,16 @@ def print_metrics(metrics: dict, algorithm_name: str = ""):
         print(f"Metrics for: {algorithm_name}")
         print(f"{'='*70}")
 
-    # PRIMARY METRICS (Segmental SNR)
     print("\n[PRIMARY METRICS - Segmental SNR]")
     print(f"  Input segSNR:         {metrics['input_segsnr_db']:7.2f} dB")
     print(f"  Output segSNR:        {metrics['output_segsnr_db']:7.2f} dB")
     print(f"  segSNR Improvement:   {metrics['segsnr_improvement_db']:7.2f} dB  ★")
 
-    # SECONDARY METRICS (Global SNR)
     print("\n[Global SNR Metrics]")
     print(f"  Input SNR:            {metrics['input_snr_db']:7.2f} dB")
     print(f"  Output SNR:           {metrics['output_snr_db']:7.2f} dB")
     print(f"  SNR Improvement:      {metrics['snr_improvement_db']:7.2f} dB")
 
-    # REFERENCE METRICS (PESQ/STOI - not primary for traditional algorithms)
     print("\n[Reference Metrics - For comparison only]")
     if metrics['pesq'] is not None:
         print(f"  PESQ:                 {metrics['pesq']:7.2f} (1.0-4.5)")
@@ -758,7 +693,6 @@ def print_metrics(metrics: dict, algorithm_name: str = ""):
     else:
         print(f"  STOI:                 N/A (install: pip install pystoi)")
 
-    # QUALITY METRICS
     print("\n[Quality Metrics]")
     print(f"  LSD:                  {metrics['lsd_db']:7.2f} dB")
     print(f"  Musical Noise:        {metrics['musical_noise']:7.2e}")
@@ -769,26 +703,20 @@ def print_metrics(metrics: dict, algorithm_name: str = ""):
 
 
 if __name__ == "__main__":
-    # Example usage
     print("Speech Enhancement Metrics Module")
     print(f"PESQ available: {PESQ_AVAILABLE}")
     print(f"STOI available: {STOI_AVAILABLE}")
 
-    # Generate test signals
     fs = 16000
     duration = 2.0
     t = np.linspace(0, duration, int(fs * duration))
 
-    # Clean signal (sine wave)
     clean = np.sin(2 * np.pi * 440 * t)
 
-    # Noisy signal
     noise = np.random.randn(len(clean)) * 0.1
     noisy = clean + noise
 
-    # "Enhanced" signal (just apply simple gain)
     enhanced = noisy * 0.8
 
-    # Calculate all metrics
     metrics = evaluate_all_metrics(noisy, clean, enhanced, fs)
     print_metrics(metrics, "Test Example")

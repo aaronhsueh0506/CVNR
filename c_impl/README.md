@@ -1,9 +1,9 @@
 # ANR — C Implementation (V3-2 主線)
 
-> **基準版本**: v1.12.3（c_impl）。含 ANR 命名與 bit-exact NEON 加速（NaN 結果的 payload 位元除外）；[量測與驗證紀錄](../docs/anr_optimization.md)。共用數學函式仍由 `audiolib/common/utility/fast_math.h` 提供。
+> NEON 核心與純量版逐位元相同（NaN 結果的 payload 位元除外）；[量測與驗證](../docs/anr_optimization.md)。共用數學函式由 `audiolib/common/utility/fast_math.h` 提供。
 > **對應 Python**: `python/denoisers/v3_2_mmse_lsa.py`
 
-C 介面、檔名與 archive 已統一為 ANR；[完整改名對照](../docs/anr_migration.md)。
+C 介面、檔名與 archive 以 ANR 命名；[命名對照](../docs/anr_migration.md)。
 
 基於 Ephraim-Malah 1985 的 MMSE-LSA (Minimum Mean Square Error Log-Spectral Amplitude) 語音降噪演算法 C 實現，搭配 Cohen & Berdugo (2002) MCRA 噪聲估計與 Cohen & Berdugo (2001) Bayesian SPP 軟判決。整體通稱 **OMLSA**。
 
@@ -11,12 +11,10 @@ C 介面、檔名與 archive 已統一為 ANR；[完整改名對照](../docs/anr
 
 - **Streaming 處理**：以 hop_size 為單位輸入/輸出，適合即時處理
 - **MCRA 噪聲估計**：Cohen & Berdugo (2002) 最小值控制遞迴平均
-- **SPP 語音存在機率**：Decision Directed 方法（Fix #3: DD term 用**前一幀** `noise_psd`）
+- **SPP 語音存在機率**：Decision Directed 方法（DD term 用**前一幀** `noise_psd`）
 - **非對稱增益平滑**：Attack/Decay 分離控制
 - **可配置優化開關**：透過編譯開關選擇精度/速度權衡
 - **場景轉換偵測**：高頻 gamma + spectral flatness 雙重條件；flatness 閾值可由 `scene_change_flatness_threshold` 調整
-- **與 Python V3-2 同步**：Part A Review 修復已 port（#1, #3, #6, #9）
-- **不含 V4 wind handler**：V4 為 Python-only research 框架，VCTK/DEMAND 驗證未能改善風聲，C 端暫不實作
 
 ## 算法流程
 
@@ -123,11 +121,11 @@ make mem              # → bin/<backend>-<config-hash>/denoise_mem（範例 exa
 `make publish` 產出穩定的 `dist/<backend>/current/` 交付路徑。
 
 denoiser、MCRA、SPP、FFT **同時**提供 malloc 路徑（`_create`）與靜態記憶體路徑
-（`_get_mem_size` + `_init`，與 AEC 的 `aec_get_mem_size`/`aec_init` 命名慣例一致）。
-兩條路徑編進同一份 object，沒有編譯期 `#ifdef` 切換，用哪條純粹是「呼叫哪個函式」的
-runtime 選擇（每個 handle 內部有一個 `is_static` flag：`_create()` 設 0，`_init()` 設 1，
-`_destroy()` 靠它決定要不要真的 free）。用法：先用 `_get_mem_size()` 問要多少，配一塊
-（static 陣列，或呼叫端自己的 platform 記憶體 block），交給 `_init(mem, size, ...)`：
+（`_get_mem_size` + `_init`，與 AEC 的 `aec_get_mem_size`/`aec_init` 命名一致）。
+兩條路徑編進同一份 object，沒有編譯期 `#ifdef` 切換；每個 handle 內有 `is_static` flag
+（`_create()` 設 0，`_init()` 設 1），`_destroy()` 靠它決定要不要 free。用法：先用
+`_get_mem_size()` 問要多少，配一塊記憶體（static 陣列或呼叫端的 platform block），交給
+`_init(mem, size, ...)`：
 
 ```c
 static uint8_t pool[/* >= anr_get_mem_size(&cfg) */] __attribute__((aligned(16)));
@@ -137,67 +135,42 @@ AnrDenoiser* d = anr_init(pool, sizeof pool, &cfg);  // 零 malloc
 anr_destroy(d);                                     // no-op（記憶體由呼叫端持有）
 ```
 
-`anr_destroy()` 在這裡是**真正**的 no-op：`AnrDenoiser` 本身不持有 FFT 或任何
-backend heap 資源（頻域 I/O 由呼叫端自己的 `FftHandle` 負責，見下方完整範例），所以
-static instance 的 destroy 沒有東西要釋放。呼叫端另外持有的 `FftHandle`（`fft_init`）
-的 destroy 也是**真正**的 no-op：NE10 的 R2C/C2R twiddle cfg
-由呼叫端 pool 切出（`audiolib` 的 vendored patch P0001＋P0003 硬化，
-`ne10_fft_init_r2c_float32_ext`），沒有任何 backend-internal malloc——`fft_destroy()` 對
-pool-owned handle 一律直接 return，呼叫幾次都安全（idempotent）。細節見下方 backend 差異段落，以及
-[`../docs/c_user_manual_zh_TW.md`](../docs/c_user_manual_zh_TW.md)
-第 5 節的 `create_static_nr`/`destroy_static_nr` 完整範例。
+static instance 的 `anr_destroy()` 是 no-op：`AnrDenoiser` 不持有 FFT 或 backend heap 資源
+（頻域 I/O 由呼叫端的 `FftHandle` 負責）。`fft_init()` 建立的 handle 其 `fft_destroy()` 同樣是
+no-op、可重複呼叫：NE10 的 R2C/C2R twiddle cfg 從呼叫端 pool 切出（`audiolib` 的 vendored NE10
+external-memory 初始化 `ne10_fft_init_r2c_float32_ext`），沒有 backend-internal malloc。完整範例見
+[`../docs/c_user_manual_zh_TW.md`](../docs/c_user_manual_zh_TW.md) §1.5 的 `create_static_nr`。
 
-演算法與 malloc 版**逐位元相同**（只差配置方式）：`bin/denoise_mem` 輸出與 `bin/denoise_wav`
-byte-for-byte 一致，已對 4 個 preset 驗證。同一機制也覆蓋子模組
+演算法與 malloc 版**逐位元相同**（只差配置方式）：`denoise_mem` 輸出與 `denoise_wav`
+byte-for-byte 一致（四個 preset 皆然）。同一機制也覆蓋子模組
 `fft_get_mem_size`/`fft_init`、`noise_estimator_get_mem_size`/`noise_estimator_init`、
 `spp_get_mem_size`/`spp_init`。
 
-**零 malloc 保證**：malloc 路徑編譯進同一份 object，用 `nm` 檢查 object 檔**一定會看到**
-`malloc`/`calloc`/`free` 符號——這些符號來自 `_create()`，靜態路徑（`_init()`）在 runtime
-完全不會走到那幾行。保證的內容是：**靜態路徑在執行期不呼叫任何配置器**（`_init()` 本身只做指標運算 + `memset`；`calloc`/`malloc` 只有透過 `_create()` 才
-會被觸發到，`_init()` 的呼叫路徑完全不會經過它們）。連預設的 exact-percentile 初始化也不例外——
-MCRA 的 percentile gather/quickselect 用預先配好的 `percentile_scratch`（in-place quickselect，
-免複製）。`example/main_mem.c` 本身呼叫 `_init()` 系列，執行期同樣 0 malloc。
+**零 malloc 保證**：malloc 路徑編進同一份 object，所以 `nm` 一定看得到
+`malloc`/`calloc`/`free` 符號（來自 `_create()`）。保證的是**靜態路徑在執行期不呼叫任何配置器**：
+`_init()` 只做指標運算 + `memset`，連預設的 exact-percentile 初始化也用預先配好的
+`percentile_scratch`（in-place quickselect）。`example/main_mem.c` 呼叫 `_init()` 系列，執行期 0 malloc。
 
 **FFT 與 fast_math 來自共用的 `../audiolib/common`**（`make` 產出 `libaudio_common.a`，
-`c_impl/Makefile` 直接連結；本 repo 不含 NE10 原始碼副本）。FFT 唯一後端是 NE10，
-**100% 零 malloc**——`audiolib` 的 vendored patch P0001（+P0003 硬化）讓 NE10 的
-R2C/C2R twiddle cfg 從呼叫端 pool 切出（`ne10_fft_init_r2c_float32_ext`），handle、
-work buffer、twiddle cfg 三者都在 pool 內，`fft_init()` 到 `fft_destroy()` 全程零 heap；
-**每幀音訊路徑零 malloc**。已在 arm64（Apple Silicon）上原生編譯 + 驗證 mem==malloc
-byte-for-byte。
+`c_impl/Makefile` 直接連結；本 repo 不含 NE10 原始碼副本）。FFT 唯一後端是 NE10；handle、
+work buffer、twiddle cfg 都在 pool 內，`fft_init()` 到 `fft_destroy()` 全程零 heap，
+**每幀音訊路徑零 malloc**。
 
-> **Note:** `make` 預設啟用 6 個已驗證優化（近似數學的誤差依核准預算驗收），不需要手動指定。
+> **Note:** `make` 預設啟用 6 個優化開關（近似數學的誤差依核准預算驗收），不需要手動指定。
 
 這裡的「fast math」指 `fast_math.h` 與 `USE_*` 選項的近似函式，並非編譯器
 `-ffast-math`；後者會被 Makefile 拒絕。std-math C 對 Python 與出貨 C 對
 std-math C 分別用數值容差／核准近似預算驗收，不能將出貨結果宣稱為 Python bit-exact。
 
-### FP-contraction 統一政策
+### FP-contraction 政策
 
-`-ffp-contract=off -fno-math-errno` 是**橫跨四個 repo 的統一政策**（`audiolib`、
-`NR/c_impl`、`AEC/c_impl`、`Audio_ALG/pipelines`）：每個 Makefile 編譯的每一個
-TU——自己的原始碼**與**vendored 的 NE10 C/C++ 一律套用這兩個 flag。本 repo
-無自己的 C++ TU（`CXXFLAGS` 只是 CFG_SIG payload-coverage 佔位，見 Makefile
-註解），所以只有 `CFLAGS` 需要這個 flag。它被附加在 `CFLAGS` 組裝的**最後一步**
-（`EXTRA_CFLAGS`、DEBUG-vs-預設優化區塊、`WERROR` 全部疊加完之後），確保呼叫端傳
-的任何 flag 都不能蓋過它；同時在 parse time 直接擋掉 `EXTRA_CFLAGS`（或
-`CFLAGS=` override）內含 `-Ofast`/`-ffast-math`/`-ffp-contract=<任意值>`：
-
-```
-$ make EXTRA_CFLAGS=-ffast-math
-Makefile:218: *** FP policy conflict: CFLAGS/CXXFLAGS/CPPFLAGS/EXTRA_CFLAGS contains -ffast-math; this repo pins -ffp-contract=off; remove -ffast-math from CFLAGS/CXXFLAGS/CPPFLAGS/EXTRA_CFLAGS.  Stop.
-```
-
-`../audiolib/common/scripts/audit_fp_contract.sh` 是 disassembly 等級的驗證：反組譯
-本 repo 的 `anr.o`/`noise_estimator.o`/`spp_estimator.o`。SIMD=1（AArch64）時這三個
-object 含 NEON 程式碼——`anr.o`、`spp_estimator.o` 與 `noise_estimator.o` 使用
-`audiolib/common/utility/simd_kernels.h` 的 exp/EMA kernel，`noise_estimator.o` 另含
-`noise_estimator_min_ordered` 的 NEON 最小值搜尋——但只用不融合的 vmul/vadd/vsub 與比較/選擇指令，
-沒有顯式 `fmaf()`/`fma()`/`vfmaq_f32` 呼叫。SIMD=0（`-DSIMD_KERNELS_FORCE_SCALAR`）時不編入
-這些 NEON intrinsic 路徑，但編譯器的自動向量化仍可能產生向量指令，同樣不含融合指令。若出現任何
-fmadd/fmsub/fnmadd/fnmsub/fmla/fmls 指令即判定失敗——那正是編譯器「自行」融合
-`a*b+c` 的訊號，也正是這個 flag 存在的目的。詳見該腳本 header 的完整 scoping 說明。
+`-ffp-contract=off -fno-math-errno` 是四個 repo（`audiolib`、`NR/c_impl`、`AEC/c_impl`、
+`Audio_ALG/pipelines`）的統一政策，套用到每個 TU（含 vendored 的 NE10）。它附加在
+`CFLAGS` 組裝的最後一步，呼叫端的 flag 蓋不掉；Makefile 在 parse time 拒絕
+`EXTRA_CFLAGS`（或 `CFLAGS=`）內的 `-Ofast`／`-ffast-math`／`-ffp-contract=<任意值>`
+（`FP policy conflict`）。`../audiolib/common/scripts/audit_fp_contract.sh` 反組譯
+`anr.o`／`noise_estimator.o`／`spp_estimator.o`，出現 fmadd／fmsub／fnmadd／fnmsub／
+fmla／fmls 即失敗；其 header 說明檢查範圍。
 
 ## 編譯開關說明
 
@@ -213,22 +186,22 @@ libm 呼叫，位元結果不變但速度慢很多。ARMv7 Advanced SIMD 會把 
 NaN 取代 NaN payload，因此 ARM32 上 `SIMD=1` 與 `SIMD=0` 對這類值可能不同；只有 NE10 NEON
 FFT（以及 AEC 在具硬體 FMA 的核心上的 delay matched filter）受影響；NR 本身在 ARM32 為 C。
 
-### 預設啟用（數學等價，`make` 即啟用）
+### 預設啟用（`make` 即啟用）
 
-| 開關 | 說明 | 效果 | 相關度 |
-|------|------|------|--------|
-| `USE_FAST_GAIN_SMOOTHING` | 在 log 域直接 clamp，省略 exp→log 轉換 | 每頻點省 ~150 cycles | 公式等價；fast-math 下不保證 bit-exact |
-| `USE_SHARED_XI_RATIO` | SPP 和 Gain 共用 v 計算結果 | 每頻點省 1 次除法 | 公式等價；≤1 ulp，不保證 bit-exact |
-| `USE_OPTIMIZED_MIN_BUFFER` | MCRA 最小值緩衝改為連續記憶體佈局 | 改善 cache 效率 | 100% |
-| `USE_OPTIMIZED_E1` | E1(v) 指數積分分支重排 + 共用 log10 | 每頻點省 ~50 cycles | 100% |
-| `USE_SINGLE_CLAMP` | 移除冗餘的 gain clamp（僅在 `USE_FAST_GAIN_SMOOTHING` **關閉**時有作用——預設兩者皆開,此 flag 守的分支不會被編譯,等於 no-op;FAST_GAIN_SMOOTHING 的 log-域 clamp 已結構性避免 double-clamp） | (預設組合下無效果) | 100% |
-| `USE_INCREMENTAL_MIN` | MCRA 增量最小值追蹤（O(1) 平均） | 省 ~59K cycles/幀 | 100% |
+| 開關 | 說明 | 相關度 |
+|------|------|--------|
+| `USE_FAST_GAIN_SMOOTHING` | 在 log 域直接 clamp，省略 exp→log 轉換 | 公式等價；fast-math 下不保證 bit-exact |
+| `USE_SHARED_XI_RATIO` | SPP 和 Gain 共用 v 計算結果，每頻點省 1 次除法 | 公式等價；≤1 ulp，不保證 bit-exact |
+| `USE_OPTIMIZED_MIN_BUFFER` | MCRA 最小值緩衝使用連續記憶體佈局 | 100% |
+| `USE_OPTIMIZED_E1` | E1(v) 指數積分分支重排 + 共用 log10 | 100% |
+| `USE_SINGLE_CLAMP` | 移除冗餘的 gain clamp；只在 `USE_FAST_GAIN_SMOOTHING` **關閉**時有作用，預設組合下是 no-op | 100% |
+| `USE_INCREMENTAL_MIN` | MCRA 增量最小值追蹤（平均 O(1)） | 100% |
 
 ### 手動啟用
 
-| 開關 | 說明 | 效果 | 相關度 |
-|------|------|------|--------|
-| `USE_FAST_PERCENTILE` | 使用 mean×0.23 近似目前設定的 30th percentile | 只省 `num_init_frames` 個 float 的 percentile scratch（啟動列已與最小值 ring 共用儲存） | 近似模式，需獨立做品質驗證 |
+| 開關 | 說明 | 相關度 |
+|------|------|--------|
+| `USE_FAST_PERCENTILE` | 使用 mean×0.23 近似目前設定的 30th percentile，只省 `num_init_frames` 個 float 的 percentile scratch（啟動列已與最小值 ring 共用儲存） | 近似模式，需獨立做品質驗證 |
 
 ### 調試用
 
@@ -245,75 +218,31 @@ FFT（以及 AEC 在具硬體 FMA 的核心上的 delay matched filter）受影�
 | 嵌入式/最小記憶體 | `make EXTRA_CFLAGS="-DUSE_FAST_PERCENTILE"` |
 | 嵌入式/零 malloc（呼叫端提供記憶體） | `make mem`（`_get_mem_size`/`_init`，見上「靜態記憶體版本」） |
 
-## 嵌入式優化詳解
+## 實作要點
 
-### 優化 1：消除 sqrtf — magnitude 到 power 域
-
-`process_frame` 在 power 域運算，不對 513 頻點計算 `sqrtf(power[k])`。
-下游所有使用點都需要 magnitude 的**平方**，sqrt 與 ² 互相抵銷，所以直接計算：
-
-```
-enhanced_psd[k] = gain[k]² × power[k]
-```
-
-最終音訊重建用 `fft_apply_gain(spectrum, gain)` 直接乘 complex spectrum，不需要 magnitude。
-**magnitude 陣列只在 `#ifdef DEBUG_DUMP` 時計算**。
-
-### 優化 2：MCRA 增量最小值追蹤
-
-MCRA 噪聲估計的瓶頸是每幀掃描 ring buffer（L=32 幀）找最小值：
-513 頻點 × 32 幀 = **16,416 次比較/幀**。
-
-增量追蹤利用 ring buffer 的特性，只在必要時重掃描：
-
-```
-寫入新值 new_S 到 ring buffer，覆蓋舊值 old_val：
-
-情況 1: new_S ≤ S_min  →  S_min = new_S          (O(1), ~60% 幀)
-情況 2: old_val ≈ S_min  →  重掃描找新 S_min      (O(L), ~5% 幀)
-情況 3: 其他            →  S_min 不變              (O(1), ~35% 幀)
-
-平均: ~95% 的幀只需 O(1)，從 61,560 比較降至 ~513 比較
-```
-
-### 優化 3：迴圈合併
-
-**noise_estimator.c** — 6 個獨立 for-k 迴圈 → 2 個 + 場景偵測：
-- Loop A: S 時間平滑 + min buffer 寫入 + min 追蹤
-- Loop C: SPP indicator + 噪聲更新
-- 場景轉換偵測：高頻 gamma + spectral flatness（迴圈後純量判斷）
-
-**anr.c** — gain_prev save + enhanced_psd_prev save
-
-純結構重排，改善 cache locality，bit-exact。
-
-### 預估節省量
-
-| 優化 | cycles 節省/幀 |
-|------|--------------|
-| 預設啟用 6 flag | ~138K |
-| 消除 sqrtf (513 次) | ~25K |
-| MCRA 迴圈合併 | ~5K |
-| 增量 min tracking | ~59K |
-| process_frame 迴圈合併 | ~3K |
-| **合計** | **~230K** |
-
-以 Cortex-M4F @168MHz 估算：每 20ms 幀可省 ~1.4ms。
+- **power 域運算**：增益計算在 power 域進行，下游需要的是 magnitude 的平方，所以
+  `enhanced_psd[k] = gain[k]² × power[k]`，不需對每個頻點做 `sqrtf`；最終重建用
+  `fft_apply_gain(spectrum, gain)` 直接乘複數頻譜。
+- **MCRA 增量最小值追蹤**：瓶頸是每幀掃描 ring buffer（L 幀；16 ms 錨點下為 32 幀）找最小值。
+  寫入新值 `new_S` 覆蓋舊值 `old_val` 時：`new_S ≤ S_min` → `S_min = new_S`（O(1)）；
+  `old_val ≈ S_min` → 重掃描找新 `S_min`（O(L)）；其他情況 `S_min` 不變（O(1)）。
+  多數幀只需 O(1)。
 
 ## 使用方法
 
 ### 命令列工具
 
 ```bash
-./bin/denoise_wav input.wav output.wav                     # 預設 balanced
-./bin/denoise_wav input.wav output.wav --nr-mode moderate  # 強度：mild|moderate|balanced|aggressive（或 0|1|2|3）
-./bin/denoise_wav input.wav output.wav --bypass            # 不處理，原樣複製
+# 執行檔在 bin/<backend>-<config-hash>/（`make -s print-bin-dir` 取得）
+denoise_wav input.wav output.wav                     # 預設 balanced
+denoise_wav input.wav output.wav --nr-mode moderate  # 強度：mild|moderate|balanced|aggressive（或 0|1|2|3）
+denoise_wav input.wav output.wav --bypass            # 不處理，原樣複製
 ```
 
 **強度軸：**
-- `--nr-mode {mild|moderate|balanced|aggressive}`，或同順序的數字 `0|1|2|3`（`anr_config_for_mode`；`anr_nr_mode_from_name()` 兩種寫法都接受）：全消，越強壓越深。
-  4 級深度階梯 g_min = −20 / −25 / −30 / −40 dB（振幅 /20）。所有預設共用 `alpha_xi=0.92`
-  （2026-07 musical-noise fix：DD ξ 平滑，壓掉 SPP 抖動＝musical noise；對語音幾乎零成本）。
+- `--nr-mode {mild|moderate|balanced|aggressive}`，或同順序的數字 `0|1|2|3`（`anr_config_for_mode`；`anr_nr_mode_from_name()` 兩種寫法都接受）：越強壓越深。
+  4 級深度階梯 g_min = −20 / −23 / −25 / −28 dB（振幅 /20）。所有預設共用 `alpha_xi`
+  （DD ξ 平滑，壓掉 SPP 抖動＝musical noise；對語音幾乎零成本）。
 
 ### 程式碼整合（freq-domain：caller 自備 FFT / 窗 / OLA）
 
@@ -375,7 +304,7 @@ length、SPP 的 a-priori-SNR 歷史、增益平滑歷史，全部繼續跑。�
 > canonical preset 交給
 > `anr_set_mode()`，在這種實例上會被**拒絕**（它的 `L` 不同）——這正是兩條
 > pipeline 各自提供 setter（`audio_pipeline_set_nr_mode()` /
-> `four_aec_nr_res_set_nr_mode()`）重組完整組態再呼叫 `anr_reconfigure()` 的原因。
+> `audio_pipeline_4ch_set_nr_mode()`）重組完整組態再呼叫 `anr_reconfigure()` 的原因。
 
 ```c
 /* standalone：直接換強度，噪聲底與平滑歷史保留 */
@@ -421,13 +350,13 @@ python3 ../python/tools/parity_nr.py compare --ref /tmp/parity_in.bin --c-gains 
 ```
 
 NRP2 dump header 會攜帶 `sample_rate`；C 端據此建立完全相同的 signal grid
-與 wall-clock-retimed EMA/count。仍可讀舊 NRP1（視為 16 kHz）。實測
+與 wall-clock-retimed EMA/count。NRP1 header 視為 16 kHz。實測
 （48 kHz babble_10dB.wav，3480 幀 × 513 bin）：
 
 | build | worst &#124;Δgain&#124; | median &#124;Δgain&#124; | mean &#124;Δgain&#124; |
 |-------|--------------|---------------|-------------|
-| standard-math (`-DUSE_STANDARD_MATH`) | 7.212e-6 | 2.235e-8 | 5.028e-8 |
-| fast-math (預設) | 3.176e-3 | 7.829e-5 | 1.635e-4 |
+| standard-math (`-DUSE_STANDARD_MATH`) | 1.192e-5 | 1.490e-8 | 4.593e-8 |
+| fast-math (預設) | 7.277e-3 | 1.113e-4 | 2.268e-4 |
 
 上表的 standard-math 使用 `DEBUG=0 EXTRA_CFLAGS=-DUSE_STANDARD_MATH`，
 與上方 `DEBUG=1` 指令不同；DEBUG=1 同時關閉六個 production 優化開關。
@@ -477,12 +406,11 @@ Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差
 ### 不建議在 release 動
 - `alpha_xi` / `alpha_s` / `alpha_d` / `L` / `alpha_p` — 內部穩定性依賴這些預設
 - `num_init_frames` — 依 grid 換算為約 200 ms（例如 16 kHz/256 為 25 frames），改短會讓底噪估計 under-fit
-- 編譯開關：v4.2 recommended configuration 即 `make`（已啟用 6 個公式等價／回歸驗證過的優化；其中 fast gain smoothing 在近似數學下不宣稱 bit-exact）
+- 編譯開關：出貨組態即 `make`（啟用 6 個優化開關；其中 fast gain smoothing 在近似數學下不宣稱 bit-exact）
 
 ### 當這些都不夠
 - 檢查是否屬於「不適用情境」—— 本模組 by design 無法處理風聲 / 衝擊 / 重疊干擾
-- 用 `make debug` 重編並開啟 `DEBUG_DUMP` 輸出 `noise_psd / spp / xi / gamma / gain`，與 Python 逐幀對比
-- 註：Python 與 C 皆不含「V4 OMLSA + wind handler」子系統（adaptive-q 亦驗證 NO-SHIP）
+- 用 `make debug` 重編（標準數學），以 `anr_get_noise_psd()`／`anr_get_spp()`／`anr_get_gain()` 讀出逐幀值，與 Python 逐幀對比（parity harness 見上）
 
 ## 配置參數
 
@@ -497,7 +425,7 @@ Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差
 | `frame_size` | 等於 `fft_size` | 不補零的 2 次方分析窗；8k→128（可選 256）、16k→256（可選 512）、48k→1024 |
 | `hop_size` | `frame_size / 2` | 固定 50% overlap |
 | `fft_size` | 依 rate/grid 選擇 | 嚴格等於 frame（不將 20 ms frame 補到下一個 2 次方） |
-| `alpha_xi` | 0.92 | 先驗 SNR (ξ) DD 平滑；2026-07 musical-noise fix（was 0.88） |
+| `alpha_xi` | 0.92 | 先驗 SNR (ξ) DD 平滑 |
 | `q` | 0.52 | balanced 語音先驗機率 |
 | `xi_min_db` | -10 | balanced 先驗 SNR 下限 (dB) |
 | `alpha_s` | 0.95 | MCRA 時間平滑 |
@@ -507,7 +435,7 @@ Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差
 | `scene_change_threshold_db` | 10.0 | 場景轉換高頻 gamma 閾值 (dB) |
 | `scene_change_min_frames` | 5 | 場景轉換需連續幀數 |
 | `scene_change_blend` | 0.5 | 場景轉換噪聲重置混合比 |
-| `scene_change_flatness_threshold` | 0.4 | 場景轉換高頻 spectral flatness 閾值 (Fix #6, v4.2) |
+| `scene_change_flatness_threshold` | 0.4 | 場景轉換高頻 spectral flatness 閾值 |
 | `g_min_db` | -25.0 | balanced 最小增益（**audio 振幅 dB，/20**；約 0.056 floor） |
 | `alpha_g` | 0.88 | 增益平滑因子 |
 | `alpha_attack` | 0.15（16 ms 錨點） | 非對稱平滑 Attack；建構時依 grid retime |
@@ -532,12 +460,13 @@ Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差
 ```
 c_impl/
 ├── include/
-│   ├── anr.h    # 主要 API（malloc + 靜態記憶體 create/get_mem_size/init）
-│   ├── anr_types.h       # 配置結構和預設值
+│   ├── anr.h                  # 主要 API（malloc + 靜態記憶體 create/get_mem_size/init）
+│   ├── anr_types.h            # 配置結構和預設值
 │   ├── noise_estimator.h      # 噪聲 PSD 追蹤
 │   └── spp_estimator.h        # SPP 估計
 ├── src/
-│   ├── anr.c    # 主模組（含 MMSE-LSA 增益計算）
+│   ├── anr.c                  # 主模組（含 MMSE-LSA 增益計算）
+│   ├── anr_internal.h
 │   ├── noise_estimator.c
 │   └── spp_estimator.c
 ├── example/
@@ -559,10 +488,9 @@ c_impl/
 
 ## 記憶體使用
 
-- **基本使用** (16 kHz, USE_FAST_PERCENTILE)：~50 KB
-- **精確 percentile** (`make` 預設不啟用 USE_FAST_PERCENTILE)：多 `num_init_frames` 個 float（啟動列與最小值 ring 共用同一塊，取兩者較大者）
-- **48 kHz** (n_freqs=513, L=32)：~130 KB；MCRA `min_buffer` 約 ~66 KB
-- **v4.2**：Fix #3 的 `noise_psd_prev` 每實例 +`n_freqs × 4` bytes（16 kHz ~1 KB）
+- **16 kHz/256**（balanced，`make` 預設）：`anr_get_mem_size()` = 45,344 B；加 `-DUSE_FAST_PERCENTILE` 為 45,200 B（只少 percentile scratch，啟動列與最小值 ring 共用同一塊，取兩者較大者）
+- **48 kHz/1024**（n_freqs=513，L=48）：144,576 B；MCRA `min_buffer`（`L × n_freqs × 4`）= 98,496 B
+- 另需 `fft_get_mem_size()`（256 → 7,152 B；1024 → 26,352 B），各 grid 數值見 `docs/html/nr_c_api.html`
 
 
 ## 參考文獻

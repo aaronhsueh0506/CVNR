@@ -1,19 +1,13 @@
-"""arm 4: post-hoc removal of the echo-explained fraction of a noise rise.
+"""Post-hoc removal of the echo-explained fraction of a noise rise
+(McraNoiseEstimator `remove_echo_explained_rise` / `extra_noise_psd`).
 
-Context (see python/core/noise_estimators/mcra.py module docstring and
-McraNoiseEstimator.update()'s `remove_echo_explained_rise` / `extra_noise_psd`):
-the AEC+NR pipeline folds the AEC residual-echo PSD R²(f) into a LOCAL COPY of
-the noise floor before computing SPP/gain (v3_2_mmse_lsa.denoise_spectrum).
-That local copy is not supposed to pollute the tracker's own noise_psd, but
-with `accept_external_spp=True` (production default) the SPP computed FROM
-that polluted copy is fed straight back into update()'s own `spp` parameter,
-so the tracker absorbs power faster during echo-active periods. arm 4 does
-not touch that update rate -- it runs the unmodified recursion first, then
-subtracts back out, per bin, the fraction of THIS frame's rise that the
-supplied extra (R²) power can explain.
+The AEC+NR pipeline folds the residual-echo PSD into a local copy of the noise floor before
+computing SPP/gain. With `accept_external_spp=True` the SPP computed from that copy is fed back
+into update(), so the tracker absorbs power faster during echo. The correction leaves that rate
+alone: it runs the unmodified recursion, then subtracts, per bin, the part of this frame's rise
+that the supplied extra power explains.
 
-These tests check the mechanism in isolation, directly against the formula
-(not against any acceptance bar/corpus -- see the campaign memory for that).
+The tests check the mechanism directly against the formula.
 """
 import os
 import sys
@@ -106,8 +100,8 @@ def test_rising_bin_matches_hand_computed_correction():
     magnitude = np.array([50.0] * 8)  # power = 2500, far above previous=1.0
     extra = np.array([200.0] * 8)     # explains part of the 2499 excess
 
-    # Unmodified run to get "previous" (pre-update) and "tracked" (post-update,
-    # no correction) independently of arm 4's own bookkeeping.
+    # Unmodified run gives "previous" (pre-update) and "tracked" (post-update, no correction)
+    # independently of the correction path.
     plain = _make_estimator(remove_echo_explained_rise=False)
     previous = plain.noise_psd.copy()
     tracked_unmodified = plain.update(magnitude, spp=spp)
@@ -142,10 +136,9 @@ def test_large_extra_clamps_fraction_to_one():
 
 
 def test_scene_change_write_is_also_corrected():
-    """The snapshot is taken before step 7 (scene-change reset) and the
-    correction is applied after it, so a reset-driven jump in noise_psd is
-    corrected by the same proportional rule as an ordinary rise -- arm 4
-    wraps the WHOLE update() call, it does not special-case the reset path."""
+    """The snapshot is taken before the scene-change reset and the correction is applied after
+    it, so a reset-driven jump in noise_psd is corrected by the same proportional rule as an
+    ordinary rise."""
     est = _make_estimator(
         remove_echo_explained_rise=True,
         scene_change_threshold_db=0.1,   # trivially easy to trigger
@@ -155,8 +148,8 @@ def test_scene_change_write_is_also_corrected():
     )
     previous = est.noise_psd.copy()
 
-    # A broadband, flat loud frame in the upper half triggers the scene-change
-    # write at step 7 (hi_gamma large, flatness high for a flat spectrum).
+    # A broadband, flat loud frame in the upper half triggers the scene-change write
+    # (hi_gamma large, flatness high for a flat spectrum).
     magnitude = np.array([1.0, 1.0, 1.0, 1.0, 50.0, 50.0, 50.0, 50.0])
     extra = np.array([0.0, 0.0, 0.0, 0.0, 300.0, 300.0, 300.0, 300.0])
 
@@ -185,19 +178,14 @@ def test_scene_change_write_is_also_corrected():
     # The high bins (extra > 0) should be pulled back below the uncorrected
     # scene-change write.
     assert np.all(tracked_arm4[4:] < tracked_unmodified[4:])
-    # The low bins (extra == 0) are untouched by arm 4.
+    # The low bins (extra == 0) are untouched.
     np.testing.assert_array_equal(tracked_arm4[:4], tracked_unmodified[:4])
 
 
 # ---------------------------------------------------------------------------
-# Scene-change-trigger interaction fix: the trigger's hi_gamma was computed
-# on raw, echo-included power, so it never cleared while extra_noise_psd
-# explained most of a bin's rise -- firing every scene_change_min_frames for
-# the whole echo episode instead of once. These tests cover the fix:
-# hi_gamma (energy test only, not flatness) is computed from echo-corrected
-# power when arm 4 is active, and S_min/min_buffer are stomped with the same
-# corrected value a fire's noise_psd write already receives post-hoc,
-# instead of raw (echo-polluted) self.S.
+# Scene-change trigger with the correction active: hi_gamma (energy test only, not flatness) uses
+# echo-corrected power, and a fire seeds S_min/min_buffer with the same corrected value as the
+# noise_psd write, not the raw (echo-polluted) S.
 # ---------------------------------------------------------------------------
 
 N_FREQS_HAZARD = 16
@@ -220,12 +208,9 @@ def _make_hazard_estimator(remove_echo_explained_rise, **kwargs):
 
 def _drive_echo_dominated_rise(est, extra_noise_psd, n_frames=200, echo_level=50.0,
                                 echo_frac=0.95, seed=0):
-    """Feed a sustained hi-band rise that is `echo_frac` explained by
-    extra_noise_psd (when supplied) -- the DT-onset over-estimation shape
-    that triggers the hazard. Returns
-    the number of scene-change FIRES observed (a drop of scene_change_count
-    to 0 after it was > 0, i.e. a committed reset, whether the first
-    confirm or a within-episode re-fire)."""
+    """Feed a sustained hi-band rise that is `echo_frac` explained by extra_noise_psd (when
+    supplied). Returns the number of scene-change fires observed (scene_change_count dropping to
+    0 after it was > 0, i.e. a committed reset)."""
     rng = np.random.RandomState(seed)
     fires = 0
     for _ in range(n_frames):
@@ -246,12 +231,9 @@ def _drive_echo_dominated_rise(est, extra_noise_psd, n_frames=200, echo_level=50
 
 
 def test_echo_dominated_rise_no_longer_refires_repeatedly():
-    """The hazard, reproduced and fixed: when extra_noise_psd explains 95%
-    of a sustained hi-band rise, the trigger must not refire every
-    scene_change_min_frames for the whole episode. A non-echo control (same
-    stimulus, remove_echo_explained_rise off) legitimately fires once as the
-    noise floor converges -- that is normal scene-change behaviour, not the
-    hazard, and is used here as the sanity baseline."""
+    """When extra_noise_psd explains 95% of a sustained hi-band rise, the trigger must not refire
+    every scene_change_min_frames for the whole episode. The non-echo control (same stimulus,
+    remove_echo_explained_rise off) legitimately fires once as the noise floor converges."""
     est_off = _make_hazard_estimator(remove_echo_explained_rise=False)
     fires_off = _drive_echo_dominated_rise(est_off, extra_noise_psd=False)
     assert fires_off <= 2, (
@@ -267,12 +249,9 @@ def test_echo_dominated_rise_no_longer_refires_repeatedly():
 
 
 def test_hi_gamma_uses_corrected_power_directly():
-    """Unit-level check of the fix itself (not just its symptom): construct
-    one frame where raw hi-band power alone clears scene_change_threshold
-    but the echo-corrected power does not, and confirm the trigger does NOT
-    fire when remove_echo_explained_rise is active with that extra -- while
-    the identical raw stimulus WOULD fire with the flag off (proving this
-    is the trigger seeing corrected power, not some other suppression)."""
+    """One frame whose raw hi-band power clears scene_change_threshold but whose echo-corrected
+    power does not: the trigger must not fire with remove_echo_explained_rise active, while the
+    identical raw stimulus fires with the flag off."""
     threshold_db = 10.0
     est_off = _make_hazard_estimator(remove_echo_explained_rise=False,
                                       scene_change_threshold_db=threshold_db,
@@ -294,11 +273,9 @@ def test_hi_gamma_uses_corrected_power_directly():
     extra[HI_START_HAZARD:] = extra_hi
     spp = np.full(N_FREQS_HAZARD, 0.3)
 
-    # A fire stomps S_min/min_buffer with the just-smoothed S (hi band well
-    # above noise_floor); if it does NOT fire, S_min stays at its init level
-    # (min_buffer's other rows are still the init fill) -- so S_min's hi
-    # band staying at noise_floor is a direct, mechanism-level probe for
-    # "did not fire" that does not depend on any confirm-only bookkeeping.
+    # A fire seeds S_min/min_buffer with the just-smoothed S (hi band well above noise_floor);
+    # without a fire S_min stays at its init level, so S_min's hi band staying at noise_floor
+    # probes "did not fire" directly.
     est_off.update(magnitude.copy(), spp=spp)
     assert not np.allclose(est_off.S_min[HI_START_HAZARD:], noise_floor), (
         "control: the raw stimulus alone must clear the ordinary trigger")
@@ -310,13 +287,10 @@ def test_hi_gamma_uses_corrected_power_directly():
 
 
 def test_s_min_and_min_buffer_corrected_on_arm4_fire():
-    """When a fire DOES happen with remove_echo_explained_rise active (the
-    rise is only partly echo-explained, so the trigger legitimately clears),
-    S_min/min_buffer must be seeded with the same echo-corrected value the
-    noise_psd write already receives post-hoc -- not raw (echo-polluted)
-    self.S. Uses a single-frame, deterministic trigger (scene_change_min_
-    frames=1) so S_min is checked immediately after the fire, before later
-    frames' ordinary smoothing can wash out the difference."""
+    """When a fire happens with remove_echo_explained_rise active (the rise is only partly
+    echo-explained), S_min/min_buffer are seeded with the same echo-corrected value as the
+    noise_psd write, not the raw S. scene_change_min_frames=1 makes the trigger deterministic so
+    S_min is checked right after the fire."""
     est = _make_hazard_estimator(remove_echo_explained_rise=True,
                                   scene_change_threshold_db=0.1,
                                   scene_change_min_frames=1,
@@ -338,19 +312,15 @@ def test_s_min_and_min_buffer_corrected_on_arm4_fire():
     for row in range(est.min_buffer.shape[0]):
         np.testing.assert_allclose(est.min_buffer[row], expected_S_for_reset,
                                     rtol=1e-10)
-    # The low (non-echo) bins are untouched by the correction (extra == 0
-    # there), matching the noise_psd correction's own untouched-bin rule.
+    # The low (non-echo) bins are untouched by the correction (extra == 0 there).
     np.testing.assert_allclose(est.S_min[:HI_START_HAZARD],
                                 (0.9 * pre_S + 0.1 * power)[:HI_START_HAZARD],
                                 rtol=1e-10)
 
 
 def test_arm4_fire_correction_bit_exact_when_disabled():
-    """Mutation check: with remove_echo_explained_rise=False, the new
-    S_for_reset branch must be a pure pass-through (S_for_reset is self.S),
-    reproducing test_scene_change_write_is_also_corrected's unmodified
-    sibling exactly -- i.e. the problem-1 fix changes nothing on the
-    default-off path."""
+    """With remove_echo_explained_rise=False the fire seeds S_min/min_buffer from the raw S and
+    extra_noise_psd is ignored: the results are identical with and without it."""
     kwargs = dict(scene_change_threshold_db=0.1, scene_change_min_frames=1,
                   scene_change_flatness_threshold=0.0, scene_change_blend=0.5)
     est_a = _make_hazard_estimator(remove_echo_explained_rise=False, **kwargs)

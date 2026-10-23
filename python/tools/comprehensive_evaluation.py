@@ -2,7 +2,7 @@
 """
 完整評估系統 - 使用 Loizou 2008 專業指標
 
-評估所有七種降噪方法並與 Speex/RNNoise 對標
+評估 OUR_METHODS 中的降噪方法並與 Speex/RNNoise 對標
 
 評估指標:
 1. segSNR (Loizou)      - 帶 VAD 的分段 SNR
@@ -22,7 +22,6 @@
 import sys
 import os
 
-# Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
@@ -32,7 +31,6 @@ import csv
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-# 導入 Loizou 評估指標
 from utils.metrics_loizou import (
     composite_measure,
     segmental_snr,
@@ -40,24 +38,19 @@ from utils.metrics_loizou import (
     weighted_spectral_slope
 )
 
-# 導入 PESQ/STOI
 from utils.metrics import calculate_pesq, calculate_stoi
 
-# 評估配置
 EVAL_SR = 16000  # 評估採樣率
 TRIM_SECONDS = 0.5  # 我們的方法需要 trim 的時間
 
-# 測試用例
 TEST_CASES = [
     'babble_0dB', 'babble_5dB', 'babble_10dB', 'babble_15dB',
     'car_0dB', 'car_5dB', 'car_10dB', 'car_15dB',
     'street_0dB', 'street_5dB', 'street_10dB', 'street_15dB'
 ]
 
-# 我們的降噪方法
 OUR_METHODS = ['V1', 'V2', 'V3', 'V3-2', 'V3-3', 'V3-4']
 
-# Benchmark 方法
 BENCHMARK_METHODS = {
     'Speex': 'test_wav/wav/benchmark_wav/speex/speexdsp',
     'RNNoise': 'test_wav/wav/benchmark_wav/rnnoise/rnnoise'
@@ -80,15 +73,12 @@ def load_and_prepare_audio(
     Returns:
         (audio_16k, 16000): Resample 到 16kHz 的音頻和採樣率
     """
-    # 加載音頻（保持原始採樣率）
     audio, sr = librosa.load(file_path, sr=None)
 
-    # Trim 前 0.5s（如果需要）
     if needs_trim:
         skip_samples = int(TRIM_SECONDS * sr)
         audio = audio[skip_samples:]
 
-    # Resample 到 16kHz 用於評估
     if sr != EVAL_SR:
         audio_16k = librosa.resample(audio, orig_sr=sr, target_sr=EVAL_SR)
     else:
@@ -114,17 +104,14 @@ def evaluate_single_file(
         'test_case': test_case
     }
 
-    # 對齊長度
     min_len = min(len(clean_16k), len(enhanced_16k))
     clean_seg = clean_16k[:min_len]
     enhanced_seg = enhanced_16k[:min_len]
 
     try:
-        # 1. Loizou 復合指標 (segSNR, fwSegSNR, WSS, global_SNR)
         loizou_metrics = composite_measure(clean_seg, enhanced_seg, EVAL_SR)
         results.update(loizou_metrics)
 
-        # 2. PESQ
         try:
             pesq_score = calculate_pesq(clean_seg, enhanced_seg, EVAL_SR)
             results['PESQ'] = pesq_score
@@ -132,7 +119,6 @@ def evaluate_single_file(
             print(f"    ⚠️  PESQ failed for {method_name} - {test_case}: {e}")
             results['PESQ'] = None
 
-        # 3. STOI
         try:
             stoi_score = calculate_stoi(clean_seg, enhanced_seg, EVAL_SR)
             results['STOI'] = stoi_score
@@ -211,7 +197,6 @@ def calculate_averages(all_results: List[Dict]) -> Dict:
             if value is not None:
                 method_metrics[method][metric].append(value)
 
-    # 計算平均值
     averages = {}
     for method, metrics in method_metrics.items():
         averages[method] = {}
@@ -244,7 +229,6 @@ def print_averages_table(averages: Dict):
 
     print("=" * 100)
 
-    # 指標解讀
     print("\n指標解讀:")
     print("  segSNR, fwSegSNR, global_SNR: 越高越好 ⬆️  (目標: segSNR > 8.0 dB)")
     print("  WSS: 越低越好 ⬇️  (目標: < 50)")
@@ -272,11 +256,9 @@ def save_results(all_results: List[Dict], averages: Dict, output_dir: str = 'res
     """保存結果到文件"""
     os.makedirs(output_dir, exist_ok=True)
 
-    # 轉換為可序列化格式
     serializable_results = convert_to_serializable(all_results)
     serializable_averages = convert_to_serializable(averages)
 
-    # 1. 保存 JSON (詳細數據)
     json_file = os.path.join(output_dir, 'loizou_evaluation.json')
     with open(json_file, 'w', encoding='utf-8') as f:
         json.dump({
@@ -285,7 +267,6 @@ def save_results(all_results: List[Dict], averages: Dict, output_dir: str = 'res
         }, f, indent=2, ensure_ascii=False)
     print(f"\n✅ 詳細結果已保存: {json_file}")
 
-    # 2. 保存 CSV (表格數據)
     csv_file = os.path.join(output_dir, 'loizou_evaluation.csv')
     with open(csv_file, 'w', newline='', encoding='utf-8') as f:
         fieldnames = ['method', 'test_case', 'segSNR', 'fwSegSNR', 'global_SNR', 'WSS', 'PESQ', 'STOI']
@@ -296,7 +277,6 @@ def save_results(all_results: List[Dict], averages: Dict, output_dir: str = 'res
                 writer.writerow(result)
     print(f"✅ CSV 結果已保存: {csv_file}")
 
-    # 3. 保存 Markdown 報告
     md_file = os.path.join(output_dir, 'loizou_evaluation.md')
     with open(md_file, 'w', encoding='utf-8') as f:
         f.write("# Loizou 2008 完整評估報告\n\n")
@@ -343,18 +323,15 @@ def main():
 
     all_results = []
 
-    # 加載 clean 參考音頻（需要 trim）
     print("\n📁 加載 clean 參考音頻...")
     clean_file = 'test_wav/wav/clean.wav'
     clean_audio, clean_sr = librosa.load(clean_file, sr=None)
     skip_samples = int(TRIM_SECONDS * clean_sr)
     clean_trimmed = clean_audio[skip_samples:]
 
-    # Resample clean 到 16kHz
     clean_16k = librosa.resample(clean_trimmed, orig_sr=clean_sr, target_sr=EVAL_SR)
     print(f"✓ Clean 音頻已加載 (原始: {clean_sr} Hz, 評估: {EVAL_SR} Hz)")
 
-    # 評估 Benchmark 方法
     print("\n🎯 評估 Benchmark 方法...")
     for bench_name, bench_path_prefix in BENCHMARK_METHODS.items():
         print(f"\n  方法: {bench_name}")
@@ -366,10 +343,8 @@ def main():
                 continue
 
             try:
-                # Benchmark 方法不需要 trim
                 bench_16k, _ = load_and_prepare_audio(bench_file, clean_sr, needs_trim=False)
 
-                # 評估
                 result = evaluate_single_file(clean_16k, bench_16k, bench_name, test_case)
                 if result:
                     all_results.append(result)
@@ -377,7 +352,6 @@ def main():
             except Exception as e:
                 print(f"    ✗ {test_case}: ERROR - {e}")
 
-    # 評估我們的方法
     print("\n🎯 評估我們的七種方法...")
     for method in OUR_METHODS:
         print(f"\n  方法: {method}")
@@ -389,10 +363,8 @@ def main():
                 continue
 
             try:
-                # 我們的方法需要 trim 前 0.5s
                 our_16k, _ = load_and_prepare_audio(our_file, clean_sr, needs_trim=True)
 
-                # 評估
                 result = evaluate_single_file(clean_16k, our_16k, method, test_case)
                 if result:
                     all_results.append(result)
@@ -400,14 +372,11 @@ def main():
             except Exception as e:
                 print(f"    ✗ {test_case}: ERROR - {e}")
 
-    # 打印結果
     print_results_table(all_results)
 
-    # 計算並打印平均值
     averages = calculate_averages(all_results)
     print_averages_table(averages)
 
-    # 保存結果
     save_results(all_results, averages)
 
     print("\n" + "=" * 100)

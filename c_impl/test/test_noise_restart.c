@@ -1,10 +1,8 @@
 /* Exact-zero (digital silence) frames carry no noise statistics:
- *  - they do not count toward noise initialization, so a stream that starts with silence
- *    initializes on the signal that follows;
- *  - they do not advance the tracker, so a converged noise floor survives a silent stretch;
- *  - after five seconds of silence a stationary tone whose first frame is a waveform onset
- *    (partial frame at reduced power) reaches the same steady gain as the same tone without
- *    leading silence;
+ *  - they neither count toward initialization nor advance the tracker, so a stream that starts
+ *    with silence initializes on the signal that follows and a converged floor survives a gap;
+ *  - after five seconds of silence a stationary tone whose first frame is a partial onset frame
+ *    reaches the same steady gain as the same tone without leading silence;
  *  - the first frame after initialization is not pushed to the gain floor by an a-priori SNR
  *    estimate that lacks the floor of later frames.
  */

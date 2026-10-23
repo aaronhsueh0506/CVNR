@@ -40,7 +40,7 @@ void print_usage(const char* prog) {
     printf("  %s noisy.wav clean.wav --bypass\n", prog);
 }
 
-/* Periodic sqrt-Hann in float32; shared with the streaming front ends. */
+/* Periodic sqrt-Hann window. */
 static void build_sqrt_hann(float* w, int N) {
     ac_window_build(w, N);
 }
@@ -173,13 +173,13 @@ int main(int argc, char* argv[]) {
     printf("  FFT size: %d  Frequency bins: %d\n", fft_size, n_freqs);
     printf("  Window: sqrt(periodic Hann), sqrt-Hann^2 @ 50%% = COLA\n");
 
-    /* 5. Framing — same count/rule as Python FrameProcessor._split_frames:
-     *    n_frames = max(1, ceil(max(N-frame,0)/hop) + 1); last frame zero-padded. */
+    /* 5. Framing: n_frames = max(1, ceil(max(N - frame, 0) / hop) + 1); the last frame is
+     *    zero-padded. */
     int n_frames;
     if (n_samples <= frame_size) {
         n_frames = 1;
     } else {
-        n_frames = (n_samples - frame_size + hop - 1) / hop + 1;  /* ceil((N-frame)/hop)+1 */
+        n_frames = (n_samples - frame_size + hop - 1) / hop + 1;
     }
 
     int out_len = (n_frames - 1) * hop + frame_size;  /* OLA length before crop */

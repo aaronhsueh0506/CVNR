@@ -17,16 +17,11 @@ extern "C" {
 /* Opaque handle. */
 typedef struct AnrDenoiser AnrDenoiser;
 
-/* Lifecycle and processing. */
-
 /* Allocate a heap instance; returns NULL on invalid config or allocation failure. */
 AnrDenoiser* anr_create(const AnrConfig* config);
 
-/* Caller-owned instance and all noise-tracker/SPP state use one 16-byte-aligned block. Query
- * bytes once with anr_get_mem_size(config), then supply at least that size to anr_init(). Size
- * and carve order must match. Invalid config, alignment or capacity returns NULL (size query
- * returns 0).
- */
+/* Static-memory path: one 16-byte-aligned block of at least anr_get_mem_size(config) bytes
+ * holds the instance. Invalid config, alignment or capacity gives NULL (size query: 0). */
 size_t anr_get_mem_size(const AnrConfig* config);
 AnrDenoiser* anr_init(void* mem, size_t mem_size,
                                 const AnrConfig* config);
@@ -34,90 +29,67 @@ AnrDenoiser* anr_init(void* mem, size_t mem_size,
 /* Free a heap instance. Static instances retain caller-owned memory; destroy is a no-op. */
 void anr_destroy(AnrDenoiser* self);
 
-/* Process one Complex[n_freqs] spectrum; output has NR gain applied. Exact in-place aliasing
- * and disjoint buffers are supported; partial overlap is unsupported. Returns 0 on success, -1
- * for NULL input/output/handle.
- */
+/* Applies the gain to spectrum_in[n_freqs]; in-place or disjoint buffers only. Returns 0, or -1
+ * for NULL arguments. */
 int anr_process(AnrDenoiser* self,
                      const Complex*   spectrum_in,
                      Complex*         spectrum_out);
 
-/* Compute gain[n_freqs] without applying it. Optional extra_noise_psd[n_freqs] uses the input
- * power scale and augments only the SPP/SNR noise floor (N² + R²); the noise tracker follows
- * the input power independently. NULL extra_noise_psd selects ordinary NR. NULL gain_out skips
- * the copy; anr_get_gain() still exposes the result. Returns 0 on success, -1 for NULL
- * input/handle.
- */
+/* Computes gain[n_freqs] without applying it. Optional extra_noise_psd[n_freqs] (input power
+ * scale) raises only the SPP/SNR noise floor; the tracker still follows the input power. NULL
+ * gain_out skips the copy (see anr_get_gain). Returns 0, or -1 for NULL input/handle. */
 int anr_process_gain(AnrDenoiser* self,
                           const Complex*   spectrum_in,
                           const float*     extra_noise_psd,
                           float*           gain_out);
 
-/** Reset all internal state (call when switching audio streams). */
+/* Clears all internal state (use when switching audio streams). */
 void anr_reset(AnrDenoiser* self);
 
-/* Replace tuning scalars verbatim; no preset lookup, overlay composition or allocation. Grid,
- * L and num_init_frames must match the instance, and target must pass anr_validate_config().
- * Noise, minimum-ring, SPP and gain state are preserved. Call between hops, serialized with
- * processing; not thread-safe. Returns 0, or -1 with no writes for NULL, invalid config or
- * geometry mismatch.
- */
+/* Replaces the tuning scalars with target; noise, minimum-ring, SPP and gain state are kept.
+ * Grid, L and num_init_frames must match the instance and target must pass
+ * anr_validate_config(). Call between hops, not concurrently with processing. Returns 0, or -1
+ * with nothing written. */
 int anr_reconfigure(AnrDenoiser* self, const AnrConfig* target);
 
-/* Compose the canonical strength preset on the current grid, then reconfigure. Caller-specific
- * overlays require anr_reconfigure() instead.
- * Returns 0, or -1 for NULL, invalid mode or rejected config.
- */
+/* Applies the strength preset for the current grid through anr_reconfigure(). Returns 0, or -1
+ * for NULL, invalid mode or rejected config. */
 int anr_set_mode(AnrDenoiser* self, AnrMode mode);
 
-/* Read-only queries. */
-
-/** hop_size from config (samples; for caller reference only). */
+/* Read-only queries. Sizes are in samples; n_freqs = fft_size/2 + 1. */
 int anr_get_hop_size(const AnrDenoiser* self);
-
-/** frame_size from config (samples; for caller reference only). */
 int anr_get_frame_size(const AnrDenoiser* self);
-
-/** Number of frequency bins (fft_size/2 + 1). */
 int anr_get_n_freqs(const AnrDenoiser* self);
 
-/* Frequency-domain core latency: 0 samples. Caller accounts for window/FFT/overlap-add
- * latency.
- */
+/* Core latency in samples (0); the caller accounts for window/FFT/overlap-add. */
 int anr_get_latency(const AnrDenoiser* self);
 
-/** True once the noise estimator has completed its init frames. */
+/* True once the noise estimator has completed its init frames. */
 bool anr_is_initialized(const AnrDenoiser* self);
 
-/** Current Speech Presence Probability per bin [n_freqs]. */
+/* Speech presence probability per bin [n_freqs]. */
 const float* anr_get_spp(const AnrDenoiser* self, int* n_freqs);
 
-/** Current noise PSD estimate (power units) [n_freqs]. */
+/* Noise PSD estimate (power units) [n_freqs]. */
 const float* anr_get_noise_psd(const AnrDenoiser* self, int* n_freqs);
 
-/** The frame speech gate as applied (see ANR_SPEECH_PROTECT_ANCHOR_Q);
- * tracks anr_reconfigure(). */
+/* Frame speech gate in effect (ANR_SPEECH_PROTECT_ANCHOR_Q); follows anr_reconfigure(). */
 float anr_get_speech_protect_frame_threshold(const AnrDenoiser* self);
 
-/* Most recent gain[n_freqs], linear [g_min, 1]. Valid after one processed frame; pointer is
- * borrowed until the next process call.
- */
+/* Latest gain[n_freqs], linear in [g_min, 1]; valid after one processed frame and borrowed
+ * until the next process call. */
 const float* anr_get_gain(const AnrDenoiser* self, int* n_freqs);
 
-/* Last-frame aggregate diagnostics. Computed on request from current gain/SPP/noise arrays; no
- * extra per-hop state.
- */
+/* Last-frame aggregate diagnostics, computed on request. */
 typedef struct AnrDebugStatus {
-    int   initialized;      /* noise-floor init done (== anr_is_initialized) */
-    float mean_gain_db;     /* 20*log10(mean linear gain), dB, last frame          */
-    float min_gain_db;      /* 20*log10(deepest per-bin linear gain), dB, last frame */
-    float mean_spp;         /* mean speech-presence probability [0,1], last frame  */
-    float noise_floor_db;   /* 10*log10(mean noise PSD), dB (power), last frame    */
+    int   initialized;      /* noise-floor init done */
+    float mean_gain_db;     /* dB, last frame */
+    float min_gain_db;      /* dB, deepest bin */
+    float mean_spp;         /* [0,1] */
+    float noise_floor_db;   /* dB (power) */
 } AnrDebugStatus;
 
-/* Fill *out without changing DSP state. NULL handle produces zero fields. Uses standard log
- * math; reduction runs only on request.
- */
+/* Fills *out without changing DSP state; a NULL handle yields zero fields. */
 void anr_debug_status(const AnrDenoiser* self, AnrDebugStatus* out);
 
 #ifdef __cplusplus

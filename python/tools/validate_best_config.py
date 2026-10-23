@@ -12,7 +12,6 @@
 import sys
 import os
 
-# Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
@@ -21,7 +20,6 @@ from core import FrameProcessor, Reconstructor, SppEstimator
 from core.noise_estimators import RecursiveAverageNoiseEstimator
 from utils.metrics import calculate_segmental_snr
 
-# 最佳配置
 BOOST_FACTOR = 1.20
 G_MIN_DB = -1.0
 ALPHA_XI = 0.92
@@ -30,7 +28,6 @@ ALPHA_G = 0.60
 g_min = 10 ** (G_MIN_DB / 10)
 sr = 16000
 
-# 測試用例
 noise_types = ['babble', 'car', 'street']
 snr_levels = [0, 5, 10, 15]
 
@@ -42,13 +39,11 @@ print("=" * 100)
 print(f"{'Test Case':<20} {'Input SNR':>10} {'RMS%':>7} {'segSNR↑':>9} {'Output SNR':>11}")
 print("-" * 100)
 
-# 初始化處理器（共用）
 processor = FrameProcessor(sample_rate=sr, frame_size=512, frame_shift=256,
                            fft_size=512, window_type='hanning')
 reconstructor = Reconstructor(fft_size=512, frame_shift=processor.frame_shift,
                               window=processor.window)
 
-# 加載 clean
 clean, _ = librosa.load("test_wav/wav/clean.wav", sr=sr)
 skip = int(0.5 * sr)
 clean = clean[skip:]
@@ -62,23 +57,18 @@ for noise in noise_types:
         input_file = f"test_wav/wav/{test_id}.wav"
 
         try:
-            # 加載音頻
             noisy, _ = librosa.load(input_file, sr=sr)
             noisy_eval = noisy[skip:]
 
-            # 計算輸入 segSNR
             input_segsnr = calculate_segmental_snr(clean, noisy_eval, sr)
 
-            # 重置處理器
             noise_estimator = RecursiveAverageNoiseEstimator(alpha=0.95, num_init_frames=20)
             spp_estimator = SppEstimator(alpha=ALPHA_XI, q=0.5, xi_min_db=-25.0)
 
-            # 分幀
             magnitudes, phases, _ = processor.process_signal(noisy)
             n_frames = magnitudes.shape[0]
             noise_estimator.estimate(magnitudes)
 
-            # 逐幀處理
             gain_prev = None
             enhanced_psd_prev = None
             enhanced_magnitude = np.zeros_like(magnitudes)
@@ -92,7 +82,6 @@ for noise in noise_types:
                     Y_psd, noise_psd, gain_prev, enhanced_psd_prev
                 )
 
-                # 計算 MMSE gain
                 v = (xi / (1 + xi)) * gamma
                 v = np.clip(v, 1e-10, 700)
 
@@ -104,39 +93,30 @@ for noise in noise_types:
 
                 gain_mmse = (xi / (1 + xi)) * np.exp(0.5 * exp1_v)
 
-                # 應用提升因子
                 gain_boosted = BOOST_FACTOR * gain_mmse
 
-                # SPP 混合
                 gain = spp * gain_boosted + (1 - spp) * g_min
 
-                # 時間平滑
                 if gain_prev is not None:
                     gain = ALPHA_G * gain_prev + (1 - ALPHA_G) * gain
 
-                # 限制範圍
                 gain = np.clip(gain, g_min, 2.0)
 
-                # 應用增益
                 enhanced_magnitude[i] = gain * magnitudes[i]
                 gain_prev = gain.copy()
                 enhanced_psd_prev = enhanced_magnitude[i] ** 2
 
-                # 更新噪聲估計
                 is_speech = np.mean(spp) > 0.5
                 noise_estimator.update(magnitudes[i], is_speech=is_speech)
 
-            # 重建信號
             enhanced = reconstructor.reconstruct_signal(enhanced_magnitude, phases,
                                                         original_length=len(noisy))
             enhanced_eval = enhanced[skip:]
 
-            # 對齊
             min_len = min(len(clean), len(enhanced_eval))
             clean_seg = clean[:min_len]
             enhanced_seg = enhanced_eval[:min_len]
 
-            # 計算指標
             clean_rms = np.sqrt(np.mean(clean_seg**2))
             enhanced_rms = np.sqrt(np.mean(enhanced_seg**2))
             rms_ratio = enhanced_rms / clean_rms * 100

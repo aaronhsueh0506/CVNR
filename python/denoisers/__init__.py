@@ -1,6 +1,4 @@
-"""
-Denoisers - 完整的降噪器
-"""
+"""Complete denoisers."""
 
 from .base_denoiser import BaseDenoiser
 from .v1_spectral_subtraction import SpectralSubtractionDenoiser
