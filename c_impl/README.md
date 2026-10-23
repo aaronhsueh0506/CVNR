@@ -106,7 +106,7 @@ make SIMD=0  # 強制 NR 與 audiolib 的所有可選 SIMD 路徑走 scalar
 make debug
 ```
 
-### 全速版本（啟用近似 percentile，進一步省記憶體）
+### 全速版本（啟用近似 percentile）
 
 ```bash
 make EXTRA_CFLAGS="-DUSE_FAST_PERCENTILE"
@@ -228,7 +228,7 @@ FFT（以及 AEC 在具硬體 FMA 的核心上的 delay matched filter）受影�
 
 | 開關 | 說明 | 效果 | 相關度 |
 |------|------|------|--------|
-| `USE_FAST_PERCENTILE` | 使用 mean×0.23 近似目前設定的 30th percentile | 省 ~20KB 記憶體 | 近似模式，需獨立做品質驗證 |
+| `USE_FAST_PERCENTILE` | 使用 mean×0.23 近似目前設定的 30th percentile | 只省 `num_init_frames` 個 float 的 percentile scratch（啟動列已與最小值 ring 共用儲存） | 近似模式，需獨立做品質驗證 |
 
 ### 調試用
 
@@ -560,7 +560,7 @@ c_impl/
 ## 記憶體使用
 
 - **基本使用** (16 kHz, USE_FAST_PERCENTILE)：~50 KB
-- **精確 percentile** (`make` 預設不啟用 USE_FAST_PERCENTILE)：+20 KB
+- **精確 percentile** (`make` 預設不啟用 USE_FAST_PERCENTILE)：多 `num_init_frames` 個 float（啟動列與最小值 ring 共用同一塊，取兩者較大者）
 - **48 kHz** (n_freqs=513, L=32)：~130 KB；MCRA `min_buffer` 約 ~66 KB
 - **v4.2**：Fix #3 的 `noise_psd_prev` 每實例 +`n_freqs × 4` bytes（16 kHz ~1 KB）
 

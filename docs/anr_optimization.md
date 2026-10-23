@@ -92,7 +92,7 @@ Validation scope and its limits are in [anr_validation.md](anr_validation.md).
 From `c_impl/`, run:
 
 ```sh
-make BACKEND=ne10 SIMD=1 WERROR=1 all lib mem parity test-config test-reconfigure test-noise-restart test-scene-change test-config-parity test-api-cpp test-bit-exact
+make BACKEND=ne10 SIMD=1 WERROR=1 all lib mem parity test-config test-reconfigure test-noise-restart test-scene-change test-shared-startup test-config-parity test-api-cpp test-bit-exact
 make BACKEND=ne10 SIMD=0 WERROR=1 test-bit-exact
 ```
 

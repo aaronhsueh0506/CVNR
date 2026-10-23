@@ -501,7 +501,7 @@ size_t anr_get_mem_size(const AnrConfig* config) {
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* init_power_sum    */
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* log_gain_prev     */
 
-    size_t noise_sz = noise_estimator_get_mem_size(nf, config);
+    size_t noise_sz = noise_estimator_get_mem_size_shared_startup(nf, config);
     size_t spp_sz  = spp_get_mem_size(nf);
     if (noise_sz == 0 || spp_sz == 0) return 0;   /* sub-module rejected the config */
 
@@ -546,8 +546,8 @@ AnrDenoiser* anr_init(void* mem, size_t mem_size,
     self->log_gain_prev     = (float*)cursor; cursor += arr;
 
     /* Sub-modules carved from the same block (no malloc). */
-    size_t noise_sz = noise_estimator_get_mem_size(nf, config);
-    self->noise_est = noise_estimator_init(cursor, noise_sz, nf, config);
+    size_t noise_sz = noise_estimator_get_mem_size_shared_startup(nf, config);
+    self->noise_est = noise_estimator_init_shared_startup(cursor, noise_sz, nf, config);
     cursor += noise_sz;
 
     size_t spp_sz = spp_get_mem_size(nf);
@@ -577,7 +577,7 @@ AnrDenoiser* anr_create(const AnrConfig* config) {
 
     self->power             = (float*)calloc(nf, sizeof(float));
     self->noise_aug         = (float*)calloc(nf, sizeof(float));
-    self->noise_est         = noise_estimator_create(nf, config);
+    self->noise_est         = noise_estimator_create_shared_startup(nf, config);
     self->spp_est           = spp_create(nf, config);
     self->spp               = (float*)calloc(nf, sizeof(float));
     self->xi                = (float*)calloc(nf, sizeof(float));

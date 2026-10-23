@@ -121,7 +121,8 @@ endif
 #                           also drops the six USE_* optimizations below;
 #                           EXTRA_CFLAGS="-DUSE_STANDARD_MATH" keeps them (README parity procedure).
 # USE_FAST_PERCENTILE       Initial noise floor from mean * 0.23 instead of the exact 30th
-#                           percentile (quickselect needs about 20 KB more memory).
+#                           percentile (saves only the quickselect scratch: the startup rows share
+#                           the minimum ring's storage in the denoiser's tracker).
 # USE_FAST_GAIN_SMOOTHING   Clamp in the log domain and skip the exp->log round trip.
 #                           Formula-equivalent only: with approximate math it is not bit-exact to
 #                           the disabled path.
@@ -242,8 +243,8 @@ CFLAGS    += $(FP_POLICY)
 COMMON_FWD = BACKEND=$(BACKEND) SIMD=$(SIMD) WERROR=$(WERROR) CC='$(CC)' CXX='$(CXX)' EXTRA_CFLAGS='$(EXTRA_CFLAGS)' NO_STDIO=$(NO_STDIO) TOOLCHAIN_CHECK=$(TOOLCHAIN_CHECK)
 
 ifeq ($(COMMON_LIB),)
-.PHONY: all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-scene-change test-api-cpp bench-anr
-all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-scene-change test-api-cpp bench-anr:
+.PHONY: all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-scene-change test-shared-startup test-api-cpp bench-anr
+all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-scene-change test-shared-startup test-api-cpp bench-anr:
 	+@ac="$$($(MAKE) -s --no-print-directory -C $(COMMON_DIR) $(COMMON_FWD) print-lib-path)"; \
 	 test -n "$$ac" || { echo "FATAL: could not resolve audiolib archive path (COMMON_DIR=$(COMMON_DIR) -- is audiolib present as a sibling of this repo?)" >&2; exit 1; }; \
 	 $(MAKE) --no-print-directory $@ COMMON_LIB="$$ac"
@@ -418,11 +419,12 @@ $(OBJ_DIR)/main_mem.o: $(EXAMPLE_DIR)/main_mem.c | _cfg_guard
 # (test/test_config_validation.c) built against the same objects as denoise_wav; a non-zero exit
 # fails the recipe.
 # =============================================================================
-.PHONY: test-config test-reconfigure test-noise-restart test-scene-change
+.PHONY: test-config test-reconfigure test-noise-restart test-scene-change test-shared-startup
 TEST_TARGET = $(BIN_DIR)/test_config_validation
 TEST_RECFG_TARGET = $(BIN_DIR)/test_reconfigure
 TEST_RESTART_TARGET = $(BIN_DIR)/test_noise_restart
 TEST_SCENE_TARGET = $(BIN_DIR)/test_scene_change_margin
+TEST_SHARED_TARGET = $(BIN_DIR)/test_shared_startup
 test-config: $(TEST_TARGET)
 	"$(abspath $(TEST_TARGET))"
 
@@ -434,6 +436,9 @@ test-noise-restart: $(TEST_RESTART_TARGET)
 
 test-scene-change: $(TEST_SCENE_TARGET)
 	"$(abspath $(TEST_SCENE_TARGET))"
+
+test-shared-startup: $(TEST_SHARED_TARGET)
+	"$(abspath $(TEST_SHARED_TARGET))"
 
 $(TEST_TARGET): $(OBJS) $(OBJ_DIR)/test_config_validation.o $(COMMON_LIB) | _cfg_guard
 	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/test_config_validation.o $(COMMON_LIB) $(LDFLAGS)
@@ -465,6 +470,15 @@ $(TEST_SCENE_TARGET): $(OBJS) $(OBJ_DIR)/test_scene_change_margin.o $(COMMON_LIB
 	@echo "Build complete: $@"
 
 $(OBJ_DIR)/test_scene_change_margin.o: $(TEST_DIR)/test_scene_change_margin.c | _cfg_guard
+	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
+
+# Shared startup/ring storage of the integrated tracker versus the standalone tracker (see
+# test/test_shared_startup.c).
+$(TEST_SHARED_TARGET): $(OBJS) $(OBJ_DIR)/test_shared_startup.o $(COMMON_LIB) | _cfg_guard
+	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/test_shared_startup.o $(COMMON_LIB) $(LDFLAGS)
+	@echo "Build complete: $@"
+
+$(OBJ_DIR)/test_shared_startup.o: $(TEST_DIR)/test_shared_startup.c | _cfg_guard
 	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
 
 # =============================================================================
@@ -864,6 +878,7 @@ help:
 	@echo "  test-reconfigure - Build + run the runtime reconfiguration tests"
 	@echo "  test-noise-restart - Build + run the digital-silence noise tracking tests"
 	@echo "  test-scene-change - Build + run the scene-change flatness margin test"
+	@echo "  test-shared-startup - Build + run the shared startup/ring storage equivalence test"
 	@echo "  test-api-cpp - Build + run the C++ header compile/link smoke test"
 	@echo "  test-bit-exact - Compare the optimized kernels with the scalar reference (needs python3); also runs the"
 	@echo "                   kernel-level tests test_anr_kernels and test_min_ordered_special; test_anr_kernels is the only"
@@ -895,7 +910,7 @@ help:
 	@echo "  USE_FAST_PERCENTILE - Use mean*0.23 approximation instead of exact 30th percentile"
 	@echo ""
 	@echo "Memory usage:"
-	@echo "  Without USE_FAST_PERCENTILE: +20KB for exact percentile buffer"
+	@echo "  Without USE_FAST_PERCENTILE: + num_init_frames floats per instance for the percentile scratch"
 	@echo "  With USE_FAST_PERCENTILE: No extra memory"
 	@echo ""
 	@echo "After building:"

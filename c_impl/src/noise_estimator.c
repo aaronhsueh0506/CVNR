@@ -62,6 +62,8 @@ struct NoiseEstimator {
 #ifndef USE_FAST_PERCENTILE
     // Buffer for exact percentile calculation during initialization
     // Layout: init_power_buffer[frame_idx * n_freqs + freq_idx]
+    // In the shared-startup layout this is min_buffer itself: the init rows are dead once
+    // noise_estimator_init_noise() has consumed them, and the ring is not read before that.
     float* init_power_buffer;
     int num_init_frames;    // Max number of init frames (from config)
     // Per-bin gather + quickselect scratch [num_init_frames] — pre-allocated so
@@ -162,7 +164,14 @@ static void noise_estimator_init_scalars(NoiseEstimator* self, int n_freqs,
 
 /* Static allocation. */
 
-size_t noise_estimator_get_mem_size(int n_freqs, const AnrConfig* config) {
+/* shared_startup places the init rows and the minimum ring in one region of the larger of the
+ * two. Only the integrated denoiser may use it: it accumulates solely before initialization and
+ * re-accumulates every row after a reset, so the rows never need to outlive the ring's first
+ * write. The standalone API keeps separate buffers because callers may accumulate or
+ * re-initialize at any time.
+ */
+static size_t noise_estimator_mem_size_impl(int n_freqs, const AnrConfig* config,
+                                            bool shared_startup) {
     /* Check dimensions and saturating size arithmetic before allocation. */
     if (n_freqs <= 0 || !config) return 0;
     if (config->L <= 0) return 0;
@@ -170,28 +179,45 @@ size_t noise_estimator_get_mem_size(int n_freqs, const AnrConfig* config) {
     if (config->num_init_frames <= 0) return 0;
 #endif
 
+    size_t ring_rows = (size_t)config->L;
+#if !defined(USE_FAST_PERCENTILE)
+    if (shared_startup && (size_t)config->num_init_frames > ring_rows)
+        ring_rows = (size_t)config->num_init_frames;
+#else
+    (void)shared_startup;
+#endif
+
     size_t total = ALIGN16(sizeof(NoiseEstimator));
     total = ck_field_size(total, (size_t)n_freqs, sizeof(float));   /* noise_psd  */
     total = ck_field_size(total, (size_t)n_freqs, sizeof(float));   /* S          */
     total = ck_field_size(total, (size_t)n_freqs, sizeof(float));   /* S_min      */
     total = ck_field_size(total, (size_t)n_freqs, sizeof(float));   /* spp        */
-    total = ck_field_size(total, ck_mul_size((size_t)config->L, (size_t)n_freqs),
+    total = ck_field_size(total, ck_mul_size(ring_rows, (size_t)n_freqs),
                           sizeof(float));                            /* min_buffer */
     total = ck_field_size(total, (size_t)n_freqs, sizeof(float));   /* flatness_scratch */
 #ifndef USE_FAST_PERCENTILE
-    total = ck_field_size(total, ck_mul_size((size_t)config->num_init_frames, (size_t)n_freqs),
-                          sizeof(float));                            /* init_power_buffer  */
+    if (!shared_startup)
+        total = ck_field_size(total, ck_mul_size((size_t)config->num_init_frames, (size_t)n_freqs),
+                              sizeof(float));                        /* init_power_buffer  */
     total = ck_field_size(total, (size_t)config->num_init_frames, sizeof(float)); /* percentile_scratch */
 #endif
     return MEM_SIZE_INVALID(total) ? 0 : total;
 }
 
-NoiseEstimator* noise_estimator_init(void* mem, size_t mem_size,
-                                     int n_freqs, const AnrConfig* config) {
+size_t noise_estimator_get_mem_size(int n_freqs, const AnrConfig* config) {
+    return noise_estimator_mem_size_impl(n_freqs, config, false);
+}
+
+size_t noise_estimator_get_mem_size_shared_startup(int n_freqs, const AnrConfig* config) {
+    return noise_estimator_mem_size_impl(n_freqs, config, true);
+}
+
+static NoiseEstimator* noise_estimator_init_impl(void* mem, size_t mem_size, int n_freqs,
+                                                 const AnrConfig* config, bool shared_startup) {
     if (n_freqs <= 0 || !config || !mem) return NULL;
     /* Reject unaligned memory before writing. */
     if (!MEM_IS_ALIGNED16(mem)) return NULL;
-    size_t need = noise_estimator_get_mem_size(n_freqs, config);
+    size_t need = noise_estimator_mem_size_impl(n_freqs, config, shared_startup);
     if (need == 0 || mem_size < need) return NULL;
 
     memset(mem, 0, need);   /* calloc-equivalent */
@@ -203,15 +229,25 @@ NoiseEstimator* noise_estimator_init(void* mem, size_t mem_size,
     noise_estimator_init_scalars(self, n_freqs, config);
     self->is_static = true;
 
+    size_t ring_rows = (size_t)self->L;
+#ifndef USE_FAST_PERCENTILE
+    if (shared_startup && (size_t)self->num_init_frames > ring_rows)
+        ring_rows = (size_t)self->num_init_frames;
+#endif
+
     self->noise_psd  = (float*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(float));
     self->S          = (float*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(float));
     self->S_min      = (float*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(float));
     self->spp        = (float*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(float));
-    self->min_buffer = (float*)cursor; cursor += ALIGN16((size_t)self->L * n_freqs * sizeof(float));
+    self->min_buffer = (float*)cursor; cursor += ALIGN16(ring_rows * n_freqs * sizeof(float));
     self->flatness_scratch = (float*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(float));
 #ifndef USE_FAST_PERCENTILE
-    self->init_power_buffer = (float*)cursor;
-    cursor += ALIGN16((size_t)self->num_init_frames * n_freqs * sizeof(float));
+    if (shared_startup) {
+        self->init_power_buffer = self->min_buffer;
+    } else {
+        self->init_power_buffer = (float*)cursor;
+        cursor += ALIGN16((size_t)self->num_init_frames * n_freqs * sizeof(float));
+    }
     self->percentile_scratch = (float*)cursor;
     cursor += ALIGN16((size_t)self->num_init_frames * sizeof(float));
 #endif
@@ -222,9 +258,20 @@ NoiseEstimator* noise_estimator_init(void* mem, size_t mem_size,
     return self;
 }
 
+NoiseEstimator* noise_estimator_init(void* mem, size_t mem_size,
+                                     int n_freqs, const AnrConfig* config) {
+    return noise_estimator_init_impl(mem, mem_size, n_freqs, config, false);
+}
+
+NoiseEstimator* noise_estimator_init_shared_startup(void* mem, size_t mem_size, int n_freqs,
+                                                    const AnrConfig* config) {
+    return noise_estimator_init_impl(mem, mem_size, n_freqs, config, true);
+}
+
 /* Heap allocation. */
 
-NoiseEstimator* noise_estimator_create(int n_freqs, const AnrConfig* config) {
+static NoiseEstimator* noise_estimator_create_impl(int n_freqs, const AnrConfig* config,
+                                                   bool shared_startup) {
     if (n_freqs <= 0 || !config) return NULL;
 
     NoiseEstimator* self = (NoiseEstimator*)calloc(1, sizeof(NoiseEstimator));
@@ -233,6 +280,14 @@ NoiseEstimator* noise_estimator_create(int n_freqs, const AnrConfig* config) {
     noise_estimator_init_scalars(self, n_freqs, config);
     self->is_static = false;
 
+    size_t ring_rows = (size_t)self->L;
+#ifndef USE_FAST_PERCENTILE
+    if (shared_startup && (size_t)self->num_init_frames > ring_rows)
+        ring_rows = (size_t)self->num_init_frames;
+#else
+    (void)shared_startup;
+#endif
+
     // Allocate state arrays
     self->noise_psd = (float*)calloc(n_freqs, sizeof(float));
     self->S = (float*)calloc(n_freqs, sizeof(float));
@@ -240,7 +295,7 @@ NoiseEstimator* noise_estimator_create(int n_freqs, const AnrConfig* config) {
     self->spp = (float*)calloc(n_freqs, sizeof(float));
 
     // Allocate min tracking buffer
-    self->min_buffer = (float*)calloc(self->L * n_freqs, sizeof(float));
+    self->min_buffer = (float*)calloc(ring_rows * n_freqs, sizeof(float));
     self->flatness_scratch = (float*)calloc(n_freqs, sizeof(float));
 
     if (!self->noise_psd || !self->S || !self->S_min ||
@@ -251,7 +306,9 @@ NoiseEstimator* noise_estimator_create(int n_freqs, const AnrConfig* config) {
 
 #ifndef USE_FAST_PERCENTILE
     // Allocate buffer for exact percentile calculation + its quickselect scratch
-    self->init_power_buffer = (float*)calloc(self->num_init_frames * n_freqs, sizeof(float));
+    self->init_power_buffer = shared_startup
+        ? self->min_buffer
+        : (float*)calloc(self->num_init_frames * n_freqs, sizeof(float));
     self->percentile_scratch = (float*)calloc(self->num_init_frames, sizeof(float));
     if (!self->init_power_buffer || !self->percentile_scratch) {
         noise_estimator_destroy(self);
@@ -262,20 +319,30 @@ NoiseEstimator* noise_estimator_create(int n_freqs, const AnrConfig* config) {
     return self;
 }
 
+NoiseEstimator* noise_estimator_create(int n_freqs, const AnrConfig* config) {
+    return noise_estimator_create_impl(n_freqs, config, false);
+}
+
+NoiseEstimator* noise_estimator_create_shared_startup(int n_freqs, const AnrConfig* config) {
+    return noise_estimator_create_impl(n_freqs, config, true);
+}
+
 void noise_estimator_destroy(NoiseEstimator* self) {
     if (!self) return;
     if (self->is_static) return;  /* caller owns the block; nothing to free */
 
+#ifndef USE_FAST_PERCENTILE
+    /* Shared-startup instances alias the init rows onto min_buffer; free it once, below. */
+    if (self->init_power_buffer && self->init_power_buffer != self->min_buffer)
+        free(self->init_power_buffer);
+    if (self->percentile_scratch) free(self->percentile_scratch);
+#endif
     if (self->noise_psd) free(self->noise_psd);
     if (self->S) free(self->S);
     if (self->S_min) free(self->S_min);
     if (self->spp) free(self->spp);
     if (self->min_buffer) free(self->min_buffer);
     if (self->flatness_scratch) free(self->flatness_scratch);
-#ifndef USE_FAST_PERCENTILE
-    if (self->init_power_buffer) free(self->init_power_buffer);
-    if (self->percentile_scratch) free(self->percentile_scratch);
-#endif
 
     free(self);
 }
@@ -286,6 +353,8 @@ void noise_estimator_accumulate_init_power(NoiseEstimator* self, const float* po
                                            int frame_idx) {
     if (!self || !power || !self->init_power_buffer) return;
     if (frame_idx < 0 || frame_idx >= self->num_init_frames) return;
+    /* A shared region belongs to the ring once initialized. */
+    if (self->is_initialized && self->init_power_buffer == self->min_buffer) return;
 
     int n_freqs = self->n_freqs;
     int offset = frame_idx * n_freqs;
@@ -368,6 +437,10 @@ void noise_estimator_accumulate_init_power(NoiseEstimator* self, const float* po
 
 void noise_estimator_init_noise(NoiseEstimator* self, const float* power_sum, int n_frames) {
     if (!self || !power_sum || n_frames <= 0) return;
+#ifndef USE_FAST_PERCENTILE
+    /* The init rows of a shared region were overwritten by the ring. */
+    if (self->is_initialized && self->init_power_buffer == self->min_buffer) return;
+#endif
 
     int n_freqs = self->n_freqs;
 
@@ -422,7 +495,8 @@ void noise_estimator_init_noise(NoiseEstimator* self, const float* power_sum, in
     }
 #endif
 
-    // Fill min_buffer with initial noise estimate
+    // Fill min_buffer with initial noise estimate. This must follow the percentile pass above:
+    // a shared-startup region still holds the init rows until every bin has been read.
 #ifdef USE_OPTIMIZED_MIN_BUFFER
     // Frequency-major layout: [freq_idx * L + frame_idx]
     for (int k = 0; k < n_freqs; k++) {

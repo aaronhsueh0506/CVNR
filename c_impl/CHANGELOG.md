@@ -2,6 +2,18 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [Unreleased] · 2026-10-23 · 噪聲追蹤器的啟動列與最小值 ring 共用儲存
+
+### 變更 (Changed)
+
+- 整合 denoiser（`anr_get_mem_size`／`anr_init`／`anr_create`）內的噪聲追蹤器把 exact-percentile 的啟動 power 列與最小值
+  ring 放在同一塊記憶體（取較大者）：啟動列在 `noise_estimator_init_noise()` 讀完後才寫 ring，`anr_reset()` 後每列都會重新累積。
+  `anr_get_mem_size()` 每實例少 6,512／6,720／12,912／13,376／38,992 B（8k/128、8k/256、16k/256、16k/512、48k/1024，四個 strength 相同）；
+  輸出與可觀察狀態逐位元不變。獨立的 `noise_estimator_*` 公開 API 與其尺寸不變，仍可隨時重新累積、重新初始化；
+  新增 `make test-shared-startup`。
+  `docs/html/nr_c_api.html` 的 `fft_get_mem_size()` 欄隨較小的 FFT handle 重新量測（256／512／1024 點為 7,152／13,552／26,352 B）；
+  `anr_get_mem_size()` 不受影響，因為 denoiser 使用呼叫端持有的 FFT handle。
+
 ## [Unreleased] · 2026-10-23 · 移除沒有呼叫端的函式與宣告
 
 ### 移除 (Removed)
