@@ -437,9 +437,9 @@ Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差
 | `scene_change_blend` | 0.5 | 場景轉換噪聲重置混合比 |
 | `scene_change_flatness_threshold` | 0.4 | 場景轉換高頻 spectral flatness 閾值 |
 | `g_min_db` | -25.0 | balanced 最小增益（**audio 振幅 dB，/20**；約 0.056 floor） |
-| `alpha_g` | 0.88 | 增益平滑因子 |
+| `alpha_g` | 0.88 | C 不讀取（不參與增益運算；平滑改調 `alpha_decay`／`alpha_attack`） |
 | `alpha_attack` | 0.15（16 ms 錨點） | 非對稱平滑 Attack；建構時依 grid retime |
-| `alpha_decay` | 0.88 | 非對稱平滑 Decay (= alpha_g) |
+| `alpha_decay` | 0.88 | 非對稱平滑 Decay；有自己的預設（與 `alpha_g` 的預設值相同，兩者互相獨立） |
 
 ## 延遲
 

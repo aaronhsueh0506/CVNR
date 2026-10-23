@@ -34,7 +34,8 @@
 | `xi_min_db` | 最小先驗 SNR | -10 ~ -20 dB | 保留更多弱成分，也可能留噪 | 壓得更深，微弱語音風險增加 |
 | `q` | 語音存在先驗機率 | 0.2 ~ 0.7 | 更保守，保留語音 | 更激進降噪 |
 | `noise_over_subtraction` | 送入 SPP/gain 的噪聲 PSD 倍率 | 1.0 ~ 2.0 | 壓得更深 | 保留更多內容 |
-| `alpha_g` | 增益平滑 | 0.5 ~ 0.95 | 平滑，可能拖泥帶水 | 乾脆，可能粗糙 |
+| `alpha_decay` | 增益下降方向平滑（C 有自己的預設 0.88；Python 預設取自 `alpha_g`） | 0.5 ~ 0.95 | 平滑，musical noise 少，尾音可能拖長 | 乾脆，可能粗糙 |
+| `alpha_attack` | 增益上升方向平滑 | 0.05 ~ 0.5 | 起音變慢，語音開頭可能被切 | 起音快，增益較易抖動 |
 
 ---
 
@@ -47,8 +48,8 @@
 | 微弱語音被截斷 | xi_min_db 太低 | 調高 (如 -15 → -10) |
 | 殘留太多噪聲 | q 過高或 over-subtraction 過低 | 調低 q 或調高 over-subtraction |
 | 輔音 (f, s, th) 消失 | q 過低或 over-subtraction 過高 | 調高 q 或調低 over-subtraction |
-| 像在水底、有咕嚕聲 | alpha_g 過低 | 調高 (如 0.7 → 0.9) |
-| 語音開頭被切 | alpha_g 過高 | 調低 (如 0.9 → 0.8) |
+| 像在水底、有咕嚕聲 | `alpha_decay` 過低 | 調高 |
+| 語音開頭被切 | `alpha_attack` 過高 | 調低 |
 
 ---
 
@@ -112,11 +113,11 @@
 
 ---
 
-### 4. alpha_g (增益平滑因子 / Gain Smoothing Factor)
+### 4. alpha_decay／alpha_attack (增益平滑因子 / Gain Smoothing Factor)
 
 **物理意義**：控制降噪過程的「反應速度」。
 
-**參數範圍**：0.5 ~ 0.95。C 端 `alpha_g` 不參與增益運算，改調 `alpha_decay`（下降方向）與 `alpha_attack`（上升方向）。
+**參數範圍**：`alpha_decay` 0.5 ~ 0.95（增益下降時使用）、`alpha_attack` 0.05 ~ 0.5（增益上升時使用）。C 不讀取 `alpha_g`；`alpha_decay` 有自己的預設（與 `alpha_g` 的預設值相同，兩者互相獨立，皆依 grid retime）。Python：未指定 `alpha_decay` 時才以 `alpha_g` 作為它的預設值；`use_asymmetric_smoothing=False` 的對稱模式下 `alpha_g` 才是對稱平滑係數（C 沒有這條路徑）。
 
 **直觀理解**：
 
@@ -126,8 +127,8 @@
 | 數值越低 (如 0.6) | 反應極快。能迅速切斷噪聲，但聽起來會很「乾」、「脆」，甚至有點粗糙 |
 
 **調整建議**：
-- 聲音聽起來像在水底、有咕嚕聲 (Musical Noise) → 調高 (如 0.8 改 0.9)
-- 語音的開頭 (Onset) 被切掉、反應遲鈍 → 調低 (如 0.9 改 0.8)
+- 聲音聽起來像在水底、有咕嚕聲 (Musical Noise) → 調高 `alpha_decay`（如 0.8 改 0.9）
+- 語音的開頭 (Onset) 被切掉、反應遲鈍 → 調低 `alpha_attack`（如 0.2 改 0.15）
 
 ---
 
@@ -155,7 +156,7 @@ MCRA 的 scene change detector 用「高頻 gamma + spectral flatness」雙重�
 - `mcra_accept_external_spp` (True)：**True = 使用 denoiser 的 Bayesian posterior SPP
   （standalone 與目前 Audio_ALG pipeline 都採用）；False = 改用 MCRA 內部 binary
   ratio-test（plain MCRA，僅供另外驗證的組態）**
-- `alpha_attack` (0.15，16 ms authored) / `alpha_decay` (= alpha_g)：非對稱平滑，全 preset 共用
+- `alpha_attack` (0.15，16 ms authored) / `alpha_decay`（C 有自己的預設；Python 預設取自 `alpha_g`）：非對稱平滑，全 preset 共用
 
 如確實需要動，**請務必以 VCTK/DEMAND 800+ 檔做 regression 驗證**，避免改善單一 case 但整體退步。
 
@@ -179,7 +180,7 @@ MCRA 的 scene change detector 用「高頻 gamma + spectral flatness」雙重�
 3. 遇到場景切換問題調 `scene_change_*`
 4. 每次只動一個參數，用同一批測試音檔 A/B 比對
 5. 拿去 VCTK regression（若有批次測試 pipeline）確認沒變差
-6. 記錄到 `python/config/*.yaml` 或 C 端 custom config（C 端 `alpha_g` 不參與增益運算，平滑改調 `alpha_decay`／`alpha_attack`）
+6. 記錄到 `python/config/*.yaml` 或 C 端 custom config（平滑調 `alpha_decay`／`alpha_attack`；C 不讀 `alpha_g`，`alpha_decay` 有自己的預設）
 
 ---
 

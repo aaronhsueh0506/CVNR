@@ -4,6 +4,15 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [Unreleased] — 2026-10-24 — `alpha_g` / `alpha_decay` wording
+
+### Changed
+- `c_impl/README.md` and `docs/parameter_tuning.md` state that the C library does not read `alpha_g`: gain
+  smoothing uses `alpha_attack` (rising gain) and `alpha_decay` (falling gain), and `alpha_decay` has its own
+  default, equal to `alpha_g`'s default. Only the Python denoiser derives an unset `alpha_decay` from `alpha_g`, and
+  only its symmetric mode (`use_asymmetric_smoothing=False`) smooths with `alpha_g`; C has no symmetric path.
+  No code or output change.
+
 ## [Unreleased] — 2026-10-23 — Creation guards; sources and docs condensed
 
 ### Fixed
