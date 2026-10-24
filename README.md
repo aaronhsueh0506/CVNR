@@ -163,6 +163,7 @@ from `python/requirements-dev.txt`.
 | `c_impl/include/`, `c_impl/src/` | Public C API and production source |
 | `python/tests/`, `c_impl/test/` | Regression, parity, and negative-input tests |
 | `python/tools/` | Benchmark, diagnosis, and conversion utilities |
+| `docs/c_user_manual_zh_TW.md` | C integration manual (index and chapters 0, 2, 3, 5, 6); chapters 1 and 4 are in `docs/c_user_manual_zh_TW_01_quick_start.md` and `docs/c_user_manual_zh_TW_02_config_reference.md` |
 | `docs/parameter_tuning.md` | Supported tuning workflow |
 | `docs/html/` | Integrator pages: flow diagrams, API usage, parameter tables |
 | `docs/archive/` | Historical plans and superseded research documents |

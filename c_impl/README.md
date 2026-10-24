@@ -141,7 +141,7 @@ static instance 的 `anr_destroy()` 是 no-op：`AnrDenoiser` 不持有 FFT 或 
 （頻域 I/O 由呼叫端的 `FftHandle` 負責）。`fft_init()` 建立的 handle 其 `fft_destroy()` 同樣是
 no-op、可重複呼叫：NE10 的 R2C/C2R twiddle cfg 從呼叫端 pool 切出（`audiolib` 的 vendored NE10
 external-memory 初始化 `ne10_fft_init_r2c_float32_ext`），沒有 backend-internal malloc。完整範例見
-[`../docs/c_user_manual_zh_TW.md`](../docs/c_user_manual_zh_TW.md) §1.5 的 `create_static_nr`。
+[`../docs/c_user_manual_zh_TW_01_quick_start.md`](../docs/c_user_manual_zh_TW_01_quick_start.md) §1.5 的 `create_static_nr`。
 
 演算法與 malloc 版使用同一個處理核心（只差配置方式）：實測 `denoise_mem` 輸出與 `denoise_wav` byte-for-byte 一致：`test_wav/wav/babble_0dB.wav`（48 kHz/1024，四個 preset）、
 `test_wav/music/fix_gain_noise.wav`（16 kHz，256 與 512 兩個 grid，mild／balanced／aggressive）；其他素材與 grid 未逐一比對。同一機制也覆蓋子模組
@@ -417,7 +417,7 @@ Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差
 
 ## 配置參數
 
-> **數值以 [`docs/c_user_manual_zh_TW.md`](../docs/c_user_manual_zh_TW.md) §4 為準。**
+> **數值以 [`docs/c_user_manual_zh_TW_02_config_reference.md`](../docs/c_user_manual_zh_TW_02_config_reference.md) §4 為準。**
 > 下表只列欄位與用途。多數 EMA 係數與幀數（`alpha_*`、`L`、`num_init_frames`）
 > 在建構時會**依實際 hop retime**，所以這裡標的是「調校時的錨點值」，不是
 > `anr_default_config_for_grid()` 實際填進 struct 的值——兩者在 16 kHz/256
@@ -447,7 +447,7 @@ Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差
 ## 延遲
 
 NR 核心本身 0 延遲（增益同 hop 產出）。端到端的框架延遲來自呼叫端的 sqrt-Hann WOLA（50% overlap），
-為 **1 個 hop**；實測以 `../docs/c_user_manual_zh_TW.md` §1.1 的
+為 **1 個 hop**；實測以 `../docs/c_user_manual_zh_TW_01_quick_start.md` §1.1 的
 `nr_stream.c` 流程送入單一脈衝，16 kHz/256 的輸出峰值比輸入晚 128 樣本。
 
 | 採樣率 | frame_size | hop_size | fft_size | 框架延遲（1 hop） |
