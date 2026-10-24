@@ -67,7 +67,7 @@ is removed.
 ## Scope limits
 
 - Cost figures ([anr_optimization.md](anr_optimization.md)) are host measurements on
-  Apple M4 with NE10; they are not embedded-board, whole-pipeline or other-compiler
+  an Arm64 development host with NE10; they are not embedded-board, whole-pipeline or other-compiler
   results. Embedded cycle counts are not covered.
 - Bit-exactness (except the payload bits of a NaN result) is established between builds of
   the same source tree with the NE10 FFT backend.

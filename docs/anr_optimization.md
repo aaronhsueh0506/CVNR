@@ -46,7 +46,7 @@ Every statement below that says "identical" or "bit-exact" carries this exceptio
 extra noise PSD on three grids and two strengths. It uses frozen synthetic spectra, a
 fresh instance per pass, five untimed warm-up passes and 30 timed passes of 600 hops, and
 prints median, quartiles and minimum. The figures below are medians in microseconds per
-hop on Apple M4 with the NE10 backend and clang -O2 with the strict FP flags, 12
+hop on an Arm64 development host with the NE10 backend and clang -O2 with the strict FP flags, 12
 alternating runs of the two binaries. They describe the host and compiler that built the
 binaries; they are not target-platform figures.
 

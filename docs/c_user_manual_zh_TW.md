@@ -57,8 +57,9 @@
 |---|---|
 | `denoise_wav` | 完整的時域 wrapper 範例：讀 WAV → framing/FFT/NR/IFFT/OLA → 寫 WAV |
 | `denoise_mem` | static memory 路徑（`_get_mem_size` + `_init`）示範 runner |
-| `test_config_validation` | config 驗證與對齊防護的回歸測試 |
-| `test_config_parity` | 印出各 grid × strength 的正規 config |
+| `test_config_validation` | config 驗證與對齊防護的回歸測試（`make test-config`） |
+| `test_config_parity` | 印出各 grid × strength 的正規 config（`make test-config-parity`） |
+| 其他 `test_*` | `test-reconfigure`、`test-noise-restart`、`test-scene-change`、`test-shared-startup`、`test-api-cpp`、`test-bit-exact`；`make test`／`make test-full` 為彙總 |
 
 `make publish` 產出的 release 內容為 `libanr.a` 與 `denoise_wav`；header 請直接從
 source tree 取用。
@@ -236,6 +237,12 @@ int nr_stream_demo(const float *pcm, int n_samples, float *out)
 尺寸一律從 config 或 query API 取得（`cfg.hop_size`、`anr_get_n_freqs()`…），
 **不要硬編任何 hop / n_freqs 常數**。
 
+**延遲**：NR 核心本身 0 延遲（增益同 hop 產出）。1.1 的 sqrt-Hann、50% overlap WOLA 為 1 個 hop：
+以 1.1 的 `nr_stream.c` 送入單一脈衝，16 kHz/256 的輸出峰值比輸入晚 128 樣本（8 ms）。
+
+**時序圖與外部／內部參數分類**：見 `docs/html/nr.html`（逐層時序圖）、
+`docs/html/nr_c_api.html`（呼叫順序與錯誤語意）、`docs/html/nr_c_api_params.html`（外部／內部參數表與函式分級）。
+
 ### 1.3 兩個永久行為契約
 
 這兩點是這個 library 對使用者的長期承諾，不是版本花絮，整合時必須先接受。
@@ -246,8 +253,9 @@ C library 只能往前走。初始化期間它會**直接 pass-through**（每�
 輸出與輸入逐 sample 相同），同時累積噪聲統計，累滿之後**一次性**完成噪聲估計初始化。
 它**先天無法**像 offline/batch 實作那樣「回頭用最終的 noise PSD 重算前 N 個 frame」。
 
-- pass-through 的長度就是 `config.num_init_frames` 個 frame；預設約 200 ms
-  （各 grid 的實際 frame 數見 4.2 節）。
+- pass-through 的長度就是 `config.num_init_frames` 個**非全零** frame；預設約 200 ms
+  （各 grid 的實際 frame 數見 4.2 節）。數位靜音 frame（所有 bin 功率恰為 0）回傳 0：初始化前 gain 為 `1.0` 且不計入這個數字；
+  初始化後仍照常計算 gain（不會被強制為 `1.0`），只是不推進噪聲底追蹤。第 `num_init_frames` 次呼叫完成初始化，但那一次的 gain 仍是 `1.0`，下一個 frame 才開始抑制。
 - 消費端必須預期開頭這段音訊實質上是未處理的；不要把它當成 bug，也不要用縮短
   `num_init_frames` 以外的方式去「修」它。
 - 開頭這段最好是**只有背景噪聲、沒有目標語音**，否則初始噪聲估計會被語音污染。
@@ -355,6 +363,7 @@ int nr_gain_only(AnrDenoiser *nr, const Complex *spectrum_in,
 | `anr_get_hop_size()` / `anr_get_frame_size()` / `anr_get_n_freqs()` | 取得實際尺寸 | 配置 buffer 時；避免硬編 |
 | `anr_is_initialized()` | 初始化 pass-through 是否結束 | 想知道輸出何時開始真的有降噪時 |
 | `anr_get_noise_psd()` / `anr_get_gain()` | 讀最近一個 frame 的 per-bin 陣列 | 除錯／視覺化 |
+| `anr_get_speech_protect_frame_threshold()` | 幀級語音閘的生效值（`value + (q − 0.52)`，隨 `anr_reconfigure()` 更新） | 確認 preset 切換後的閘門值 |
 | `anr_debug_status()` | 一次取得聚合狀態（見下） | 板上監看，建議每秒一次 |
 
 `anr_debug_status()` 填入 `AnrDebugStatus`：`initialized`、`mean_gain_db`、
@@ -366,6 +375,36 @@ per-bin 查詢回傳的是 instance 內部的唯讀記憶體：**不要修改、
 
 執行緒：每個 instance 都有狀態，**同一個 instance 不可被多個 thread 同時呼叫**；不同
 instance 之間不共用可變狀態，可各自在不同 thread 使用。多條串流請各建一個 instance。
+
+### 1.8 執行期換強度：`anr_set_mode()` 與 `anr_reconfigure()`
+
+```c
+int anr_reconfigure(AnrDenoiser *self, const AnrConfig *target);
+int anr_set_mode(AnrDenoiser *self, AnrMode mode);
+```
+
+在 running instance 上換調參欄位，不重建、不重新配置記憶體。回 `0`，或 `-1`（`self`／`target` 為 NULL、
+`target` 未通過 `anr_validate_config()`、`mode` 超出 enum、六個幾何欄位任一不符）；`-1` 時**什麼都不寫**。
+
+- **幾何必須相同**：`sample_rate`／`frame_size`／`hop_size`／`fft_size`／`L`／`num_init_frames` 必須等於實例當下的值。
+- **狀態刻意保留**：噪聲底、最小值追蹤環與其 scene-change 計數、SPP 先驗 SNR 歷史、增益平滑歷史全部繼續跑。換強度不是重啟；要重啟用 `anr_reset()`。
+- **`anr_reconfigure()` 逐字採用 `target`**，不查 preset、不疊覆寫：自己疊了覆寫的呼叫端要重組整份組態。
+- **`anr_set_mode()`** 以實例的 grid 組出 canonical 組態（`L` 為函式庫預設）後交給 `anr_reconfigure()`：
+  只適用於組態等於 canonical preset 的實例。對疊了覆寫的實例，非 pool 欄位的覆寫會被悄悄還原，
+  覆寫 `L` 或 `num_init_frames` 則被拒絕（回 `-1`）。
+- 在兩個 hop 之間呼叫，與處理序列化；**非 thread-safe**。
+- 改 `cross_band_*` 欄位會重置跨頻先驗狀態；改 `speech_aware_noise_tracking`／`noise_gate_*`／`makeup_*` 會重置共用 frame 狀態。
+
+```c
+if (anr_set_mode(nr, ANR_MODE_AGGRESSIVE) != 0) { /* mode 無效或被拒 */ }
+
+AnrConfig t = anr_config_for_mode_grid(sr, fft_size, ANR_MODE_AGGRESSIVE);
+t.noise_over_subtraction = 1.2f;                  /* 範例覆寫，每次都要重新疊上去 */
+if (anr_reconfigure(nr, &t) != 0) { /* 幾何不符或 t 無效 */ }
+```
+
+函式庫沒有 `anr_get_config()`：要「只改一個旋鈕」，必須自己持有一份目前的 `AnrConfig`。
+回歸測試：`make -C c_impl test-reconfigure`（`c_impl/test/test_reconfigure.c`）。
 
 ---
 
@@ -434,8 +473,11 @@ c++ -std=gnu99 app.c \
 | `anr_process(...)` | 回傳 `0` | 回傳 `-1`：`self` / `spectrum_in` / `spectrum_out` 任一為 `NULL` |
 | `anr_process_gain(...)` | 回傳 `0` | 回傳 `-1`：`self` 或 `spectrum_in` 為 `NULL`。`extra_noise_psd` 與 `gain_out` 為 `NULL` 是合法用法，不是錯誤 |
 | `anr_reset(self)` | `void` | `self == NULL` **安靜 no-op**，沒有任何回報 |
+| `anr_set_mode(self, mode)` | 回傳 `0` | 回傳 `-1`：`self == NULL`、`mode` 超出 enum、組出的 config 被 `anr_reconfigure()` 拒絕；`-1` 時什麼都不寫 |
+| `anr_reconfigure(self, target)` | 回傳 `0` | 回傳 `-1`：`self`／`target` 為 `NULL`、`target` 未通過驗證、六個幾何欄位任一與實例不同；`-1` 時什麼都不寫 |
 | `anr_get_hop_size()` / `get_frame_size()` / `get_n_freqs()` | 回傳正整數 | handle 為 `NULL` 時回傳 **`0`** |
 | `anr_is_initialized()` | `true` / `false` | handle 為 `NULL` 時回傳 `false` |
+| `anr_get_speech_protect_frame_threshold()` | 回傳生效的幀級語音閘值 | handle 為 `NULL` 時回傳 `0.0` |
 | `anr_get_noise_psd()` / `get_gain()` | 回傳唯讀陣列指標，並在 `n_freqs != NULL` 時寫入長度 | handle 為 `NULL` 時回傳 `NULL` 並把 `*n_freqs` 設為 `0`。`n_freqs` 本身可以傳 `NULL` |
 | `anr_debug_status(self, out)` | `void`，填滿 `*out` | `out == NULL` 時**什麼都不做**；`self == NULL` 時把 `*out` **全部歸零**（不會寫入 NaN） |
 | `anr_validate_config(config)` | 回傳 `true` | 回傳 `false`：`config == NULL`，或任何欄位越界／為 NaN／為 Inf |
@@ -464,7 +506,8 @@ c++ -std=gnu99 app.c \
 「預設值」欄若標示為**依 grid 而定**，代表 constructor 會依實際 hop 換算，實測值見 4.2 節。
 
 **通則**：instance 建立後，改動你手上那份 `AnrConfig` 不會有任何效果（內部已經複製並
-衍生出尺寸與狀態）。要換 sample rate、grid、`L` 或 `num_init_frames`，必須 destroy 後重建。
+衍生出尺寸與狀態）。要換 sample rate、grid、`L` 或 `num_init_frames`，必須 destroy 後重建；
+其餘調參欄位可在執行期用 `anr_set_mode()`／`anr_reconfigure()` 換（見 1.8）。
 
 ### 4.1 Grid 欄位（4 個）
 
@@ -571,7 +614,7 @@ MCRA broadband gate 內部用來計數的 `spp > 0.5` 則是另一個分類門�
 |---|---|---|---|---|
 | `scene_change_threshold_db` | 觸發場景變化判定的門檻（dB） | 有限值，`[-80, 80]` | 10.0 | **調低**：更容易判定為場景變化（噪聲底變化時追得快，但誤判也多）。**調高**：更保守 |
 | `scene_change_min_frames` | 需連續成立幾個 frame 才確認 | `>= 0`（只檢查非負，無上限） | 依 grid（53–64 ms） | **調大**：只有持續的變化才算數，抗誤觸。**調小**：反應快但容易被瞬態誤觸 |
-| `scene_change_blend` | 確認場景變化後，**保留**多少舊噪聲底（新噪聲底 = `blend ×` 舊值 + `(1 - blend) ×` 當前觀測值） | 有限值，`[0, 1]` | 0.5 | **調小**（趨近 0）：幾乎整個換成新場景的觀測值，切換快但誤判時風險高。**調大**（趨近 1）：幾乎不動，`1.0` 等同關閉這條路徑 |
+| `scene_change_blend` | 確認場景變化後，**保留**多少舊噪聲底（新噪聲底 = `blend ×` 舊值 + `(1 - blend) ×` 當前觀測值） | 有限值，`[0, 1]` | 0.5 | **調小**（趨近 0）：幾乎整個換成新場景的觀測值，切換快但誤判時風險高。**調大**（趨近 1）：噪聲底幾乎不動；`1.0` 時噪聲底 `noise_psd` 維持原值，但最小值追蹤 `S_min` 與最小值環仍會用當前功率重新播種（不是停用） |
 | `scene_change_flatness_threshold` | 高頻頻譜平坦度門檻 | 有限值，`[0, 1]` | 0.4 | **調高**：只有很「像噪聲」的頻譜才會被當成場景變化，音樂／語音較不會誤觸。**調低**：較寬鬆 |
 | `broadband_threshold` | 寬頻場景重置的啟用門檻 | 有限值，`[0, 1]`；**`1.0` 代表關閉** | 1.0（關閉） | 需要在寬頻噪聲突然出現後快速追上時，設成 `< 1.0`（越小越早介入）。不需要就維持 `1.0` |
 
@@ -597,6 +640,22 @@ MCRA broadband gate 內部用來計數的 `spp > 0.5` 則是另一個分類門�
 全程整數運算；預設 config 的 `L` 用這一版）；
 `anr_retime_alpha()` / `anr_retime_frames()` 是 10 ms 參考 hop 的簡寫。
 兩者在參數無效時**不會報錯**（見第 3 節），呼叫前請自行確認輸入。
+
+### 4.8 外部（可開放給第三方）與內部（存在但不建議開放）
+
+`AnrConfig` 的 41 欄 = 外部 A 4 欄（3 個概念）＋ 外部 B 4 欄 ＋ 內部 33 欄。完整表（預設、範圍、耦合、
+為什麼不開放）在 `docs/html/nr_c_api_params.html`；這裡只列歸屬：
+
+| 類別 | 欄位 | 說明 |
+|---|---|---|
+| 外部 A | `sample_rate`、`fft_size`（`frame_size`／`hop_size` 是衍生值）、`AnrMode` | 部署環境與強度 preset；建立時決定 |
+| 外部 B | `g_min_db`、`xi_min_db`、`q`、`noise_over_subtraction` | 四個 preset 在動的欄位；`speech_protect_floor` 開啟（預設）時 `g_min_db` 實際上限是 `speech_protect_floor_db`（−15）；`q` 連動幀級語音閘 |
+| 內部：噪聲追蹤器 | `alpha_s`、`alpha_d`、`alpha_p`、`L`、`delta_db`、`num_init_frames` | `L`／`num_init_frames` 決定 pool，執行期不可改 |
+| 內部：平滑 | `alpha_xi`、`alpha_attack`、`alpha_decay`、`alpha_g`（C 不讀） | 手冊 5.2 的 musical noise 處方會調 `alpha_decay`，但不建議開放給第三方 |
+| 內部：場景切換 | `scene_change_*`（4 欄）、`broadband_threshold` | 門檻與遲滯 |
+| 內部：低頻語音保護（預設開） | `speech_protect_floor`、`speech_protect_floor_db`、`speech_protect_threshold`、`speech_protect_frame_threshold` | 閘門值隨 `q` 位移 |
+| 內部：speech-aware 追蹤（預設開） | `speech_aware_noise_tracking`、`alpha_d_speech`、`noise_gate_xi_db`、`noise_gate_lf_hz`、`noise_gate_frame_frac` | |
+| 內部：預設關閉的研究欄位 | `cross_band_speech_prior`、`cross_band_speech_prior_max_q`、`cross_band_speech_prior_alpha`、`dd_from_gmmse`、`makeup_gain`、`makeup_prior_xi_db`（保留欄位）、`makeup_blim`、`makeup_up_slope`、`makeup_down_slope` | 另有 `anr_apply_speech_protection_experiment()`、`anr_apply_cross_band_speech_experiment()` 兩個研究用疊加函式，不對外 |
 
 ---
 

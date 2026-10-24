@@ -87,6 +87,12 @@ composition and call `anr_reconfigure()`: the bare canonical preset passed to
 fields are `L` or `num_init_frames`.
 Details in [`c_impl/README.md`](c_impl/README.md).
 
+HTML pages for integrators (self-contained, no external resources):
+[`docs/html/nr.html`](docs/html/nr.html) (algorithm, sequence and flow diagrams,
+latency), [`docs/html/nr_c_api.html`](docs/html/nr_c_api.html) (call order, error
+semantics, reset), and [`docs/html/nr_c_api_params.html`](docs/html/nr_c_api_params.html)
+(external versus internal parameters, public versus internal functions).
+
 Build outputs are keyed by backend and configuration. `make -C c_impl
 publish` creates the immutable release layout and provenance manifest; do not
 copy an arbitrary file from a `bin/` directory.
@@ -158,6 +164,7 @@ from `python/requirements-dev.txt`.
 | `python/tests/`, `c_impl/test/` | Regression, parity, and negative-input tests |
 | `python/tools/` | Benchmark, diagnosis, and conversion utilities |
 | `docs/parameter_tuning.md` | Supported tuning workflow |
+| `docs/html/` | Integrator pages: flow diagrams, API usage, parameter tables |
 | `docs/archive/` | Historical plans and superseded research documents |
 
 Source headers and the current READMEs take precedence over `docs/archive/`.

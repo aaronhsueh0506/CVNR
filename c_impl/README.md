@@ -18,17 +18,19 @@ C 介面、檔名與 archive 以 ANR 命名；[命名對照](../docs/anr_migrati
 
 ## 算法流程
 
+函式庫的範圍是 `Y[k]` → 增益 → `Y[k]×G[k]`；標「呼叫端」的方塊（緩衝、加窗、FFT、IFFT、OLA）由應用自己負責。
+
 ```
 輸入音頻 (hop_size samples)
         │
         ▼
 ┌───────────────┐
-│   OLA 緩衝     │  ← 累積到 frame_size
+│ OLA 緩衝(呼叫端)│  ← 累積到 frame_size
 └───────┬───────┘
         │
         ▼
 ┌───────────────┐
-│  加窗 + FFT    │  → 複數頻譜 Y[k]
+│加窗+FFT(呼叫端) │  → 複數頻譜 Y[k]
 └───────┬───────┘
         │
         ├─────────────────────┬─────────────────────┐
@@ -68,13 +70,13 @@ C 介面、檔名與 archive 以 ANR 命名；[命名對照](../docs/anr_migrati
                     Y[k] × G[k] = X̂[k]
                             │
                             ▼
-                   ┌───────────────┐
-                   │  IFFT + 加窗  │ 
-                   └───────┬───────┘
+                   ┌────────────────┐
+                   │IFFT+加窗(呼叫端)│
+                   └───────┬────────┘
                            │
                            ▼
                    ┌───────────────┐
-                   │   OLA 合成     │
+                   │OLA 合成(呼叫端)│
                    └───────┬───────┘
                            │
                            ▼
@@ -141,8 +143,8 @@ no-op、可重複呼叫：NE10 的 R2C/C2R twiddle cfg 從呼叫端 pool 切出�
 external-memory 初始化 `ne10_fft_init_r2c_float32_ext`），沒有 backend-internal malloc。完整範例見
 [`../docs/c_user_manual_zh_TW.md`](../docs/c_user_manual_zh_TW.md) §1.5 的 `create_static_nr`。
 
-演算法與 malloc 版**逐位元相同**（只差配置方式）：`denoise_mem` 輸出與 `denoise_wav`
-byte-for-byte 一致（四個 preset 皆然）。同一機制也覆蓋子模組
+演算法與 malloc 版使用同一個處理核心（只差配置方式）：實測 `denoise_mem` 輸出與 `denoise_wav` byte-for-byte 一致：`test_wav/wav/babble_0dB.wav`（48 kHz/1024，四個 preset）、
+`test_wav/music/fix_gain_noise.wav`（16 kHz，256 與 512 兩個 grid，mild／balanced／aggressive）；其他素材與 grid 未逐一比對。同一機制也覆蓋子模組
 `fft_get_mem_size`/`fft_init`、`noise_estimator_get_mem_size`/`noise_estimator_init`、
 `spp_get_mem_size`/`spp_init`。
 
@@ -330,21 +332,24 @@ B＝16k/512/256、C＝48k/1024/512。NRP2 header 記錄輸入 sample rate，
 float64／float32 與數學近似的數值容差檢查，不宣稱 bit-exact。
 
 ```bash
+# 0. 輸出夾（repo 根目錄的 results/，benchmark 工具也寫這裡）
+mkdir -p ../results
+
 # 1. Python 端 dump 參考頻譜 + gain
-python3 ../python/tools/parity_nr.py dump --wav ../test_wav/wav/babble_10dB.wav --out /tmp/parity_in.bin
+python3 ../python/tools/parity_nr.py dump --wav ../test_wav/wav/babble_10dB.wav --out ../results/parity_in.bin
 
 # 2a. C 端 fast-math（bin 目錄依 build flags 雜湊）
 ac=$(make -s --no-print-directory -C ../../audiolib/common print-lib-path)
 make DEBUG=0 COMMON_LIB="$ac" parity
 bin_dir=$(make -s DEBUG=0 COMMON_LIB="$ac" print-bin-dir)
-"$bin_dir/parity_runner" /tmp/parity_in.bin /tmp/g_fast.bin
-python3 ../python/tools/parity_nr.py compare --ref /tmp/parity_in.bin --c-gains /tmp/g_fast.bin
+"$bin_dir/parity_runner" ../results/parity_in.bin ../results/g_fast.bin
+python3 ../python/tools/parity_nr.py compare --ref ../results/parity_in.bin --c-gains ../results/g_fast.bin
 
 # 2b. C 端 standard-math（檢查 float32/float64 殘差）
 make DEBUG=1 COMMON_LIB="$ac" parity
 bin_dir=$(make -s DEBUG=1 COMMON_LIB="$ac" print-bin-dir)
-"$bin_dir/parity_runner" /tmp/parity_in.bin /tmp/g_debug.bin
-python3 ../python/tools/parity_nr.py compare --ref /tmp/parity_in.bin --c-gains /tmp/g_debug.bin
+"$bin_dir/parity_runner" ../results/parity_in.bin ../results/g_debug.bin
+python3 ../python/tools/parity_nr.py compare --ref ../results/parity_in.bin --c-gains ../results/g_debug.bin
 ```
 
 NRP2 dump header 會攜帶 `sample_rate`；C 端據此建立完全相同的 signal grid
@@ -441,17 +446,20 @@ Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差
 
 ## 延遲
 
-算法 framing 延遲約為一個 `frame_size`；實際值依 signal grid 而非固定 20 ms。
+NR 核心本身 0 延遲（增益同 hop 產出）。端到端的框架延遲來自呼叫端的 sqrt-Hann WOLA（50% overlap），
+為 **1 個 hop**；實測以 `../docs/c_user_manual_zh_TW.md` §1.1 的
+`nr_stream.c` 流程送入單一脈衝，16 kHz/256 的輸出峰值比輸入晚 128 樣本。
 
-| 採樣率 | frame_size | hop_size | fft_size | 延遲 |
+| 採樣率 | frame_size | hop_size | fft_size | 框架延遲（1 hop） |
 |--------|-----------|----------|----------|------|
-| 8 kHz（預設） | 128 samples | 64 samples | 128 | 16 ms |
-| 8 kHz（可選，較高延遲） | 256 samples | 128 samples | 256 | 32 ms |
-| 16 kHz（預設） | 256 samples | 128 samples | 256 | 16 ms |
-| 16 kHz（可選，較高延遲） | 512 samples | 256 samples | 512 | 32 ms |
-| 48 kHz | 1024 samples | 512 samples | 1024 | 21.333 ms |
+| 8 kHz（預設） | 128 samples | 64 samples | 128 | 8 ms |
+| 8 kHz（可選，較高延遲） | 256 samples | 128 samples | 256 | 16 ms |
+| 16 kHz（預設） | 256 samples | 128 samples | 256 | 8 ms |
+| 16 kHz（可選，較高延遲） | 512 samples | 256 samples | 512 | 16 ms |
+| 48 kHz | 1024 samples | 512 samples | 1024 | 10.667 ms |
 
 > **注意**: 初始化幀數會依 hop retime，保證至少約 200 ms；期間音頻 passthrough（gain=1），MCRA 累積噪聲統計。
+> 數位靜音幀（所有 bin 恰為 0）不計入這 200 ms。
 
 ## 檔案結構
 
@@ -472,6 +480,7 @@ c_impl/
 │   ├── main_mem.c              # 命令列工具（靜態記憶體路徑，見上一節）
 │   ├── parity_runner.c         # Python↔C parity harness 的 C 端
 │   └── wav_io.h                # WAV 讀寫
+├── test/                      # C 測試（make test-* 目標）與 Python/C parity 腳本
 ├── Makefile
 ├── README.md                  # 本文件
 └── CHANGELOG.md               # 改動記錄

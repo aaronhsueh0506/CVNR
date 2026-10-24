@@ -34,13 +34,16 @@ pre code{background:none;padding:0}
 <a href="../../../audiolib/common/docs/html/audio_common.html">audiolib</a>
 <span class="sep">|</span>
 <a href="../../../AEC/docs/html/aec_c_api.html">AEC API</a>
+<a href="../../../AEC/docs/html/aec_params.html">AEC 參數</a>
 <a href="nr_c_api.html"><b>NR API</b></a>
+<a href="nr_c_api_params.html">NR 參數</a>
 <a href="../../../audiolib/common/docs/html/audio_common_c_api.html">audiolib API</a>
+<a href="../../../audiolib/common/docs/html/audio_common_params.html">audiolib 參數</a><a href="../../../audiolib/docs/html/spatial_chain.html">空間鏈</a>
 <a href="../../../Audio_ALG/docs/html/integration_example.html">串接範例</a>
 </nav>
 
-<h1>NR C API 使用說明 — <code>lib/nr/c_impl</code></h1>
-<p class="small">本頁是<b>整合者視角</b>的 API 說明：init/process 要呼叫什麼、input/output 怎麼給、每個參數調了會有什麼結果。演算法內部機制見 <a href="nr.html">nr.html</a>;完整欄位與錯誤語意的 canonical 出處是 <code>NR/docs/c_user_manual_zh_TW.md</code>。函式內部自行呼叫的子模組不在本頁範圍。</p>
+<h1>NR C API 使用說明 — <code>NR/c_impl</code></h1>
+<p class="small">本頁是<b>整合者視角</b>的 API 說明：init/process 要呼叫什麼、input/output 怎麼給、錯誤與 reset 怎麼處理。演算法內部機制與逐層時序圖見 <a href="nr.html">nr.html</a>;<b>外部／內部參數表與函式分級</b>見 <a href="nr_c_api_params.html">nr_c_api_params.html</a>;完整欄位與錯誤語意的 canonical 出處是 <code>NR/docs/c_user_manual_zh_TW.md</code>。函式內部自行呼叫的子模組不在本頁範圍。</p>
 
 <h2>1. 責任邊界(先看這個)</h2>
 <p>NR 是<b>純頻域</b> MMSE-LSA/OMLSA 降噪核心。它<b>只吃 <code>Complex[n_freqs]</code>、只吐 <code>Complex[n_freqs]</code></b>,不含 window、FFT、IFFT、OLA 或任何 PCM buffer 邏輯——這些全部是呼叫端的責任(<code>NR/c_impl/include/anr.h</code>)。</p>
@@ -59,17 +62,18 @@ pre code{background:none;padding:0}
 <h2>2. 這個 lib 可以設定的 grid(與 AEC 不同,注意)</h2>
 <p><code>anr_validate_config()</code>(<code>anr_types.h</code>)接受<b>五組</b> grid。硬性關係:<code>frame_size == fft_size</code>(不補零)、<code>hop_size == frame_size/2</code>(固定 50% overlap)。</p>
 <div class="tblwrap"><table>
-<tr><th>sample_rate</th><th>fft_size = frame_size</th><th>hop_size</th><th>hop 時長</th><th>n_freqs</th><th>演算法延遲</th><th>狀態</th></tr>
-<tr><td>8000</td><td>128</td><td>64</td><td>8.000 ms</td><td>65</td><td>16 ms</td><td>8k 預設</td></tr>
-<tr><td>8000</td><td>256</td><td>128</td><td>16.000 ms</td><td>129</td><td>32 ms</td><td>8k 替代</td></tr>
-<tr><td><b>16000</b></td><td><b>256</b></td><td><b>128</b></td><td>8.000 ms</td><td>129</td><td>16 ms</td><td><b>產品預設(低延遲)</b></td></tr>
-<tr><td><b>16000</b></td><td><b>512</b></td><td><b>256</b></td><td>16.000 ms</td><td>257</td><td>32 ms</td><td><b>產品替代(高頻率解析度)</b></td></tr>
-<tr><td><b>48000</b></td><td><b>1024</b></td><td><b>512</b></td><td>10.667 ms</td><td>513</td><td>21.333 ms</td><td><b>48k 唯一 grid</b></td></tr>
+<tr><th>sample_rate</th><th>fft_size = frame_size</th><th>hop_size</th><th>hop 時長</th><th>n_freqs</th><th>呼叫端 WOLA 延遲（1 hop）</th><th>狀態</th></tr>
+<tr><td>8000</td><td>128</td><td>64</td><td>8.000 ms</td><td>65</td><td>8.000 ms</td><td>8k 預設</td></tr>
+<tr><td>8000</td><td>256</td><td>128</td><td>16.000 ms</td><td>129</td><td>16.000 ms</td><td>8k 替代</td></tr>
+<tr><td><b>16000</b></td><td><b>256</b></td><td><b>128</b></td><td>8.000 ms</td><td>129</td><td>8.000 ms</td><td><b>產品預設(低延遲)</b></td></tr>
+<tr><td><b>16000</b></td><td><b>512</b></td><td><b>256</b></td><td>16.000 ms</td><td>257</td><td>16.000 ms</td><td><b>產品替代(高頻率解析度)</b></td></tr>
+<tr><td><b>48000</b></td><td><b>1024</b></td><td><b>512</b></td><td>10.667 ms</td><td>513</td><td>10.667 ms</td><td><b>48k 唯一 grid</b></td></tr>
 </table></div>
+<p class="small">NR 核心本身 0 延遲（同 hop 產出增益）；表中延遲來自呼叫端的 sqrt-Hann WOLA（50 % overlap 的 window+FFT／IFFT+OLA），實測 16k/256 的脈衝輸入到輸出差 128 樣本＝1 hop。</p>
 <p><b>兩個產品 sample rate(16k／48k),而 16 kHz 是唯一有兩種 hop 可選的。</b>選 hop 的取捨:</p>
 <div class="tblwrap"><table>
 <tr><th>選 16k/256(hop 128)</th><th>選 16k/512(hop 256)</th></tr>
-<tr><td>延遲減半(16 ms vs 32 ms)</td><td>頻率解析度加倍(129→257 bins),低頻噪聲與 tonal 成分分得更開</td></tr>
+<tr><td>延遲減半(8 ms vs 16 ms)</td><td>頻率解析度加倍(129→257 bins),低頻噪聲與 tonal 成分分得更開</td></tr>
 <tr><td>每秒處理次數加倍 → CPU 較高</td><td>每秒處理次數減半 → CPU 較低</td></tr>
 <tr><td>對瞬態/起音反應快</td><td>長窗對非穩態噪聲反應較鈍</td></tr>
 <tr><td>記憶體 45,344 B</td><td>記憶體 56,432 B</td></tr>
@@ -81,23 +85,33 @@ pre code{background:none;padding:0}
 <p>兩條路徑<b>永遠同時編進同一份 object</b>(不是 <code>#ifdef</code> 二選一);handle 內有 runtime flag <code>is_static</code>,<code>destroy()</code> 靠它決定要不要真的 <code>free()</code>(<code>anr.c</code>)。</p>
 
 <h3>A. Static pool(板端路徑)</h3>
-<pre>AnrConfig cfg = anr_config_for_mode_grid(16000, 256, ANR_MODE_BALANCED);
+<pre>#include &lt;stdint.h&gt;
+#include "anr.h"
 
-if (!anr_validate_config(&amp;cfg)) { /* 唯一能事先知道為何被拒的手段 */ }
+static uint8_t g_pool[48 * 1024] __attribute__((aligned(16)));   /* &gt;= anr_get_mem_size(&amp;cfg) */
 
-size_t need = anr_get_mem_size(&amp;cfg);   /* 0 = config 無效或尺寸溢位 */
-void  *pool = board_alloc_aligned(16, need); /* 基底必須 16-byte 對齊 */
-AnrDenoiser *nr = pool ? anr_init(pool, need, &amp;cfg) : NULL;
-if (!nr) { /* 對齊錯 / pool 太小 / config 無效 */ }
+AnrDenoiser *nr_create_static(void)
+{
+    AnrConfig cfg = anr_config_for_mode_grid(16000, 256, ANR_MODE_BALANCED);
+    if (!anr_validate_config(&amp;cfg)) return NULL;     /* 唯一能事先知道為何被拒的手段 */
 
-/* ... 每 frame 呼叫 process ... */
+    size_t need = anr_get_mem_size(&amp;cfg);            /* 0 = config 無效或尺寸溢位 */
+    if (need == 0 || need &gt; sizeof g_pool) return NULL;
 
-anr_destroy(nr);   /* static instance 上是真 no-op,可重複呼叫 */
-board_free(pool);       /* pool ownership 永遠在 caller */</pre>
+    return anr_init(g_pool, sizeof g_pool, &amp;cfg);    /* NULL = 未對齊 / pool 太小 / config 無效 */
+}
+
+void nr_end_of_stream(AnrDenoiser *nr)
+{
+    /* ... 每 hop 呼叫 anr_process() 或 anr_process_gain() ... */
+    anr_reset(nr);     /* 串流邊界:同時清呼叫端自己的 analysis / OLA buffer */
+    anr_destroy(nr);   /* static 實例是真 no-op,可重複呼叫;pool 由呼叫端持有、呼叫端釋放 */
+}</pre>
 
 <h3>B. Heap(桌面/測試)</h3>
-<pre>AnrDenoiser *nr = anr_create(&amp;cfg);
-anr_destroy(nr);   /* heap instance 只能呼叫一次,重複呼叫 = double free */</pre>
+<pre>AnrConfig cfg = anr_config_for_mode(16000, ANR_MODE_BALANCED);
+AnrDenoiser *nr = anr_create(&amp;cfg);   /* NULL = config 無效或配置失敗 */
+anr_destroy(nr);                      /* heap 實例只能呼叫一次,重複呼叫 = double free */</pre>
 
 <h3>記憶體實測(NE10)</h3>
 <div class="tblwrap"><table>
@@ -108,7 +122,33 @@ anr_destroy(nr);   /* heap instance 只能呼叫一次,重複呼叫 = double fre
 <tr><td>16k/512</td><td>56,432</td><td>56,336</td><td>13,552</td></tr>
 <tr><td>48k/1024</td><td>144,576</td><td>144,464</td><td>26,352</td></tr>
 </table></div>
-<p class="small">啟動階段的 power 列與最小值 ring 共用同一塊儲存(取兩者較大者),所以預設建置與 <code>USE_FAST_PERCENTILE</code> 只差 percentile scratch。FFT pool 是<b>另一塊</b>,各自查詢、各自 16-byte 對齊。上表是預設建置(<code>DEBUG=0</code>)、balanced preset 的值;<code>DEBUG=1</code>(標準數學、關閉六項最佳化)的值略小(16k/256 為 44,816 B)。<b>不要把這裡的 byte 數寫死進產品</b>——永遠用當前 config 呼叫 <code>anr_get_mem_size()</code>。只有 <code>fft_size</code>／<code>L</code>／<code>num_init_frames</code> 會改變需求量。</p>
+<p class="small">啟動階段的 power 列與最小值 ring 共用同一塊儲存(取兩者較大者),所以預設建置與 <code>USE_FAST_PERCENTILE</code> 只差 percentile scratch。FFT pool 是<b>另一塊</b>,各自查詢、各自 16-byte 對齊。上表是預設建置(<code>DEBUG=0</code>)、balanced preset 的值;<code>DEBUG=1</code>(標準數學、關閉六項最佳化,少一塊 <code>USE_SHARED_XI_RATIO</code> 的 <code>v</code> 暫存)的值略小(16k/256 為 44,816 B，差 528 B)。<b>不要把這裡的 byte 數寫死進產品</b>——永遠用當前 config 呼叫 <code>anr_get_mem_size()</code>。只有 <code>fft_size</code>／<code>L</code>／<code>num_init_frames</code> 會改變需求量。</p>
+
+<h3>呼叫順序與時序圖(API 層)</h3>
+<pre>
+ Application                                          AnrDenoiser (NR)         audiolib fft_*
+     |                                                     |                        |
+ [建立,一次]
+     |-- anr_config_for_mode_grid(sr, fft, mode) --&gt; AnrConfig(值回傳;不支援的 sr 不在此報錯,由下一行驗證擋下)
+     |-- anr_validate_config(&amp;cfg) --&gt; true | false
+     |-- anr_get_mem_size(&amp;cfg) --&gt; bytes                 (0 = 被拒)
+     |-- anr_init(pool, bytes, &amp;cfg) ------------------&gt;|  清零並切 pool;is_static = true
+     |&lt;-- AnrDenoiser* | NULL(未對齊 / pool 太小 / config 無效)
+     |-- fft_get_mem_size(fft) + fft_init(...) -----------------------------------&gt;|  另一塊 pool
+ [每個 hop;呼叫端 sqrt-Hann、50 % overlap]
+     |-- 加窗 + fft_forward(h, time, E[n_freqs]) --------------------------------&gt;|
+     |-- anr_process_gain(nr, E, extra | NULL, NULL) ----&gt;|  回 0 | -1(NULL 引數,狀態未動)
+     |-- anr_get_gain(nr, NULL) -------------------------&gt;|  g[n_freqs](借用,到下次 process 前有效)
+     |-- E × g(或 min(g, G_res))+ fft_inverse + 合成窗 + OLA -------------------&gt;|
+ [執行期換強度,hop 之間]
+     |-- anr_set_mode(nr, mode) | anr_reconfigure(nr, &amp;t) -&gt;|  回 0 | -1(幾何不符 / 無效,什麼都不寫)
+ [串流邊界,或任何一級拒絕了一個 hop]
+     |-- anr_reset(nr) -----------------------------------&gt;|  清追蹤器 / SPP / 增益歷史
+     |-- 清呼叫端自己的 analysis / OLA buffer                |  之後 num_init_frames 個 hop 再次 pass-through
+ [結束]
+     |-- anr_destroy(nr);fft_destroy(h)                      pool 實例 no-op;heap 實例只能一次
+</pre>
+<p class="small">NR 內部各子模組在一個 hop 內的順序與暖機／靜音分支見 <a href="nr.html">nr.html</a> 的時序圖。</p>
 
 <h2>4. 每-frame 處理入口</h2>
 <div class="tblwrap"><table>
@@ -117,11 +157,12 @@ anr_destroy(nr);   /* heap instance 只能呼叫一次,重複呼叫 = double fre
 <tr><td><code>anr_process_gain()</code></td><td><b>NR 是串接鏈的一環</b>:只要 gain、不要套用,交給上層與 AEC/RES 的 gain 融合</td></tr>
 </table></div>
 <pre>/* A. 直接套用,可 in-place */
-if (anr_process(nr, spectrum, spectrum) != 0) { /* NULL handle/buffer */ }
+if (anr_process(nr, spectrum, spectrum) != 0) { /* self / 輸入 / 輸出為 NULL */ }
 
 /* B. 只取 gain(串接鏈都走這條) */
-float gain[257];
-if (anr_process_gain(nr, error_spec, extra_noise_psd, gain) != 0) { /* error */ }</pre>
+float gain[257];                                 /* &gt;= anr_get_n_freqs(nr) */
+if (anr_process_gain(nr, error_spec, extra_noise_psd, gain) != 0) { /* self / error_spec 為 NULL */ }
+/* gain_out 傳 NULL 時改讀 anr_get_gain(nr, NULL) */</pre>
 <div class="tblwrap"><table>
 <tr><th>項目</th><th>契約</th></tr>
 <tr><td>buffer 長度</td><td>全部 <code>n_freqs = fft_size/2+1</code>;函式<b>沒有長度參數</b>,傳錯不會替你報錯</td></tr>
@@ -129,14 +170,14 @@ if (anr_process_gain(nr, error_spec, extra_noise_psd, gain) != 0) { /* error */ 
 <tr><td>Aliasing</td><td><code>spectrum_out == spectrum_in</code>(<b>完全同一指標</b>)支援;完全不相交也支援;<b>部分重疊不支援</b>(<code>anr.c</code>)</td></tr>
 <tr><td><code>extra_noise_psd</code></td><td>長度 <code>n_freqs</code>,可為 <code>NULL</code>。非 NULL 時做 echo-as-extra-noise:<code>ξ=S²/(N²+R²)</code>,只餵進 SPP／先驗 SNR；MCRA 噪聲估計仍只用輸入功率更新</td></tr>
 <tr><td><code>gain_out</code></td><td>可傳 <code>NULL</code> 省一次 memcpy,之後用 <code>anr_get_gain()</code> 讀同一份</td></tr>
-<tr><td>回傳值</td><td><code>0</code> 成功;<code>-1</code> 表示必要的 <code>self</code>／<code>spectrum_in</code> 為 NULL。<code>extra_noise_psd</code>／<code>gain_out</code> 傳 NULL <b>是合法用法</b></td></tr>
-<tr><td>初始化期</td><td>前 <code>num_init_frames</code> 個 frame 是 pass-through(gain 全 1.0),同時累積噪聲統計</td></tr>
+<tr><td>回傳值</td><td><code>0</code> 成功;<code>-1</code> 表示必要的 <code>self</code>／<code>spectrum_in</code>(<code>anr_process()</code> 另含 <code>spectrum_out</code>)為 NULL,此時狀態未動。<code>extra_noise_psd</code>／<code>gain_out</code> 傳 NULL <b>是合法用法</b></td></tr>
+<tr><td>初始化期</td><td>前 <code>num_init_frames</code> 個<b>非全零</b> frame 是 pass-through(gain 全 1.0),同時累積噪聲統計；第 <code>num_init_frames</code> 次呼叫完成初始化，但那一次的 gain 仍是 1.0，下一個 hop 才開始抑制。<b>數位靜音 frame(所有 bin 功率恰為 0)</b>不是錯誤、回 0：初始化前 gain=1 且不計入暖機；初始化後仍照常算 gain(<b>不會</b>被強制為 1，實測 16k/256 在 40 個以上噪聲 hop 之後的全零 hop 平均 gain 約 0.2)，只是不推進噪聲底追蹤器(<code>anr.c</code> <code>frame_is_silent()</code>、<code>process_init_or_gain()</code>)</td></tr>
 </table></div>
 <div class="warn"><b>Aliasing 規則與 FFT 層相反。</b><code>fft_forward()</code>／<code>fft_inverse()</code> 用 <code>restrict</code>,<b>任何</b>重疊(含完全相同指標)都是 UB;NR 這裡卻明確支援完全同一指標。兩層不要套用同一條直覺。</div>
-<div class="note"><b>接 AEC 的 <code>r2</code> 時要先換算尺度。</b><code>AecResContext.r2</code> 是 int16-square scale,直接當 <code>extra_noise_psd</code> 前必須除以 <code>32768²</code>。換算方式照 Audio_ALG 的串接範例,application 不要自己另推一份。</div>
+<div class="note"><b>接 AEC 的 <code>r2</code> 時要先換算尺度。</b>AEC 的殘留回音 PSD(<code>SeSpecFrame.r2</code>／<code>AecResContext.r2</code>)是 int16² 尺度,而線性誤差頻譜 <code>E</code> 是 audio 尺度,直接當 <code>extra_noise_psd</code> 前必須除以 <code>32768²</code>。範例層的 <code>se_anr_stage_gain()</code>(<code>pipelines/samples/se_anr_stage.h</code>)已做這件事,且只在 <code>frame-&gt;usable_linear</code> 為真時才併入;application 不要自己另推一份。</div>
 
-<h2>5. 參數設定與效果</h2>
-<p>設定強度的正規做法是選一個 mode,不要逐欄位手調。<code>anr_config_for_mode_grid()</code> 的四級只改 <code>g_min_db</code>、<code>q</code>、<code>xi_min_db</code>、<code>noise_over_subtraction</code>;DD、tracker、gain dynamics 與低頻語音 guard 的<b>組態欄位</b>共用。例外是幀級語音閘 <code>speech_protect_frame_threshold</code>:設定值著作於 balanced 的 <code>q = 0.52</code>,生效值為 <code>value + (q − 0.52)</code>,因此隨 preset 自動位移(mild 0.61 / moderate 0.57 / balanced 0.55 / aggressive 0.48;可用 <code>anr_get_speech_protect_frame_threshold()</code> 讀回)。</p>
+<h2>5. 參數設定：用 mode，不要逐欄位手調</h2>
+<p>設定強度的正規做法是選一個 <code>AnrMode</code>。<code>anr_config_for_mode_grid()</code> 的四級只改 <code>g_min_db</code>、<code>q</code>、<code>xi_min_db</code>、<code>noise_over_subtraction</code>；DD、tracker、gain dynamics 與低頻語音 guard 的<b>組態欄位</b>共用。例外是幀級語音閘 <code>speech_protect_frame_threshold</code>:設定值著作於 balanced 的 <code>q = 0.52</code>,生效值為 <code>value + (q − 0.52)</code>,隨 preset 位移(mild 0.61 / moderate 0.57 / balanced 0.55 / aggressive 0.48;可用 <code>anr_get_speech_protect_frame_threshold()</code> 讀回)。</p>
 <div class="tblwrap"><table>
 <tr><th>AnrMode</th><th><code>g_min_db</code></th><th><code>q</code></th><th><code>xi_min_db</code></th><th><code>noise_over_subtraction</code></th><th>聽感</th></tr>
 <tr><td><code>MILD</code></td><td>-20.0</td><td>0.58</td><td>-10.0</td><td>1.2</td><td>最保守,優先保留語音細節</td></tr>
@@ -144,41 +185,7 @@ if (anr_process_gain(nr, error_spec, extra_noise_psd, gain) != 0) { /* error */ 
 <tr><td><code>BALANCED</code></td><td>-25.0</td><td>0.52</td><td>-10.0</td><td>1.4</td><td><b>預設</b>,語音品質與抑噪平衡</td></tr>
 <tr><td><code>AGGRESSIVE</code></td><td>-28.0</td><td>0.45</td><td>-12.0</td><td>1.3</td><td>抑噪最深,較可能犧牲語音細節</td></tr>
 </table></div>
-<p class="small">四級共用時間常數。16 kHz/256 實際值如下；其他 grid 請由 config API 讀回。</p>
-<div class="tblwrap"><table>
-<tr><th>16k/256(hop 128)實際值</th><th><code>alpha_d</code></th><th><code>alpha_g</code></th><th><code>alpha_attack</code></th><th><code>alpha_decay</code></th></tr>
-<tr><td>全部四級</td><td>0.921954</td><td>0.902789</td><td>0.387298</td><td>0.902789</td></tr>
-</table></div>
-<div class="note"><code>alpha_g</code> 仍不直接參與 C gain 運算;產品預設令 <code>alpha_decay=alpha_g</code>。要調實際平滑請改 <code>alpha_decay</code>。</div>
-
-<h3>逐欄位效果(預設值為 16k/256 實測)</h3>
-<div class="tblwrap"><table>
-<tr><th>欄位</th><th>預設</th><th>合法範圍</th><th>調了會怎樣</th></tr>
-<tr><td colspan="4" style="background:#eef5f0"><b>增益(強度主軸)</b></td></tr>
-<tr><td><code>g_min_db</code></td><td>-25.0</td><td><code>[-80,80]</code> finite</td><td><b>振幅</b> dB(<code>/20</code>)增益下限,四級 preset 的核心差異。調低 → 更乾淨,但處理痕跡與傷語音風險上升</td></tr>
-<tr><td><code>alpha_attack</code></td><td>0.387298</td><td><code>[0,1]</code></td><td>增益「上升」方向平滑。調小 → 起音更清楚,但噪聲易短暫漏出</td></tr>
-<tr><td><code>alpha_decay</code></td><td>0.902789</td><td><code>[0,1]</code></td><td>增益「下降」方向平滑。調大 → musical noise 明顯減少,但尾音拖長。<b>這才是真正生效的增益平滑旋鈕</b></td></tr>
-<tr><td><code class="dead">alpha_g</code></td><td>0.902789</td><td><code>[0,1]</code></td><td class="dead"><b>死旋鈕</b>——會被複製進 instance、會通過驗證,但 <code>calculate_gain()</code> 從不讀它(<code>anr.c</code> 內只有宣告與賦值兩處)。四級 preset 剛好把它設成與 <code>alpha_decay</code> 同值,造成「調它好像有效」的錯覺。要調平滑請改 <code>alpha_decay</code></td></tr>
-<tr><td colspan="4" style="background:#eef5f0"><b>SPP(語音存在機率)</b></td></tr>
-<tr><td><code>q</code></td><td>0.52</td><td>finite,<b>開區間 (0,1)</b>;0 與 1 都被拒</td><td>語音先驗機率,經 <code>prior_ratio=(1-q)/q</code> 進 SPP sigmoid。調大 → 偏 mild、更保語音;調小 → 偏 aggressive、抑噪更深</td></tr>
-<tr><td><code>alpha_xi</code></td><td>0.959166</td><td><code>[0,1]</code></td><td>DD 先驗 SNR 平滑。調大 → 更平滑、musical noise 更少,但起音較鈍</td></tr>
-<tr><td><code>xi_min_db</code></td><td>-10.0</td><td><code>[-80,80]</code></td><td>先驗 SNR 下限(<b>功率</b> dB,<code>/10</code>)。調低 → 殘留底噪更少但處理痕跡更明顯。是控制殘留噪聲深度的主要旋鈕</td></tr>
-<tr><td colspan="4" style="background:#eef5f0"><b>MCRA 噪聲估計</b></td></tr>
-<tr><td><code>alpha_s</code></td><td>0.959796</td><td><code>[0,1]</code></td><td>功率譜時間平滑。調大 → 噪聲追蹤更穩、對瞬態不敏感。一般不動</td></tr>
-<tr><td><code>alpha_d</code></td><td>0.921954</td><td><code>[0,1]</code></td><td>噪聲估計更新慣性。調大 → 更新更慢、更不易把語音吸收進噪聲底;調小 → 追噪聲底快但易吃掉語音</td></tr>
-<tr><td><code>alpha_p</code></td><td>0.275946</td><td><code>[0,1]</code></td><td>語音存在指示平滑。一般不動</td></tr>
-<tr><td><code>L</code></td><td>64</td><td><code>1..320</code></td><td>MCRA 最小值追蹤視窗(frame 數,≈512 ms)。調大 → 不易把持續語音誤判為噪聲,但噪聲底上升時追得慢。<b>會改變記憶體需求</b></td></tr>
-<tr><td><code>delta_db</code></td><td>10.0</td><td><code>[-80,80]</code></td><td>語音判定門檻(功率 dB)。調高 → 更難判為語音,噪聲估計更易吸收訊號 → 抑噪深但傷語音風險高</td></tr>
-<tr><td><code>num_init_frames</code></td><td>25</td><td><code>1..200</code></td><td>啟動 pass-through 長度(≈200 ms),這段期間完全不降噪。<b>會改變記憶體需求</b></td></tr>
-<tr><td colspan="4" style="background:#eef5f0"><b>場景變化偵測</b></td></tr>
-<tr><td><code>scene_change_threshold_db</code></td><td>10.0</td><td><code>[-80,80]</code></td><td>高頻 gamma 觸發門檻。調低 → 更容易判定場景變化</td></tr>
-<tr><td><code>scene_change_min_frames</code></td><td>7</td><td><code>&gt;=0</code>(<b>無上限</b>)</td><td>要連續成立幾個 frame 才確認。調大 → 抗誤觸但反應慢</td></tr>
-<tr><td><code>scene_change_blend</code></td><td>0.5</td><td><code>[0,1]</code></td><td>確認後保留舊噪聲底的比例:<code>new = blend*old + (1-blend)*obs</code></td></tr>
-<tr><td><code>scene_change_flatness_threshold</code></td><td>0.4</td><td><code>[0,1]</code></td><td>高頻頻譜平坦度門檻。調高 → 更保守,音樂/語音不易誤觸</td></tr>
-<tr><td><code>broadband_threshold</code></td><td>1.0</td><td><code>[0,1]</code>;<b><code>1.0</code> = 停用</b></td><td>寬頻場景重置閘門。設 <code>&lt;1.0</code> 時噪聲突然出現能更快追上</td></tr>
-</table></div>
-<div class="note"><code>q=0.52</code> 是 balanced preset 的作者設定,不是把輸出 SPP 固定為 0.52。頻譜沒有偏向語音或非語音的證據時,Bayesian posterior 會自然回到約 <code>q</code>;MCRA broadband gate 內部的 <code>spp &gt; 0.5</code> 是另一個分類門檻。</div>
-<p class="small">全部範圍取自 <code>anr_validate_config()</code>(<code>anr_types.h</code>),它是 <code>get_mem_size()</code>／<code>create()</code>／<code>init()</code>／<code>reconfigure()</code> 共用的唯一閘門。</p>
+<div class="note"><b>外部可調／內部不開放的完整分類、每個欄位的預設、範圍、耦合與調整方向，見 <a href="nr_c_api_params.html">nr_c_api_params.html</a>。</b>要調增益平滑請改 <code>alpha_decay</code>(必要時連同 <code>alpha_attack</code>);<code>alpha_g</code> 是死旋鈕(會過驗證、會被複製，但 <code>calculate_gain()</code> 從不讀它)。<code>q=0.52</code> 是 balanced 的作者設定,不是把輸出 SPP 固定為 0.52:沒有證據偏向語音或非語音時,Bayesian posterior 自然回到約 <code>q</code>,所以 <code>mean_spp≈0.5</code> 是中性狀態。</div>
 
 <h3>為什麼有 retime 系列函式</h3>
 <p>EMA 係數與 frame 計數多半是在某個參考 hop(10 ms 或 16 ms)下調出來的錨點值;不同 grid 的實際 hop 不同(8／16／10.667 ms),原封套用會讓真實時間常數跑掉。<code>anr_retime_alpha()</code>／<code>_retime_frames()</code>(及帶 <code>_ref</code>／<code>_ms</code> 的顯式版本)把「錨點值 + 錨點 hop」換算成當前 grid 的等效值。</p>
@@ -213,6 +220,7 @@ anr_reconfigure(nr, &amp;t);</pre>
 <tr><th>函式</th><th>回傳</th><th>NULL handle 時</th></tr>
 <tr><td><code>anr_get_hop_size()</code>／<code>_get_frame_size()</code>／<code>_get_n_freqs()</code></td><td>grid 幾何</td><td><code>0</code></td></tr>
 <tr><td><code>anr_is_initialized()</code></td><td>啟動 pass-through 是否已結束</td><td><code>false</code></td></tr>
+<tr><td><code>anr_get_speech_protect_frame_threshold()</code></td><td>幀級語音閘的生效值（<code>value + (q − 0.52)</code>，跟著 <code>anr_reconfigure()</code> 走）</td><td><code>0.0</code></td></tr>
 <tr><td><code>anr_get_noise_psd()</code>／<code>_get_gain()</code></td><td>instance <b>內部唯讀</b>記憶體的 borrowed pointer</td><td><code>NULL</code>,<code>*n_freqs=0</code></td></tr>
 <tr><td><code>anr_debug_status()</code></td><td>結構化快照,唯讀不擾動 DSP,不呼叫就零成本</td><td><code>out</code> 全部歸零(不寫 NaN)</td></tr>
 </table></div>
@@ -245,10 +253,10 @@ make -C NR/c_impl lib SIMD=0                  # 純量參考建置</pre>
 <li>WOLA 是 periodic sqrt-Hann、50% overlap、<code>frame_size == fft_size</code>、不補零。</li>
 <li>每次 <code>process</code> 恰好給 <code>n_freqs</code> 個 bin,函式不會替你檢查長度。</li>
 <li>pool 基底 16-byte 對齊;<code>get_mem_size()</code> 與 <code>init()</code> 的回傳值都檢查。</li>
-<li>borrowed pointer(<code>_get_gain</code>／<code>_get_spp</code>／<code>_get_noise_psd</code>)沒有跨下一次 <code>process()</code> 保存。</li>
+<li>borrowed pointer(<code>anr_get_gain</code>／<code>anr_get_noise_psd</code>)沒有跨下一次 <code>process()</code> 保存。</li>
 <li>stream boundary 同時 reset NR <b>與</b> caller 的 WOLA/ring state。</li>
 <li>要調平滑用 <code>alpha_decay</code>,<b>不是</b> <code>alpha_g</code>。</li>
-<li>沒有 include <code>noise_estimator.h</code>／<code>spp_estimator.h</code>。</li>
+<li>沒有 include <code>noise_estimator.h</code>／<code>spp_estimator.h</code>／<code>anr_internal.h</code>；公開／內部函式分級見 <a href="nr_c_api_params.html">參數頁</a> §6。</li>
 </ul>
 
 <h2>相關檔案與測試路徑</h2>
@@ -258,6 +266,9 @@ make -C NR/c_impl lib SIMD=0                  # 純量參考建置</pre>
 <li><code>NR/c_impl/example/main.c</code>、<code>main_mem.c</code> — heap 與 static pool 的完整可編譯範例</li>
 <li><code>NR/docs/c_user_manual_zh_TW.md</code> — canonical 手冊(完整欄位、錯誤語意表)</li>
 <li><code>NR/docs/parameter_tuning.md</code> — 調校指引</li>
+<li>串在 AEC 之後的用法：<code>Audio_ALG/pipelines/samples/se_anr_stage.h</code>（<code>se_anr_stage_gain()</code>）、<code>Audio_ALG/pipelines/mono_aec_nr_res/main.c</code>（<code>mono_form()</code>）</li>
+<li>測試：<code>make -C NR/c_impl test-config</code>、<code>test-reconfigure</code>、<code>test-noise-restart</code>、<code>test-scene-change</code>、<code>test-shared-startup</code>、<code>test-api-cpp</code>、<code>test-bit-exact</code>；<code>test</code>／<code>test-full</code> 為彙總</li>
+<li><a href="nr.html">nr.html</a>（演算法、時序圖、延遲）、<a href="nr_c_api_params.html">nr_c_api_params.html</a>（外部／內部參數、函式分級）</li>
 </ul>
 </body>
 </html>

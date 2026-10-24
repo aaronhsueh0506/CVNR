@@ -91,7 +91,7 @@ G_PM = sqrt(v) / (sqrt(π) · γ) · exp(v/2) / I0(v/2)
 - 調整時一次只動一個參數，並用同一批音檔做 A/B（`python/tools/run_vctk_benchmark.py`
   與 `compare_vctk_benchmark.py`）。
 
-所有 V3 系列使用同一個 MCRA 最小值追蹤器：自動適應噪聲場景變化，每 L 幀更新最小值，
+所有 V3 系列使用同一個 MCRA 最小值追蹤器：自動適應噪聲場景變化，以最近 L 幀的滑動最小值（每幀更新）追蹤噪聲底，
 無需額外配置。
 
 ## 常見問題

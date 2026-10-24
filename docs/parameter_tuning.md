@@ -139,8 +139,8 @@ MCRA 的 scene change detector 用「高頻 gamma + spectral flatness」雙重�
 | 參數 | 預設 | 症狀 & 調整 |
 |---|---|---|
 | `scene_change_threshold_db` | 10.0 | 切換太慢 → 降至 7；誤觸發把語音當噪聲 → 升至 12 |
-| `scene_change_min_frames` | 5 | 誤觸發頻率高 → 升至 8；太遲鈍 → 降至 3 |
-| `scene_change_blend` | 0.5 | 觸發時噪聲重估強度：1.0 = 完全重置；0 = 不重置 |
+| `scene_change_min_frames` | 5（10 ms 錨點；依 grid 重定時，16k/256 實際為 7） | 誤觸發頻率高 → 升至 8；太遲鈍 → 降至 3 |
+| `scene_change_blend` | 0.5 | 觸發時**保留舊噪聲底**的比例（新 = blend×舊 + (1−blend)×當前觀測）：1.0 = 噪聲底 `noise_psd` 維持原值（`S_min` 與最小值環仍會用當前功率重新播種，並非停用）；0 = 幾乎完全換成當前觀測 |
 | `scene_change_flatness_threshold` | 0.4 | 高頻頻譜平坦度門檻。一般搭配 threshold_db 使用，不需單調 |
 
 ---
@@ -186,6 +186,7 @@ MCRA 的 scene change detector 用「高頻 gamma + spectral flatness」雙重�
 
 ## 🔗 相關文檔
 
+- [NR 參數（外部／內部分類、預設、範圍、耦合）](html/nr_c_api_params.html) — 哪些欄位可開放給第三方、哪些屬內部
 - [README.md](../README.md) — 項目總覽與現行 release contract
 - [歷史演算法說明](archive/algorithm_history.md) — 只供理解早期版本
 - [C 使用說明](../c_impl/README.md) — C 實作使用方法與同等調參指引

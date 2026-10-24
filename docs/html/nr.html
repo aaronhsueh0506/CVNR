@@ -22,19 +22,19 @@ pre code{background:none;padding:0}
 </style>
 </head>
 <body>
-<nav><a href="../../../Audio_ALG/docs/html/index.html">index</a><a href="../../../AEC/docs/html/aec.html">aec</a><a href="nr.html">nr</a><a href="../../../audiolib/common/docs/html/audio_common.html">audiolib</a><a href="../../../AEC/docs/html/aec_c_api.html">AEC API</a><a href="nr_c_api.html">NR API</a><a href="../../../audiolib/common/docs/html/audio_common_c_api.html">audiolib API</a><a href="../../../Audio_ALG/docs/html/integration_example.html">串接範例</a></nav>
-<h1>NR C library(MMSE-LSA denoiser)— <code>lib/nr/c_impl</code></h1>
+<nav><a href="../../../Audio_ALG/docs/html/index.html">index</a><a href="../../../AEC/docs/html/aec.html">aec</a><a href="nr.html"><b>nr</b></a><a href="../../../audiolib/common/docs/html/audio_common.html">audiolib</a><a href="../../../AEC/docs/html/aec_c_api.html">AEC API</a><a href="../../../AEC/docs/html/aec_params.html">AEC 參數</a><a href="nr_c_api.html">NR API</a><a href="nr_c_api_params.html">NR 參數</a><a href="../../../audiolib/common/docs/html/audio_common_c_api.html">audiolib API</a><a href="../../../audiolib/common/docs/html/audio_common_params.html">audiolib 參數</a><a href="../../../audiolib/docs/html/spatial_chain.html">空間鏈</a><a href="../../../Audio_ALG/docs/html/integration_example.html">串接範例</a></nav>
+<h1>NR C library(MMSE-LSA denoiser)— <code>NR/c_impl</code></h1>
 
 <h2>概要</h2>
-<p><code>AnrDenoiser</code>(V3-2)是 OM-LSA 族降噪核心:Ephraim-Malah 1985 MMSE-LSA 增益 + Cohen&amp;Berdugo 2002 MCRA 噪聲估計 + 2001 Bayesian SPP。<b>頻域 I/O</b>:輸入/輸出都是 <code>Complex[n_freqs]</code> 頻譜,window / forward FFT / inverse FFT / OLA 全由呼叫端負責(mono 整合範例直接餵 AEC 的 <code>ctx.error_spec</code>,一次 FFT 走完 AEC+NR+RES 三級)。純 DSP、無 NN/NPU 成分;全部 state 收在 <code>AnrDenoiser</code> C struct(caller pool 或 heap)。</p>
-<p>串在 AEC 之後的整合碼(Audio_ALG 的 <code>pipelines/mono_aec_nr_res/main.c</code>,經 <code>pipelines/samples/se_anr_stage.h</code> 的 <code>se_anr_stage_gain()</code>;RES 增益是 <code>Aec</code> 自己算的 <code>ctx.res_gain</code>,4ch 則是單元內 <code>AecRes</code> 的 <code>g_res_ctx</code>)實際使用的 seam 是 <b><code>anr_process_gain()</code> + <code>anr_get_gain()</code></b>:算出每 bin 增益但不套用,並可把外部殘留回音 PSD R² 折進噪聲底(unified gain,ξ = S²/(N²+R²));MCRA 追蹤器只吃乾淨功率,R² 不污染噪聲估計。整合端再取 <code>g_total = min(G_nr, G_res)</code>。</p>
+<p><code>AnrDenoiser</code>(V3-2)是 OM-LSA 族降噪核心:Ephraim-Malah 1985 MMSE-LSA 增益 + Cohen&amp;Berdugo 2002 MCRA 噪聲估計 + 2001 Bayesian SPP。<b>頻域 I/O</b>:輸入/輸出都是 <code>Complex[n_freqs]</code> 頻譜,window / forward FFT / inverse FFT / OLA 全由呼叫端負責(串在 AEC 之後時,NR 不另做 FFT,直接吃 AEC 已算好的線性誤差頻譜 <code>SeSpecFrame.e</code>)。純 DSP、無 NN/NPU 成分;全部 state 收在 <code>AnrDenoiser</code> C struct(caller pool 或 heap)。</p>
+<p>串在 AEC 之後的整合碼(Audio_ALG 的 <code>pipelines/mono_aec_nr_res/main.c</code>,每支範例 main 自己初始化 NR、自己寫那十行串接)經 <code>pipelines/samples/se_anr_stage.h</code> 的 <code>se_anr_stage_gain()</code> 使用的 seam 是 <b><code>anr_process_gain()</code> + <code>anr_get_gain()</code></b>:算出每 bin 增益但不套用,並可把外部殘留回音 PSD R² 折進噪聲底(ξ = S²/(N²+R²),R² 先乘 <code>noise_over_subtraction</code> 同一倍率);MCRA 追蹤器只吃乾淨功率,R² 不污染噪聲估計。RES 增益:單聲道是 AEC 自己在呼叫內算的 <code>frame.g_res_ctx</code>;4ch 的 <code>AudioPipeline4Ch</code> 單元不含 RES(<code>audio_pipeline_4ch_fuse()</code> 留下 <code>g_res_ctx = NULL</code>),應用在單元之後自己建立 libaec 的 <code>AecRes</code>,每 hop 用 <code>se_res_stage_gain()</code> 算出 G_res(見下方 C)。兩者整合端都取 <code>g_total = min(G_nr, G_res)</code>。</p>
 <div class="tblwrap"><table>
 <tr><th>sr</th><th>fft_size(白名單)</th><th>hop</th><th>n_freqs</th><th>L(balanced 實測)</th><th>num_init_frames</th><th>anr_get_mem_size(balanced,預設建置 <code>DEBUG=0</code> 實測)</th></tr>
 <tr><td>8000</td><td>128(預設)/ 256</td><td>64 / 128</td><td>65 / 129</td><td>64 / 32</td><td>25 / 13</td><td>23,328 / 28,784 B</td></tr>
 <tr><td>16000</td><td>256(預設)/ 512</td><td>128 / 256</td><td>129 / 257</td><td>64 / 32</td><td>25 / 13</td><td>45,344 / 56,432 B</td></tr>
 <tr><td>48000</td><td>1024</td><td>512</td><td>513</td><td>48</td><td>19</td><td>144,576 B</td></tr>
 </table></div>
-<p class="small">格點規則:frame = fft、hop = frame/2、無 zero-padding(<code>anr_validate_config()</code> 強制)。常數重定時:大多數係數以 10 ms hop 為著作基準(<code>anr_retime_alpha/_frames</code>),少數(<code>alpha_xi</code>、<code>alpha_attack</code>、<code>L=32</code> 等)以 16 ms 為基準(<code>anr_retime_alpha_ref(..., 0.016)</code>、<code>anr_retime_frames_ms(32, ..., 16)</code>)——兩個著作格點並存是刻意的,詳見 <code>anr_types.h</code> 各欄註解。</p>
+<p class="small">格點規則:frame = fft、hop = frame/2、無 zero-padding(<code>anr_validate_config()</code> 強制)。常數重定時:大多數係數以 10 ms hop 為著作基準(<code>anr_retime_alpha/_frames</code>),少數(<code>alpha_xi</code>、<code>alpha_attack</code>、<code>L=32</code> 等)以 16 ms 為基準(<code>anr_retime_alpha_ref(..., 0.016)</code>、<code>anr_retime_frames_ms(32, ..., 16)</code>)——兩個著作格點並存是刻意的,詳見 <code>anr_types.h</code> 各欄註解。<b>pool 大小不要寫死</b>,一律用 <code>anr_get_mem_size()</code>。</p>
 <p><b>Strength modes</b>(<code>AnrMode</code>;g_min 為振幅 dB,/20 慣例):</p>
 <div class="tblwrap"><table>
 <tr><th>mode</th><th>g_min_db</th><th>q</th><th>xi_min_db</th><th>over-subtraction</th><th>備註</th></tr>
@@ -43,85 +43,213 @@ pre code{background:none;padding:0}
 <tr><td><code>ANR_MODE_BALANCED</code></td><td>−25</td><td>0.52</td><td>−10</td><td>1.4</td><td>預設(= <code>anr_default_config</code>)</td></tr>
 <tr><td><code>ANR_MODE_AGGRESSIVE</code></td><td>−28</td><td>0.45</td><td>−12</td><td>1.3</td><td>最深抑制</td></tr>
 </table></div>
-<p class="small">幀級語音保護門檻 0.55 著作於 balanced 的 q=0.52，生效值為 <code>0.55+(q−0.52)</code>；四級依序為 0.61／0.57／0.55／0.48。</p>
+<p class="small">幀級語音保護門檻 0.55 著作於 balanced 的 q=0.52，生效值為 <code>0.55+(q−0.52)</code>；四級依序為 0.61／0.57／0.55／0.48。外部可調與內部參數的完整分類見 <a href="nr_c_api_params.html">nr_c_api_params.html</a>。</p>
 
-<h2>API 用法</h2>
-<pre><code>#include "anr.h"
+<h2>如何呼叫使用</h2>
+<p>下面兩段的識別字都對現行 header 編譯檢查過(<code>-Wall -Wextra -Werror</code>)。細節(對齊、錯誤語意、aliasing、reset)見 <a href="nr_c_api.html">nr_c_api.html</a>。</p>
+<p><b>A. 直接使用(呼叫端已有頻譜;static pool 路徑)</b></p>
+<pre><code>#include &lt;stdlib.h&gt;
+#include "anr.h"
 
-/* canonical 強度 preset(L 為函式庫預設,依 grid 約 512 ms) */
-AnrConfig cfg = anr_config_for_mode_grid(16000, 512, ANR_MODE_BALANCED);
+int nr_freq_domain_demo(const Complex *spectra, int n_hops, Complex *out)
+{
+    AnrConfig cfg = anr_config_for_mode_grid(16000, 256, ANR_MODE_BALANCED);
+    if (!anr_validate_config(&amp;cfg)) return -1;
 
-size_t bytes = anr_get_mem_size(&amp;cfg);        /* 0 = config 無效 */
-AnrDenoiser* d = anr_init(pool, bytes, &amp;cfg);   /* 或 anr_create(&amp;cfg) */
+    size_t bytes = anr_get_mem_size(&amp;cfg);              /* 0 = config 被拒 */
+    void *pool = NULL;
+    if (bytes == 0 || posix_memalign(&amp;pool, 16, bytes) != 0) return -1;   /* 16-byte 對齊 */
 
-for (每個 hop) {
-    /* 呼叫端已有 E(f) = AecResContext.error_spec(或自行 window+FFT) */
-    /* extra = ctx.r2[k] / 32768²(unified gain);純 NR 傳 NULL */
-    anr_process_gain(d, error_spec, extra_noise_psd, NULL);
-    const float* g_nr = anr_get_gain(d, NULL);   /* [g_min,1],下一次呼叫前有效 */
-    /* 整合端:g_total[k] = min(g_nr[k], ctx.res_gain[k]);套用+IFFT+OLA 由呼叫端 */
+    AnrDenoiser *nr = anr_init(pool, bytes, &amp;cfg);      /* NULL = 未對齊 / 太小 / 無效 */
+    if (!nr) { free(pool); return -1; }
+
+    const int n_freqs = anr_get_n_freqs(nr);            /* 129 */
+    int rc = 0;
+    for (int h = 0; h &lt; n_hops &amp;&amp; rc == 0; ++h)       /* 每 hop 恰好 n_freqs 個 bin */
+        rc = anr_process(nr, spectra + (size_t)h * n_freqs, out + (size_t)h * n_freqs);
+    if (rc != 0) anr_reset(nr);     /* 函式庫不會自動 reset,由呼叫端決定 */
+    anr_destroy(nr);                /* pool 實例:no-op */
+    free(pool);                     /* pool 由呼叫端釋放 */
+    return rc;
 }
-anr_destroy(d);   /* anr_init 實例為 no-op */</code></pre>
-<p class="small">獨立使用(不外接 RES)可改用 <code>anr_process(d, spec_in, spec_out)</code>:直接把增益套在頻譜上,可 in-place。查詢:<code>anr_get_noise_psd/get_gain/is_initialized/debug_status</code>。切換音訊流呼叫 <code>anr_reset()</code>。</p>
 
-<p><b>執行期重設定</b>(在 running instance 上換 tuning,不重建、不重新配置記憶體):</p>
-<pre><code>int anr_reconfigure(AnrDenoiser* self, const AnrConfig* target);
-int anr_set_mode(AnrDenoiser* self, AnrMode mode);
+/* 串接鏈只要增益:extra_psd 與 |spectrum|² 同尺度,可為 NULL */
+const float *nr_gain_demo(AnrDenoiser *nr, const Complex *spectrum, const float *extra_psd)
+{
+    if (anr_process_gain(nr, spectrum, extra_psd, NULL) != 0) return NULL;
+    return anr_get_gain(nr, NULL);   /* 借用指標,到下次 process/reset/destroy 前有效 */
+}</code></pre>
+<p><b>B. 串在 AEC 之後的一個 hop(mono 整合範例的做法;<code>Chain</code> 是應用自己的 struct)</b></p>
+<p class="small">需要的 header:<code>aec.h</code>、<code>anr.h</code>、<code>audio_stft.h</code>、<code>common/se_stage.h</code>、<code>samples/se_anr_stage.h</code>、<code>utility/simd_kernels.h</code>(後三者在 Audio_ALG/pipelines 與 audiolib)。</p>
+<pre><code>int chain_hop(Chain *c, const float *mic, const float *ref, float *out)
+{
+    SeSpecFrame f;
+    aec_process_context(c-&gt;aec, mic, ref);
+    if (se_frame_from_aec(c-&gt;aec, &amp;f) != 0) return -1;
 
-/* A. 組態等於 canonical preset 的實例:直接換強度 */
-if (anr_set_mode(d, ANR_MODE_AGGRESSIVE) != 0) { /* 引數不合法 */ }
+    const float *g_res = f.g_res_ctx;                                /* AEC 自己的 RES 增益 */
+    const float *g_nr  = se_anr_stage_gain(c-&gt;nr, &amp;f, c-&gt;extra, 1);  /* r2/32768² 併入噪聲底 */
+    if (!g_res || !g_nr) return -1;                                  /* 呼叫端整鏈 reset */
 
-/* B. 在 canonical preset 上疊了自己覆寫的呼叫端:重組整份組態再交出去 */
-AnrConfig target = anr_config_for_mode_grid(sr, fft_size, ANR_MODE_AGGRESSIVE);
-target.noise_over_subtraction = 1.2f;                        /* 範例覆寫,每次都要重新疊上去 */
-if (anr_reconfigure(d, &amp;target) != 0) { /* 幾何不符或 target 無效 */ }</code></pre>
-<p class="small">不重新配置任何記憶體,所以格點(<code>sample_rate</code>/<code>frame_size</code>/<code>hop_size</code>/<code>fft_size</code>)與兩個決定 pool 大小的欄位(<code>L</code>、<code>num_init_frames</code>)<b>必須等於實例當下的值</b>,<code>target</code> 另外要完整通過 <code>anr_validate_config()</code>。回 0,或 −1(NULL / target 無效 / 幾何不符)且<b>什麼都不寫</b>。在兩個 hop 之間呼叫、與 <code>anr_process()</code> 序列化;<b>非 thread-safe</b>。</p>
-<p class="small"><b>狀態刻意保留</b>:追蹤中的噪聲底、MCRA 最小值追蹤環與其 scene-change run length、SPP 的 a-priori-SNR 歷史、增益平滑歷史全部繼續跑。換強度不是重啟——串流中途丟掉噪聲估計造成的 artefact 比原本想調掉的東西更糟;真的要重啟用 <code>anr_reset()</code>。</p>
-<p class="small"><code>anr_reconfigure()</code> <b>逐字採用</b> <code>target</code>:不做 preset 查表、不做 overlay 疊加。<code>anr_set_mode()</code> 則是便利包裝——以實例的 grid 組出該 mode 的 canonical 組態(<code>L</code> 為函式庫預設)後交給 <code>reconfigure()</code>。</p>
-<p class="small"><b>兩者不可互換。</b>組態等於 canonical preset 的實例(以 <code>anr_config_for_mode_grid()</code> 建立、沒有改任何欄位)可直接用 <code>anr_set_mode()</code> 換強度。在 canonical preset 上疊了覆寫的實例,若把裸的 canonical preset 交給 <code>anr_set_mode()</code>:非 pool 欄位的覆寫會被悄悄還原;覆寫的是 <code>L</code> 或 <code>num_init_frames</code> 時則會被<b>拒絕</b>(pool 大小不符)。這種實例請自己重組完整組態再呼叫 <code>anr_reconfigure()</code>。回歸測試 <code>make test-reconfigure</code>(<code>test/test_reconfigure.c</code>)。</p>
+    sk_min_f32(c-&gt;total, g_nr, g_res, f.n_freqs);
+    sk_capply_gain_f32(c-&gt;spec, f.e, c-&gt;total, f.n_freqs);
+    if (c-&gt;enable_cng &amp;&amp; f.cn)
+        aec_cng_fill(&amp;c-&gt;rng, c-&gt;spec, f.cn, g_res, g_nr, SE_CNG_NR_GAIN_FLOOR, f.n_freqs);
+    (void)ac_istft_push(c-&gt;istft, c-&gt;spec, out);
+    return 0;
+}</code></pre>
+<p><b>C. 4ch:單元之後的一個 hop(RES 是應用自己的 <code>AecRes</code>)</b></p>
+<p class="small">順序與 B 不同:先 process → fuse(E、R²、CN,<code>g_res_ctx = NULL</code>),再 RES 增益,才是 NR 增益。NR 端的呼叫(<code>se_anr_stage_gain()</code> → <code>anr_process_gain()</code>)與 B 完全相同,R² 併入噪聲底的規則也相同。範例已在暫存複本以 <code>-Wall -Wextra -Werror</code> 編譯通過(只編譯、未連結)。完整初始化見 Audio_ALG 的 <code>pipelines/4ch_aec_bf_nr_res/audio_pipeline_4ch_static.c</code>。</p>
+<pre><code>#include "audio_pipeline_4ch.h"   /* Audio_ALG 4ch unit */
+#include "aec_res.h"
+#include "anr.h"
+#include "audio_stft.h"
+#include "common/se_stage.h"
+#include "samples/se_anr_stage.h"
+#include "utility/simd_kernels.h"
+
+typedef struct Chain4 {            /* the application's own struct */
+    AudioPipeline4Ch *unit;
+    AecRes *res;                   /* created by the application after the unit */
+    AnrDenoiser *nr;
+    AcIstft *istft;
+    float *extra, *total;          /* n_freqs floats each */
+    Complex *spec;                 /* n_freqs bins */
+    uint32_t rng;                  /* SE_CNG_RNG_SEED */
+} Chain4;
+
+int chain_hop_4ch(Chain4 *c, const float *mics, const float *ref, int vad, float *out)
+{
+    SeSpecFrame f;
+    AudioPipeline4ChBeam beam;
+    AudioPipeline4ChFrameInfo info;
+    if (audio_pipeline_4ch_process_with_activity(c-&gt;unit, mics, ref, 1, vad, NULL, &amp;beam, &amp;info)
+            != FOUR_AEC_NR_RES_OK) return -1;
+    if (audio_pipeline_4ch_fuse(c-&gt;unit, &amp;f) != FOUR_AEC_NR_RES_OK) return -1;  /* f.g_res_ctx == NULL */
+
+    const float *g_res = se_res_stage_gain(c-&gt;res, &amp;f);                      /* the app's AecRes */
+    const float *g_nr  = g_res ? se_anr_stage_gain(c-&gt;nr, &amp;f, c-&gt;extra, 1) : NULL;
+    if (!g_res || !g_nr) return -1;                                          /* reset the whole chain */
+
+    sk_min_f32(c-&gt;total, g_nr, g_res, f.n_freqs);
+    sk_capply_gain_f32(c-&gt;spec, f.e, c-&gt;total, f.n_freqs);
+    if (f.cn)
+        aec_cng_fill(&amp;c-&gt;rng, c-&gt;spec, f.cn, g_res, g_nr, SE_CNG_NR_GAIN_FLOOR, f.n_freqs);
+    (void)ac_istft_push(c-&gt;istft, c-&gt;spec, out);
+    return 0;
+}
+</code></pre>
+<p class="small">初始化:<code>nr_cfg = anr_config_for_mode_grid(sr, grid.fft_size, mode)</code>(與 AEC <b>同一組</b> grid,L 用函式庫預設)→ <code>anr_get_mem_size()</code> → <code>anr_init()</code>;合成用 <code>ac_stft_config_default()</code> + <code>ac_istft_get_mem_size()</code> + <code>ac_istft_init()</code>。串流邊界或任何一級拒絕:<code>aec_reset()</code>、<code>anr_reset()</code>、<code>ac_istft_reset()</code> 一起做。</p>
+
+<h2>流程時序圖</h2>
+<p class="small">圖 1:NR 本體(呼叫端 ↔ <code>AnrDenoiser</code> ↔ 內部子模組),含建立、暖機、穩態、特殊 hop、reset 與被拒呼叫。<code>NoiseEstimator</code>／<code>SppEstimator</code> 是內部子模組,整合者不直接呼叫。</p>
+<pre>
+ Application             AnrDenoiser                NoiseEstimator            SppEstimator
+     |                        |                          |                        |
+ [建立,一次]
+     |-anr_config_for_mode_grid(sr,fft,mode)-&gt; AnrConfig;anr_validate_config(&amp;cfg)
+     |-anr_get_mem_size(&amp;cfg)-&gt; bytes (0=被拒)
+     |-anr_init(pool,bytes,&amp;cfg)-&gt;|--noise_estimator_init_shared_startup-&gt;|
+     |                        |------------------------spp_init-----------------&gt;|
+     |&lt;-AnrDenoiser* | NULL(未對齊/太小/無效)
+ [每個 hop]
+     |-anr_process_gain(nr,E,extra|NULL,NULL)-&gt;|
+     |                        | fft_power(E)-&gt;power;frame_is_silent(power)?
+     |                        |
+     |  (A) 尚未 initialized(暖機,前 num_init_frames 個非全零 hop)
+     |                        |--accumulate_init_power(power,idx)--&gt;|  (全零 hop 不累積)
+     |                        |--滿 num_init_frames: init_noise()---&gt;|  30th percentile 播種
+     |                        |  gain[k]=1;gain_prev=1;enhanced_psd_prev=power   (直通)
+     |  (B) 已 initialized
+     |                        |--get_noise_psd()-----------------&gt;|  N[k]
+     |                        |  prepare_noise_for_spp: noise_aug=over_sub*(N+extra)
+     |                        |--spp_estimate_ex(power,noise_aug,gain_prev,enh_prev)-----&gt;|
+     |                        |&lt;------------------ spp, xi, gamma, v -----------------------|
+     |                        |  update_frame_speech_evidence -&gt; calculate_gain
+     |                        |  -&gt; apply_low_band_speech_floor -&gt; apply_frame_makeup(預設關)
+     |                        |--update_ex(power,spp,slow_lf_rise,..)-&gt;|  全零 hop 跳過;只吃乾淨 power
+     |&lt;-return 0--------------|
+     |-anr_get_gain(nr,NULL)-&gt;|  const float* gain[n_freqs](借用,到下次 process/reset/destroy)
+ [執行期換強度,hop 之間]
+     |-anr_set_mode(nr,mode)|anr_reconfigure(nr,&amp;t)-&gt;|  anr_validate_config(t) + grid/L/num_init_frames 相符?
+     |                        |--noise_estimator_apply_config_scalars-&gt;|
+     |                        |-------------spp_apply_config_scalars----------------&gt;|
+     |&lt;-0 | -1(不符或 t 無效:什麼都不寫;追蹤狀態一律保留)
+ [串流邊界 / 被拒的 hop]
+     |-anr_reset(nr)---------&gt;|--noise_estimator_reset-----&gt;|--------spp_reset--------&gt;|
+     |                        |  reset_gain_state;init_frame_count=0;is_initialized=false
+     |                        |  → 下一個 hop 起又是 (A),共 num_init_frames 個非全零 hop
+     |-anr_process_gain(NULL,..) 或 spectrum_in==NULL -&gt; -1(狀態未動)
+ [結束]
+     |-anr_destroy(nr)        pool 實例 no-op;heap 實例釋放並只能呼叫一次
+</pre>
+<p class="small">圖 2:串在 AEC 之後的一個 hop(mono 整合範例;箭頭標的都是真實函式名)。</p>
+<p class="small">4ch 的對應序列:Application 先對 4ch 單元呼叫 process 與 fuse,再對 libaec 的 <code>AecRes</code> 呼叫 <code>se_res_stage_gain()</code>,之後的 NR 增益、取小、CNG、<code>ac_istft_push</code> 與本圖相同;四條生命線(單元／AecRes／NR／ISTFT)的完整圖見 <a href="../../../AEC/docs/html/aec_res.html">aec_res</a> §2.3。單聲道的 RES 增益則在 AEC 的呼叫內算出(圖中 <code>frame.g_res_ctx</code>)。</p>
+<pre>
+ Application        Aec            se_anr_stage_gain       AnrDenoiser          AcIstft
+     |               |                    |                     |                  |
+     |-aec_process_context(aec,mic,ref)-&gt;|  線性 AEC;E、R²、CN、RES 增益就緒
+     |-se_frame_from_aec(aec,&amp;frame)-&gt;  SeSpecFrame:e, r2, cn, g_res_ctx, usable_linear
+     |-se_anr_stage_gain(nr,&amp;frame,scratch,use_r2)-&gt;|
+     |                    | use_r2 且 usable_linear: scratch = r2/32768² (extra)
+     |                    |-anr_process_gain(nr,frame.e,extra|NULL,NULL)-&gt;|  (圖 1)
+     |                    |-anr_get_gain(nr,NULL)-&gt;|
+     |&lt;-G_nr (borrowed) | NULL(被拒)
+     |-sk_min_f32(total,G_nr,frame.g_res_ctx)           取小(非有限值保持可見)
+     |-sk_capply_gain_f32(spec,frame.e,total)
+     |-aec_cng_fill(&amp;rng,spec,frame.cn,G_res,G_nr,..)   僅 enable_cng 且有 RES 增益
+     |-ac_istft_push(istft,spec,out)--------------------------------------------&gt;|  hop 個樣本
+     |  任一步 NULL/-1: aec_reset + anr_reset + ac_istft_reset(+ 噪聲產生器種子)
+</pre>
 
 <h2>Block diagram(一次 <code>anr_process_gain()</code> 的程式流)</h2>
 <pre>
  spectrum_in Complex[n_freqs]         extra_noise_psd float[n_freqs] | NULL
     |                                     |
  fft_power() → power[k]=|X|²              |
+ frame_is_silent()(所有 bin 恰為 0?)     |
     |                                     |
-    ├── !is_initialized(前 num_init_frames 幀)─────────────┐
-    |     init_power_sum += power                          |
-    |     noise_estimator_accumulate_init_power()          |
-    |     滿幀 → noise_estimator_init_noise()              |
-    |     gain[k]=1(直通)                                  |
-    |                                                      |
-    └── 已初始化:                                          |
-          noise_for_spp = noise_estimator_get_noise_psd()
-                          (+ extra ←───────────────────────┘  ξ=S²/(N²+R²))
+    ├── !is_initialized ──────────────────────────────────────┐
+    |     非靜音:init_power_sum += power                      |
+    |     noise_estimator_accumulate_init_power()             |
+    |     滿 num_init_frames → noise_estimator_init_noise()   |
+    |     gain[k]=1(直通)                                     |
+    |                                                         |
+    └── 已初始化:                                             |
+          N = noise_estimator_get_noise_psd()                 |
+          noise_aug = noise_over_subtraction*(N + extra) ←────┘  ξ=S²/(N²+R²)
              |
-          spp_estimate(power, noise_for_spp, gain_prev, enhanced_psd_prev)
-             → spp / xi / gamma          (decision-directed a-priori SNR)
+          spp_estimate_ex(power, noise_aug, gain_prev, enhanced_psd_prev)
+             → spp / xi / gamma / v      (decision-directed 先驗 SNR)
              |
-          calculate_gain(spp, xi, gamma)
-             → MMSE-LSA 增益
-               + 不對稱 attack/decay 平滑 → gain[k] ∈ [g_min, 1]
-               (gain_prev / enhanced_psd_prev 於同一迴圈更新)
+          update_frame_speech_evidence()   語音帶(80–4000 Hz)SPP 平均 → 幀級語音閘
+             |                             xi 超門檻的 bin 比例 → slow_lf_rise
+          calculate_gain()   G_H1 = ξ/(1+ξ)·exp(½E1(v)),夾在 [g_min,1]
+             → log 域 spp·log G_H1 + (1−spp)·log g_min
+             → 不對稱 attack/decay 平滑 → gain[k] ∈ [g_min, 1]
+             → apply_low_band_speech_floor()(預設開:語音幀的低頻 bin 增益 ≥ −15 dB)
+             |  (gain_prev / log_gain_prev / enhanced_psd_prev 於同一迴圈更新)
+          apply_frame_makeup()             預設關
              |
-          noise_estimator_update_ex(power, spp, …)  ← 只吃乾淨 power,R² 不進噪聲追蹤
-             → noise_psd / S / S_min(L 幀最小值追蹤)+ scene-change 偵測
+          noise_estimator_update_ex(power, spp, slow_lf_rise, …)  ← 非全零 hop 才跑;只吃乾淨 power
+             → S / S_min(L 幀最小值環)→ 語音指示 → 場景偵測與重置 → 噪聲更新
     |
  gain_out(可 NULL;anr_get_gain() 讀同一 buffer)
 </pre>
 
-<h2>訊號泳道圖(hop 為欄;NR 本體 0 lag)</h2>
+<h2>訊號泳道圖(hop 為欄;NR 本體 0 lag;N = num_init_frames)</h2>
 <pre>
-hop →           0 … init-1              init … N                 N+1
+hop →           第 1 … N-1 個非全零 hop    第 N 個非全零 hop         之後各 hop
 ──────────────────────────────────────────────────────────────────────────────
-caller(FFT)   E(f)(hop t)             E(f)(hop t)              E(f)(hop t)
-              (mono 整合範例: 由 AEC 的 ctx.error_spec 供給,同 hop)
+caller(FFT)   E(f)(hop t)                E(f)(hop t)              E(f)(hop t)
+              (串 AEC 時由 frame.e 供給,同 hop)
 ──────────────────────────────────────────────────────────────────────────────
-C NR          噪聲初始化累積            SPP→gain→MCRA 更新        同左
- (denoiser)   gain(t)=1(直通)         gain(t) 用 hop t 的 E(f)  ── 同 hop 產出,0 hop lag ──
+C NR          累積噪聲初始化列            init_noise() 完成         SPP→gain→MCRA 更新
+ (denoiser)   gain(t)=1(直通)            is_initialized=true      gain(t) 用 hop t 的 E(f)
+              (暖機期的全零 hop:gain=1,不計數)   gain(t) 仍=1             ── 同 hop 產出,0 hop lag ──
               ↑ 吃 t 與 t-1 的 DD state(gain_prev / enhanced_psd_prev 為前一 hop)
 ──────────────────────────────────────────────────────────────────────────────
-caller(合成)  g_total=min(gain,G_res)  同左                      同左
+caller(合成)  g_total=min(gain,G_res)    同左                      同左
               apply → IFFT → OLA:out(t) 含前一 frame 後半 → 框架 1 hop lag(呼叫端負擔)
 </pre>
 
@@ -143,26 +271,27 @@ caller(合成)  g_total=min(gain,G_res)  同左                      同左
 <tr><td><code>log_gain_prev</code></td><td>float32[n_freqs]</td><td>1,028 B</td><td>attack/decay 增益平滑的前一幀 log 增益</td></tr>
 <tr><td><code>init_power_sum</code>、<code>init_frame_count</code>、<code>is_initialized</code></td><td>float32[n_freqs] + 純量</td><td>1,028 B</td><td>噪聲初始化累積(warm-up)</td></tr>
 <tr><td>MCRA:<code>noise_psd / S / S_min</code></td><td>float32[n_freqs] ×3</td><td>3×1,028 B</td><td>噪聲 PSD、時間平滑功率、追蹤最小值</td></tr>
-<tr><td>MCRA:<code>min_buffer</code></td><td>float32[L×n_freqs]</td><td>32×257×4 ≈ 32,896 B</td><td>L 幀最小值追蹤環(最大單一 state)</td></tr>
-<tr><td>MCRA:<code>spp</code> + scene-change 計數器</td><td>float32[n_freqs] + 純量</td><td>1,028 B</td><td>內部 SPP 平滑、scene reset 連續計數</td></tr>
-<tr><td>SPP:<code>gamma_prev / noise_psd_prev</code></td><td>float32[n_freqs] ×2</td><td>2×1,028 B</td><td>前一幀 a-posteriori SNR / 噪聲 PSD</td></tr>
+<tr><td>MCRA:<code>min_buffer</code></td><td>float32[max(L, num_init_frames)×n_freqs]</td><td>32×257×4 ≈ 32,896 B</td><td>L 幀最小值追蹤環(最大單一 state);啟動階段的 power 列與它共用同一塊儲存(<code>USE_FAST_PERCENTILE</code> 時不需要啟動列)</td></tr>
+<tr><td>MCRA:<code>spp</code> + <code>ring_idx</code>、<code>scene_change_count</code></td><td>float32[n_freqs] + 純量</td><td>1,028 B</td><td>內部 SPP 平滑、環寫入位置、scene reset 連續計數</td></tr>
+<tr><td>SPP:<code>gamma_prev / noise_psd_prev</code></td><td>float32[n_freqs] ×2</td><td>2×1,028 B</td><td>前一幀 a-posteriori SNR / 送進 SPP 的噪聲 PSD</td></tr>
+<tr><td>純量 state</td><td>float / bool</td><td>—</td><td>跨頻先驗與 make-up 的 EMA、<code>gain_initialized</code>、<code>slow_lf_rise</code>、<code>speech_protect_frame_active</code>(<code>anr_reset()</code> 回到初始值)</td></tr>
 <tr><td>本幀 scratch(<code>power/noise_aug/spp/xi/gamma/gain/v/…</code>)</td><td>float32[n_freqs] ×~9</td><td>~9×1,028 B</td><td>每 hop 全覆寫,不跨 hop(列出僅為完整)</td></tr>
 <tr><td><b>合計</b></td><td colspan="3"><code>anr_get_mem_size</code> 實測:見概要表(16k/512 balanced = 56,432 B)</td></tr>
 </table></div>
 
 <h2>延遲與 warm-up</h2>
 <ul>
-<li><b>演算法延遲 = 0 樣本</b>:頻域增益同 hop 產出;框架延遲(window+FFT / IFFT+OLA,50% overlap 下為 1 hop)由呼叫端的 transform 負擔——mono 整合範例的端到端 1 hop 就來自這層(參見 aec.html 延遲表)。</li>
-<li><b>Warm-up = <code>num_init_frames</code></b>(≈200 ms,格點重定時:16k/256=25 幀、16k/512=13 幀、48k=19 幀,實測):期間累積噪聲底、<b>增益=1 直通</b>(不抑制),滿幀後 <code>noise_estimator_init_noise()</code> 完成初始化,<code>anr_is_initialized()</code> 轉 true。</li>
-<li>MCRA 最小值追蹤窗 L(balanced 實測 64/32/48 幀 ≈ 512 ms)決定噪聲底適應新環境的時間尺度;scene-change 偵測(hi-freq γ + 頻譜平坦度,<code>broadband_threshold&lt;1</code> 時另有寬頻 reset)提供快速路徑。</li>
+<li><b>演算法延遲 = 0 樣本</b>:頻域增益同 hop 產出;框架延遲(window+FFT / IFFT+OLA,50% overlap 下為 <b>1 hop</b>:16k/256 = 128 樣本 = 8 ms、16k/512 = 16 ms、48k/1024 = 10.667 ms)由呼叫端的 transform 負擔——mono 整合範例的端到端 1 hop 就來自這層(參見 aec.html 延遲表)。16k/256 的脈衝實測:輸出峰值比輸入晚 128 樣本。</li>
+<li><b>Warm-up = <code>num_init_frames</code></b>(≈200 ms,格點重定時:16k/256=25 幀、16k/512=13 幀、48k=19 幀,實測):期間累積噪聲底、<b>增益=1 直通</b>(不抑制),第 <code>num_init_frames</code> 個非全零 hop 完成 <code>noise_estimator_init_noise()</code>、<code>anr_is_initialized()</code> 轉 true,但那一個 hop 的 gain 仍是 1,下一個 hop 才開始抑制。數位靜音 hop(所有 bin 恰為 0)不計入 warm-up、也不推進噪聲追蹤(實測 30 個全零 hop 後仍未初始化,gain 維持 1)。初始化之後的全零 hop 不會被強制為 gain=1,照常算 gain,只是不推進噪聲底追蹤器(實測 16k/256、40 個以上噪聲 hop 之後的全零 hop 平均 gain 約 0.2)。</li>
+<li>MCRA 最小值追蹤窗 L(balanced 實測 64/32/48 幀 ≈ 512 ms)決定噪聲底適應新環境的時間尺度;場景偵測(上半頻帶 γ 超門檻且頻譜平坦度超門檻,連續 <code>scene_change_min_frames</code> 個 hop 才重置)提供快速路徑;<code>broadband_threshold&lt;1</code> 時另有寬頻起音閘。</li>
 </ul>
 
 <h2>相關檔案與測試路徑</h2>
 <ul>
-<li>API:<code>lib/nr/c_impl/include/anr.h</code>、<code>anr_types.h</code>(python/config/preset/驗證全在此);實作:<code>src/anr.c</code>、<code>src/noise_estimator.c</code>、<code>src/spp_estimator.c</code></li>
-<li>使用端:<code>pipelines/mono_aec_nr_res/main.c</code>(mono 整合範例,經 <code>pipelines/samples/se_anr_stage.h</code> 呼叫 NR seam)、<code>lib/nr/c_impl/example/main_mem.c</code>(獨立 freq-domain runner,含 <code>build_sqrt_hann()</code>)</li>
-<li>文件:<code>lib/nr/docs/c_user_manual_zh_TW.md</code>、<code>lib/nr/c_impl/README.md</code></li>
-<li>測試:<code>make test-config</code>(config 驗證 + gain-borrow 行為,輸出 ALL CHECKS PASSED)/ <code>make test-config-parity</code>(5 格點 × 4 strength 的 20 列常數 CSV 輸出,供 Python 端 parity 比對)</li>
+<li>API:<code>NR/c_impl/include/anr.h</code>、<code>anr_types.h</code>(config/preset/驗證全在此);實作:<code>src/anr.c</code>、<code>src/noise_estimator.c</code>、<code>src/spp_estimator.c</code></li>
+<li>使用端:<code>Audio_ALG/pipelines/mono_aec_nr_res/main.c</code>(mono 整合範例,經 <code>pipelines/samples/se_anr_stage.h</code> 呼叫 NR seam)、<code>NR/c_impl/example/main.c</code>(heap)、<code>example/main_mem.c</code>(獨立 freq-domain runner,static pool,含 <code>build_sqrt_hann()</code>)</li>
+<li>文件:<code>NR/docs/c_user_manual_zh_TW.md</code>、<code>NR/c_impl/README.md</code>;同系列頁面 <a href="nr_c_api.html">nr_c_api.html</a>(呼叫與錯誤語意)、<a href="nr_c_api_params.html">nr_c_api_params.html</a>(外部／內部參數、函式分級)</li>
+<li>測試(<code>make -C NR/c_impl</code>):<code>test-config</code>(config 驗證 + gain-borrow)、<code>test-reconfigure</code>、<code>test-noise-restart</code>(數位靜音與首個追蹤幀)、<code>test-scene-change</code>、<code>test-shared-startup</code>、<code>test-api-cpp</code>、<code>test-bit-exact</code>、<code>test-config-parity</code>(5 格點 × 4 強度的 config CSV,供 Python 端對拍);<code>test</code>／<code>test-full</code> 為彙總</li>
 </ul>
 </body>
 </html>
