@@ -52,11 +52,11 @@
 ## 5. 涵蓋率與未能判斷
 
 <!-- STATS -->
-**涵蓋率**：C 函式定義 96；mirror 28；partial 43；C-only 25（其中 SIMD twin／dispatcher 3）；未能判斷 0；另有宣告無實作 0；Python-only 18 個符號（9 列）
+**涵蓋率**：C 函式定義 94；mirror 28；partial 42；C-only 24（其中 SIMD twin／dispatcher 3）；未能判斷 0；另有宣告無實作 0；Python-only 18 個符號（9 列）
 
-- 統計來源：測試內的掃描器對 `src/anr.c`、`src/noise_estimator.c`、`src/spp_estimator.c`、`include/anr_types.h` 取頂層函式定義（`extern "C"` 包裝不算函式、條件編譯分支的重複定義只算一次）。分項：`anr.c` 38、`noise_estimator.c` 28、`spp_estimator.c` 14、`anr_types.h` 16，合計 96。`anr.h`、`noise_estimator.h`、`spp_estimator.h`、`anr_internal.h` 沒有函式定義（只有宣告）。
-- 「已對應」= mirror + partial = 71；C-only 中 3 個是 twin（scalar／NEON／dispatcher 變體），其餘 22 個是記憶體管理、執行期重設定、診斷、實驗 overlay 等。
-- **未能判斷：0**。沒有任何 C 函式在嘗試後仍無法決定「有／無 Python 對應」。判斷力度較低、值得複核的是只有 `[讀碼]` 標籤的 38 列（全表 78 列）；這些列的對應是合理的對讀結果，但沒有文件或註解背書。
+- 統計來源：測試內的掃描器對 `src/anr.c`、`src/noise_estimator.c`、`src/spp_estimator.c`、`include/anr_types.h` 取頂層函式定義（`extern "C"` 包裝不算函式、條件編譯分支的重複定義只算一次）。分項：`anr.c` 36、`noise_estimator.c` 28、`spp_estimator.c` 14、`anr_types.h` 16，合計 94。`anr.h`、`noise_estimator.h`、`spp_estimator.h`、`anr_internal.h` 沒有函式定義（只有宣告）。
+- 「已對應」= mirror + partial = 70；C-only 中 3 個是 twin（scalar／NEON／dispatcher 變體），其餘 21 個是記憶體管理、執行期重設定、診斷、實驗 overlay 等。
+- **未能判斷：0**。沒有任何 C 函式在嘗試後仍無法決定「有／無 Python 對應」。判斷力度較低、值得複核的是只有 `[讀碼]` 標籤的 37 列（全表 77 列）；這些列的對應是合理的對讀結果，但沒有文件或註解背書。
 - Python 側：`core/**`、`denoisers/**` 的頂層類別與函式全部出現在表中（對應列或 Python-only 列，由測試守住）；Python-only 以類別／函式為粒度，方法與研究旋鈕不單獨成列（旋鈕寫在所屬列的「已知落差」S-35）。
 
 ## 6. 對照表
@@ -92,9 +92,8 @@
 | `src/anr.c:anr_reconfigure` | — | C-only | D-19 | `c_impl/test/test_reconfigure.c`[C] | [稽核] 執行期換設定並保留 DSP 狀態（grid／L／num_init_frames 不可變）；Python 沒有。 |
 | `src/anr.c:anr_set_mode` | `core/nr_strength.py:apply_strength` | partial | D-19 | `c_impl/test/test_reconfigure.c`[C]；`c_impl/test/test_bit_exact_stream.c`[CC] | [讀碼] C：以 `anr_config_for_mode_grid` 產生目標設定後 `anr_reconfigure`（執行期）。Python 只能在建構前以 `apply_strength` 疊 preset，沒有執行期切換。 |
 | `src/anr.c:anr_reset` | `denoisers/v3_2_mmse_lsa.py:MmseLsaDenoiser.reset` | mirror | — | `c_impl/test/test_bit_exact_stream.c`[CC] | [讀碼] 清所有幀間狀態；Python 在 `denoise_spectrum` 進入時自動呼叫 `reset()`。 |
-| `src/anr.c:anr_get_hop_size`、`src/anr.c:anr_get_frame_size`、`src/anr.c:anr_get_n_freqs`、`src/anr.c:anr_get_latency` | — | C-only | — | `c_impl/test/test_reconfigure.c`[C] | [讀碼] 設定值存取器。Python 以 `FrameProcessor` 屬性表達 frame／hop（見 Python-only 區）；`anr_get_latency` 恆為 0（頻域核心無額外延遲）。 |
+| `src/anr.c:anr_get_hop_size`、`src/anr.c:anr_get_frame_size`、`src/anr.c:anr_get_n_freqs` | — | C-only | — | `c_impl/test/test_reconfigure.c`[C] | [讀碼] 設定值存取器。Python 以 `FrameProcessor` 屬性表達 frame／hop（見 Python-only 區）。 |
 | `src/anr.c:anr_is_initialized` | `core/noise_estimators/mcra.py:McraNoiseEstimator.estimate#is_initialized` | partial | — | `c_impl/test/test_noise_restart.c`[C]；`c_impl/test/test_reconfigure.c`[C] | [讀碼] C 回報噪聲初始化完成；Python 對應 `McraNoiseEstimator.is_initialized`（由 `estimate()` 設定）。 |
-| `src/anr.c:anr_get_spp` | `denoisers/v3_2_mmse_lsa.py:MmseLsaDenoiser.denoise_spectrum#return_spp` | partial | — | — | [讀碼] 借用最近一幀的 SPP。C 回傳未 lift 的原始 SPP；Python `return_spp` 記錄 `estimate()` 的回傳值（cross-band／frame prior 開啟時已 lift），預設路徑兩者相同。 |
 | `src/anr.c:anr_get_noise_psd` | `denoisers/v3_2_mmse_lsa.py:MmseLsaDenoiser.denoise_spectrum#return_noise_psd` | partial | — | `c_impl/test/test_reconfigure.c`[C] | [讀碼] 時點不同：C 在 `anr_process*` 之後讀到的是本幀追蹤更新後的值；Python `return_noise_psd` 記錄「算該幀增益前」的估計器內部值（不含 R²）。 |
 | `src/anr.c:anr_get_speech_protect_frame_threshold` | `denoisers/v3_2_mmse_lsa.py:MmseLsaDenoiser.__init__#speech_protect_frame_threshold_effective` | mirror | — | `c_impl/test/test_reconfigure.c`[C] | [註解] = 設定值 + (q − 0.52)；Python 註解寫明以 float32 計算「like the C port」。 |
 | `src/anr.c:anr_get_gain` | `denoisers/v3_2_mmse_lsa.py:MmseLsaDenoiser.denoise_spectrum#return_gain` | partial | — | `c_impl/test/test_config_validation.c`[C] | [讀碼] 最近一幀的最終增益；兩側都含 make-up 縮放（Python `return_gain` 記錄 `gain × applied_scale`）。 |

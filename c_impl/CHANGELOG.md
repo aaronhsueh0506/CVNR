@@ -2,6 +2,14 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [Unreleased] · 2026-10-24 · 移除沒有呼叫端的查詢函式
+
+### 移除 (Removed)
+
+- `anr_get_latency()`（恆回 `0`，零呼叫端、零測試）與 `anr_get_spp()`（零呼叫端、零測試）及其宣告；
+  `anr_get_noise_psd()`、`anr_get_gain()`、`anr_debug_status()` 保留。音訊輸出與 `anr_get_mem_size()` 不變。
+  整體延遲仍由呼叫端的 framing／OLA 決定，頻域核心不增加延遲。
+
 ## [Unreleased] · 2026-10-23 · 噪聲追蹤器的啟動列與最小值 ring 共用儲存
 
 ### 變更 (Changed)
@@ -21,7 +29,7 @@
 - `noise_estimator.h` 中從未有實作的 `noise_estimator_get_spp()`、`noise_estimator_get_n_freqs()` 與
   `spp_estimator.h` 的 `spp_get_n_freqs()` 宣告（原本照 header 呼叫會得到 link error）。
 - 零呼叫端的 `noise_estimator_get_internal_spp()`、`noise_estimator_is_initialized()`（含 header 宣告）與
-  `spp_is_initialized()`；要讀 SPP／噪聲底請走 `anr_get_spp()`／`anr_get_noise_psd()`，初始化狀態走
+  `spp_is_initialized()`；要讀噪聲底請走 `anr_get_noise_psd()`，初始化狀態走
   `anr_is_initialized()`。
 - 零呼叫端的 `anr_retime_frames_ref()`（double 版；整數版 `anr_retime_frames_ms()` 取代，且 `1e-12` 容差在結果超過約
   6000 frames 時可能多算 1）。`anr_retime_alpha_ref()` 仍有呼叫端，保留。

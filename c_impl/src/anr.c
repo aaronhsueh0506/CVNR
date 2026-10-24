@@ -775,19 +775,8 @@ int anr_get_n_freqs(const AnrDenoiser* self) {
     return self ? self->n_freqs : 0;
 }
 
-int anr_get_latency(const AnrDenoiser* self) {
-    (void)self;
-    return 0;
-}
-
 bool anr_is_initialized(const AnrDenoiser* self) {
     return self ? self->is_initialized : false;
-}
-
-const float* anr_get_spp(const AnrDenoiser* self, int* n_freqs) {
-    if (!self) { if (n_freqs) *n_freqs = 0; return NULL; }
-    if (n_freqs) *n_freqs = self->n_freqs;
-    return self->spp;
 }
 
 const float* anr_get_noise_psd(const AnrDenoiser* self, int* n_freqs) {

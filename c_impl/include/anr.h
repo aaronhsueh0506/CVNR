@@ -61,14 +61,8 @@ int anr_get_hop_size(const AnrDenoiser* self);
 int anr_get_frame_size(const AnrDenoiser* self);
 int anr_get_n_freqs(const AnrDenoiser* self);
 
-/* Core latency in samples (0); the caller accounts for window/FFT/overlap-add. */
-int anr_get_latency(const AnrDenoiser* self);
-
 /* True once the noise estimator has completed its init frames. */
 bool anr_is_initialized(const AnrDenoiser* self);
-
-/* Speech presence probability per bin [n_freqs]. */
-const float* anr_get_spp(const AnrDenoiser* self, int* n_freqs);
 
 /* Noise PSD estimate (power units) [n_freqs]. */
 const float* anr_get_noise_psd(const AnrDenoiser* self, int* n_freqs);

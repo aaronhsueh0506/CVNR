@@ -353,9 +353,8 @@ int nr_gain_only(AnrDenoiser *nr, const Complex *spectrum_in,
 | 函式 | 用途 | 什麼時候呼叫 |
 |---|---|---|
 | `anr_get_hop_size()` / `anr_get_frame_size()` / `anr_get_n_freqs()` | 取得實際尺寸 | 配置 buffer 時；避免硬編 |
-| `anr_get_latency()` | 頻域 core 本身的延遲 | 一律回 `0`；**不含**呼叫端 framing／OLA 的延遲，整體延遲要自己算 |
 | `anr_is_initialized()` | 初始化 pass-through 是否結束 | 想知道輸出何時開始真的有降噪時 |
-| `anr_get_spp()` / `anr_get_noise_psd()` / `anr_get_gain()` | 讀最近一個 frame 的 per-bin 陣列 | 除錯／視覺化 |
+| `anr_get_noise_psd()` / `anr_get_gain()` | 讀最近一個 frame 的 per-bin 陣列 | 除錯／視覺化 |
 | `anr_debug_status()` | 一次取得聚合狀態（見下） | 板上監看，建議每秒一次 |
 
 `anr_debug_status()` 填入 `AnrDebugStatus`：`initialized`、`mean_gain_db`、
@@ -436,9 +435,8 @@ c++ -std=gnu99 app.c \
 | `anr_process_gain(...)` | 回傳 `0` | 回傳 `-1`：`self` 或 `spectrum_in` 為 `NULL`。`extra_noise_psd` 與 `gain_out` 為 `NULL` 是合法用法，不是錯誤 |
 | `anr_reset(self)` | `void` | `self == NULL` **安靜 no-op**，沒有任何回報 |
 | `anr_get_hop_size()` / `get_frame_size()` / `get_n_freqs()` | 回傳正整數 | handle 為 `NULL` 時回傳 **`0`** |
-| `anr_get_latency()` | 一律回傳 `0` | handle 為 `NULL` 也回傳 `0`。`0` 是正常值，**不是**錯誤碼 |
 | `anr_is_initialized()` | `true` / `false` | handle 為 `NULL` 時回傳 `false` |
-| `anr_get_spp()` / `get_noise_psd()` / `get_gain()` | 回傳唯讀陣列指標，並在 `n_freqs != NULL` 時寫入長度 | handle 為 `NULL` 時回傳 `NULL` 並把 `*n_freqs` 設為 `0`。`n_freqs` 本身可以傳 `NULL` |
+| `anr_get_noise_psd()` / `get_gain()` | 回傳唯讀陣列指標，並在 `n_freqs != NULL` 時寫入長度 | handle 為 `NULL` 時回傳 `NULL` 並把 `*n_freqs` 設為 `0`。`n_freqs` 本身可以傳 `NULL` |
 | `anr_debug_status(self, out)` | `void`，填滿 `*out` | `out == NULL` 時**什麼都不做**；`self == NULL` 時把 `*out` **全部歸零**（不會寫入 NaN） |
 | `anr_validate_config(config)` | 回傳 `true` | 回傳 `false`：`config == NULL`，或任何欄位越界／為 NaN／為 Inf |
 | `anr_default_config()` / `_for_grid()` / `anr_config_for_mode()` / `_for_mode_grid()` | 以值回傳 `AnrConfig` | **沒有錯誤回傳值**。傳入不支援的 sample rate 時會產生一個 `fft_size == 0` 的無效 config，必須靠 `anr_validate_config()` 才會發現 |

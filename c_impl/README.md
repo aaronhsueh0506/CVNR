@@ -408,7 +408,7 @@ Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差
 
 ### 當這些都不夠
 - 檢查是否屬於「不適用情境」—— 本模組 by design 無法處理風聲 / 衝擊 / 重疊干擾
-- 用 `make debug` 重編（標準數學），以 `anr_get_noise_psd()`／`anr_get_spp()`／`anr_get_gain()` 讀出逐幀值，與 Python 逐幀對比（parity harness 見上）
+- 用 `make debug` 重編（標準數學），以 `anr_get_noise_psd()`／`anr_get_gain()` 讀出逐幀值，與 Python 逐幀對比（parity harness 見上）
 
 ## 配置參數
 

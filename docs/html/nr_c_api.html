@@ -212,12 +212,11 @@ anr_reconfigure(nr, &amp;t);</pre>
 <div class="tblwrap"><table>
 <tr><th>函式</th><th>回傳</th><th>NULL handle 時</th></tr>
 <tr><td><code>anr_get_hop_size()</code>／<code>_get_frame_size()</code>／<code>_get_n_freqs()</code></td><td>grid 幾何</td><td><code>0</code></td></tr>
-<tr><td><code>anr_get_latency()</code></td><td><b>永遠 <code>0</code></b>——頻域 core 本身零延遲;IFFT+OLA 的 <code>frame_size</code> 延遲要呼叫端自己算</td><td><code>0</code></td></tr>
 <tr><td><code>anr_is_initialized()</code></td><td>啟動 pass-through 是否已結束</td><td><code>false</code></td></tr>
-<tr><td><code>anr_get_spp()</code>／<code>_get_noise_psd()</code>／<code>_get_gain()</code></td><td>instance <b>內部唯讀</b>記憶體的 borrowed pointer</td><td><code>NULL</code>,<code>*n_freqs=0</code></td></tr>
+<tr><td><code>anr_get_noise_psd()</code>／<code>_get_gain()</code></td><td>instance <b>內部唯讀</b>記憶體的 borrowed pointer</td><td><code>NULL</code>,<code>*n_freqs=0</code></td></tr>
 <tr><td><code>anr_debug_status()</code></td><td>結構化快照,唯讀不擾動 DSP,不呼叫就零成本</td><td><code>out</code> 全部歸零(不寫 NaN)</td></tr>
 </table></div>
-<div class="warn">三個 <code>_get_*</code> 回的是 borrowed pointer:<b>不要改、不要 free、不要跨下一次 <code>process()</code>／<code>reset()</code>／<code>destroy()</code> 保存</b>,要留就複製走。</div>
+<div class="warn">兩個 <code>_get_*</code> 回的是 borrowed pointer:<b>不要改、不要 free、不要跨下一次 <code>process()</code>／<code>reset()</code>／<code>destroy()</code> 保存</b>,要留就複製走。</div>
 
 <h3><code>AnrDebugStatus</code> 五個欄位</h3>
 <div class="tblwrap"><table>
