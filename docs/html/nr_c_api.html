@@ -174,7 +174,7 @@ if (anr_process_gain(nr, error_spec, extra_noise_psd, gain) != 0) { /* self / er
 <tr><td>初始化期</td><td>前 <code>num_init_frames</code> 個<b>非全零</b> frame 是 pass-through(gain 全 1.0),同時累積噪聲統計；第 <code>num_init_frames</code> 次呼叫完成初始化，但那一次的 gain 仍是 1.0，下一個 hop 才開始抑制。<b>數位靜音 frame(所有 bin 功率恰為 0)</b>不是錯誤、回 0：初始化前 gain=1 且不計入暖機；初始化後仍照常算 gain(<b>不會</b>被強制為 1，實測 16k/256 在 40 個以上噪聲 hop 之後的全零 hop 平均 gain 約 0.2)，只是不推進噪聲底追蹤器(<code>anr.c</code> <code>frame_is_silent()</code>、<code>process_init_or_gain()</code>)</td></tr>
 </table></div>
 <div class="warn"><b>Aliasing 規則與 FFT 層相反。</b><code>fft_forward()</code>／<code>fft_inverse()</code> 用 <code>restrict</code>,<b>任何</b>重疊(含完全相同指標)都是 UB;NR 這裡卻明確支援完全同一指標。兩層不要套用同一條直覺。</div>
-<div class="note"><b>接 AEC 的 <code>r2</code> 時要先換算尺度。</b>AEC 的殘留回音 PSD(<code>SeSpecFrame.r2</code>／<code>AecResContext.r2</code>)是 int16² 尺度,而線性誤差頻譜 <code>E</code> 是 audio 尺度,直接當 <code>extra_noise_psd</code> 前必須除以 <code>32768²</code>。範例層的 <code>se_anr_stage_gain()</code>(<code>pipelines/samples/se_anr_stage.h</code>)已做這件事,且只在 <code>frame-&gt;usable_linear</code> 為真時才併入;application 不要自己另推一份。</div>
+<div class="note"><b>接 AEC 的 <code>r2</code> 時要先換算尺度。</b>AEC 的殘留回音 PSD(<code>AecResContext.r2</code>／<code>McabFrame.r2</code>)是 int16² 尺度,而線性誤差頻譜 <code>E</code> 是 audio 尺度,直接當 <code>extra_noise_psd</code> 前必須除以 <code>32768²</code>。範例層已做這件事:4ch 的 <code>mcab_sample_anr_gain()</code>(<code>pipelines/4ch_aec_bf_nr_res/mcab_sample_post.h</code>)與 mono 範例的 <code>mono_nr_gain()</code>(<code>pipelines/mono_aec_nr_res/main.c</code>),都只在 <code>use_r2</code> 開啟、<code>r2</code> 非 NULL 且 <code>usable_linear</code> 為真時才併入;application 不要自己另推一份。</div>
 
 <h2>5. 參數設定：用 mode，不要逐欄位手調</h2>
 <p>設定強度的正規做法是選一個 <code>AnrMode</code>。<code>anr_config_for_mode_grid()</code> 的四級只改 <code>g_min_db</code>、<code>q</code>、<code>xi_min_db</code>、<code>noise_over_subtraction</code>；DD、tracker、gain dynamics 與低頻語音 guard 的<b>組態欄位</b>共用。例外是幀級語音閘 <code>speech_protect_frame_threshold</code>:設定值著作於 balanced 的 <code>q = 0.52</code>,生效值為 <code>value + (q − 0.52)</code>,隨 preset 位移(mild 0.61 / moderate 0.57 / balanced 0.55 / aggressive 0.48;可用 <code>anr_get_speech_protect_frame_threshold()</code> 讀回)。</p>
@@ -266,7 +266,7 @@ make -C NR/c_impl lib SIMD=0                  # 純量參考建置</pre>
 <li><code>NR/c_impl/example/main.c</code>、<code>main_mem.c</code> — heap 與 static pool 的完整可編譯範例</li>
 <li><code>NR/docs/c_user_manual_zh_TW.md</code> — canonical 手冊(完整欄位、錯誤語意表)</li>
 <li><code>NR/docs/parameter_tuning.md</code> — 調校指引</li>
-<li>串在 AEC 之後的用法：<code>Audio_ALG/pipelines/samples/se_anr_stage.h</code>（<code>se_anr_stage_gain()</code>）、<code>Audio_ALG/pipelines/mono_aec_nr_res/main.c</code>（<code>mono_form()</code>）</li>
+<li>串在 AEC 之後的用法：<code>Audio_ALG/pipelines/4ch_aec_bf_nr_res/mcab_sample_post.h</code>（<code>mcab_sample_anr_gain()</code>）、<code>Audio_ALG/pipelines/mono_aec_nr_res/main.c</code>（<code>mono_nr_gain()</code>、<code>mono_form()</code>）</li>
 <li>測試：<code>make -C NR/c_impl test-config</code>、<code>test-reconfigure</code>、<code>test-noise-restart</code>、<code>test-scene-change</code>、<code>test-shared-startup</code>、<code>test-api-cpp</code>、<code>test-bit-exact</code>；<code>test</code>／<code>test-full</code> 為彙總</li>
 <li><a href="nr.html">nr.html</a>（演算法、時序圖、延遲）、<a href="nr_c_api_params.html">nr_c_api_params.html</a>（外部／內部參數、函式分級）</li>
 </ul>
