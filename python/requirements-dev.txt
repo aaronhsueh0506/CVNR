@@ -6,8 +6,7 @@ librosa
 pesq
 pystoi
 
-# Plotting/diagnostic tooling (utils/visualization.py,
-# tools/ablate_nr_music.py, tools/diagnose_algorithm.py, tools/generate_csv_results.py). Not required to run the core NR algorithm, its C port,
+# Plotting tooling (utils/visualization.py, the optional plots of process_audio.py). Not required to run the core NR algorithm, its C port,
 # or the pytest unit-test suite -- utils/__init__.py lazily imports visualization.py
 # so importing `utils` (and anything pytest auto-collects under it) never requires
 # matplotlib to be installed.

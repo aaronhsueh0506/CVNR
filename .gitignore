@@ -67,7 +67,7 @@ comparison_results/
 
 # 音樂保留 eval harness 產物（tools/eval_music_preservation.py 的輸出，含 wav/png/json）
 results/music_eval*/
-# NR 強度 ablation harness 產物（tools/ablate_nr_music.py 的 wav/png/json）
+# NR 強度 ablation 產物（wav/png/json；產生它的研究工具已移出 repo 歸檔，規則保留以免舊產物進版）
 results/ablate_nr/
 # A/B 證據目錄（報告、腳本、摘要、WAV、gain dump、runner 二進位）：不進版，隨 release 附件或外部儲存
 results/ab_evidence/

@@ -4,6 +4,24 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [Unreleased] — 2026-10-28 — Offline research tools archived out of the tree
+
+### Removed
+- 17 files under `python/tools/`: the optimizer and its launchers/monitors (`parameter_optimizer.py`,
+  `validate_best_config.py`, `analyze_optimization_results.py`, `run_optuna_all.sh`, `run_parallel_optimization.sh`,
+  `monitor_optimization.sh`, `monitor_optuna.sh`, `check_progress.sh`), the benchmark/report scripts
+  (`benchmark_all.py`, `benchmark_comparison.py`, `comprehensive_evaluation.py`, `generate_comparison_tables.py`,
+  `generate_csv_results.py`, `diagnose_algorithm.py`, `ablate_nr_music.py`) and `pcm_to_wav.sh` / `wav_to_pcm.sh`.
+  Nothing in the build, the tests or the parity gates used them. They are archived outside the repository (see the
+  cleanup record) and stay in git history through `56bc7b0`; the archive is not runnable as is. Entries below that
+  name these tools (including the `results/` regeneration note of 2026-10-23) are history.
+- `python/tools/` keeps `__init__.py`, `parity_nr.py`, `pyc_parity_nr.py`, `test_bit_exact.py`, `run_vctk_benchmark.py`,
+  `compare_vctk_benchmark.py` and `score_wav_directories.py`.
+
+### Changed
+- `.gitignore`, `python/process_audio.py` (`build_v3_2_base_params` docstring) and `python/requirements-dev.txt` no
+  longer name the archived tools. No code or output change.
+
 ## [Unreleased] — 2026-10-24 — Two-tier verification (`make test`, `make test-full`); config parity covers 8 kHz
 
 ### Changed

@@ -108,8 +108,8 @@ def load_config(config_file: str) -> dict:
 
 def build_v3_2_base_params(config, sample_rate, frame_size, frame_shift, fft_size):
     """Build the base MmseLsaDenoiser kwargs from a V3-2 config dict (BEFORE the strength/mode
-    overlays). Shared by create_denoiser_from_config and tools/ablate_nr_music.py so the
-    config→params mapping lives in exactly one place.
+    overlays). Shared by create_denoiser_from_config, tools/run_vctk_benchmark.py and the integration
+    pipelines so the config→params mapping lives in exactly one place.
     """
     spp_config = config.get('spp', {})
     gain_config = config.get('gain_calculation', {})
