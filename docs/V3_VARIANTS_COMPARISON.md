@@ -83,7 +83,7 @@ G_PM = sqrt(v) / (sqrt(π) · γ) · exp(v/2) / I0(v/2)
 
 ## 選擇與參數
 
-- **產品**：V3-2（Musical Noise 最少，C 端同一套演算法）。強度用 strength mode 選，
+- **產品**：V3-2（Musical Noise 最少，C 端同一套演算法）。強度用 strength level 選（Python 稱 preset），
   見 [parameter_tuning.md](parameter_tuning.md)。
 - **研究對比**：V3、V3-3 用於比較不同成本函數。
 - 各版本的預設參數在 `python/config/*.yaml`；`g_min_db` 為 audio 振幅 dB（`/20`），
@@ -113,7 +113,7 @@ G_PM = sqrt(v) / (sqrt(π) · γ) · exp(v/2) / I0(v/2)
 
 ### Q3: 如何選擇 g_min_db？
 
-`g_min_db` 決定最大噪聲抑制量（audio 振幅 dB，`/20`）。四級 strength preset 為
+`g_min_db` 決定最大噪聲抑制量（audio 振幅 dB，`/20`）。四級 strength level 為
 -20 / -23 / -25 / -28 dB（見 [parameter_tuning.md](parameter_tuning.md)）；越小壓得越深，
 語音失真風險越高。
 

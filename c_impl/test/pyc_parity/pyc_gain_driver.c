@@ -5,7 +5,7 @@
  * write the per-bin gains) plus the two things that runner cannot do:
  *   - config overrides given as key=value, so that both sides can run with a non-default feature
  *     (currently makeup_gain), and
- *   - strict argument handling: an unknown strength name or a config that fails
+ *   - strict argument handling: an unknown level name or a config that fails
  *     anr_validate_config() is an error, never a silent fallback to balanced.
  * With no overrides the output is byte-identical to parity_runner's; pyc_parity_nr.sh checks this
  * on every run.
@@ -29,9 +29,9 @@ static int fail(const char* msg) {
 }
 
 int main(int argc, char** argv) {
-    if (argc < 4) return fail("usage: pyc_gain_driver <in.nrp2> <out.gains> <strength> [makeup_gain=0|1]");
-    int mode = anr_nr_mode_from_name(argv[3]);
-    if (mode < 0) return fail("unknown strength (expected mild|moderate|balanced|aggressive)");
+    if (argc < 4) return fail("usage: pyc_gain_driver <in.nrp2> <out.gains> <level> [makeup_gain=0|1]");
+    int level = anr_nr_level_from_name(argv[3]);
+    if (level < 0) return fail("unknown level (expected mild|moderate|balanced|aggressive)");
 
     FILE* fin = fopen(argv[1], "rb");
     if (!fin) return fail("cannot open input");
@@ -47,7 +47,7 @@ int main(int argc, char** argv) {
     }
     const int fft_size = (n_freqs - 1) * 2;
 
-    AnrConfig config = anr_config_for_mode_grid(sample_rate, fft_size, (AnrMode)mode);
+    AnrConfig config = anr_config_for_level_grid(sample_rate, fft_size, (AnrLevel)level);
     for (int i = 4; i < argc; i++) {
         if (strcmp(argv[i], "makeup_gain=1") == 0) config.makeup_gain = true;
         else if (strcmp(argv[i], "makeup_gain=0") == 0) config.makeup_gain = false;

@@ -11,15 +11,15 @@ MMSE-LSA/OMLSA gain and MCRA/SPP components for technical accuracy.
 | Public headers | `include/anr.h`, `include/anr_types.h` |
 | Sources | `src/anr.c`, `src/anr_internal.h` |
 | Archive | `libanr.a`, linked with the matching `libaudio_common.a` |
-| Types | `AnrDenoiser`, `AnrConfig`, `AnrMode`, `AnrDebugStatus` |
+| Types | `AnrDenoiser`, `AnrConfig`, `AnrLevel`, `AnrDebugStatus` |
 | Functions | `anr_*` |
-| Strength constants | `ANR_MODE_*` |
+| Strength constants | `ANR_LEVEL_*` (legacy names `ANR_MODE_*`, `AnrMode` stay) |
 | Other constants | `ANR_*` |
 
 ```c
 #include "anr.h"
 
-AnrConfig cfg = anr_config_for_mode_grid(16000, 256, ANR_MODE_BALANCED);
+AnrConfig cfg = anr_config_for_level_grid(16000, 256, ANR_LEVEL_BALANCED);
 AnrDenoiser *nr = anr_create(&cfg);
 /* Check nr before processing; spectrum contains cfg.fft_size / 2 + 1 bins. */
 anr_process(nr, spectrum, spectrum);

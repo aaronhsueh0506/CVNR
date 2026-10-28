@@ -43,7 +43,7 @@ Every statement below that says "identical" or "bit-exact" carries this exceptio
 ## Cost
 
 `make bench-anr` (from `c_impl/`) times `anr_process()` and `anr_process_gain()` with an
-extra noise PSD on three grids and two strengths. It uses frozen synthetic spectra, a
+extra noise PSD on three grids and two levels. It uses frozen synthetic spectra, a
 fresh instance per pass, five untimed warm-up passes and 30 timed passes of 600 hops, and
 prints median, quartiles and minimum. The figures below are medians in microseconds per
 hop on an Arm64 development host with the NE10 backend and clang -O2 with the strict FP flags, 12
@@ -54,7 +54,7 @@ binaries; they are not target-platform figures.
 source compiled with `EXTRA_CFLAGS=-DANR_REFERENCE_KERNELS` (every kernel runs its scalar
 twin).
 
-| Grid | Strength | `anr_process` | `anr_process_gain` + extra PSD |
+| Grid | Level | `anr_process` | `anr_process_gain` + extra PSD |
 |---|---|---|---|
 | 16 kHz, FFT 256 | balanced | 1.435 → 0.794 (−44.7 %) | 1.337 → 0.740 (−44.7 %) |
 | 16 kHz, FFT 256 | aggressive | 1.434 → 0.788 (−45.0 %) | 1.337 → 0.740 (−44.7 %) |
@@ -77,18 +77,18 @@ make BACKEND=ne10 SIMD=1 WERROR=1 test-full
 ```
 
 `test` builds `all lib mem parity`, runs the C test targets (`test-config`, `test-reconfigure`,
-`test-noise-restart`, `test-scene-change`, `test-shared-startup`, `test-api-cpp`, `test-bit-exact`),
-the pytest suite, and the Python/C parity gate (220 of the 428 scenarios: four strengths on the
+`test-noise-restart`, `test-scene-change`, `test-shared-startup`, `test-api-cpp`, `test-cli-args`, `test-bit-exact`),
+the pytest suite, and the Python/C parity gate (220 of the 428 scenarios: four levels on the
 16 kHz and 48 kHz grids, without the 8 kHz grids, the `scale_1e-3`/`scale_1e-5`/`scale_1e-6`/`int16_pk55`
 rungs and the make-up rows of the 16k/512 and 48k/1024 grids). The Python/C configuration comparison
-(`python/tests/test_config_parity.py`, five grids x four strengths) runs the `test-config-parity`
+(`python/tests/test_config_parity.py`, five grids x four levels) runs the `test-config-parity`
 dump from inside pytest. `test-full` adds the standalone `test-config-parity`, `test-bit-exact` at the
 other `SIMD` setting, and all 428 parity scenarios.
 
 `make test-bit-exact` builds the library twice from the same sources, once with
 `-DANR_REFERENCE_KERNELS`, and runs three checks:
 
-- a synthetic per-hop stream (three grids; four strengths, DD-from-G_H1, cross-band
+- a synthetic per-hop stream (three grids; four levels, DD-from-G_H1, cross-band
   prior with make-up, a fast-decay case that reaches the inert-bin restart, and a static
   pool; 256 hops each, including digital-silence hops; the feature cases add runtime
   resets and reconfiguration) whose state and output bytes must be identical between the two builds

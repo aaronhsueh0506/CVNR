@@ -4,6 +4,31 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [Unreleased] — 2026-10-28 — C strength setting renamed from "mode" to "level"
+
+### Changed
+- Pure rename in C, headers, C tests, the example CLIs and the docs. Values (`mild`/`moderate`/`balanced`/`aggressive`),
+  digits (0..3, default `balanced` = 2), the config built for each level, the pool size and every process output
+  are unchanged (config bytes for 16k/256, 16k/512, 48k/1024 x 4 levels, the config-parity CSV and the
+  `denoise_wav`/`denoise_mem` outputs compared equal to the previous build). Out-of-range handling per function is
+  unchanged: `anr_config_for_level*` falls back to `balanced`, `anr_set_level` returns -1.
+- Rename table: `AnrMode` -> `AnrLevel`; `ANR_MODE_{MILD,MODERATE,BALANCED,AGGRESSIVE}` -> `ANR_LEVEL_*`;
+  `anr_set_mode` -> `anr_set_level`; `anr_config_for_mode` / `anr_config_for_mode_grid` -> `anr_config_for_level` /
+  `anr_config_for_level_grid`; `anr_nr_mode_is_valid` / `_from_name` / `_name` -> `anr_nr_level_is_valid` / `_from_name` / `_name`.
+- Legacy names kept in `anr_types.h` for as long as the Python twins call this setting a strength preset (two Python
+  tests read these lines): the four `ANR_MODE_* = n` enumerators with literal digits (members of `AnrLevel`) and
+  `typedef AnrLevel AnrMode`. The old function names are removed.
+- `denoise_wav` and `denoise_mem` take `--nr-level <name|0..3>`; `--nr-mode` stays as an alias. A missing value or a next
+  token that starts with `--` exits 2 with `<prog>: --nr-level needs a value` (a lone `-` or a negative number is a value;
+  `make test-cli-args`). Printed text that tools may
+  read is unchanged (`NR mode: <name>` line, `bench_anr` column header, config-parity CSV `strength` column).
+- C manual, README, function map (column 1; "C level == Python preset" bridge), HTML pages and tuning guide follow.
+- Link-incompatible for prebuilt objects: recompile and relink against the new `libanr.a`/headers (the renamed helpers
+  in `anr_types.h` are `static inline`, a source-level break only).
+- Python unchanged. Stale preset/mode wording remains in Python comments at `python/core/nr_strength.py` (lines 1, 33),
+  `python/tools/parity_nr.py` (78), `python/tools/run_vctk_benchmark.py` (55), `python/tools/compare_vctk_benchmark.py` (60),
+  `python/tests/test_config_parity.py` (5, 11) and `python/tests/test_nr_strength_index.py` (1, 15, 18).
+
 ## [Unreleased] — 2026-10-28 — Offline research tools archived out of the tree
 
 ### Removed

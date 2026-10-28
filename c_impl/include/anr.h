@@ -52,9 +52,9 @@ void anr_reset(AnrDenoiser* self);
  * with nothing written. */
 int anr_reconfigure(AnrDenoiser* self, const AnrConfig* target);
 
-/* Applies the strength preset for the current grid through anr_reconfigure(). Returns 0, or -1
- * for NULL, invalid mode or rejected config. */
-int anr_set_mode(AnrDenoiser* self, AnrMode mode);
+/* Applies the strength level for the current grid through anr_reconfigure(). Returns 0, or -1
+ * for NULL, invalid level or rejected config. */
+int anr_set_level(AnrDenoiser* self, AnrLevel level);
 
 /* Read-only queries. Sizes are in samples; n_freqs = fft_size/2 + 1. */
 int anr_get_hop_size(const AnrDenoiser* self);

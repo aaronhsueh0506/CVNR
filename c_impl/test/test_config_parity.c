@@ -1,5 +1,5 @@
-/* Dump canonical configs for five grids and four strengths as CSV.
- * Consumed by python/tests/test_config_parity.py. */
+/* Dump canonical configs for five grids and four levels as CSV. The `strength` column
+ * and the value names are read by python/tests/test_config_parity.py. */
 #include "anr_types.h"
 
 #include <stdio.h>
@@ -9,12 +9,12 @@ static const Grid GRIDS[] = {
     {8000, 128}, {8000, 256}, {16000, 256}, {16000, 512}, {48000, 1024},
 };
 
-typedef struct { AnrMode mode; const char* name; } Strength;
-static const Strength STRENGTHS[] = {
-    {ANR_MODE_MILD,       "mild"},
-    {ANR_MODE_MODERATE,   "moderate"},
-    {ANR_MODE_BALANCED,   "balanced"},
-    {ANR_MODE_AGGRESSIVE, "aggressive"},
+typedef struct { AnrLevel level; const char* name; } LevelRow;
+static const LevelRow LEVELS[] = {
+    {ANR_LEVEL_MILD,       "mild"},
+    {ANR_LEVEL_MODERATE,   "moderate"},
+    {ANR_LEVEL_BALANCED,   "balanced"},
+    {ANR_LEVEL_AGGRESSIVE, "aggressive"},
 };
 
 int main(void) {
@@ -31,13 +31,13 @@ int main(void) {
            "makeup_blim,makeup_up_slope,makeup_down_slope\n");
 
     for (size_t g = 0; g < sizeof(GRIDS) / sizeof(GRIDS[0]); ++g) {
-        for (size_t s = 0; s < sizeof(STRENGTHS) / sizeof(STRENGTHS[0]); ++s) {
-            AnrConfig c = anr_config_for_mode_grid(
-                GRIDS[g].sample_rate, GRIDS[g].fft_size, STRENGTHS[s].mode);
+        for (size_t s = 0; s < sizeof(LEVELS) / sizeof(LEVELS[0]); ++s) {
+            AnrConfig c = anr_config_for_level_grid(
+                GRIDS[g].sample_rate, GRIDS[g].fft_size, LEVELS[s].level);
             printf("%d,%d,%d,%s,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%d,"
                    "%.9g,%.9g,%.9g,%d,%.9g,%.9g,%.9g,%d,%.9g,%.9g,"
                    "%.9g,%d,%.9g,%.9g,%.9g,%d,%d,%.9g,%.9g,%.9g,%.9g,%d,%.9g,%.9g,%.9g,%.9g\n",
-                   c.sample_rate, c.fft_size, c.hop_size, STRENGTHS[s].name,
+                   c.sample_rate, c.fft_size, c.hop_size, LEVELS[s].name,
                    c.alpha_xi, c.q, c.xi_min_db, c.g_min_db, c.alpha_g,
                    c.alpha_attack, c.alpha_decay, c.num_init_frames,
                    c.alpha_s, c.alpha_d, c.alpha_p, c.L,

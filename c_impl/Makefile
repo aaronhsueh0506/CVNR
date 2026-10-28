@@ -233,8 +233,8 @@ CFLAGS    += $(FP_POLICY)
 COMMON_FWD = BACKEND=$(BACKEND) SIMD=$(SIMD) WERROR=$(WERROR) CC='$(CC)' CXX='$(CXX)' EXTRA_CFLAGS='$(EXTRA_CFLAGS)' NO_STDIO=$(NO_STDIO) TOOLCHAIN_CHECK=$(TOOLCHAIN_CHECK)
 
 ifeq ($(COMMON_LIB),)
-.PHONY: all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-scene-change test-shared-startup test-api-cpp bench-anr
-all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-scene-change test-shared-startup test-api-cpp bench-anr:
+.PHONY: all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-scene-change test-shared-startup test-api-cpp test-cli-args bench-anr
+all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-scene-change test-shared-startup test-api-cpp test-cli-args bench-anr:
 	+@ac="$$($(MAKE) -s --no-print-directory -C $(COMMON_DIR) $(COMMON_FWD) print-lib-path)"; \
 	 test -n "$$ac" || { echo "FATAL: could not resolve audiolib archive path (COMMON_DIR=$(COMMON_DIR) -- is audiolib present as a sibling of this repo?)" >&2; exit 1; }; \
 	 $(MAKE) --no-print-directory $@ COMMON_LIB="$$ac"
@@ -470,7 +470,7 @@ $(OBJ_DIR)/test_shared_startup.o: $(TEST_DIR)/test_shared_startup.c | _cfg_guard
 
 # =============================================================================
 # Python<->C effective-config parity dump: prints the canonical AnrConfig for every shipped
-# (grid, strength) combination so that ../python/tests/test_config_parity.py can compare it with
+# (grid, level) combination so that ../python/tests/test_config_parity.py can compare it with
 # process_audio.py's build_v3_2_base_params() + apply_strength() composition. See the header of
 # test/test_config_parity.c.
 # =============================================================================
@@ -486,6 +486,11 @@ $(TEST_PARITY_TARGET): $(OBJS) $(OBJ_DIR)/test_config_parity.o $(COMMON_LIB) | _
 $(OBJ_DIR)/test_config_parity.o: $(TEST_DIR)/test_config_parity.c | _cfg_guard
 	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
 
+# Argument handling of denoise_wav and denoise_mem (--nr-level/--nr-mode need a value).
+.PHONY: test-cli-args
+test-cli-args: $(TARGET) $(MEM_TARGET)
+	PYTHON="$(PYTHON)" sh $(TEST_DIR)/test_cli_args.sh "$(abspath $(TARGET))" "$(abspath $(MEM_TARGET))"
+
 # Verify the public C API through a C++ caller.
 .PHONY: test-api-cpp
 TEST_CPP_TARGET = $(BIN_DIR)/test_api_cpp
@@ -498,7 +503,7 @@ $(TEST_CPP_TARGET): $(OBJS) $(OBJ_DIR)/test_api_cpp.o $(COMMON_LIB) | _cfg_guard
 $(OBJ_DIR)/test_api_cpp.o: $(TEST_DIR)/test_api_cpp.cpp | _cfg_guard
 	$(CXX) $(filter-out -std=gnu99,$(CFLAGS)) $(CXXFLAGS) -std=c++17 $(FP_POLICY) -MD -MP -c -o $@ $<
 
-# Per-hop cost of anr_process() and anr_process_gain() on three grids and two strengths. Host-only
+# Per-hop cost of anr_process() and anr_process_gain() on three grids and two levels. Host-only
 # timing of the build selected by BACKEND/SIMD/CC; run it on an otherwise idle machine.
 .PHONY: bench-anr
 BENCH_TARGET = $(BIN_DIR)/bench_anr
@@ -530,12 +535,12 @@ test-bit-exact:
 #            every parity scenario.
 # The gate drops the 8k grids (their config is covered by pytest), the level-scaling rungs beyond
 # scale_1e-4/int16_pk5/int16_pk12 and the make-up rows that duplicate makeup_xi_ctrl; all four
-# strengths stay because a strength-specific gain error is only visible there.
+# levels stay because a level-specific gain error is only visible there.
 PYC_PARITY_GATE_ONLY = ^(?!.*/8k_)(?!.*/(scale_1e-3|scale_1e-5|scale_1e-6|int16_pk55)$$)(?!.*/(16k_512|48k_1024)/[^/]+/makeup$$)
 PYC_PARITY_JSON ?= $(OBJ_ROOT)/pyc_parity_nr.json
 SIMD_OTHER = $(if $(filter 0,$(SIMD)),1,0)
 TEST_BUILD_GOALS = all lib mem parity
-TEST_C_GOALS = test-config test-reconfigure test-noise-restart test-scene-change test-shared-startup test-api-cpp test-bit-exact
+TEST_C_GOALS = test-config test-reconfigure test-noise-restart test-scene-change test-shared-startup test-api-cpp test-cli-args test-bit-exact
 # pytest starts its own `make`; a clean make environment keeps that child's stdout to the CSV the
 # test parses. COMMON_DIR travels explicitly because MAKEFLAGS (which carries command-line
 # variables) is dropped.
@@ -880,6 +885,7 @@ help:
 	@echo "  test-scene-change - Build + run the scene-change flatness margin test"
 	@echo "  test-shared-startup - Build + run the shared startup/ring storage equivalence test"
 	@echo "  test-api-cpp - Build + run the C++ header compile/link smoke test"
+	@echo "  test-cli-args - Build denoise_wav and denoise_mem and run the option-value checks of their --nr-level/--nr-mode"
 	@echo "  test-bit-exact - Compare the optimized kernels with the scalar reference (needs python3); also runs the"
 	@echo "                   kernel-level tests test_anr_kernels and test_min_ordered_special; test_anr_kernels is the only"
 	@echo "                   gate for the ring growth constant and the inert-restart weight; with SIMD=0 it compares scalar with scalar"

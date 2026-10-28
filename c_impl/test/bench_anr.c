@@ -139,8 +139,8 @@ int main(int argc, char** argv) {
 
     static const int rates[] = {16000, 16000, 48000};
     static const int sizes[] = {256, 512, 1024};
-    static const AnrMode modes[] = {ANR_MODE_BALANCED, ANR_MODE_AGGRESSIVE};
-    static const char* const mode_names[] = {"balanced", "aggressive"};
+    static const AnrLevel levels[] = {ANR_LEVEL_BALANCED, ANR_LEVEL_AGGRESSIVE};
+    static const char* const level_names[] = {"balanced", "aggressive"};
     static const char* const entry_names[] = {"process", "process_gain+extra"};
 
     if (!medians_only) {
@@ -153,7 +153,7 @@ int main(int argc, char** argv) {
     }
     for (int g = 0; g < 3; ++g) {
         for (int m = 0; m < 2; ++m) {
-            AnrConfig cfg = anr_config_for_mode_grid(rates[g], sizes[g], modes[m]);
+            AnrConfig cfg = anr_config_for_level_grid(rates[g], sizes[g], levels[m]);
             if (!anr_validate_config(&cfg)) return 4;
             Complex* spectra = make_spectra(&cfg, hops);
             for (int e = 0; e < 2; ++e) {
@@ -163,7 +163,7 @@ int main(int argc, char** argv) {
                 } else {
                     char grid[16];
                     snprintf(grid, sizeof(grid), "%d/%d", rates[g] / 1000, sizes[g]);
-                    printf("%-10s %-11s %-19s %9.4f %9.4f %9.4f %9.4f\n", grid, mode_names[m],
+                    printf("%-10s %-11s %-19s %9.4f %9.4f %9.4f %9.4f\n", grid, level_names[m],
                            entry_names[e], s.median, s.p25, s.p75, s.minimum);
                 }
             }

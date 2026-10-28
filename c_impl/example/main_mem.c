@@ -46,7 +46,8 @@ void print_usage(const char* prog) {
     printf("Usage: %s <input.wav> <output.wav> [options]\n\n", prog);
     printf("Options:\n");
     printf("  --bypass       Bypass mode (copy input to output)\n");
-    printf("  --nr-mode <m>  NR strength: 0|1|2|3 or mild|moderate|balanced|aggressive (default: balanced)\n");
+    printf("  --nr-level <l> NR level: 0|1|2|3 or mild|moderate|balanced|aggressive (default: balanced)\n");
+    printf("                 (--nr-mode is accepted as an alias)\n");
     printf("  --debug        Print one anr_debug_status() line per second of audio\n\n");
     printf("  --fft-size <n> Select project grid (256/512 @16k; 1024 @48k)\n\n");
     printf("All state is pre-allocated in static memory; no malloc on the audio path.\n");
@@ -69,7 +70,7 @@ int main(int argc, char* argv[]) {
     int bypass = 0;
     int debug = 0;
     int fft_size_override = 0;
-    AnrMode nr_mode = ANR_MODE_BALANCED;
+    AnrLevel nr_level = ANR_LEVEL_BALANCED;
 
     for (int i = 3; i < argc; i++) {
         if (strcmp(argv[i], "--bypass") == 0) {
@@ -78,10 +79,15 @@ int main(int argc, char* argv[]) {
             debug = 1;
         } else if (strcmp(argv[i], "--fft-size") == 0 && i + 1 < argc) {
             fft_size_override = atoi(argv[++i]);
-        } else if (strcmp(argv[i], "--nr-mode") == 0 && i + 1 < argc) {
+        } else if (strcmp(argv[i], "--nr-level") == 0 || strcmp(argv[i], "--nr-mode") == 0) {
+            /* The value is the next token unless that starts with "--" (a lone "-" or "-5" is a value). */
+            if (i + 1 >= argc || (argv[i + 1][0] == '-' && argv[i + 1][1] == '-')) {
+                fprintf(stderr, "%s: %s needs a value\n", argv[0], argv[i]);
+                return 2;
+            }
             /* Name or digit 0..3; an unrecognised value keeps the balanced default. */
-            int m = anr_nr_mode_from_name(argv[++i]);
-            nr_mode = m >= 0 ? (AnrMode)m : ANR_MODE_BALANCED;
+            int m = anr_nr_level_from_name(argv[++i]);
+            nr_level = m >= 0 ? (AnrLevel)m : ANR_LEVEL_BALANCED;
         }
     }
 
@@ -142,8 +148,8 @@ int main(int argc, char* argv[]) {
     /* 3. Config — no-padding project grid. */
     int selected_fft = fft_size_override > 0
                      ? fft_size_override : anr_default_fft_size(sample_rate);
-    AnrConfig config = anr_config_for_mode_grid(
-        sample_rate, selected_fft, nr_mode);
+    AnrConfig config = anr_config_for_level_grid(
+        sample_rate, selected_fft, nr_level);
 
     /* Reject unsupported grids with a clear message (anr_get_mem_size() would also reject them,
      * with a generic pool-size error). */
@@ -186,8 +192,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    const char* mode_names[] = {"mild", "moderate", "balanced", "aggressive"};
-    printf("  NR mode: %s\n", mode_names[nr_mode]);
+    const char* level_names[] = {"mild", "moderate", "balanced", "aggressive"};
+    printf("  NR mode: %s\n", level_names[nr_level]);
 
     /* 6. Framing (as in main.c). */
     int n_frames = (n_samples <= frame_size)

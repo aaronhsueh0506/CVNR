@@ -35,13 +35,13 @@ pre code{background:none;padding:0}
 <tr><td>48000</td><td>1024</td><td>512</td><td>513</td><td>48</td><td>19</td><td>144,576 B</td></tr>
 </table></div>
 <p class="small">格點規則:frame = fft、hop = frame/2、無 zero-padding(<code>anr_validate_config()</code> 強制)。常數重定時:大多數係數以 10 ms hop 為著作基準(<code>anr_retime_alpha/_frames</code>),少數(<code>alpha_xi</code>、<code>alpha_attack</code>、<code>L=32</code> 等)以 16 ms 為基準(<code>anr_retime_alpha_ref(..., 0.016)</code>、<code>anr_retime_frames_ms(32, ..., 16)</code>)——兩個著作格點並存是刻意的,詳見 <code>anr_types.h</code> 各欄註解。<b>pool 大小不要寫死</b>,一律用 <code>anr_get_mem_size()</code>。</p>
-<p><b>Strength modes</b>(<code>AnrMode</code>;g_min 為振幅 dB,/20 慣例):</p>
+<p><b>Strength levels</b>(<code>AnrLevel</code>;g_min 為振幅 dB,/20 慣例):</p>
 <div class="tblwrap"><table>
-<tr><th>mode</th><th>g_min_db</th><th>q</th><th>xi_min_db</th><th>over-subtraction</th><th>備註</th></tr>
-<tr><td><code>ANR_MODE_MILD</code></td><td>−20</td><td>0.58</td><td>−10</td><td>1.2</td><td>最溫和,保語音細節</td></tr>
-<tr><td><code>ANR_MODE_MODERATE</code></td><td>−23</td><td>0.54</td><td>−10</td><td>1.3</td><td>mild ↔ balanced 之間</td></tr>
-<tr><td><code>ANR_MODE_BALANCED</code></td><td>−25</td><td>0.52</td><td>−10</td><td>1.4</td><td>預設(= <code>anr_default_config</code>)</td></tr>
-<tr><td><code>ANR_MODE_AGGRESSIVE</code></td><td>−28</td><td>0.45</td><td>−12</td><td>1.3</td><td>最深抑制</td></tr>
+<tr><th>level</th><th>g_min_db</th><th>q</th><th>xi_min_db</th><th>over-subtraction</th><th>備註</th></tr>
+<tr><td><code>ANR_LEVEL_MILD</code></td><td>−20</td><td>0.58</td><td>−10</td><td>1.2</td><td>最溫和,保語音細節</td></tr>
+<tr><td><code>ANR_LEVEL_MODERATE</code></td><td>−23</td><td>0.54</td><td>−10</td><td>1.3</td><td>mild ↔ balanced 之間</td></tr>
+<tr><td><code>ANR_LEVEL_BALANCED</code></td><td>−25</td><td>0.52</td><td>−10</td><td>1.4</td><td>預設(= <code>anr_default_config</code>)</td></tr>
+<tr><td><code>ANR_LEVEL_AGGRESSIVE</code></td><td>−28</td><td>0.45</td><td>−12</td><td>1.3</td><td>最深抑制</td></tr>
 </table></div>
 <p class="small">幀級語音保護門檻 0.55 著作於 balanced 的 q=0.52，生效值為 <code>0.55+(q−0.52)</code>；四級依序為 0.61／0.57／0.55／0.48。外部可調與內部參數的完整分類見 <a href="nr_c_api_params.html">nr_c_api_params.html</a>。</p>
 
@@ -53,7 +53,7 @@ pre code{background:none;padding:0}
 
 int nr_freq_domain_demo(const Complex *spectra, int n_hops, Complex *out)
 {
-    AnrConfig cfg = anr_config_for_mode_grid(16000, 256, ANR_MODE_BALANCED);
+    AnrConfig cfg = anr_config_for_level_grid(16000, 256, ANR_LEVEL_BALANCED);
     if (!anr_validate_config(&amp;cfg)) return -1;
 
     size_t bytes = anr_get_mem_size(&amp;cfg);              /* 0 = config 被拒 */
@@ -149,7 +149,7 @@ int chain_hop_4ch(Chain4 *c, const float *mics, const float *ref, int vad, float
     (void)ac_istft_push(c-&gt;istft, c-&gt;spec, out);
     return 0;
 }</code></pre>
-<p class="small">初始化:<code>nr_cfg = anr_config_for_mode_grid(sr, grid.fft_size, mode)</code>(與 AEC <b>同一組</b> grid,L 用函式庫預設)→ <code>anr_get_mem_size()</code> → <code>anr_init()</code>;合成用 <code>ac_stft_config_default()</code> + <code>ac_istft_get_mem_size()</code> + <code>ac_istft_init()</code>。串流邊界或任何一級拒絕:<code>aec_reset()</code>、<code>anr_reset()</code>、<code>ac_istft_reset()</code> 一起做。</p>
+<p class="small">初始化:<code>nr_cfg = anr_config_for_level_grid(sr, grid.fft_size, level)</code>(與 AEC <b>同一組</b> grid,L 用函式庫預設)→ <code>anr_get_mem_size()</code> → <code>anr_init()</code>;合成用 <code>ac_stft_config_default()</code> + <code>ac_istft_get_mem_size()</code> + <code>ac_istft_init()</code>。串流邊界或任何一級拒絕:<code>aec_reset()</code>、<code>anr_reset()</code>、<code>ac_istft_reset()</code> 一起做。</p>
 
 <h2>流程時序圖</h2>
 <p class="small">圖 1:NR 本體(呼叫端 ↔ <code>AnrDenoiser</code> ↔ 內部子模組),含建立、暖機、穩態、特殊 hop、reset 與被拒呼叫。<code>NoiseEstimator</code>／<code>SppEstimator</code> 是內部子模組,整合者不直接呼叫。</p>
@@ -157,7 +157,7 @@ int chain_hop_4ch(Chain4 *c, const float *mics, const float *ref, int vad, float
  Application             AnrDenoiser                NoiseEstimator            SppEstimator
      |                        |                          |                        |
  [建立,一次]
-     |-anr_config_for_mode_grid(sr,fft,mode)-&gt; AnrConfig;anr_validate_config(&amp;cfg)
+     |-anr_config_for_level_grid(sr,fft, level)-&gt; AnrConfig;anr_validate_config(&amp;cfg)
      |-anr_get_mem_size(&amp;cfg)-&gt; bytes (0=被拒)
      |-anr_init(pool,bytes,&amp;cfg)-&gt;|--noise_estimator_init_shared_startup-&gt;|
      |                        |------------------------spp_init-----------------&gt;|
@@ -181,7 +181,7 @@ int chain_hop_4ch(Chain4 *c, const float *mics, const float *ref, int vad, float
      |&lt;-return 0--------------|
      |-anr_get_gain(nr,NULL)-&gt;|  const float* gain[n_freqs](借用,到下次 process/reset/destroy)
  [執行期換強度,hop 之間]
-     |-anr_set_mode(nr,mode)|anr_reconfigure(nr,&amp;t)-&gt;|  anr_validate_config(t) + grid/L/num_init_frames 相符?
+     |-anr_set_level(nr, level)|anr_reconfigure(nr,&amp;t)-&gt;|  anr_validate_config(t) + grid/L/num_init_frames 相符?
      |                        |--noise_estimator_apply_config_scalars-&gt;|
      |                        |-------------spp_apply_config_scalars----------------&gt;|
      |&lt;-0 | -1(不符或 t 無效:什麼都不寫;追蹤狀態一律保留)
@@ -297,7 +297,7 @@ caller(合成)  g_total=min(gain,G_res)    同左                      同左
 
 <h2>相關檔案與測試路徑</h2>
 <ul>
-<li>API:<code>NR/c_impl/include/anr.h</code>、<code>anr_types.h</code>(config/preset/驗證全在此);實作:<code>src/anr.c</code>、<code>src/noise_estimator.c</code>、<code>src/spp_estimator.c</code></li>
+<li>API:<code>NR/c_impl/include/anr.h</code>、<code>anr_types.h</code>(config/level/驗證全在此);實作:<code>src/anr.c</code>、<code>src/noise_estimator.c</code>、<code>src/spp_estimator.c</code></li>
 <li>使用端:<code>Audio_ALG/pipelines/mono_aec_nr_res/main.c</code>(mono 整合範例,自己的 <code>mono_nr_gain()</code> 呼叫 NR seam;4ch 範例經 <code>pipelines/4ch_aec_bf_nr_res/mcab_sample_post.h</code> 的 <code>mcab_sample_anr_gain()</code>)、<code>NR/c_impl/example/main.c</code>(heap)、<code>example/main_mem.c</code>(獨立 freq-domain runner,static pool,含 <code>build_sqrt_hann()</code>)</li>
 <li>文件:<code>NR/docs/c_user_manual_zh_TW.md</code>、<code>NR/c_impl/README.md</code>;同系列頁面 <a href="nr_c_api.html">nr_c_api.html</a>(呼叫與錯誤語意)、<a href="nr_c_api_params.html">nr_c_api_params.html</a>(外部／內部參數、函式分級)</li>
 <li>測試(<code>make -C NR/c_impl</code>):<code>test-config</code>(config 驗證 + gain-borrow)、<code>test-reconfigure</code>、<code>test-noise-restart</code>(數位靜音與首個追蹤幀)、<code>test-scene-change</code>、<code>test-shared-startup</code>、<code>test-api-cpp</code>、<code>test-bit-exact</code>、<code>test-config-parity</code>(5 格點 × 4 強度的 config CSV,供 Python 端對拍);<code>test</code>／<code>test-full</code> 為彙總</li>

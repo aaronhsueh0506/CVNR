@@ -56,9 +56,9 @@ static void dump_state(const uint32_t* context, const AnrDenoiser* s,
         record(context, 18, s->noise_est->min_buffer, nf * (uint32_t)s->config.L);
 }
 
-static void run_case(uint32_t grid, int sr, int fft, AnrMode strength,
+static void run_case(uint32_t grid, int sr, int fft, AnrLevel level,
                      uint32_t feature, int static_memory) {
-    AnrConfig config = anr_config_for_mode_grid(sr, fft, strength);
+    AnrConfig config = anr_config_for_level_grid(sr, fft, level);
     if (feature == 1) config.dd_from_gmmse = true;
     if (feature == 3) config.alpha_d = 0.4f;   /* fast decay: bins held at zero reach the inert floor */
     if (feature == 2) {
@@ -81,7 +81,7 @@ static void run_case(uint32_t grid, int sr, int fft, AnrMode strength,
     float* extra = (float*)malloc((size_t)nf * sizeof(float));
     float* returned_gain = (float*)malloc((size_t)nf * sizeof(float));
     if (!input || !output || !extra || !returned_gain) exit(5);
-    rng = 918273u + grid * 101u + (uint32_t)strength * 17u + feature;
+    rng = 918273u + grid * 101u + (uint32_t)level * 17u + feature;
     for (uint32_t frame = 0; frame < FRAMES; ++frame) {
         float scale = frame < 48 ? 0.05f : frame < 112 ? 2.0f
                     : frame < 176 ? 0.2f : frame < 224 ? 0.0f : 0.5f;
@@ -103,7 +103,7 @@ static void run_case(uint32_t grid, int sr, int fft, AnrMode strength,
             config.q = 0.48f;
             if (anr_reconfigure(s, &config)) exit(6);
         }
-        if (feature && frame == 208 && anr_set_mode(s, ANR_MODE_AGGRESSIVE)) exit(7);
+        if (feature && frame == 208 && anr_set_level(s, ANR_LEVEL_AGGRESSIVE)) exit(7);
         memset(output, 0, (size_t)nf * sizeof(Complex));
         if ((frame & 3u) == 0) {
             if (anr_process(s, input, input)) exit(8);
@@ -115,7 +115,7 @@ static void run_case(uint32_t grid, int sr, int fft, AnrMode strength,
             float* gain_out = (frame & 8u) ? returned_gain : NULL;
             if (anr_process_gain(s, input, external, gain_out)) exit(10);
         }
-        uint32_t context[] = {grid, (uint32_t)strength,
+        uint32_t context[] = {grid, (uint32_t)level,
                               feature + (static_memory ? 4u : 0u), frame};
         dump_state(context, s, output, returned_gain);
     }
@@ -140,11 +140,11 @@ int main(void) {
     const int rates[] = {16000, 16000, 48000};
     const int sizes[] = {256, 512, 1024};
     for (uint32_t grid = 0; grid < 3; ++grid) {
-        for (int strength = ANR_MODE_MILD; strength <= ANR_MODE_AGGRESSIVE; ++strength)
-            run_case(grid, rates[grid], sizes[grid], (AnrMode)strength, 0, 0);
+        for (int level = ANR_LEVEL_MILD; level <= ANR_LEVEL_AGGRESSIVE; ++level)
+            run_case(grid, rates[grid], sizes[grid], (AnrLevel)level, 0, 0);
         for (uint32_t feature = 1; feature <= 3; ++feature)
-            run_case(grid, rates[grid], sizes[grid], ANR_MODE_BALANCED, feature, 0);
-        run_case(grid, rates[grid], sizes[grid], ANR_MODE_BALANCED, 0, 1);
+            run_case(grid, rates[grid], sizes[grid], ANR_LEVEL_BALANCED, feature, 0);
+        run_case(grid, rates[grid], sizes[grid], ANR_LEVEL_BALANCED, 0, 1);
     }
     return fflush(stdout) == 0 ? 0 : 11;
 }

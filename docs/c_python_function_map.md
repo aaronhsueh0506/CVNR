@@ -12,6 +12,8 @@
 - 讓對拍腳本（`python/tools/pyc_parity_nr.py`）的 EXPECTED_RED 紅燈能回頭找到函式。
 - 在 Python 或 C 側增刪改符號時，由 pytest 提醒更新本表。
 
+命名橋：C 稱強度 `level`（`AnrLevel`、`anr_set_level`、`anr_config_for_level*`），Python 稱 strength preset（`NR_STRENGTH_PRESETS`、`apply_strength`）；C level == Python preset，值與數字 0..3 相同。Python 檔案內的註解與 docstring 仍寫舊 C 名稱（`anr_config_for_mode`、`AnrMode`），以本表第 1 欄為準。
+
 每一列的最後一欄用標籤標出依據（見 §3）；標 `[讀碼]` 的列是逐行對讀 C 與 Python 後的判斷，沒有文件或註解背書。
 
 ## 2. 如何維護
@@ -90,7 +92,7 @@
 | `src/anr.c:anr_process_gain` | `denoisers/v3_2_mmse_lsa.py:MmseLsaDenoiser.denoise_spectrum#return_gain`；`denoisers/v3_2_mmse_lsa.py:MmseLsaDenoiser.denoise_spectrum#extra_noise_psd` | partial | S-13、D-18 | `python/tools/parity_nr.py`[CP]＋`c_impl/example/parity_runner.c`[CP] | [測試] 與 `anr_process` 同一內部流程，另吃 `extra_noise_psd`（R²）並輸出 gain；`parity_nr.py` 的 C 側（`parity_runner`）就是逐幀呼叫它，Python 側取 `denoise(..., return_gain=True)`。數值對拍由 `pyc_parity_nr` 承擔。 |
 | `src/anr.c:process_init_or_gain` | — | C-only | — | `c_impl/test/test_noise_restart.c`[C]；`c_impl/test/test_bit_exact_stream.c`[CC] | [讀碼] `anr_process` 與 `anr_process_gain` 共用的逐幀階段：噪聲底尚未初始化時累積起始功率並旁路（gain = 1），之後呼叫增益階段；Python 在 `denoise_spectrum` 內聯。 |
 | `src/anr.c:anr_reconfigure` | — | C-only | D-19 | `c_impl/test/test_reconfigure.c`[C] | [稽核] 執行期換設定並保留 DSP 狀態（grid／L／num_init_frames 不可變）；Python 沒有。 |
-| `src/anr.c:anr_set_mode` | `core/nr_strength.py:apply_strength` | partial | D-19 | `c_impl/test/test_reconfigure.c`[C]；`c_impl/test/test_bit_exact_stream.c`[CC] | [讀碼] C：以 `anr_config_for_mode_grid` 產生目標設定後 `anr_reconfigure`（執行期）。Python 只能在建構前以 `apply_strength` 疊 preset，沒有執行期切換。 |
+| `src/anr.c:anr_set_level` | `core/nr_strength.py:apply_strength` | partial | D-19 | `c_impl/test/test_reconfigure.c`[C]；`c_impl/test/test_bit_exact_stream.c`[CC] | [讀碼] C：以 `anr_config_for_level_grid` 產生目標設定後 `anr_reconfigure`（執行期）。Python 只能在建構前以 `apply_strength` 疊 preset，沒有執行期切換。 |
 | `src/anr.c:anr_reset` | `denoisers/v3_2_mmse_lsa.py:MmseLsaDenoiser.reset` | mirror | — | `c_impl/test/test_bit_exact_stream.c`[CC] | [讀碼] 清所有幀間狀態；Python 在 `denoise_spectrum` 進入時自動呼叫 `reset()`。 |
 | `src/anr.c:anr_get_hop_size`、`src/anr.c:anr_get_frame_size`、`src/anr.c:anr_get_n_freqs` | — | C-only | — | `c_impl/test/test_reconfigure.c`[C] | [讀碼] 設定值存取器。Python 以 `FrameProcessor` 屬性表達 frame／hop（見 Python-only 區）。 |
 | `src/anr.c:anr_is_initialized` | `core/noise_estimators/mcra.py:McraNoiseEstimator.estimate#is_initialized` | partial | — | `c_impl/test/test_noise_restart.c`[C]；`c_impl/test/test_reconfigure.c`[C] | [讀碼] C 回報噪聲初始化完成；Python 對應 `McraNoiseEstimator.is_initialized`（由 `estimate()` 設定）。 |
@@ -140,19 +142,19 @@
 | `src/spp_estimator.c:spp_estimate_ex` | `core/spp_estimator.py:SppEstimator.estimate` | partial | — | `python/tools/parity_nr.py`[CP]＋`c_impl/example/parity_runner.c`[CP] | [稽核] 僅在 `USE_SHARED_XI_RATIO` 編譯；同 `spp_estimate`，另輸出 `v_out` 供增益階段反推 xi/(1+xi)。 |
 | `src/spp_estimator.c:spp_reset` | `core/spp_estimator.py:SppEstimator.reset` | mirror | — | `c_impl/test/test_bit_exact_stream.c`[CC] | [讀碼] 清 `gamma_prev`、`noise_psd_prev` 與 is_initialized；Python 另清 cross-band／frame prior 狀態（C 的 cross-band 狀態在 `anr.c`，見 `reset_frame_evidence_state`）。 |
 
-### 6.4 `include/anr_types.h`（config／retime／preset／驗證的 `static inline`）
+### 6.4 `include/anr_types.h`（config／retime／level／驗證的 `static inline`）
 
 | C 檔:函式 | Python 檔:符號 | 關係 | 已知落差 | 對拍／測試 | 依據與說明 |
 | --- | --- | --- | --- | --- | --- |
-| `include/anr_types.h:anr_nr_mode_is_valid` | `core/nr_strength.py:apply_strength` | partial | — | `c_impl/test/test_reconfigure.c`[C] | [讀碼] C：enum 白名單（bool）；Python：`strength not in NR_STRENGTH_PRESETS` 時 raise ValueError。測試只經 `anr_set_mode` 的無效 enum 案例間接走到，沒有直接呼叫。 |
-| `include/anr_types.h:anr_nr_mode_from_name` | `core/nr_strength.py:nr_strength_name` | partial | — | `python/tests/test_nr_strength_index.py`[PY] | [CHANGELOG][測試] C：名稱或 `0`..`3` → enum，未知／NULL 回 −1。Python `nr_strength_name` 只把 `"0"`..`"3"` 換成名稱，其他值原樣通過給 argparse 的 `choices`。`test_nr_strength_index.py` 讀 `anr_types.h` 的 `ANR_MODE_*` 值核對索引（c_impl/CHANGELOG）。 |
-| `include/anr_types.h:anr_nr_mode_name` | `core/nr_strength.py:NR_STRENGTH_PRESETS` | partial | — | `python/tests/test_nr_strength_index.py`[PY] | [註解][測試] enum → 名稱。Python `NR_STRENGTH_PRESETS` 的鍵順序即 C `AnrMode` 值順序（`nr_strength.py` 註解）。 |
+| `include/anr_types.h:anr_nr_level_is_valid` | `core/nr_strength.py:apply_strength` | partial | — | `c_impl/test/test_reconfigure.c`[C] | [讀碼] C：enum 白名單（bool）；Python：`strength not in NR_STRENGTH_PRESETS` 時 raise ValueError。測試只經 `anr_set_level` 的無效 enum 案例間接走到，沒有直接呼叫。 |
+| `include/anr_types.h:anr_nr_level_from_name` | `core/nr_strength.py:nr_strength_name` | partial | — | `python/tests/test_nr_strength_index.py`[PY] | [CHANGELOG][測試] C：名稱或 `0`..`3` → enum，未知／NULL 回 −1。Python `nr_strength_name` 只把 `"0"`..`"3"` 換成名稱，其他值原樣通過給 argparse 的 `choices`。`test_nr_strength_index.py` 讀 `anr_types.h` 的 `ANR_MODE_*` 舊名列核對索引（c_impl/CHANGELOG）；這四行（附字面數字）與 `AnrMode` typedef 因此留在 header。 |
+| `include/anr_types.h:anr_nr_level_name` | `core/nr_strength.py:NR_STRENGTH_PRESETS` | partial | — | `python/tests/test_nr_strength_index.py`[PY] | [註解][測試] enum → 名稱。Python `NR_STRENGTH_PRESETS` 的鍵順序即 C `AnrLevel` 值順序（`nr_strength.py` 註解仍寫舊名 `AnrMode`）。 |
 | `include/anr_types.h:anr_default_fft_size` | `core/signal_grid.py:_DEFAULT_FFT`；`core/signal_grid.py:resolve_signal_grid` | mirror | — | `python/tests/test_config_parity.py`[CP]＋`c_impl/test/test_config_parity.c`[CP] | [讀碼] 8 kHz → 128、16 kHz → 256、48 kHz → 1024；`resolve_signal_grid` 另檢查 grid 白名單（對應 C 的 `anr_validate_config`）。 |
 | `include/anr_types.h:anr_retime_alpha_ref`、`include/anr_types.h:anr_retime_alpha` | `core/signal_grid.py:retime_ema_alpha` | mirror | — | `python/tests/test_config_parity.py`[CP]＋`c_impl/test/test_config_parity.c`[CP] | [稽核][測試] `alpha^((hop/sr)/ref_hop)`：C 為 float32 `powf`（參考時長保持 double），Python float64。`test_config_parity` 對拍用它算出的設定欄位。輸入超出 [0, 1] 時 Python raise、C 原值回傳（作者讀碼）。 |
 | `include/anr_types.h:anr_retime_frames` | `core/signal_grid.py:retime_frame_count` | mirror | — | `python/tests/test_config_parity.py`[CP]＋`c_impl/test/test_config_parity.c`[CP] | [稽核][測試] 不縮短實際時長的幀數換算 `ceil(frames·ref·sr/hop − 1e-12)`：Python 用 double，C `anr_retime_frames` 用整數運算。`test_config_parity` 對拍用它算出的設定欄位。非正輸入 Python raise、C 回 0（作者讀碼）。 |
 | `include/anr_types.h:anr_retime_frames_ms` | `core/signal_grid.py:retime_frame_count` | mirror | — | — | [讀碼] `anr_default_config()` 的 `config.L` 呼叫這個整數版（ceil 用 int64 ceiling division，同檔 `anr_retime_frames` 的手法；有溢位檢查）。在 5 個白名單 grid（8k/128、8k/256、16k/256、16k/512、48k/1024）上結果與 Python `retime_frame_count()` 相同（L=64/32/64/32/48）；差異只可能出現在 `L>320`（`anr_validate_config()` 拒收的範圍）。 |
 | `include/anr_types.h:anr_default_config_for_grid`、`include/anr_types.h:anr_default_config` | `process_audio.py:build_v3_2_base_params`；`denoisers/v3_2_mmse_lsa.py:MmseLsaDenoiser.__init__` | mirror | D-20 | `python/tests/test_config_parity.py`[CP]＋`c_impl/test/test_config_parity.c`[CP] | [註解][測試][稽核] 預設（balanced）設定：Python 由 `config/v3_2_config.yaml` 經 `build_v3_2_base_params` 組出參數，再於 `MmseLsaDenoiser.__init__` retime；C 在 builder 內 retime（C 檔註解「sync with Python v3_2_config.yaml」）。`test_config_parity.py` 對拍 16k/256、16k/512、48k/1024 三個 grid × 4 個 strength，8 kHz 不在其中。`process_audio.py` 不在 core／denoisers 範圍，只因它是預設值的實際來源而列入。 |
-| `include/anr_types.h:anr_config_for_mode_grid`、`include/anr_types.h:anr_config_for_mode` | `core/nr_strength.py:apply_strength`；`core/nr_strength.py:NR_STRENGTH_PRESETS` | mirror | — | `python/tests/test_config_parity.py`[CP]＋`c_impl/test/test_config_parity.c`[CP]；`python/tests/test_nr_strength_index.py`[PY] | [註解][測試] 四個 strength 只改 `g_min_db`／`q`／`xi_min_db`／`noise_over_subtraction`。`nr_strength.py` docstring 寫明鏡射 C `anr_config_for_mode`。 |
+| `include/anr_types.h:anr_config_for_level_grid`、`include/anr_types.h:anr_config_for_level` | `core/nr_strength.py:apply_strength`；`core/nr_strength.py:NR_STRENGTH_PRESETS` | mirror | — | `python/tests/test_config_parity.py`[CP]＋`c_impl/test/test_config_parity.c`[CP]；`python/tests/test_nr_strength_index.py`[PY] | [註解][測試] 四個 strength 只改 `g_min_db`／`q`／`xi_min_db`／`noise_over_subtraction`。`nr_strength.py` docstring 寫明鏡射 C `anr_config_for_mode`（舊名，現為 `anr_config_for_level`）。 |
 | `include/anr_types.h:anr_apply_speech_protection_experiment`、`include/anr_types.h:anr_apply_cross_band_speech_experiment` | — | C-only | — | `c_impl/test/test_bit_exact_stream.c`[CC]；`c_impl/test/test_config_validation.c`[C] | [讀碼] 整組實驗 overlay；repo 內只有 C 測試引用。Python 沒有同名函式，研究 CLI 以旗標逐欄設定（未逐值比對）。 |
 | `include/anr_types.h:anr_finite_in_range`、`include/anr_types.h:anr_validate_config` | `denoisers/v3_2_mmse_lsa.py:MmseLsaDenoiser.__init__`；`core/signal_grid.py:validate_signal_grid` | partial | S-34、D-19 | `c_impl/test/test_config_validation.c`[C] | [稽核] C：有限值＋範圍＋grid 白名單 fail-closed；Python：`__init__` 只有少數 raise（約 11 處）與 `validate_signal_grid`。邊界值上的不一致方向都是 Python 接受、C 拒絕（S-34）。 |
 
@@ -188,7 +190,7 @@
 | `S-34` | 設定範圍檢查不對稱：C `anr_validate_config` 嚴格 fail-closed，Python 幾乎不驗 |
 | `S-35` | Python-only 的預設關閉研究旋鈕（`frame_prior_*`、`floor_blend`、`alpha_noise_up`、cross-band strength 等），C 不實作 |
 | `D-18` | 出貨預設（fast-math＋六旗標）相對 Python 的數值偏差；量測見 `pyc_parity_nr` 的 L2 |
-| `D-19` | 只存在 C 的機制與較嚴格驗證：`anr_reconfigure`／`anr_set_mode`／`anr_debug_status`／靜態記憶體池／`USE_FAST_PERCENTILE`／`anr_validate_config` |
+| `D-19` | 只存在 C 的機制與較嚴格驗證：`anr_reconfigure`／`anr_set_level`／`anr_debug_status`／靜態記憶體池／`USE_FAST_PERCENTILE`／`anr_validate_config` |
 | `D-20` | `makeup_prior_xi_db` 與 `alpha_g` 在 C 為惰性欄位（make-up 門檻借用 `noise_gate_xi_db`；見 `anr_types.h` 註解） |
 | `D-22` | Python-only 研究旋鈕與其他版本（V1／V2／V3／V3-3、`recursive_average`…） |
 

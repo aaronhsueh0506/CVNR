@@ -738,12 +738,12 @@ int anr_reconfigure(AnrDenoiser* self, const AnrConfig* target) {
     return 0;
 }
 
-int anr_set_mode(AnrDenoiser* self, AnrMode mode) {
+int anr_set_level(AnrDenoiser* self, AnrLevel level) {
     AnrConfig target;
     if (!self) return -1;
-    if (!anr_nr_mode_is_valid(mode)) return -1;
-    target = anr_config_for_mode_grid(self->config.sample_rate,
-                                           self->config.fft_size, mode);
+    if (!anr_nr_level_is_valid(level)) return -1;
+    target = anr_config_for_level_grid(self->config.sample_rate,
+                                       self->config.fft_size, level);
     return anr_reconfigure(self, &target);
 }
 

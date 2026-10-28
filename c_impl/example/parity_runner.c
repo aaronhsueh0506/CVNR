@@ -6,8 +6,8 @@
  * Trailing data is ignored. fft_size = (n_freqs - 1) * 2.
  * Output: int32 n_frames, n_freqs; then per frame gain[n_freqs] (float32).
  *
- * Usage: parity_runner <in_spectra.bin> <out_c_gains.bin> [full] [<strength>]
- *   The optional mode must be 'full'. <strength> is 0|1|2|3 or
+ * Usage: parity_runner <in_spectra.bin> <out_c_gains.bin> [full] [<level>]
+ *   The optional mode must be 'full'. <level> is 0|1|2|3 or
  *   mild|moderate|balanced|aggressive and defaults to balanced.
  */
 
@@ -33,11 +33,11 @@ int main(int argc, char* argv[]) {
         fprintf(stderr, "Error: unsupported mode '%s' (only 'full')\n", argv[3]);
         return 1;
     }
-    AnrMode nr_mode = ANR_MODE_BALANCED;
+    AnrLevel nr_level = ANR_LEVEL_BALANCED;
     if (argc >= 5) {
         /* Name or digit 0..3; an unrecognised value keeps the balanced default. */
-        int m = anr_nr_mode_from_name(argv[4]);
-        nr_mode = m >= 0 ? (AnrMode)m : ANR_MODE_BALANCED;
+        int m = anr_nr_level_from_name(argv[4]);
+        nr_level = m >= 0 ? (AnrLevel)m : ANR_LEVEL_BALANCED;
     }
 
     FILE* fin = fopen(argv[1], "rb");
@@ -78,8 +78,8 @@ int main(int argc, char* argv[]) {
     int fft_size = (n_freqs - 1) * 2;
 
     /* The sample rate selects the retimed EMA and frame-count parameters. */
-    AnrConfig config = anr_config_for_mode_grid(
-        sample_rate, fft_size, nr_mode);
+    AnrConfig config = anr_config_for_level_grid(
+        sample_rate, fft_size, nr_level);
 
     AnrDenoiser* denoiser = anr_create(&config);
     if (!denoiser) {

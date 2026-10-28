@@ -50,6 +50,10 @@ monotonic and a stronger preset does not track speech as noise. Missing,
 malformed, or unreadable YAML configuration is fatal; the CLI never falls back
 to other defaults.
 
+The C library calls the same four-step setting a *level* (`AnrLevel`, C
+`--nr-level`): C level == Python strength preset (`--nr-mode`,
+`NR_STRENGTH_PRESETS`); the values and digits `0`-`3` are identical.
+
 ## C build and integration
 
 The C API and archive are named ANR; [C API naming and Python layout](docs/anr_migration.md)
@@ -76,14 +80,14 @@ wrapper. The pool path and heap path share the same processing core; see
 
 The tuning scalars can be swapped on a running instance:
 `anr_reconfigure()` takes a caller-composed `AnrConfig` verbatim, and
-`anr_set_mode()` composes the canonical config for a strength mode. Nothing is
+`anr_set_level()` composes the canonical config for a strength level. Nothing is
 reallocated, so the grid and the pool-sizing fields (`L`, `num_init_frames`)
 must match the instance; the noise floor, MCRA ring, SPP history and gain
 smoothing history are preserved. An instance built from the unmodified canonical
-preset for its grid (library-default `L`) can use `anr_set_mode()` directly. A
-caller that layers its own overrides on top of a preset must rebuild its whole
-composition and call `anr_reconfigure()`: the bare canonical preset passed to
-`anr_set_mode()` reverts those overrides, or is refused when the overridden
+level config for its grid (library-default `L`) can use `anr_set_level()` directly. A
+caller that layers its own overrides on top of a level config must rebuild its whole
+composition and call `anr_reconfigure()`: the bare canonical level config passed to
+`anr_set_level()` reverts those overrides, or is refused when the overridden
 fields are `L` or `num_init_frames`.
 Details in [`c_impl/README.md`](c_impl/README.md).
 

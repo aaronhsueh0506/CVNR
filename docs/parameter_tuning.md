@@ -6,23 +6,23 @@
 
 ---
 
-## 🪜 先試 Strength Mode（Python + C 都有）
+## 🪜 先試 Strength Level（Python + C 都有）
 
-> **命名好的 4 級 strength mode 兩端都有**：
+> **命名好的 4 級強度兩端都有**（C 稱 level，Python 稱 strength preset：C level == Python preset）：
 > - **Python**：`python/process_audio.py` 的 `create_denoiser_from_config(..., strength=...)`（preset 表在 `python/core/nr_strength.py`）或 CLI `python/process_audio.py --nr-mode {mild,moderate,balanced,aggressive}`（亦可寫 0-3）。
-> - **C**：`anr_config_for_mode(sample_rate, ANR_MODE_MILD|MODERATE|BALANCED|AGGRESSIVE)`（`c_impl/include/anr_types.h`）或 `denoise_wav --nr-mode`。
+> - **C**：`anr_config_for_level(sample_rate, ANR_LEVEL_MILD|MODERATE|BALANCED|AGGRESSIVE)`（`c_impl/include/anr_types.h`）或 `denoise_wav --nr-level`（舊旗標 `--nr-mode` 仍可用）。
 > 兩端 4 級 std-math **數值對齊，非逐位元相同**。g_min_db 為 **audio 振幅 dB（/20）**。
 > 四級共用同一套 DD、MCRA tracker、gain attack/decay 與低頻語音保護；
-> preset 只改下表四個「抑噪深度」旋鈕。
+> 每一級只改下表四個「抑噪深度」旋鈕。
 
-| 模式 | g_min_db | q（語音存在先驗） | xi_min_db | noise over-subtraction | 適用 |
+| 等級 | g_min_db | q（語音存在先驗） | xi_min_db | noise over-subtraction | 適用 |
 |---|---:|---:|---:|---:|---|
 | mild | -20 dB | 0.58 | -10 dB | 1.2 | 安靜 / 室內、重視語音自然度（最淺） |
 | moderate | -23 dB | 0.54 | -10 dB | 1.3 | mild 與 balanced 之間 |
 | balanced（預設） | -25 dB | 0.52 | -10 dB | 1.4 | 一般使用 |
 | aggressive | -28 dB | 0.45 | -12 dB | 1.3 | 高噪 / 戶外、可接受更多失真（最深） |
 
-**多數情境切 `--nr-mode` 就夠了**，以下細節調參僅在這一步不符需求時再看。
+**多數情境切強度（Python `--nr-mode`、C `--nr-level`）就夠了**，以下細節調參僅在這一步不符需求時再看。
 
 ---
 
@@ -80,7 +80,7 @@
 
 **物理意義**：它告訴算法：「假設最糟糕的情況下，語音信號至少也有這麼強」。
 
-**參數範圍**：通常在 -10 dB 到 -20 dB 之間（現行四級 preset 為 -10 / -12 dB）。
+**參數範圍**：通常在 -10 dB 到 -20 dB 之間（現行四級為 -10 / -12 dB）。
 
 **直觀理解**：它是 DD 先驗 SNR 的數值下限；下限越高，最低允許增益通常越大。
 
@@ -156,7 +156,7 @@ MCRA 的 scene change detector 用「高頻 gamma + spectral flatness」雙重�
 - `mcra_accept_external_spp` (True)：**True = 使用 denoiser 的 Bayesian posterior SPP
   （standalone 與目前 Audio_ALG pipeline 都採用）；False = 改用 MCRA 內部 binary
   ratio-test（plain MCRA，僅供另外驗證的組態）**
-- `alpha_attack` (0.15，16 ms authored) / `alpha_decay`（C 有自己的預設；Python 預設取自 `alpha_g`）：非對稱平滑，全 preset 共用
+- `alpha_attack` (0.15，16 ms authored) / `alpha_decay`（C 有自己的預設；Python 預設取自 `alpha_g`）：非對稱平滑，四級共用
 
 如確實需要動，**請務必以 VCTK/DEMAND 800+ 檔做 regression 驗證**，避免改善單一 case 但整體退步。
 
@@ -175,7 +175,7 @@ MCRA 的 scene change detector 用「高頻 gamma + spectral flatness」雙重�
 
 ## 📝 調參流程建議
 
-1. 先換 strength mode（`--nr-mode mild|moderate|balanced|aggressive`，Python + C 皆可）（**80% 的情境止於這一步**）
+1. 先換強度（Python `--nr-mode`、C `--nr-level`，值皆為 `mild|moderate|balanced|aggressive`）（**80% 的情境止於這一步**）
 2. 遇到 symptom 對照「調參決策表」調四大核心旋鈕
 3. 遇到場景切換問題調 `scene_change_*`
 4. 每次只動一個參數，用同一批測試音檔 A/B 比對

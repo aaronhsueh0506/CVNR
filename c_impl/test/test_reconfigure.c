@@ -74,7 +74,7 @@ static void inst_run(Inst* in, int n_frames, unsigned seed) {
 }
 
 /* inst_run() plus the mean gain (dB) averaged over the run's last 20 frames,
- * so a strength switch can be judged by its effect on the same input. */
+ * so a level switch can be judged by its effect on the same input. */
 static float inst_run_mean_gain_db(Inst* in, int n_frames, unsigned seed) {
     int nf = anr_get_n_freqs(in->d);
     Complex* x = (Complex*)calloc((size_t)nf, sizeof(Complex));
@@ -108,8 +108,8 @@ static void check_self_reconfigure_is_noop(void) {
     int g;
     printf("-- reconfigure to the CURRENT config is a complete no-op --\n");
     for (g = 0; g < N_GRIDS; ++g) {
-        AnrConfig cfg = anr_config_for_mode_grid(
-            GRIDS[g].sr, GRIDS[g].fft, ANR_MODE_BALANCED);
+        AnrConfig cfg = anr_config_for_level_grid(
+            GRIDS[g].sr, GRIDS[g].fft, ANR_LEVEL_BALANCED);
         Inst in;
         void* snapshot;
         char msg[160];
@@ -133,9 +133,9 @@ static void check_self_reconfigure_is_noop(void) {
         CHECK(memcmp(snapshot, in.pool, in.bytes) == 0, msg);
 
         snprintf(msg, sizeof(msg),
-                 "grid %d/%d: set_mode to the CURRENT mode is also a no-op",
+                 "grid %d/%d: set_level to the CURRENT level is also a no-op",
                  GRIDS[g].sr, GRIDS[g].fft);
-        CHECK(anr_set_mode(in.d, ANR_MODE_BALANCED) == 0 &&
+        CHECK(anr_set_level(in.d, ANR_LEVEL_BALANCED) == 0 &&
                   memcmp(snapshot, in.pool, in.bytes) == 0, msg);
 
         free(snapshot);
@@ -143,18 +143,18 @@ static void check_self_reconfigure_is_noop(void) {
     }
 }
 
-/* ── 2: a real strength change preserves every history ─────────────────── */
+/* ── 2: a real level change preserves every history ─────────────────── */
 
 static void check_state_is_preserved(void) {
-    AnrConfig cfg = anr_config_for_mode_grid(16000, 512,
-                                                      ANR_MODE_BALANCED);
+    AnrConfig cfg = anr_config_for_level_grid(16000, 512,
+                                                      ANR_LEVEL_BALANCED);
     Inst in;
     const float* noise_before;
     float* noise_copy;
     void* pool_copy;
     float gain_before, gain_after;
     int nf;
-    printf("-- a strength change preserves noise floor / SPP / gain history --\n");
+    printf("-- a level change preserves noise floor / SPP / gain history --\n");
     if (inst_open(&in, &cfg) != 0) { CHECK(0, "instance created"); return; }
     gain_before = inst_run_mean_gain_db(&in, 80, 0xBEEFu);
 
@@ -167,7 +167,7 @@ static void check_state_is_preserved(void) {
     pool_copy = malloc(in.bytes);
     memcpy(pool_copy, in.pool, in.bytes);
 
-    CHECK(anr_set_mode(in.d, ANR_MODE_AGGRESSIVE) == 0,
+    CHECK(anr_set_level(in.d, ANR_LEVEL_AGGRESSIVE) == 0,
           "switch balanced -> aggressive accepted");
     CHECK(memcmp(noise_copy, anr_get_noise_psd(in.d, NULL),
                  (size_t)nf * sizeof(float)) == 0,
@@ -175,16 +175,16 @@ static void check_state_is_preserved(void) {
     CHECK(anr_is_initialized(in.d),
           "the noise-floor initialisation flag survives the switch");
     CHECK(memcmp(pool_copy, in.pool, in.bytes) != 0,
-          "the strength switch changed configuration scalars (not a no-op)");
+          "the level switch changed configuration scalars (not a no-op)");
 
     /* The switch must actually have DONE something, or the assertions above
-     * are vacuous: the deeper preset has to lower the mean gain on the same
+     * are vacuous: the deeper level has to lower the mean gain on the same
      * stationary input once its history has been re-driven. */
     gain_after = inst_run_mean_gain_db(&in, 100, 0xC0DEu);
     printf("   mean gain over the last 20 frames: balanced %.2f dB -> aggressive %.2f dB\n",
            gain_before, gain_after);
     CHECK(gain_after < gain_before - 0.5f,
-          "the switch really installed the deeper preset (mean gain fell by > 0.5 dB)");
+          "the switch really installed the deeper level (mean gain fell by > 0.5 dB)");
 
     free(pool_copy);
     free(noise_copy);
@@ -194,8 +194,8 @@ static void check_state_is_preserved(void) {
 /* Mutation check: anr_reset() clears the state a bad reconfiguration would, and the section-2
  * comparison must notice, so "the noise PSD is untouched" is not vacuous. */
 static void check_state_clearing_is_observable(void) {
-    AnrConfig cfg = anr_config_for_mode_grid(16000, 512,
-                                                      ANR_MODE_BALANCED);
+    AnrConfig cfg = anr_config_for_level_grid(16000, 512,
+                                                      ANR_LEVEL_BALANCED);
     Inst in;
     int nf;
     float* noise_copy;
@@ -223,8 +223,8 @@ static void check_state_clearing_is_observable(void) {
 /* ── 3: refusal is total ───────────────────────────────────────────────── */
 
 static void check_refusal_is_total(void) {
-    AnrConfig cfg = anr_config_for_mode_grid(16000, 512,
-                                                      ANR_MODE_BALANCED);
+    AnrConfig cfg = anr_config_for_level_grid(16000, 512,
+                                                      ANR_LEVEL_BALANCED);
     Inst in;
     void* snapshot;
     printf("-- refusal writes nothing --\n");
@@ -257,11 +257,11 @@ static void check_refusal_is_total(void) {
 
     CHECK(anr_reconfigure(NULL, &cfg) == -1, "NULL instance refused");
     CHECK(anr_reconfigure(in.d, NULL) == -1, "NULL target refused");
-    CHECK(anr_set_mode(NULL, ANR_MODE_MILD) == -1,
-          "set_mode: NULL instance refused");
-    CHECK(anr_set_mode(in.d, (AnrMode)42) == -1 &&
+    CHECK(anr_set_level(NULL, ANR_LEVEL_MILD) == -1,
+          "set_level: NULL instance refused");
+    CHECK(anr_set_level(in.d, (AnrLevel)42) == -1 &&
               memcmp(snapshot, in.pool, in.bytes) == 0,
-          "set_mode: out-of-enum mode refused and untouched");
+          "set_level: out-of-enum level refused and untouched");
 
     free(snapshot);
     inst_close(&in);
@@ -270,9 +270,9 @@ static void check_refusal_is_total(void) {
 /* ── 4: a pipeline-shaped config survives (overrides are NOT reverted) ─── */
 
 static void check_pipeline_overrides_survive(void) {
-    /* A caller-composed config: preset, then L, alpha_decay and broadband_threshold overrides. */
-    AnrConfig cfg = anr_config_for_mode_grid(16000, 512,
-                                                      ANR_MODE_BALANCED);
+    /* A caller-composed config: level, then L, alpha_decay and broadband_threshold overrides. */
+    AnrConfig cfg = anr_config_for_level_grid(16000, 512,
+                                                      ANR_LEVEL_BALANCED);
     AnrConfig target;
     Inst in;
     printf("-- pipeline overrides survive a reconfiguration --\n");
@@ -282,13 +282,13 @@ static void check_pipeline_overrides_survive(void) {
     if (inst_open(&in, &cfg) != 0) { CHECK(0, "pipeline instance created"); return; }
     inst_run(&in, 40, 0x99u);
 
-    /* anr_set_mode() rebuilds the preset, whose L differs: it must refuse, not silently revert. */
-    CHECK(anr_set_mode(in.d, ANR_MODE_AGGRESSIVE) == -1,
-          "set_mode REFUSES a pipeline-shaped instance instead of silently "
+    /* anr_set_level() rebuilds the level, whose L differs: it must refuse, not silently revert. */
+    CHECK(anr_set_level(in.d, ANR_LEVEL_AGGRESSIVE) == -1,
+          "set_level REFUSES a pipeline-shaped instance instead of silently "
           "reverting its overrides");
 
-    /* Recompose the same overrides on the new preset. */
-    target = anr_config_for_mode_grid(16000, 512, ANR_MODE_AGGRESSIVE);
+    /* Recompose the same overrides on the new level. */
+    target = anr_config_for_level_grid(16000, 512, ANR_LEVEL_AGGRESSIVE);
     target.broadband_threshold = 0.8f;
     target.L = cfg.L;
     target.alpha_decay = target.alpha_g;
@@ -303,17 +303,17 @@ static void check_pipeline_overrides_survive(void) {
 
 static void check_pool_size_is_unchanged(void) {
     int g, m;
-    static const AnrMode MODES[] = {
-        ANR_MODE_MILD, ANR_MODE_MODERATE,
-        ANR_MODE_BALANCED, ANR_MODE_AGGRESSIVE,
+    static const AnrLevel LEVELS[] = {
+        ANR_LEVEL_MILD, ANR_LEVEL_MODERATE,
+        ANR_LEVEL_BALANCED, ANR_LEVEL_AGGRESSIVE,
     };
-    printf("-- pool size is identical across all four strengths --\n");
+    printf("-- pool size is identical across all four levels --\n");
     for (g = 0; g < N_GRIDS; ++g) {
         size_t first = 0;
         int same = 1;
         for (m = 0; m < 4; ++m) {
-            AnrConfig cfg = anr_config_for_mode_grid(
-                GRIDS[g].sr, GRIDS[g].fft, MODES[m]);
+            AnrConfig cfg = anr_config_for_level_grid(
+                GRIDS[g].sr, GRIDS[g].fft, LEVELS[m]);
             size_t n = anr_get_mem_size(&cfg);
             if (m == 0) first = n;
             else if (n != first) same = 0;
@@ -321,7 +321,7 @@ static void check_pool_size_is_unchanged(void) {
         {
             char msg[128];
             snprintf(msg, sizeof(msg),
-                     "grid %d/%d: all four strengths need the same %zu bytes",
+                     "grid %d/%d: all four levels need the same %zu bytes",
                      GRIDS[g].sr, GRIDS[g].fft, first);
             CHECK(same && first > 0, msg);
         }
@@ -330,11 +330,11 @@ static void check_pool_size_is_unchanged(void) {
 
 /* The frame speech gate follows q: config value + (q - anchor). Balanced is
  * the anchor and must reproduce the authored value bit for bit; the other
- * presets and a runtime reconfigure land on the same float32 sum. */
+ * levels and a runtime reconfigure land on the same float32 sum. */
 static void check_frame_gate_follows_q(void) {
-    AnrConfig bal = anr_config_for_mode_grid(16000, 512, ANR_MODE_BALANCED);
-    AnrConfig mild = anr_config_for_mode_grid(16000, 512, ANR_MODE_MILD);
-    AnrConfig aggr = anr_config_for_mode_grid(16000, 512, ANR_MODE_AGGRESSIVE);
+    AnrConfig bal = anr_config_for_level_grid(16000, 512, ANR_LEVEL_BALANCED);
+    AnrConfig mild = anr_config_for_level_grid(16000, 512, ANR_LEVEL_MILD);
+    AnrConfig aggr = anr_config_for_level_grid(16000, 512, ANR_LEVEL_AGGRESSIVE);
     AnrDenoiser* d = anr_create(&bal);
     AnrDenoiser* m = anr_create(&mild);
     float want_mild = mild.speech_protect_frame_threshold + (mild.q - ANR_SPEECH_PROTECT_ANCHOR_Q);

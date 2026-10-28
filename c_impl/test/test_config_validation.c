@@ -1,5 +1,5 @@
 /* Validate config ranges, overflow guards, pool alignment and gain APIs.
- * All shipped presets must pass; invalid inputs must leave pools intact.
+ * All shipped levels must pass; invalid inputs must leave pools intact.
  * Returns the failure count. */
 
 #include <stdio.h>
@@ -124,7 +124,7 @@ int main(void) {
     }
     printf("\n");
 
-    /* Reject nonfinite/out-of-range tunables; validate every shipped preset. */
+    /* Reject nonfinite/out-of-range tunables; validate every shipped level. */
     printf("-- float tunable validation (R08) --\n");
     {
         AnrConfig cfg;
@@ -208,19 +208,19 @@ int main(void) {
         expect_config_rejected(&cfg, "g_min_db = -200 (out of range)", big_buf, BIG_BUF);
 
         /* (c) Every shipped config must validate, across every
-         * supported sample rate: all four strength presets and the bare default. */
-        AnrMode modes[] = { ANR_MODE_MILD, ANR_MODE_MODERATE,
-                                   ANR_MODE_BALANCED, ANR_MODE_AGGRESSIVE };
-        const char* mode_names[] = { "mild", "moderate", "balanced", "aggressive" };
+         * supported sample rate: all four strength levels and the bare default. */
+        AnrLevel levels[] = { ANR_LEVEL_MILD, ANR_LEVEL_MODERATE,
+                              ANR_LEVEL_BALANCED, ANR_LEVEL_AGGRESSIVE };
+        const char* level_names[] = { "mild", "moderate", "balanced", "aggressive" };
         int sample_rates[] = { 8000, 16000, 48000 };
 
         for (size_t r = 0; r < sizeof(sample_rates) / sizeof(sample_rates[0]); r++) {
-            for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
+            for (size_t i = 0; i < sizeof(levels) / sizeof(levels[0]); i++) {
                 char msg[96];
-                AnrConfig preset = anr_config_for_mode(sample_rates[r], modes[i]);
-                snprintf(msg, sizeof msg, "preset %s @ %dHz: validate_config() accepts",
-                         mode_names[i], sample_rates[r]);
-                CHECK(anr_validate_config(&preset), msg);
+                AnrConfig shipped = anr_config_for_level(sample_rates[r], levels[i]);
+                snprintf(msg, sizeof msg, "level %s @ %dHz: validate_config() accepts",
+                         level_names[i], sample_rates[r]);
+                CHECK(anr_validate_config(&shipped), msg);
             }
 
             AnrConfig def = anr_default_config(sample_rates[r]);
@@ -241,13 +241,13 @@ int main(void) {
             CHECK(anr_validate_config(&def), msg);
         }
 
-        /* Every supported grid keeps the preset wall-clock constants. */
+        /* Every supported grid keeps the canonical wall-clock constants. */
         {
             const int grid_sr[] = {8000, 8000, 16000, 16000, 48000};
             const int grid_fft[] = {128, 256, 256, 512, 1024};
             for (size_t g = 0; g < sizeof(grid_sr) / sizeof(grid_sr[0]); ++g) {
-                AnrConfig cfg = anr_config_for_mode_grid(
-                    grid_sr[g], grid_fft[g], ANR_MODE_BALANCED);
+                AnrConfig cfg = anr_config_for_level_grid(
+                    grid_sr[g], grid_fft[g], ANR_LEVEL_BALANCED);
                 char msg[128];
                 snprintf(msg, sizeof msg, "grid %d/%d: retimed config validates",
                          grid_sr[g], grid_fft[g]);
@@ -279,10 +279,10 @@ int main(void) {
             }
         }
 
-        /* A caller overlay on each preset (L = 150 frames at 10 ms retimed, alpha_d 0.95,
+        /* A caller overlay on each level (L = 150 frames at 10 ms retimed, alpha_d 0.95,
          * alpha_attack 0.3, alpha_decay = alpha_g) must also validate. */
-        for (size_t i = 0; i < sizeof(modes) / sizeof(modes[0]); i++) {
-            AnrConfig aec_chain = anr_config_for_mode(16000, modes[i]);
+        for (size_t i = 0; i < sizeof(levels) / sizeof(levels[0]); i++) {
+            AnrConfig aec_chain = anr_config_for_level(16000, levels[i]);
             aec_chain.L = anr_retime_frames(
                 150, aec_chain.sample_rate, aec_chain.hop_size);
             aec_chain.alpha_d = anr_retime_alpha(
@@ -292,9 +292,43 @@ int main(void) {
             aec_chain.alpha_decay  = aec_chain.alpha_g;
             char msg[96];
             snprintf(msg, sizeof msg, "AEC-chain overlay (%s): validate_config() accepts",
-                     mode_names[i]);
+                     level_names[i]);
             CHECK(anr_validate_config(&aec_chain), msg);
         }
+    }
+    printf("\n");
+
+    /* ---- 3b. Level names: values, parser, legacy aliases, out-of-range fallback ---- */
+    printf("-- level names --\n");
+    {
+        static const char* const names[] = { "mild", "moderate", "balanced", "aggressive" };
+        static const char* const digits[] = { "0", "1", "2", "3" };
+        AnrMode legacy = ANR_MODE_MODERATE;
+        AnrConfig bal = anr_config_for_level(16000, ANR_LEVEL_BALANCED);
+        AnrConfig oob = anr_config_for_level(16000, (AnrLevel)42);
+        int ok = 1;
+
+        CHECK(ANR_LEVEL_MILD == 0 && ANR_LEVEL_MODERATE == 1 &&
+              ANR_LEVEL_BALANCED == 2 && ANR_LEVEL_AGGRESSIVE == 3,
+              "ANR_LEVEL_* are 0..3 in depth order");
+        CHECK(ANR_MODE_MILD == ANR_LEVEL_MILD && ANR_MODE_MODERATE == ANR_LEVEL_MODERATE &&
+              ANR_MODE_BALANCED == ANR_LEVEL_BALANCED && ANR_MODE_AGGRESSIVE == ANR_LEVEL_AGGRESSIVE,
+              "legacy ANR_MODE_* names carry the ANR_LEVEL_* values");
+        CHECK((AnrLevel)legacy == ANR_LEVEL_MODERATE, "legacy AnrMode is the AnrLevel type");
+        for (int i = 0; i < 4; i++) {
+            ok = ok && anr_nr_level_from_name(names[i]) == i &&
+                 anr_nr_level_from_name(digits[i]) == i &&
+                 anr_nr_level_is_valid((AnrLevel)i) &&
+                 strcmp(anr_nr_level_name((AnrLevel)i), names[i]) == 0;
+        }
+        CHECK(ok, "level names and digits parse to the level, and the name round-trips");
+        CHECK(anr_nr_level_from_name("4") == -1 && anr_nr_level_from_name("loud") == -1 &&
+              anr_nr_level_from_name(NULL) == -1,
+              "unknown level name, digit out of range and NULL parse to -1");
+        CHECK(!anr_nr_level_is_valid((AnrLevel)42) && !anr_nr_level_is_valid((AnrLevel)-1),
+              "out-of-enum levels are not valid");
+        CHECK(memcmp(&bal, &oob, sizeof bal) == 0,
+              "an out-of-enum level builds the balanced config");
     }
     printf("\n");
 

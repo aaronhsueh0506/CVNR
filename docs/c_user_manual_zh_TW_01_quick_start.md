@@ -34,15 +34,15 @@ typedef struct {
 void nr_stream_destroy(NrStream *s);
 
 /* Returns 0 on success, -1 on failure (nothing is left allocated on -1). */
-int nr_stream_init(NrStream *s, int sample_rate, AnrMode mode)
+int nr_stream_init(NrStream *s, int sample_rate, AnrLevel level)
 {
     int n, n_freqs;
 
     if (!s) return -1;
     memset(s, 0, sizeof(*s));
 
-    /* 1. config: preset on the default grid for this sample rate. */
-    s->cfg = anr_config_for_mode(sample_rate, mode);
+    /* 1. config: level on the default grid for this sample rate. */
+    s->cfg = anr_config_for_level(sample_rate, level);
 
     /* 2. validate before create (tells you the config itself was rejected). */
     if (!anr_validate_config(&s->cfg)) return -1;
@@ -133,7 +133,7 @@ int nr_stream_demo(const float *pcm, int n_samples, float *out)
     NrStream s;
     int i, hop;
 
-    if (nr_stream_init(&s, 16000, ANR_MODE_BALANCED) != 0)
+    if (nr_stream_init(&s, 16000, ANR_LEVEL_BALANCED) != 0)
         return -1;
 
     hop = s.cfg.hop_size;                  /* never hard-code the hop */
@@ -151,8 +151,8 @@ int nr_stream_demo(const float *pcm, int n_samples, float *out)
 
 ### 1.2 呼叫順序
 
-1. **建 config**：`anr_config_for_mode()`（預設 grid）或
-   `anr_config_for_mode_grid()`（指定 grid）。
+1. **建 config**：`anr_config_for_level()`（預設 grid）或
+   `anr_config_for_level_grid()`（指定 grid）。
 2. **驗證**：`anr_validate_config()`。這是唯一能在建構前知道 config 被拒絕的方式。
 3. **建構**：`anr_create()`（heap）或 `anr_get_mem_size()` + `anr_init()`
    （caller-owned memory）。同時自備 `FftHandle`。
@@ -232,7 +232,7 @@ int create_static_nr(AnrConfig *cfg,
     size_t nr_need, fft_need;
 
     if (!cfg || !nr || !fft) return -1;
-    *cfg = anr_config_for_mode(16000, ANR_MODE_BALANCED);
+    *cfg = anr_config_for_level(16000, ANR_LEVEL_BALANCED);
     if (!anr_validate_config(cfg)) return -1;
 
     nr_need  = anr_get_mem_size(cfg);      /* 0 == config 被拒絕 */
@@ -290,7 +290,7 @@ int nr_gain_only(AnrDenoiser *nr, const Complex *spectrum_in,
 | `anr_get_hop_size()` / `anr_get_frame_size()` / `anr_get_n_freqs()` | 取得實際尺寸 | 配置 buffer 時；避免硬編 |
 | `anr_is_initialized()` | 初始化 pass-through 是否結束 | 想知道輸出何時開始真的有降噪時 |
 | `anr_get_noise_psd()` / `anr_get_gain()` | 讀最近一個 frame 的 per-bin 陣列 | 除錯／視覺化 |
-| `anr_get_speech_protect_frame_threshold()` | 幀級語音閘的生效值（`value + (q − 0.52)`，隨 `anr_reconfigure()` 更新） | 確認 preset 切換後的閘門值 |
+| `anr_get_speech_protect_frame_threshold()` | 幀級語音閘的生效值（`value + (q − 0.52)`，隨 `anr_reconfigure()` 更新） | 確認 level 切換後的閘門值 |
 | `anr_debug_status()` | 一次取得聚合狀態（見下） | 板上監看，建議每秒一次 |
 
 `anr_debug_status()` 填入 `AnrDebugStatus`：`initialized`、`mean_gain_db`、
@@ -303,29 +303,29 @@ per-bin 查詢回傳的是 instance 內部的唯讀記憶體：**不要修改、
 執行緒：每個 instance 都有狀態，**同一個 instance 不可被多個 thread 同時呼叫**；不同
 instance 之間不共用可變狀態，可各自在不同 thread 使用。多條串流請各建一個 instance。
 
-### 1.8 執行期換強度：`anr_set_mode()` 與 `anr_reconfigure()`
+### 1.8 執行期換強度：`anr_set_level()` 與 `anr_reconfigure()`
 
 ```c
 int anr_reconfigure(AnrDenoiser *self, const AnrConfig *target);
-int anr_set_mode(AnrDenoiser *self, AnrMode mode);
+int anr_set_level(AnrDenoiser *self, AnrLevel level);
 ```
 
 在 running instance 上換調參欄位，不重建、不重新配置記憶體。回 `0`，或 `-1`（`self`／`target` 為 NULL、
-`target` 未通過 `anr_validate_config()`、`mode` 超出 enum、六個幾何欄位任一不符）；`-1` 時**什麼都不寫**。
+`target` 未通過 `anr_validate_config()`、`level` 超出 enum、六個幾何欄位任一不符）；`-1` 時**什麼都不寫**。
 
 - **幾何必須相同**：`sample_rate`／`frame_size`／`hop_size`／`fft_size`／`L`／`num_init_frames` 必須等於實例當下的值。
 - **狀態刻意保留**：噪聲底、最小值追蹤環與其 scene-change 計數、SPP 先驗 SNR 歷史、增益平滑歷史全部繼續跑。換強度不是重啟；要重啟用 `anr_reset()`。
-- **`anr_reconfigure()` 逐字採用 `target`**，不查 preset、不疊覆寫：自己疊了覆寫的呼叫端要重組整份組態。
-- **`anr_set_mode()`** 以實例的 grid 組出 canonical 組態（`L` 為函式庫預設）後交給 `anr_reconfigure()`：
-  只適用於組態等於 canonical preset 的實例。對疊了覆寫的實例，非 pool 欄位的覆寫會被悄悄還原，
+- **`anr_reconfigure()` 逐字採用 `target`**，不查 level、不疊覆寫：自己疊了覆寫的呼叫端要重組整份組態。
+- **`anr_set_level()`** 以實例的 grid 組出 canonical 組態（`L` 為函式庫預設）後交給 `anr_reconfigure()`：
+  只適用於組態等於 canonical level 的實例。對疊了覆寫的實例，非 pool 欄位的覆寫會被悄悄還原，
   覆寫 `L` 或 `num_init_frames` 則被拒絕（回 `-1`）。
 - 在兩個 hop 之間呼叫，與處理序列化；**非 thread-safe**。
 - 改 `cross_band_*` 欄位會重置跨頻先驗狀態；改 `speech_aware_noise_tracking`／`noise_gate_*`／`makeup_*` 會重置共用 frame 狀態。
 
 ```c
-if (anr_set_mode(nr, ANR_MODE_AGGRESSIVE) != 0) { /* mode 無效或被拒 */ }
+if (anr_set_level(nr, ANR_LEVEL_AGGRESSIVE) != 0) { /* level 無效或被拒 */ }
 
-AnrConfig t = anr_config_for_mode_grid(sr, fft_size, ANR_MODE_AGGRESSIVE);
+AnrConfig t = anr_config_for_level_grid(sr, fft_size, ANR_LEVEL_AGGRESSIVE);
 t.noise_over_subtraction = 1.2f;                  /* 範例覆寫，每次都要重新疊上去 */
 if (anr_reconfigure(nr, &t) != 0) { /* 幾何不符或 t 無效 */ }
 ```

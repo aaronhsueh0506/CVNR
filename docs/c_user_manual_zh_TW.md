@@ -22,7 +22,7 @@
     - [1.5 static memory 路徑（caller-owned memory）](c_user_manual_zh_TW_01_quick_start.md#15-static-memory-路徑caller-owned-memory) <!-- split-toc -->
     - [1.6 只要 gain、不要套用：`anr_process_gain()`](c_user_manual_zh_TW_01_quick_start.md#16-只要-gain不要套用anr_process_gain) <!-- split-toc -->
     - [1.7 查詢與診斷 API](c_user_manual_zh_TW_01_quick_start.md#17-查詢與診斷-api) <!-- split-toc -->
-    - [1.8 執行期換強度：`anr_set_mode()` 與 `anr_reconfigure()`](c_user_manual_zh_TW_01_quick_start.md#18-執行期換強度anr_set_mode-與-anr_reconfigure) <!-- split-toc -->
+    - [1.8 執行期換強度：`anr_set_level()` 與 `anr_reconfigure()`](c_user_manual_zh_TW_01_quick_start.md#18-執行期換強度anr_set_level-與-anr_reconfigure) <!-- split-toc -->
   - [2. 建置與連結](#2-建置與連結) <!-- split-toc -->
   - [3. 錯誤語意表](#3-錯誤語意表) <!-- split-toc -->
   - [4. Config 欄位參考](c_user_manual_zh_TW_02_config_reference.md#4-config-欄位參考) <!-- split-toc -->
@@ -34,8 +34,8 @@
     - [4.6 增益參數（4 個）](c_user_manual_zh_TW_02_config_reference.md#46-增益參數4-個) <!-- split-toc -->
     - [4.7 hop 換算輔助函式](c_user_manual_zh_TW_02_config_reference.md#47-hop-換算輔助函式) <!-- split-toc -->
     - [4.8 外部（可開放給第三方）與內部（存在但不建議開放）](c_user_manual_zh_TW_02_config_reference.md#48-外部可開放給第三方與內部存在但不建議開放) <!-- split-toc -->
-  - [5. 強度 preset 與調參順序](#5-強度-preset-與調參順序) <!-- split-toc -->
-    - [5.1 四個 strength preset](#51-四個-strength-preset) <!-- split-toc -->
+  - [5. 強度 level 與調參順序](#5-強度-level-與調參順序) <!-- split-toc -->
+    - [5.1 四個 strength level](#51-四個-strength-level) <!-- split-toc -->
     - [5.2 建議調參順序](#52-建議調參順序) <!-- split-toc -->
     - [5.3 常見症狀對照](#53-常見症狀對照) <!-- split-toc -->
   - [6. 依賴附錄：共用 FFT 層](#6-依賴附錄共用-fft-層) <!-- split-toc -->
@@ -73,7 +73,7 @@
 | 檔案 | 內容 | 是否要直接 include |
 |---|---|---|
 | `c_impl/include/anr.h` | 建構／處理／reset／查詢 API、`AnrDebugStatus` | 是 |
-| `c_impl/include/anr_types.h` | `AnrConfig`、`AnrMode`、config constructor、`anr_validate_config()` | 是（`anr.h` 已自動含入） |
+| `c_impl/include/anr_types.h` | `AnrConfig`、`AnrLevel`、config constructor、`anr_validate_config()` | 是（`anr.h` 已自動含入） |
 | `../audiolib/common/include/fft_wrapper.h` | `Complex`、`FftHandle`、`fft_*` | 是（`anr.h` 已自動含入，見第 6 節） |
 | `../audiolib/common/utility/mem_align.h` | `ALIGN16` 等對齊巨集 | 否（`anr.h`/`anr_types.h` 本身不用到；library 內部實作（`anr.c`/`noise_estimator.c`/`spp_estimator.c`）直接 include；整合者只有自己要操作 `ALIGN16` 時才需要直接 include） |
 
@@ -93,8 +93,8 @@
 | `denoise_wav` | 完整的時域 wrapper 範例：讀 WAV → framing/FFT/NR/IFFT/OLA → 寫 WAV |
 | `denoise_mem` | static memory 路徑（`_get_mem_size` + `_init`）示範 runner |
 | `test_config_validation` | config 驗證與對齊防護的回歸測試（`make test-config`） |
-| `test_config_parity` | 印出各 grid × strength 的正規 config（`make test-config-parity`） |
-| 其他 `test_*` | `test-reconfigure`、`test-noise-restart`、`test-scene-change`、`test-shared-startup`、`test-api-cpp`、`test-bit-exact`；`make test`／`make test-full` 為彙總 |
+| `test_config_parity` | 印出各 grid × level 的正規 config（`make test-config-parity`） |
+| 其他 `test_*` | `test-reconfigure`、`test-noise-restart`、`test-scene-change`、`test-shared-startup`、`test-api-cpp`、`test-cli-args`、`test-bit-exact`；`make test`／`make test-full` 為彙總 |
 
 `make publish` 產出的 release 內容為 `libanr.a` 與 `denoise_wav`；header 請直接從
 source tree 取用。
@@ -151,7 +151,7 @@ c++ -std=gnu99 app.c \
 
 ```bash
 ./denoise_wav noisy.wav clean.wav
-./denoise_wav noisy.wav clean.wav --nr-mode mild      # 或數字 0|1|2|3 = mild|moderate|balanced|aggressive
+./denoise_wav noisy.wav clean.wav --nr-level mild     # 舊旗標 --nr-mode 同義；或數字 0|1|2|3 = mild|moderate|balanced|aggressive
 ./denoise_wav noisy.wav clean.wav --fft-size 512      # 指定 grid，見 4.1 節
 ./denoise_wav input.wav copy.wav --bypass
 ./denoise_wav noisy.wav clean.wav --debug             # 每秒印一行狀態
@@ -172,7 +172,7 @@ c++ -std=gnu99 app.c \
 | `anr_process(...)` | 回傳 `0` | 回傳 `-1`：`self` / `spectrum_in` / `spectrum_out` 任一為 `NULL` |
 | `anr_process_gain(...)` | 回傳 `0` | 回傳 `-1`：`self` 或 `spectrum_in` 為 `NULL`。`extra_noise_psd` 與 `gain_out` 為 `NULL` 是合法用法，不是錯誤 |
 | `anr_reset(self)` | `void` | `self == NULL` **安靜 no-op**，沒有任何回報 |
-| `anr_set_mode(self, mode)` | 回傳 `0` | 回傳 `-1`：`self == NULL`、`mode` 超出 enum、組出的 config 被 `anr_reconfigure()` 拒絕；`-1` 時什麼都不寫 |
+| `anr_set_level(self, level)` | 回傳 `0` | 回傳 `-1`：`self == NULL`、`level` 超出 enum、組出的 config 被 `anr_reconfigure()` 拒絕；`-1` 時什麼都不寫 |
 | `anr_reconfigure(self, target)` | 回傳 `0` | 回傳 `-1`：`self`／`target` 為 `NULL`、`target` 未通過驗證、六個幾何欄位任一與實例不同；`-1` 時什麼都不寫 |
 | `anr_get_hop_size()` / `get_frame_size()` / `get_n_freqs()` | 回傳正整數 | handle 為 `NULL` 時回傳 **`0`** |
 | `anr_is_initialized()` | `true` / `false` | handle 為 `NULL` 時回傳 `false` |
@@ -180,7 +180,7 @@ c++ -std=gnu99 app.c \
 | `anr_get_noise_psd()` / `get_gain()` | 回傳唯讀陣列指標，並在 `n_freqs != NULL` 時寫入長度 | handle 為 `NULL` 時回傳 `NULL` 並把 `*n_freqs` 設為 `0`。`n_freqs` 本身可以傳 `NULL` |
 | `anr_debug_status(self, out)` | `void`，填滿 `*out` | `out == NULL` 時**什麼都不做**；`self == NULL` 時把 `*out` **全部歸零**（不會寫入 NaN） |
 | `anr_validate_config(config)` | 回傳 `true` | 回傳 `false`：`config == NULL`，或任何欄位越界／為 NaN／為 Inf |
-| `anr_default_config()` / `_for_grid()` / `anr_config_for_mode()` / `_for_mode_grid()` | 以值回傳 `AnrConfig` | **沒有錯誤回傳值**。傳入不支援的 sample rate 時會產生一個 `fft_size == 0` 的無效 config，必須靠 `anr_validate_config()` 才會發現 |
+| `anr_default_config()` / `_for_grid()` / `anr_config_for_level()` / `_for_level_grid()` | 以值回傳 `AnrConfig` | **沒有錯誤回傳值**。傳入不支援的 sample rate 時會產生一個 `fft_size == 0` 的無效 config，必須靠 `anr_validate_config()` 才會發現 |
 | `anr_default_fft_size(sample_rate)` | 回傳預設 FFT 尺寸 | 不支援的 sample rate 回傳 **`0`** |
 | `anr_retime_alpha()` / `_alpha_ref()` | 回傳換算後的係數 | 參數越界時**原封不動回傳輸入值**，不報錯 |
 | `anr_retime_frames()` / `_frames_ms()` | 回傳換算後的 frame 數 | 參數無效或結果溢位時回傳 **`0`** |
@@ -196,25 +196,25 @@ c++ -std=gnu99 app.c \
 
 ---
 
-## 5. 強度 preset 與調參順序
+## 5. 強度 level 與調參順序
 
-### 5.1 四個 strength preset
+### 5.1 四個 strength level
 
-用 `anr_config_for_mode(sample_rate, mode)` 取得。與 grid 無關的差異：
+用 `anr_config_for_level(sample_rate, level)` 取得。與 grid 無關的差異。C 的 level 等於 Python 的 strength preset（C level == Python preset：`AnrLevel` ↔ `NR_STRENGTH_PRESETS`，名稱與數字 0..3 相同）；公開 header 為了與 Python 測試對照，仍保留舊名 `AnrMode` 與 `ANR_MODE_*`（值相同）。
 
-| Preset | `g_min_db` | `q` | `xi_min_db` | `noise_over_subtraction` | 適用方向 |
+| Level | `g_min_db` | `q` | `xi_min_db` | `noise_over_subtraction` | 適用方向 |
 |---|---:|---:|---:|---:|---|
-| `ANR_MODE_MILD` | -20.0 | 0.58 | -10.0 | 1.2 | 最保守，優先保留語音細節 |
-| `ANR_MODE_MODERATE` | -23.0 | 0.54 | -10.0 | 1.3 | mild 與 balanced 之間 |
-| `ANR_MODE_BALANCED` | -25.0 | 0.52 | -10.0 | 1.4 | 預設，語音品質與抑噪平衡 |
-| `ANR_MODE_AGGRESSIVE` | -28.0 | 0.45 | -12.0 | 1.3 | 抑噪最深，較可能犧牲語音細節 |
+| `ANR_LEVEL_MILD` | -20.0 | 0.58 | -10.0 | 1.2 | 最保守，優先保留語音細節 |
+| `ANR_LEVEL_MODERATE` | -23.0 | 0.54 | -10.0 | 1.3 | mild 與 balanced 之間 |
+| `ANR_LEVEL_BALANCED` | -25.0 | 0.52 | -10.0 | 1.4 | 預設，語音品質與抑噪平衡 |
+| `ANR_LEVEL_AGGRESSIVE` | -28.0 | 0.45 | -12.0 | 1.3 | 抑噪最深，較可能犧牲語音細節 |
 
-四個 preset 只覆寫上面四個深度欄位。DD、MCRA tracker、gain attack/decay 與低頻語音
+四個 level 只覆寫上面四個深度欄位。DD、MCRA tracker、gain attack/decay 與低頻語音
 guard 的**設定值**完全共用；以預設 16 kHz / 256 grid 為例，`alpha_d=0.921954`、
 `alpha_g=alpha_decay=0.902789`、`alpha_attack=0.387298`。
 
 唯一的例外是幀級語音閘 `speech_protect_frame_threshold`：設定值 `0.55` 著作於 balanced 的
-`q = 0.52`，生效值為 `value + (q − 0.52)`，所以隨 preset 的 `q` 自動位移（mild 0.61、
+`q = 0.52`，生效值為 `value + (q − 0.52)`，所以隨 level 的 `q` 自動位移（mild 0.61、
 moderate 0.57、balanced 0.55、aggressive 0.48）。理由是純噪聲幀的語音帶 SPP 平均值本來就
 落在 `q`；若固定用 0.55，這道閘在 mild 會永遠開著、在 aggressive 會關掉一半。生效值可用
 `anr_get_speech_protect_frame_threshold()` 讀回。
@@ -223,7 +223,7 @@ moderate 0.57、balanced 0.55、aggressive 0.48）。理由是純噪聲幀的語
 
 由上而下，**一次只動一項**，每動一次就重新聽／重新量測：
 
-1. **先選 strength preset**（`mild` / `moderate` / `balanced` / `aggressive`）。絕大多數需求
+1. **先選 strength level**（`mild` / `moderate` / `balanced` / `aggressive`）。絕大多數需求
    到這一步就結束。
 2. **深度還差一點** → 只動 `g_min_db`（整體殘留噪聲深度）與 `xi_min_db`（殘留底噪的自然度）。
 3. **聽到 musical noise／增益抖動** → 提高 `alpha_decay`（必要時連 `alpha_attack`）。
@@ -239,7 +239,7 @@ moderate 0.57、balanced 0.55、aggressive 0.48）。理由是純噪聲幀的語
 |---|---|---|
 | 開頭完全沒有降噪 | 是否還在初始化期（`anr_is_initialized()`） | 這是契約 A 的正常行為；確認開頭是純噪聲段 |
 | 換檔案後沿用了上一檔的噪聲模型 | 是否呼叫了 `anr_reset()` | 契約 B：串流邊界必須自己 reset，並清掉呼叫端的 analysis／OLA buffer |
-| 語音變悶、細節掉光 | preset 太強、`g_min_db` 太低 | 改 `mild` / `moderate`，或把 `g_min_db` 調高 |
+| 語音變悶、細節掉光 | level 太強、`g_min_db` 太低 | 改 `mild` / `moderate`，或把 `g_min_db` 調高 |
 | Musical noise（零星水聲） | 增益變動太快 | 提高 `alpha_decay`；必要時提高 `alpha_xi` |
 | 噪聲底改變後追不上 | 場景偵測太保守 | 降低 `scene_change_threshold_db` 或 `scene_change_min_frames`，或啟用 `broadband_threshold < 1.0` |
 | 輸出有週期性音量起伏 | window／OLA 寫錯 | 確認 periodic sqrt-Hann、50% overlap、analysis 與 synthesis 乘同一個 window |

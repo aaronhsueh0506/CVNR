@@ -1,4 +1,4 @@
-/* ANR configuration and strength presets. Gain estimator: Ephraim-Malah MMSE-LSA/OMLSA. */
+/* ANR configuration and strength levels. Gain estimator: Ephraim-Malah MMSE-LSA/OMLSA. */
 
 #ifndef ANR_TYPES_H
 #define ANR_TYPES_H
@@ -13,43 +13,53 @@
 extern "C" {
 #endif
 
-/* Suppression strength. */
+/* Suppression level, ordered by depth: 0 gentlest ... 3 deepest. */
 typedef enum {
-    ANR_MODE_MILD       = 0,   // Gentlest, preserve speech detail (g_min -20)
-    ANR_MODE_MODERATE   = 1,   // Between mild and balanced (g_min -23)
-    ANR_MODE_BALANCED   = 2,   // Default (g_min -25)
-    ANR_MODE_AGGRESSIVE = 3    // Deepest noise removal (g_min -28)
-} AnrMode;
+    ANR_LEVEL_MILD       = 0,   // Gentlest, preserve speech detail (g_min -20)
+    ANR_LEVEL_MODERATE   = 1,   // Between mild and balanced (g_min -23)
+    ANR_LEVEL_BALANCED   = 2,   // Default (g_min -25)
+    ANR_LEVEL_AGGRESSIVE = 3,   // Deepest noise removal (g_min -28)
 
-/* True for a defined AnrMode value. */
-static inline bool anr_nr_mode_is_valid(AnrMode mode) {
-    return mode == ANR_MODE_MILD || mode == ANR_MODE_MODERATE ||
-           mode == ANR_MODE_BALANCED || mode == ANR_MODE_AGGRESSIVE;
+    /* Legacy names of the four levels above (same values; the Python twins call this setting a
+     * strength preset and the Python tests read these lines). Keep the literal digits. */
+    ANR_MODE_MILD       = 0,
+    ANR_MODE_MODERATE   = 1,
+    ANR_MODE_BALANCED   = 2,
+    ANR_MODE_AGGRESSIVE = 3
+} AnrLevel;
+
+/* Legacy type name of AnrLevel. */
+typedef AnrLevel AnrMode;
+
+/* True for a defined AnrLevel value. */
+static inline bool anr_nr_level_is_valid(AnrLevel level) {
+    return level == ANR_LEVEL_MILD || level == ANR_LEVEL_MODERATE ||
+           level == ANR_LEVEL_BALANCED || level == ANR_LEVEL_AGGRESSIVE;
 }
 
-/* Parses a mode name ("mild", "moderate", "balanced", "aggressive") or the digit "0".."3";
- * returns the AnrMode value, or -1 for anything else (including NULL). */
-static inline int anr_nr_mode_from_name(const char *name) {
+/* Parses a level name ("mild", "moderate", "balanced", "aggressive") or the digit "0".."3";
+ * returns the AnrLevel value, or -1 for anything else (including NULL). */
+static inline int anr_nr_level_from_name(const char *name) {
     if (!name) return -1;
-    if (strcmp(name, "mild") == 0       || strcmp(name, "0") == 0) return ANR_MODE_MILD;
-    if (strcmp(name, "moderate") == 0   || strcmp(name, "1") == 0) return ANR_MODE_MODERATE;
-    if (strcmp(name, "balanced") == 0   || strcmp(name, "2") == 0) return ANR_MODE_BALANCED;
-    if (strcmp(name, "aggressive") == 0 || strcmp(name, "3") == 0) return ANR_MODE_AGGRESSIVE;
+    if (strcmp(name, "mild") == 0       || strcmp(name, "0") == 0) return ANR_LEVEL_MILD;
+    if (strcmp(name, "moderate") == 0   || strcmp(name, "1") == 0) return ANR_LEVEL_MODERATE;
+    if (strcmp(name, "balanced") == 0   || strcmp(name, "2") == 0) return ANR_LEVEL_BALANCED;
+    if (strcmp(name, "aggressive") == 0 || strcmp(name, "3") == 0) return ANR_LEVEL_AGGRESSIVE;
     return -1;
 }
 
-static inline const char *anr_nr_mode_name(AnrMode mode) {
-    switch (mode) {
-        case ANR_MODE_MILD:       return "mild";
-        case ANR_MODE_MODERATE:   return "moderate";
-        case ANR_MODE_BALANCED:   return "balanced";
-        case ANR_MODE_AGGRESSIVE: return "aggressive";
-        default:                     return "invalid";
+static inline const char *anr_nr_level_name(AnrLevel level) {
+    switch (level) {
+        case ANR_LEVEL_MILD:       return "mild";
+        case ANR_LEVEL_MODERATE:   return "moderate";
+        case ANR_LEVEL_BALANCED:   return "balanced";
+        case ANR_LEVEL_AGGRESSIVE: return "aggressive";
+        default:                   return "invalid";
     }
 }
 
 /* Frame speech gate = configured threshold + (q - ANR_SPEECH_PROTECT_ANCHOR_Q), which keeps the
- * margin above the noise-only SPP prior the same across strengths. */
+ * margin above the noise-only SPP prior the same across levels. */
 #define ANR_SPEECH_PROTECT_ANCHOR_Q 0.52f
 
 /* ANR configuration. Grid and pool dimensions are fixed for an instance. */
@@ -161,10 +171,10 @@ static inline int anr_retime_frames(int frames_10ms,
     return frames > INT_MAX ? 0 : (int)frames;
 }
 
-/** Build the default preset directly on one whitelisted no-padding grid. */
+/** Build the default (balanced) configuration directly on one whitelisted no-padding grid. */
 static inline AnrConfig anr_default_config_for_grid(
         int sample_rate, int fft_size) {
-    /* Zero padding bytes so config copies and same-mode reconfiguration are deterministic. */
+    /* Zero padding bytes so config copies and same-level reconfiguration are deterministic. */
 #ifdef __cplusplus
     AnrConfig config = {};
 #else
@@ -235,36 +245,36 @@ static inline AnrConfig anr_default_config(int sample_rate) {
         sample_rate, anr_default_fft_size(sample_rate));
 }
 
-/* Strength presets share tracker/DD/gain dynamics and change only q, xi_min_db, g_min_db and
+/* Strength levels share tracker/DD/gain dynamics and change only q, xi_min_db, g_min_db and
  * over-subtraction. g_min_db is amplitude dB (/20).
  */
-static inline AnrConfig anr_config_for_mode_grid(
-        int sample_rate, int fft_size, AnrMode mode) {
+static inline AnrConfig anr_config_for_level_grid(
+        int sample_rate, int fft_size, AnrLevel level) {
     AnrConfig config = anr_default_config_for_grid(sample_rate, fft_size);
 
-    switch (mode) {
-    case ANR_MODE_MILD:
+    switch (level) {
+    case ANR_LEVEL_MILD:
         config.g_min_db = -20.0f;
         config.q = 0.58f;
         config.xi_min_db = -10.0f;
         config.noise_over_subtraction = 1.2f;
         break;
 
-    case ANR_MODE_MODERATE:
+    case ANR_LEVEL_MODERATE:
         config.g_min_db = -23.0f;
         config.q = 0.54f;
         config.xi_min_db = -10.0f;
         config.noise_over_subtraction = 1.3f;
         break;
 
-    case ANR_MODE_AGGRESSIVE:
+    case ANR_LEVEL_AGGRESSIVE:
         config.g_min_db = -28.0f;
         config.q = 0.45f;
         config.xi_min_db = -12.0f;
         config.noise_over_subtraction = 1.3f;
         break;
 
-    case ANR_MODE_BALANCED:
+    case ANR_LEVEL_BALANCED:
     default:
         break;
     }
@@ -272,13 +282,13 @@ static inline AnrConfig anr_config_for_mode_grid(
     return config;
 }
 
-static inline AnrConfig anr_config_for_mode(
-        int sample_rate, AnrMode mode) {
-    return anr_config_for_mode_grid(
-        sample_rate, anr_default_fft_size(sample_rate), mode);
+static inline AnrConfig anr_config_for_level(
+        int sample_rate, AnrLevel level) {
+    return anr_config_for_level_grid(
+        sample_rate, anr_default_fft_size(sample_rate), level);
 }
 
-/* Optional speech-protection overlay; not a strength preset. */
+/* Optional speech-protection overlay; not a strength level. */
 static inline void anr_apply_speech_protection_experiment(
         AnrConfig* config) {
     if (!config) return;

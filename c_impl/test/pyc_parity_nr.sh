@@ -6,7 +6,7 @@
 #       A deviation is a Python<->C sync bug.
 #   L2  shipping C (Makefile default: SIMD=1, fast math, six USE_* flags) vs the std-math C.
 #       This is the accepted fast-math approximation; its tolerance is fixed.
-# Scenarios: 5 grids (8k/128, 8k/256, 16k/256, 16k/512, 48k/1024) x 4 strengths x inputs (speech in
+# Scenarios: 5 grids (8k/128, 8k/256, 16k/256, 16k/512, 48k/1024) x 4 levels x inputs (speech in
 # noise, scene change, music, synthetic digital-silence gaps, zeroed bins, level scaling, int16
 # rounding, babble at -80 dBFS, make-up gain on), as gain-level and as end-to-end waveform
 # comparisons. See python/tools/pyc_parity_nr.py for the scenario table, metrics and verdicts.

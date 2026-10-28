@@ -143,7 +143,7 @@ no-op、可重複呼叫：NE10 的 R2C/C2R twiddle cfg 從呼叫端 pool 切出�
 external-memory 初始化 `ne10_fft_init_r2c_float32_ext`），沒有 backend-internal malloc。完整範例見
 [`../docs/c_user_manual_zh_TW_01_quick_start.md`](../docs/c_user_manual_zh_TW_01_quick_start.md) §1.5 的 `create_static_nr`。
 
-演算法與 malloc 版使用同一個處理核心（只差配置方式）：實測 `denoise_mem` 輸出與 `denoise_wav` byte-for-byte 一致：`test_wav/wav/babble_0dB.wav`（48 kHz/1024，四個 preset）、
+演算法與 malloc 版使用同一個處理核心（只差配置方式）：實測 `denoise_mem` 輸出與 `denoise_wav` byte-for-byte 一致：`test_wav/wav/babble_0dB.wav`（48 kHz/1024，四個 level）、
 `test_wav/music/fix_gain_noise.wav`（16 kHz，256 與 512 兩個 grid，mild／balanced／aggressive）；其他素材與 grid 未逐一比對。同一機制也覆蓋子模組
 `fft_get_mem_size`/`fft_init`、`noise_estimator_get_mem_size`/`noise_estimator_init`、
 `spp_get_mem_size`/`spp_init`。
@@ -237,12 +237,12 @@ FFT（以及 AEC 在具硬體 FMA 的核心上的 delay matched filter）受影�
 ```bash
 # 執行檔在 bin/<backend>-<config-hash>/（`make -s print-bin-dir` 取得）
 denoise_wav input.wav output.wav                     # 預設 balanced
-denoise_wav input.wav output.wav --nr-mode moderate  # 強度：mild|moderate|balanced|aggressive（或 0|1|2|3）
+denoise_wav input.wav output.wav --nr-level moderate # 強度：mild|moderate|balanced|aggressive（或 0|1|2|3）
 denoise_wav input.wav output.wav --bypass            # 不處理，原樣複製
 ```
 
 **強度軸：**
-- `--nr-mode {mild|moderate|balanced|aggressive}`，或同順序的數字 `0|1|2|3`（`anr_config_for_mode`；`anr_nr_mode_from_name()` 兩種寫法都接受）：越強壓越深。
+- `--nr-level {mild|moderate|balanced|aggressive}`，或同順序的數字 `0|1|2|3`（`anr_config_for_level`；`anr_nr_level_from_name()` 兩種寫法都接受）：越強壓越深。舊旗標 `--nr-mode` 是同義別名。C 的 level 等於 Python 的 strength preset（C level == Python preset；`AnrLevel` ↔ `NR_STRENGTH_PRESETS`，數值相同）。公開 header 保留舊名 `AnrMode` 與 `ANR_MODE_*`（值相同）。
   4 級深度階梯 g_min = −20 / −23 / −25 / −28 dB（振幅 /20）。所有預設共用 `alpha_xi`
   （DD ξ 平滑，壓掉 SPP 抖動＝musical noise；對語音幾乎零成本）。
 
@@ -279,7 +279,7 @@ fft_destroy(fft);
 
 ```c
 int anr_reconfigure(AnrDenoiser* self, const AnrConfig* target);
-int anr_set_mode(AnrDenoiser* self, AnrMode mode);
+int anr_set_level(AnrDenoiser* self, AnrLevel level);
 ```
 
 兩者都不重新配置任何記憶體，所以格點（`sample_rate` / `frame_size` / `hop_size` /
@@ -293,27 +293,27 @@ length、SPP 的 a-priori-SNR 歷史、增益平滑歷史，全部繼續跑。�
 把噪聲估計在串流中途丟掉，造成的 artefact 比原本想調掉的東西更糟。真的要重啟請用
 `anr_reset()`。
 
-**`anr_reconfigure()` 逐字採用 `target`**：不做 preset 查表、不做 overlay 疊加。
-這是刻意的——組態是「preset 加上自己的覆寫」的呼叫端，必須自己重建整份組合再傳進來，
-否則那些覆寫會被悄悄還原回 canonical preset 的值。
+**`anr_reconfigure()` 逐字採用 `target`**：不做 level 查表、不做 overlay 疊加。
+這是刻意的——組態是「level 加上自己的覆寫」的呼叫端，必須自己重建整份組合再傳進來，
+否則那些覆寫會被悄悄還原回 canonical level 的值。
 
-**`anr_set_mode()` 只適用於組態等於 canonical preset 的實例**：它替該 mode 組出 canonical
-組態（`anr_config_for_mode_grid()`，`L` 為函式庫預設）、交給 `anr_reconfigure()`。回 `0`，
-或 `-1`（NULL、超出 enum 的 mode、target 被拒）。
+**`anr_set_level()` 只適用於組態等於 canonical level 的實例**：它替該 level 組出 canonical
+組態（`anr_config_for_level_grid()`，`L` 為函式庫預設）、交給 `anr_reconfigure()`。回 `0`，
+或 `-1`（NULL、超出 enum 的 level、target 被拒）。
 
-> **對疊了自己覆寫的實例，不要用 `anr_set_mode()`。** 以 `anr_config_for_mode_grid()` 建出、
-> 沒有改動任何欄位的實例，可以直接用 `anr_set_mode()` 換強度。若建立實例時在 canonical
-> preset 上改過欄位，裸的 canonical preset 會把非 pool 欄位的覆寫悄悄還原，而改過 `L` 或
+> **對疊了自己覆寫的實例，不要用 `anr_set_level()`。** 以 `anr_config_for_level_grid()` 建出、
+> 沒有改動任何欄位的實例，可以直接用 `anr_set_level()` 換強度。若建立實例時在 canonical
+> level 上改過欄位，裸的 canonical level 會把非 pool 欄位的覆寫悄悄還原，而改過 `L` 或
 > `num_init_frames` 時整個呼叫會被**拒絕**（pool 大小不符）。這種實例請自己重組
 > 完整組態再呼叫 `anr_reconfigure()`。
 
 ```c
-/* 組態等於 canonical preset：直接換強度，噪聲底與平滑歷史保留 */
-if (anr_set_mode(denoiser, ANR_MODE_AGGRESSIVE) != 0) { /* 引數不合法 */ }
+/* 組態等於 canonical level：直接換強度，噪聲底與平滑歷史保留 */
+if (anr_set_level(denoiser, ANR_LEVEL_AGGRESSIVE) != 0) { /* 引數不合法 */ }
 
 /* 自己疊了覆寫的呼叫端：重組整份組態再交出去 */
-AnrConfig target = anr_config_for_mode_grid(
-    sr, fft_size, ANR_MODE_AGGRESSIVE);
+AnrConfig target = anr_config_for_level_grid(
+    sr, fft_size, ANR_LEVEL_AGGRESSIVE);
 target.noise_over_subtraction = 1.2f;   /* 範例覆寫；每次都要重新疊上去 */
 if (anr_reconfigure(denoiser, &target) != 0) { /* 幾何不符或 target 無效 */ }
 ```
@@ -386,16 +386,16 @@ Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差
 
 ## 調參指引 (Quick Tuning)
 
-> **優先使用 strength mode**：呼叫 `anr_config_for_mode(sample_rate, ANR_MODE_MILD | MODERATE | BALANCED | AGGRESSIVE)`，多數情境足矣。
+> **優先使用 strength level**：呼叫 `anr_config_for_level(sample_rate, ANR_LEVEL_MILD | MODERATE | BALANCED | AGGRESSIVE)`，多數情境足矣。
 
 > **⚠ g_min_db 為 audio 振幅 dB（/20 換算 `10^(db/20)`）** — gain 直接乘幅度譜（無 sqrt），故 floor 是
 > 振幅量。越負壓越深（-28 ≈ 0.04、-25 ≈ 0.056、-20 ≈ 0.1）。（xi_min_db / delta_db / scene_change 是
 > 功率/SNR dB，維持 /10。）
 
-> 四級 strength preset 只是「抑噪深度」的四個點：`g_min_db / q / xi_min_db / noise_over_subtraction`
+> 四級 strength level 只是「抑噪深度」的四個點：`g_min_db / q / xi_min_db / noise_over_subtraction`
 > 分別為 mild −20/0.58/−10/1.2、moderate −23/0.54/−10/1.3、balanced −25/0.52/−10/1.4、
 > aggressive −28/0.45/−12/1.3；DD、MCRA tracker、attack/decay 與 300 Hz 以下的語音 guard 四級共用，
-> 換 preset 不會換到不同的時間常數。
+> 換 level 不會換到不同的時間常數。
 
 | Symptom | 建議動作 |
 |---|---|

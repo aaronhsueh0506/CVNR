@@ -9,7 +9,7 @@
 
 **通則**：instance 建立後，改動你手上那份 `AnrConfig` 不會有任何效果（內部已經複製並
 衍生出尺寸與狀態）。要換 sample rate、grid、`L` 或 `num_init_frames`，必須 destroy 後重建；
-其餘調參欄位可在執行期用 `anr_set_mode()`／`anr_reconfigure()` 換（見 [1.8](c_user_manual_zh_TW_01_quick_start.md#18-執行期換強度anr_set_mode-與-anr_reconfigure)）。
+其餘調參欄位可在執行期用 `anr_set_level()`／`anr_reconfigure()` 換（見 [1.8](c_user_manual_zh_TW_01_quick_start.md#18-執行期換強度anr_set_level-與-anr_reconfigure)）。
 
 ### 4.1 Grid 欄位（4 個）
 
@@ -30,13 +30,13 @@
 | 16000 | 512 | 256 | 16.000 ms | 257 | 支援的替代 grid |
 | 48000 | 1024 | 512 | 10.667 ms | 513 | 唯一 grid |
 
-要用替代 grid，改用 `anr_config_for_mode_grid(sample_rate, fft_size, mode)`。
+要用替代 grid，改用 `anr_config_for_level_grid(sample_rate, fft_size, level)`。
 **何時改**：hop 越短延遲越低、每秒運算次數越多；hop 越長頻率解析度越好、延遲越高。
 除此之外沒有理由動它。
 
 ### 4.2 依 grid 換算的預設值（實測）
 
-以下為 `balanced` preset 在各 grid 上的實際值（由建置後執行程式印出，非手算）：
+以下為 `balanced` level 在各 grid 上的實際值（由建置後執行程式印出，非手算）：
 
 | 欄位 | 8k/128 | 8k/256 | 16k/256 | 16k/512 | 48k/1024 |
 |---|---:|---:|---:|---:|---:|
@@ -61,10 +61,10 @@
 `scene_change_blend = 0.5`、`scene_change_flatness_threshold = 0.4`、`broadband_threshold = 1.0`、
 `speech_protect_floor = true`（`speech_protect_floor_db = -15.0`、`speech_protect_threshold = 0.0`、
 `speech_protect_frame_threshold = 0.55`）、`speech_aware_noise_tracking = true`（`noise_gate_xi_db = 3.0`、
-`noise_gate_lf_hz = 300.0`、`noise_gate_frame_frac = 0.5`）。四級 strength preset 只改 `g_min_db / q / xi_min_db /
+`noise_gate_lf_hz = 300.0`、`noise_gate_frame_frac = 0.5`）。四級 strength level 只改 `g_min_db / q / xi_min_db /
 noise_over_subtraction`（mild −20/0.58/−10/1.2、moderate −23/0.54/−10/1.3、balanced −25/0.52/−10/1.4、
 aggressive −28/0.45/−12/1.3）；上表的時間常數與低頻語音 guard 的**設定值**四級共用，
-但 `speech_protect_frame_threshold` 的**生效值**為 `value + (q − 0.52)`，隨 preset 的 `q`
+但 `speech_protect_frame_threshold` 的**生效值**為 `value + (q − 0.52)`，隨 level 的 `q`
 逐級位移（mild 0.61、moderate 0.57、balanced 0.55、aggressive 0.48）。
 
 記憶體需求（NE10，預設建置參數，實測 byte 數）：
@@ -94,7 +94,7 @@ aggressive −28/0.45/−12/1.3）；上表的時間常數與低頻語音 guard 
 | `q` | 語音先驗機率 | 有限值，**開區間 `(0, 1)`**（`0` 與 `1` 都會被拒） | 0.52 | **調大**（趨近 mild 0.58）：更保守、更保語音。**調小**（趨近 aggressive 0.45）：抑噪更深、較容易傷語音 |
 | `xi_min_db` | 訊噪比下限（dB） | 有限值，`[-80, 80]` | -10.0（aggressive -12.0） | **調低**：殘留底噪更低（更安靜、更容易聽出處理痕跡）。**調高**：保留較多自然底噪。這是控制殘留噪聲深度的主要旋鈕 |
 
-`q=0.52` 是 balanced preset 的作者設定，不是把輸出的 SPP 固定成 0.52。當頻譜沒有提供
+`q=0.52` 是 balanced level 的作者設定，不是把輸出的 SPP 固定成 0.52。當頻譜沒有提供
 偏向語音或非語音的證據時，Bayesian posterior 會自然回到約 `q`，所以 debug 的
 `mean_spp≈0.5` 是預期的中性狀態。
 MCRA broadband gate 內部用來計數的 `spp > 0.5` 則是另一個分類門檻，與 `q` 不同。
@@ -124,13 +124,13 @@ MCRA broadband gate 內部用來計數的 `spp > 0.5` 則是另一個分類門�
 
 | 欄位 | 意義 | 合法範圍 | 預設 | 何時調、往哪個方向 |
 |---|---|---|---|---|
-| `g_min_db` | 增益下限（**振幅** dB，`/20` 換算） | 有限值，`[-80, 80]` | -25.0 | **調低**：殘留噪聲更少、聽感更「乾淨」，但處理痕跡與語音損傷風險增加。**調高**：留更多底噪、語音更自然。這是控制抑噪深度最直接的旋鈕，也是四個 strength preset 的主要差異 |
+| `g_min_db` | 增益下限（**振幅** dB，`/20` 換算） | 有限值，`[-80, 80]` | -25.0 | **調低**：殘留噪聲更少、聽感更「乾淨」，但處理痕跡與語音損傷風險增加。**調高**：留更多底噪、語音更自然。這是控制抑噪深度最直接的旋鈕，也是四個 strength level 的主要差異 |
 | `alpha_g` | 增益平滑係數 | 有限值，`[0, 1]` | 依 grid | **在目前的 C 實作中這個欄位不影響輸出**（詳見下方註記）。要改變增益平滑請改 `alpha_attack` / `alpha_decay` |
 | `alpha_attack` | 增益「上升」方向的平滑係數 | 有限值，`[0, 1]` | 依 grid | **調小**：增益回升快，語音起音更清楚，但較容易讓噪聲短暫漏出。**調大**：起音較鈍但更平順 |
 | `alpha_decay` | 增益「下降」方向的平滑係數 | 有限值，`[0, 1]` | 依 grid | **調大**：增益下降慢，musical noise 明顯減少，語音尾音拖長。**調小**：噪聲收得快但容易產生抖動 |
 
 > **註記（實測）**：`alpha_g` 會被複製進 instance，但目前沒有任何運算使用它；實際的增益平滑
-> 完全由 `alpha_attack` 與 `alpha_decay` 決定。各 preset 剛好把 `alpha_g` 與 `alpha_decay`
+> 完全由 `alpha_attack` 與 `alpha_decay` 決定。各 level 剛好把 `alpha_g` 與 `alpha_decay`
 > 設成相同的值，所以只調 `alpha_g` 看起來「沒有作用」是正常的。想調平滑度請改
 > `alpha_decay`（必要時連同 `alpha_attack`）。
 
@@ -150,8 +150,8 @@ MCRA broadband gate 內部用來計數的 `spp > 0.5` 則是另一個分類門�
 
 | 類別 | 欄位 | 說明 |
 |---|---|---|
-| 外部 A | `sample_rate`、`fft_size`（`frame_size`／`hop_size` 是衍生值）、`AnrMode` | 部署環境與強度 preset；建立時決定 |
-| 外部 B | `g_min_db`、`xi_min_db`、`q`、`noise_over_subtraction` | 四個 preset 在動的欄位；`speech_protect_floor` 開啟（預設）時 `g_min_db` 實際上限是 `speech_protect_floor_db`（−15）；`q` 連動幀級語音閘 |
+| 外部 A | `sample_rate`、`fft_size`（`frame_size`／`hop_size` 是衍生值）、`AnrLevel` | 部署環境與強度 level；建立時決定 |
+| 外部 B | `g_min_db`、`xi_min_db`、`q`、`noise_over_subtraction` | 四個 level 在動的欄位；`speech_protect_floor` 開啟（預設）時 `g_min_db` 實際上限是 `speech_protect_floor_db`（−15）；`q` 連動幀級語音閘 |
 | 內部：噪聲追蹤器 | `alpha_s`、`alpha_d`、`alpha_p`、`L`、`delta_db`、`num_init_frames` | `L`／`num_init_frames` 決定 pool，執行期不可改 |
 | 內部：平滑 | `alpha_xi`、`alpha_attack`、`alpha_decay`、`alpha_g`（C 不讀） | 手冊 [5.2](c_user_manual_zh_TW.md#52-建議調參順序) 的 musical noise 處方會調 `alpha_decay`，但不建議開放給第三方 |
 | 內部：場景切換 | `scene_change_*`（4 欄）、`broadband_threshold` | 門檻與遲滯 |

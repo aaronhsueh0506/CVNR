@@ -45,7 +45,7 @@ static void run_case(const char* label, AnrConfig cfg, int sr, double onset) {
     printf("%-40s onset %.2f  control %.4f (%.1f dB)  after 5 s silence %.4f (%.1f dB)\n", label, onset,
            control, 20.0 * log10(control + 1e-12), after, 20.0 * log10(after + 1e-12));
     CHECK(control >= 0.0 && after >= 0.0, "%s: create failed", label);
-    /* Above the speech guard, steady gain must stay within 4x the preset floor. */
+    /* Above the speech guard, steady gain must stay within 4x the level floor. */
     double floor_gain = pow(10.0, cfg.g_min_db / 20.0);
     CHECK(control < 4.0 * floor_gain, "%s: stationary tone is not sufficiently suppressed (control %.3f, floor %.3f)", label, control, floor_gain);
     CHECK(after < 4.0 * floor_gain, "%s: tone after digital silence stays unsuppressed (%.3f, floor %.3f)", label, after, floor_gain);
@@ -133,9 +133,9 @@ int main(void) {
         snprintf(label, sizeof(label), "%d Hz state", rates[r]);
         run_state_case(label, def);
     }
-    run_first_frame_case("16000 Hz 256 first frame", anr_config_for_mode_grid(16000, 256, ANR_MODE_BALANCED));
-    run_first_frame_case("16000 Hz 512 first frame", anr_config_for_mode_grid(16000, 512, ANR_MODE_BALANCED));
-    run_first_frame_case("48000 Hz 1024 first frame", anr_config_for_mode_grid(48000, 1024, ANR_MODE_BALANCED));
+    run_first_frame_case("16000 Hz 256 first frame", anr_config_for_level_grid(16000, 256, ANR_LEVEL_BALANCED));
+    run_first_frame_case("16000 Hz 512 first frame", anr_config_for_level_grid(16000, 512, ANR_LEVEL_BALANCED));
+    run_first_frame_case("48000 Hz 1024 first frame", anr_config_for_level_grid(48000, 1024, ANR_LEVEL_BALANCED));
     if (g_fail) { printf(">>> FAIL\n"); return 1; }
     printf(">>> PASS\n");
     return 0;

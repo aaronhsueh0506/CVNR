@@ -5,7 +5,7 @@
  * zero-padded last frame, sqrt-periodic-Hann analysis and synthesis window, overlap-add), so the
  * result includes the C FFT/OLA path, which the gain-only driver deliberately excludes.
  *
- * Usage: pyc_e2e_driver <in.f32> <n_samples> <sample_rate> <fft_size> <strength> <out.f32>
+ * Usage: pyc_e2e_driver <in.f32> <n_samples> <sample_rate> <fft_size> <level> <out.f32>
  * The output holds min(n_samples, overlap-add length) floats.
  */
 #include <math.h>
@@ -23,13 +23,13 @@ static int fail(const char* msg) {
 }
 
 int main(int argc, char** argv) {
-    if (argc != 7) return fail("usage: pyc_e2e_driver <in.f32> <n_samples> <sample_rate> <fft_size> <strength> <out.f32>");
+    if (argc != 7) return fail("usage: pyc_e2e_driver <in.f32> <n_samples> <sample_rate> <fft_size> <level> <out.f32>");
     const int n_samples = atoi(argv[2]), sr = atoi(argv[3]), fft_size = atoi(argv[4]);
-    const int mode = anr_nr_mode_from_name(argv[5]);
+    const int level = anr_nr_level_from_name(argv[5]);
     if (n_samples <= 0 || sr <= 0 || fft_size <= 0) return fail("bad numeric argument");
-    if (mode < 0) return fail("unknown strength (expected mild|moderate|balanced|aggressive)");
+    if (level < 0) return fail("unknown level (expected mild|moderate|balanced|aggressive)");
 
-    AnrConfig cfg = anr_config_for_mode_grid(sr, fft_size, (AnrMode)mode);
+    AnrConfig cfg = anr_config_for_level_grid(sr, fft_size, (AnrLevel)level);
     if (!anr_validate_config(&cfg)) return fail("config rejected by anr_validate_config");
     const int frame = cfg.frame_size, hop = cfg.hop_size, nf = fft_size / 2 + 1;
     const int n_frames = (n_samples <= frame) ? 1 : (n_samples - frame + hop - 1) / hop + 1;

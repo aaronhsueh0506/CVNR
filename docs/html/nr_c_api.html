@@ -54,7 +54,7 @@ pre code{background:none;padding:0}
 <div class="tblwrap"><table>
 <tr><th>Header</th><th>分類</th><th>說明</th></tr>
 <tr><td><code>anr.h</code></td><td><b>公開</b></td><td>整合只需要這一個;它已自動含入下面兩個</td></tr>
-<tr><td><code>anr_types.h</code></td><td>公開(自動含入)</td><td><code>AnrConfig</code>／<code>AnrMode</code>／constructor／<code>validate_config</code></td></tr>
+<tr><td><code>anr_types.h</code></td><td>公開(自動含入)</td><td><code>AnrConfig</code>／<code>AnrLevel</code>／constructor／<code>validate_config</code></td></tr>
 <tr><td><code>fft_wrapper.h</code>(audiolib)</td><td>公開(自動含入)</td><td><code>Complex</code>／<code>FftHandle</code></td></tr>
 <tr><td><code>noise_estimator.h</code></td><td class="dead">內部,勿呼叫</td><td>denoiser 自行建立/驅動/釋放</td></tr>
 <tr><td><code>spp_estimator.h</code></td><td class="dead">內部,勿呼叫</td><td>同上</td></tr>
@@ -92,7 +92,7 @@ static uint8_t g_pool[48 * 1024] __attribute__((aligned(16)));   /* &gt;= anr_ge
 
 AnrDenoiser *nr_create_static(void)
 {
-    AnrConfig cfg = anr_config_for_mode_grid(16000, 256, ANR_MODE_BALANCED);
+    AnrConfig cfg = anr_config_for_level_grid(16000, 256, ANR_LEVEL_BALANCED);
     if (!anr_validate_config(&amp;cfg)) return NULL;     /* 唯一能事先知道為何被拒的手段 */
 
     size_t need = anr_get_mem_size(&amp;cfg);            /* 0 = config 無效或尺寸溢位 */
@@ -109,7 +109,7 @@ void nr_end_of_stream(AnrDenoiser *nr)
 }</pre>
 
 <h3>B. Heap(桌面/測試)</h3>
-<pre>AnrConfig cfg = anr_config_for_mode(16000, ANR_MODE_BALANCED);
+<pre>AnrConfig cfg = anr_config_for_level(16000, ANR_LEVEL_BALANCED);
 AnrDenoiser *nr = anr_create(&amp;cfg);   /* NULL = config 無效或配置失敗 */
 anr_destroy(nr);                      /* heap 實例只能呼叫一次,重複呼叫 = double free */</pre>
 
@@ -122,14 +122,14 @@ anr_destroy(nr);                      /* heap 實例只能呼叫一次,重複呼
 <tr><td>16k/512</td><td>56,432</td><td>56,336</td><td>13,552</td></tr>
 <tr><td>48k/1024</td><td>144,576</td><td>144,464</td><td>26,352</td></tr>
 </table></div>
-<p class="small">啟動階段的 power 列與最小值 ring 共用同一塊儲存(取兩者較大者),所以預設建置與 <code>USE_FAST_PERCENTILE</code> 只差 percentile scratch。FFT pool 是<b>另一塊</b>,各自查詢、各自 16-byte 對齊。上表是預設建置(<code>DEBUG=0</code>)、balanced preset 的值;<code>DEBUG=1</code>(標準數學、關閉六項最佳化,少一塊 <code>USE_SHARED_XI_RATIO</code> 的 <code>v</code> 暫存)的值略小(16k/256 為 44,816 B，差 528 B)。<b>不要把這裡的 byte 數寫死進產品</b>——永遠用當前 config 呼叫 <code>anr_get_mem_size()</code>。只有 <code>fft_size</code>／<code>L</code>／<code>num_init_frames</code> 會改變需求量。</p>
+<p class="small">啟動階段的 power 列與最小值 ring 共用同一塊儲存(取兩者較大者),所以預設建置與 <code>USE_FAST_PERCENTILE</code> 只差 percentile scratch。FFT pool 是<b>另一塊</b>,各自查詢、各自 16-byte 對齊。上表是預設建置(<code>DEBUG=0</code>)、balanced level 的值;<code>DEBUG=1</code>(標準數學、關閉六項最佳化,少一塊 <code>USE_SHARED_XI_RATIO</code> 的 <code>v</code> 暫存)的值略小(16k/256 為 44,816 B，差 528 B)。<b>不要把這裡的 byte 數寫死進產品</b>——永遠用當前 config 呼叫 <code>anr_get_mem_size()</code>。只有 <code>fft_size</code>／<code>L</code>／<code>num_init_frames</code> 會改變需求量。</p>
 
 <h3>呼叫順序與時序圖(API 層)</h3>
 <pre>
  Application                                          AnrDenoiser (NR)         audiolib fft_*
      |                                                     |                        |
  [建立,一次]
-     |-- anr_config_for_mode_grid(sr, fft, mode) --&gt; AnrConfig(值回傳;不支援的 sr 不在此報錯,由下一行驗證擋下)
+     |-- anr_config_for_level_grid(sr, fft, level) --&gt; AnrConfig(值回傳;不支援的 sr 不在此報錯,由下一行驗證擋下)
      |-- anr_validate_config(&amp;cfg) --&gt; true | false
      |-- anr_get_mem_size(&amp;cfg) --&gt; bytes                 (0 = 被拒)
      |-- anr_init(pool, bytes, &amp;cfg) ------------------&gt;|  清零並切 pool;is_static = true
@@ -141,7 +141,7 @@ anr_destroy(nr);                      /* heap 實例只能呼叫一次,重複呼
      |-- anr_get_gain(nr, NULL) -------------------------&gt;|  g[n_freqs](借用,到下次 process 前有效)
      |-- E × g(或 min(g, G_res))+ fft_inverse + 合成窗 + OLA -------------------&gt;|
  [執行期換強度,hop 之間]
-     |-- anr_set_mode(nr, mode) | anr_reconfigure(nr, &amp;t) -&gt;|  回 0 | -1(幾何不符 / 無效,什麼都不寫)
+     |-- anr_set_level(nr, level) | anr_reconfigure(nr, &amp;t) -&gt;|  回 0 | -1(幾何不符 / 無效,什麼都不寫)
  [串流邊界,或任何一級拒絕了一個 hop]
      |-- anr_reset(nr) -----------------------------------&gt;|  清追蹤器 / SPP / 增益歷史
      |-- 清呼叫端自己的 analysis / OLA buffer                |  之後 num_init_frames 個 hop 再次 pass-through
@@ -176,10 +176,10 @@ if (anr_process_gain(nr, error_spec, extra_noise_psd, gain) != 0) { /* self / er
 <div class="warn"><b>Aliasing 規則與 FFT 層相反。</b><code>fft_forward()</code>／<code>fft_inverse()</code> 用 <code>restrict</code>,<b>任何</b>重疊(含完全相同指標)都是 UB;NR 這裡卻明確支援完全同一指標。兩層不要套用同一條直覺。</div>
 <div class="note"><b>接 AEC 的 <code>r2</code> 時要先換算尺度。</b>AEC 的殘留回音 PSD(<code>AecResContext.r2</code>／<code>McabFrame.r2</code>)是 int16² 尺度,而線性誤差頻譜 <code>E</code> 是 audio 尺度,直接當 <code>extra_noise_psd</code> 前必須除以 <code>32768²</code>。範例層已做這件事:4ch 的 <code>mcab_sample_anr_gain()</code>(<code>pipelines/4ch_aec_bf_nr_res/mcab_sample_post.h</code>)與 mono 範例的 <code>mono_nr_gain()</code>(<code>pipelines/mono_aec_nr_res/main.c</code>),都只在 <code>use_r2</code> 開啟、<code>r2</code> 非 NULL 且 <code>usable_linear</code> 為真時才併入;application 不要自己另推一份。</div>
 
-<h2>5. 參數設定：用 mode，不要逐欄位手調</h2>
-<p>設定強度的正規做法是選一個 <code>AnrMode</code>。<code>anr_config_for_mode_grid()</code> 的四級只改 <code>g_min_db</code>、<code>q</code>、<code>xi_min_db</code>、<code>noise_over_subtraction</code>；DD、tracker、gain dynamics 與低頻語音 guard 的<b>組態欄位</b>共用。例外是幀級語音閘 <code>speech_protect_frame_threshold</code>:設定值著作於 balanced 的 <code>q = 0.52</code>,生效值為 <code>value + (q − 0.52)</code>,隨 preset 位移(mild 0.61 / moderate 0.57 / balanced 0.55 / aggressive 0.48;可用 <code>anr_get_speech_protect_frame_threshold()</code> 讀回)。</p>
+<h2>5. 參數設定：用 level，不要逐欄位手調</h2>
+<p>設定強度的正規做法是選一個 <code>AnrLevel</code>。<code>anr_config_for_level_grid()</code> 的四級只改 <code>g_min_db</code>、<code>q</code>、<code>xi_min_db</code>、<code>noise_over_subtraction</code>；DD、tracker、gain dynamics 與低頻語音 guard 的<b>組態欄位</b>共用。例外是幀級語音閘 <code>speech_protect_frame_threshold</code>:設定值著作於 balanced 的 <code>q = 0.52</code>,生效值為 <code>value + (q − 0.52)</code>,隨 level 位移(mild 0.61 / moderate 0.57 / balanced 0.55 / aggressive 0.48;可用 <code>anr_get_speech_protect_frame_threshold()</code> 讀回)。</p>
 <div class="tblwrap"><table>
-<tr><th>AnrMode</th><th><code>g_min_db</code></th><th><code>q</code></th><th><code>xi_min_db</code></th><th><code>noise_over_subtraction</code></th><th>聽感</th></tr>
+<tr><th>AnrLevel</th><th><code>g_min_db</code></th><th><code>q</code></th><th><code>xi_min_db</code></th><th><code>noise_over_subtraction</code></th><th>聽感</th></tr>
 <tr><td><code>MILD</code></td><td>-20.0</td><td>0.58</td><td>-10.0</td><td>1.2</td><td>最保守,優先保留語音細節</td></tr>
 <tr><td><code>MODERATE</code></td><td>-23.0</td><td>0.54</td><td>-10.0</td><td>1.3</td><td>mild 與 balanced 之間</td></tr>
 <tr><td><code>BALANCED</code></td><td>-25.0</td><td>0.52</td><td>-10.0</td><td>1.4</td><td><b>預設</b>,語音品質與抑噪平衡</td></tr>
@@ -193,21 +193,21 @@ if (anr_process_gain(nr, error_spec, extra_noise_psd, gain) != 0) { /* self / er
 
 <h2>6. 執行期改強度(不重啟、不重配記憶體)</h2>
 <pre>int anr_reconfigure(AnrDenoiser *nr, const AnrConfig *target);
-int anr_set_mode(AnrDenoiser *nr, AnrMode mode);</pre>
+int anr_set_level(AnrDenoiser *nr, AnrLevel level);</pre>
 <div class="tblwrap"><table>
 <tr><th>契約</th><th>內容</th></tr>
 <tr><td>幾何必須相同</td><td><code>sample_rate</code>／<code>frame_size</code>／<code>hop_size</code>／<code>fft_size</code>／<code>L</code>／<code>num_init_frames</code> 六個欄位必須與 instance 當下值<b>完全相同</b>(這條路徑不重新配置任何記憶體)</td></tr>
 <tr><td>刻意保留</td><td>追蹤中的噪聲底、MCRA 最小值追蹤環與其 run length、SPP 先驗 SNR 歷史、增益平滑歷史<b>全部繼續跑</b>。換強度不是重啟</td></tr>
-<tr><td>逐字採用</td><td><code>target</code> <b>不</b>做 preset 查表、<b>不</b>做 overlay 疊加。呼叫端自己疊的覆寫必須自己重建整份,否則會被悄悄還原成 canonical</td></tr>
+<tr><td>逐字採用</td><td><code>target</code> <b>不</b>做 level 查表、<b>不</b>做 overlay 疊加。呼叫端自己疊的覆寫必須自己重建整份,否則會被悄悄還原成 canonical</td></tr>
 <tr><td>回 <code>-1</code></td><td><code>self</code>/<code>target</code> 為 NULL、<code>target</code> 未過 <code>validate_config()</code>、六個幾何欄位任一不符。<b><code>-1</code> 時什麼都沒寫</b></td></tr>
 <tr><td>時序</td><td>在兩個 frame <b>之間</b>呼叫、與 <code>process()</code> 序列化。<b>非 thread-safe</b></td></tr>
 </table></div>
-<div class="warn"><b><code>set_mode()</code> 與 <code>reconfigure()</code> 不可互換。</b><code>set_mode()</code> 組的是<b>裸的 canonical preset</b>(<code>L</code> 為函式庫預設),組態等於 canonical preset 的實例可直接用。在 canonical preset 上疊了覆寫的實例,交給 <code>set_mode()</code> 時非 pool 欄位的覆寫會被悄悄還原;覆寫的是 <code>L</code> 或 <code>num_init_frames</code> 時則會因 pool 大小不符而<b>被拒絕</b>。這種實例請自己重組完整組態再呼叫 <code>reconfigure()</code>。</div>
-<pre>/* 組態等於 canonical preset:直接換 mode */
-anr_set_mode(nr, ANR_MODE_AGGRESSIVE);
+<div class="warn"><b><code>set_level()</code> 與 <code>reconfigure()</code> 不可互換。</b><code>set_level()</code> 組的是<b>裸的 canonical level 組態</b>(<code>L</code> 為函式庫預設),組態等於 canonical level 的實例可直接用。在 canonical level 上疊了覆寫的實例,交給 <code>set_level()</code> 時非 pool 欄位的覆寫會被悄悄還原;覆寫的是 <code>L</code> 或 <code>num_init_frames</code> 時則會因 pool 大小不符而<b>被拒絕</b>。這種實例請自己重組完整組態再呼叫 <code>reconfigure()</code>。</div>
+<pre>/* 組態等於 canonical level:直接換 level */
+anr_set_level(nr, ANR_LEVEL_AGGRESSIVE);
 
 /* 自己疊了覆寫:重組整份,逐字交出去 */
-AnrConfig t = anr_config_for_mode_grid(sr, fft_size, ANR_MODE_AGGRESSIVE);
+AnrConfig t = anr_config_for_level_grid(sr, fft_size, ANR_LEVEL_AGGRESSIVE);
 t.noise_over_subtraction = 1.2f;   /* 範例覆寫,每次都要重新疊上去 */
 anr_reconfigure(nr, &amp;t);</pre>
 
