@@ -243,9 +243,9 @@ make -C NR/c_impl lib SIMD=0                  # 純量參考建置</pre>
 <div class="tblwrap"><table>
 <tr><th>旗標</th><th>影響</th></tr>
 <tr><td><code>SIMD=0|1</code></td><td>手寫核心開關。<b>archive 與消費端 TU 的 <code>SIMD_KERNELS_FORCE_SCALAR</code> 狀態必須一致</b></td></tr>
-<tr><td><code>-ffp-contract=off</code></td><td>必要。任何 include 了 <code>simd_kernels.h</code>／<code>fast_math.h</code> 的<b>你自己的</b> TU 也要帶</td></tr>
+<tr><td><code>-ffp-contract=off -fno-math-errno</code></td><td>兩者都必要(Makefile 的 <code>FP_POLICY</code>;後者缺了,受保護的 <code>sqrtf</code> 不會降成單一 FSQRT)。任何 include 了 <code>simd_kernels.h</code>／<code>fast_math.h</code> 的<b>你自己的</b> TU 也要帶</td></tr>
 </table></div>
-<p>不要混用不同 <code>SIMD</code> 產物;archive 路徑由 build flags hash 決定,用 <code>make -s ... print-lib-path</code> 取得,不要自行拼 <code>bin/</code> 路徑。不要用 <code>-Ofast</code>／<code>-ffast-math</code>,它們會改變遞迴 DSP 數值。</p>
+<p>不要混用不同 <code>SIMD</code> 產物;archive 路徑由 build flags hash 決定,用 <code>make -s ... print-lib-path</code> 取得,不要自行拼 <code>bin/</code> 路徑。不要用 <code>-Ofast</code>／<code>-ffast-math</code>,它們會改變遞迴 DSP 數值;Makefile 在 parse time 就拒絕 <code>-Ofast</code>、<code>-ffast-math</code> 與任何 <code>-ffp-contract=&lt;值&gt;</code>(<code>FP policy conflict</code>)。</p>
 
 <h2>9. 整合檢查清單</h2>
 <ul>
