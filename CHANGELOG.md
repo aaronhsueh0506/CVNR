@@ -4,6 +4,13 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [Unreleased] — 2026-11-02 — Shared NEON kernels now run on 32-bit ARM
+
+### Changed
+- No NR source change: the shared kernels NR calls use NEON on 32-bit ARM with NEON plus fused FMA (see `audiolib/CHANGELOG.md`).
+  `test_anr_kernels` calls `SK_MATCH_SCALAR_TO_VECTOR_MODE()` first (the 32-bit ARM vector unit flushes subnormals, scalar VFP does
+  not); `bench_anr.c` defines `M_PI` itself because its `_POSIX_C_SOURCE` hides it on glibc.
+
 ## [Unreleased] — 2026-10-28 — C strength setting renamed from "mode" to "level"
 
 ### Changed

@@ -177,7 +177,11 @@ fmla／fmls 即失敗；其 header 說明檢查範圍。
 ## 編譯開關說明
 
 ARM32／ARM64 由編譯器 target 自動選擇，不需要修改原始碼。共用的手寫 DSP NEON
-kernel 目前限 AArch64；ARM32 走其 C fallback，即使 FFT 本身可使用 ARM32 NEON。
+kernel 在 AArch64、以及具 NEON＋fused FMA 的 32 位元 ARM（`-mcpu=cortex-a32/a53/a55/a73`、
+`-mfpu=neon-vfpv4`、`-mfpu=neon-fp-armv8`）使用 NEON，由 `utility/simd_kernels.h` 的
+`SK_HAVE_NEON` 單一決定；無 FMA 的 32 位元 ARM（純 `-mfpu=neon`）走 C fallback。32 位元 ARM 的
+向量單元會把次正規數清為零，NEON 與純量版只對有限且非次正規的輸入逐位元相同，比對兩者的測試先呼叫
+`SK_MATCH_SCALAR_TO_VECTOR_MODE()`。
 `SIMD=0` 是 DSP kernel 的純量覆寫，不是 ABI 選擇器。交叉編譯時必須提供同一套
 CC／CXX／AR／RANLIB。靜態 pool 的需求與結構布局屬於該次編譯的 ABI，應在目標版本
 呼叫 `_get_mem_size()`，不可沿用 ARM64 的固定 byte 數或跨 ABI 複製 handle 記憶體。
@@ -185,8 +189,9 @@ CC／CXX／AR／RANLIB。靜態 pool 的需求與結構布局屬於該次編譯�
 ARM32 請用 `EXTRA_CFLAGS=-mfpu=neon-vfpv4`（AArch32 ARMv8 核心用 `-mfpu=neon-fp-armv8`），
 不要用單純的 `-mfpu=neon`：沒有硬體 FMA 時，每個明確的 `fmaf()`（含 FFT 功率譜）都會變成
 libm 呼叫，位元結果不變但速度慢很多。ARMv7 Advanced SIMD 會把 subnormal 沖為零並以預設
-NaN 取代 NaN payload，因此 ARM32 上 `SIMD=1` 與 `SIMD=0` 對這類值可能不同；只有 NE10 NEON
-FFT（以及 AEC 在具硬體 FMA 的核心上的 delay matched filter）受影響；NR 本身在 ARM32 為 C。
+NaN 取代 NaN payload，因此 ARM32 上 `SIMD=1` 與 `SIMD=0` 對這類值可能不同；NE10 NEON FFT 與
+具硬體 FMA 的 ARM32 上所有走 NEON 的共用 kernel（含 NR 用到的）都受影響，NEON 與純量版只對有限且
+非次正規的輸入逐位元相同。
 
 ### 預設啟用（`make` 即啟用）
 

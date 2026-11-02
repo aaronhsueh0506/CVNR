@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include "utility/simd_test_mode.h"
 #include "../src/noise_estimator.c"
 
 static uint32_t rng = 123;
@@ -84,6 +85,7 @@ static int check(const float* values, int n, const char* what, int trial, Counts
 }
 
 int main(void) {
+    SK_MATCH_SCALAR_TO_VECTOR_MODE();   /* NEON and the scalar reference see subnormals alike on 32-bit ARM */
     const uint32_t special[] = {0u, 0x80000000u, 1u, 0x80000001u,
         0x3f800000u, 0xbf800000u, 0x7f800000u, 0xff800000u,
         0x7fc00000u, 0xffc00000u, 0x7f800001u, 0x7fc12345u};

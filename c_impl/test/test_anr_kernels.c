@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include "utility/simd_test_mode.h"
 #include "../src/anr.c"
 #include "../src/noise_estimator.c"
 #include "../src/spp_estimator.c"
@@ -314,6 +315,7 @@ static int test_ring_min(void) {
 int main(void) {
 
 #if SK_HAVE_NEON
+    SK_MATCH_SCALAR_TO_VECTOR_MODE();   /* both twins in one subnormal/NaN mode on 32-bit ARM */
 #ifdef USE_SHARED_XI_RATIO
     if (test_gain_prepare()) return 1;
 #endif

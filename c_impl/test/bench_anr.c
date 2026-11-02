@@ -25,6 +25,11 @@
 
 #define MAX_PASSES 4096
 
+/* _POSIX_C_SOURCE above hides M_PI on strict-feature libcs. */
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 static uint32_t rng_state = 20240611u;
 
 static float rng_uniform(void) {
