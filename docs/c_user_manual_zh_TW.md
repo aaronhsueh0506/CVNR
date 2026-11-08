@@ -1,48 +1,7 @@
-# NR C Library 使用手冊（繁體中文）
+# NR C 使用手冊
 
-這份手冊寫給**使用這個 library 的整合者**：什麼時候呼叫哪個函式、每個參數怎麼設。
-不談演算法推導、不談內部實作。所有數值都直接讀自現行原始碼（header 預設值、
-`anr_validate_config()` 的檢查、config constructor），或由實際建置後執行程式量得。
+[文件首頁](html/index.html) · [初始化與逐 hop 呼叫](reference/streaming.md) · [Config 參數表](reference/configuration.md) · [按症狀調整](parameter_tuning.md)
 
-原始碼位置一律以 repository 相對路徑表示（例如 `c_impl/include/anr.h`）。
-
----
-
-- [NR C Library 使用手冊（繁體中文）](#nr-c-library-使用手冊繁體中文) <!-- split-toc -->
-  - [0. 交付範圍與檔案清單](#0-交付範圍與檔案清單) <!-- split-toc -->
-    - [0.1 這個 library 是什麼](#01-這個-library-是什麼) <!-- split-toc -->
-    - [0.2 這個 library 不是什麼（scope boundary）](#02-這個-library-不是什麼scope-boundary) <!-- split-toc -->
-    - [0.3 交付檔案](#03-交付檔案) <!-- split-toc -->
-    - [0.4 內部子模組](#04-內部子模組) <!-- split-toc -->
-  - [1. Quick start](c_user_manual_zh_TW_01_quick_start.md#1-quick-start) <!-- split-toc -->
-    - [1.1 最短的可編譯整合](c_user_manual_zh_TW_01_quick_start.md#11-最短的可編譯整合) <!-- split-toc -->
-    - [1.2 呼叫順序](c_user_manual_zh_TW_01_quick_start.md#12-呼叫順序) <!-- split-toc -->
-    - [1.3 兩個永久行為契約](c_user_manual_zh_TW_01_quick_start.md#13-兩個永久行為契約) <!-- split-toc -->
-    - [1.4 in-place 與 aliasing 規則](c_user_manual_zh_TW_01_quick_start.md#14-in-place-與-aliasing-規則) <!-- split-toc -->
-    - [1.5 static memory 路徑（caller-owned memory）](c_user_manual_zh_TW_01_quick_start.md#15-static-memory-路徑caller-owned-memory) <!-- split-toc -->
-    - [1.6 只要 gain、不要套用：`anr_process_gain()`](c_user_manual_zh_TW_01_quick_start.md#16-只要-gain不要套用anr_process_gain) <!-- split-toc -->
-    - [1.7 查詢與診斷 API](c_user_manual_zh_TW_01_quick_start.md#17-查詢與診斷-api) <!-- split-toc -->
-    - [1.8 執行期換強度：`anr_set_level()` 與 `anr_reconfigure()`](c_user_manual_zh_TW_01_quick_start.md#18-執行期換強度anr_set_level-與-anr_reconfigure) <!-- split-toc -->
-  - [2. 建置與連結](#2-建置與連結) <!-- split-toc -->
-  - [3. 錯誤語意表](#3-錯誤語意表) <!-- split-toc -->
-  - [4. Config 欄位參考](c_user_manual_zh_TW_02_config_reference.md#4-config-欄位參考) <!-- split-toc -->
-    - [4.1 Grid 欄位（4 個）](c_user_manual_zh_TW_02_config_reference.md#41-grid-欄位4-個) <!-- split-toc -->
-    - [4.2 依 grid 換算的預設值（實測）](c_user_manual_zh_TW_02_config_reference.md#42-依-grid-換算的預設值實測) <!-- split-toc -->
-    - [4.3 SPP 參數（3 個）](c_user_manual_zh_TW_02_config_reference.md#43-spp-參數3-個) <!-- split-toc -->
-    - [4.4 MCRA 噪聲估計參數（6 個）](c_user_manual_zh_TW_02_config_reference.md#44-mcra-噪聲估計參數6-個) <!-- split-toc -->
-    - [4.5 場景變化偵測參數（5 個）](c_user_manual_zh_TW_02_config_reference.md#45-場景變化偵測參數5-個) <!-- split-toc -->
-    - [4.6 增益參數（4 個）](c_user_manual_zh_TW_02_config_reference.md#46-增益參數4-個) <!-- split-toc -->
-    - [4.7 hop 換算輔助函式](c_user_manual_zh_TW_02_config_reference.md#47-hop-換算輔助函式) <!-- split-toc -->
-    - [4.8 外部（可開放給第三方）與內部（存在但不建議開放）](c_user_manual_zh_TW_02_config_reference.md#48-外部可開放給第三方與內部存在但不建議開放) <!-- split-toc -->
-  - [5. 強度 level 與調參順序](#5-強度-level-與調參順序) <!-- split-toc -->
-    - [5.1 四個 strength level](#51-四個-strength-level) <!-- split-toc -->
-    - [5.2 建議調參順序](#52-建議調參順序) <!-- split-toc -->
-    - [5.3 常見症狀對照](#53-常見症狀對照) <!-- split-toc -->
-  - [6. 依賴附錄：共用 FFT 層](#6-依賴附錄共用-fft-層) <!-- split-toc -->
-    - [6.1 `Complex`](#61-complex) <!-- split-toc -->
-    - [6.2 需要用到的函式](#62-需要用到的函式) <!-- split-toc -->
-    - [6.3 `fft_size` 限制：2 的次方，且落在 `[16, 8192]`](#63-fft_size-限制2-的次方且落在-16-8192) <!-- split-toc -->
-    - [6.4 non-aliasing（`restrict`）要求 —— 與 `anr_process()` 相反](#64-non-aliasingrestrict要求--與-anr_process-相反) <!-- split-toc -->
 ## 0. 交付範圍與檔案清單
 
 ### 0.1 這個 library 是什麼
@@ -227,7 +186,7 @@ moderate 0.57、balanced 0.55、aggressive 0.48）。理由是純噪聲幀的語
    到這一步就結束。
 2. **深度還差一點** → 只動 `g_min_db`（整體殘留噪聲深度）與 `xi_min_db`（殘留底噪的自然度）。
 3. **聽到 musical noise／增益抖動** → 提高 `alpha_decay`（必要時連 `alpha_attack`）。
-   **不要改 `alpha_g`**，它在目前實作中不影響輸出（見 [4.6](c_user_manual_zh_TW_02_config_reference.md#46-增益參數4-個)）。
+   **不要改 `alpha_g`**，它在目前實作中不影響輸出（見 [4.6](reference/configuration.md#46-增益參數4-個)）。
 4. **場景切換追不上／誤觸太多** → 依序考慮 `scene_change_threshold_db`、
    `scene_change_min_frames`、`broadband_threshold`。
 5. **最後**才碰 MCRA 核心（`alpha_s` / `alpha_d` / `alpha_p` / `L` / `delta_db`）。
@@ -307,12 +266,12 @@ FFT 的 static memory 與 NR 的是**兩塊獨立的 pool**，各自查詢、各
   呼叫端的輸入 buffer 在回傳後內容變成未定義，適合傳入本來就要丟棄的 scratch buffer。
 
 對照之下，`anr_process()` **明確允許** `spectrum_out == spectrum_in` 的 in-place 呼叫
-（見 [1.4 節](c_user_manual_zh_TW_01_quick_start.md#14-in-place-與-aliasing-規則)）。兩層的規則不同，不要互相套用：
+（見 [1.4 節](reference/streaming.md#14-in-place-與-aliasing-規則)）。兩層的規則不同，不要互相套用：
 
 | | 允許同一個指標 | 允許部分重疊 |
 |---|---|---|
 | `anr_process()` | 是 | 否 |
 | `fft_forward()` / `fft_inverse()` | 否 | 否 |
 
-[1.1 節](c_user_manual_zh_TW_01_quick_start.md#11-最短的可編譯整合)的範例正是照這個規則寫的：FFT 的時域 buffer 與頻譜 buffer 始終是兩塊不同的記憶體，
+[1.1 節](reference/streaming.md#11-最短的可編譯整合)的範例正是照這個規則寫的：FFT 的時域 buffer 與頻譜 buffer 始終是兩塊不同的記憶體，
 而 `anr_process()` 就地作用在頻譜 buffer 上。

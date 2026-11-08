@@ -1,4 +1,5 @@
-[索引](c_user_manual_zh_TW.md) | [上一部分](c_user_manual_zh_TW_01_quick_start.md) <!-- split-nav -->
+[C 使用手冊](../c_user_manual_zh_TW.md)
+
 ## 4. Config 欄位參考
 
 `AnrConfig`（`c_impl/include/anr_types.h`）目前有 41 個欄位。以下完整說明
@@ -9,7 +10,7 @@
 
 **通則**：instance 建立後，改動你手上那份 `AnrConfig` 不會有任何效果（內部已經複製並
 衍生出尺寸與狀態）。要換 sample rate、grid、`L` 或 `num_init_frames`，必須 destroy 後重建；
-其餘調參欄位可在執行期用 `anr_set_level()`／`anr_reconfigure()` 換（見 [1.8](c_user_manual_zh_TW_01_quick_start.md#18-執行期換強度anr_set_level-與-anr_reconfigure)）。
+其餘調參欄位可在執行期用 `anr_set_level()`／`anr_reconfigure()` 換（見 [1.8](streaming.md#18-執行期換強度anr_set_level-與-anr_reconfigure)）。
 
 ### 4.1 Grid 欄位（4 個）
 
@@ -141,7 +142,7 @@ MCRA broadband gate 內部用來計數的 `spp > 0.5` 則是另一個分類門�
 `anr_retime_frames_ms(frames, sample_rate, hop_size, ref_hop_ms)`（frame 計數，參考 hop 以整數毫秒給定、
 全程整數運算；預設 config 的 `L` 用這一版）；
 `anr_retime_alpha()` / `anr_retime_frames()` 是 10 ms 參考 hop 的簡寫。
-兩者在參數無效時**不會報錯**（見[第 3 節](c_user_manual_zh_TW.md#3-錯誤語意表)），呼叫前請自行確認輸入。
+兩者在參數無效時**不會報錯**（見[第 3 節](../c_user_manual_zh_TW.md#3-錯誤語意表)），呼叫前請自行確認輸入。
 
 ### 4.8 外部（可開放給第三方）與內部（存在但不建議開放）
 
@@ -153,12 +154,10 @@ MCRA broadband gate 內部用來計數的 `spp > 0.5` 則是另一個分類門�
 | 外部 A | `sample_rate`、`fft_size`（`frame_size`／`hop_size` 是衍生值）、`AnrLevel` | 部署環境與強度 level；建立時決定 |
 | 外部 B | `g_min_db`、`xi_min_db`、`q`、`noise_over_subtraction` | 四個 level 在動的欄位；`speech_protect_floor` 開啟（預設）時 `g_min_db` 實際上限是 `speech_protect_floor_db`（−15）；`q` 連動幀級語音閘 |
 | 內部：噪聲追蹤器 | `alpha_s`、`alpha_d`、`alpha_p`、`L`、`delta_db`、`num_init_frames` | `L`／`num_init_frames` 決定 pool，執行期不可改 |
-| 內部：平滑 | `alpha_xi`、`alpha_attack`、`alpha_decay`、`alpha_g`（C 不讀） | 手冊 [5.2](c_user_manual_zh_TW.md#52-建議調參順序) 的 musical noise 處方會調 `alpha_decay`，但不建議開放給第三方 |
+| 內部：平滑 | `alpha_xi`、`alpha_attack`、`alpha_decay`、`alpha_g`（C 不讀） | 手冊 [5.2](../c_user_manual_zh_TW.md#52-建議調參順序) 的 musical noise 處方會調 `alpha_decay`，但不建議開放給第三方 |
 | 內部：場景切換 | `scene_change_*`（4 欄）、`broadband_threshold` | 門檻與遲滯 |
 | 內部：低頻語音保護（預設開） | `speech_protect_floor`、`speech_protect_floor_db`、`speech_protect_threshold`、`speech_protect_frame_threshold` | 閘門值隨 `q` 位移 |
 | 內部：speech-aware 追蹤（預設開） | `speech_aware_noise_tracking`、`alpha_d_speech`、`noise_gate_xi_db`、`noise_gate_lf_hz`、`noise_gate_frame_frac` | |
 | 內部：預設關閉的研究欄位 | `cross_band_speech_prior`、`cross_band_speech_prior_max_q`、`cross_band_speech_prior_alpha`、`dd_from_gmmse`、`makeup_gain`、`makeup_prior_xi_db`（保留欄位）、`makeup_blim`、`makeup_up_slope`、`makeup_down_slope` | 另有 `anr_apply_speech_protection_experiment()`、`anr_apply_cross_band_speech_experiment()` 兩個研究用疊加函式，不對外 |
 
 ---
-
-[索引](c_user_manual_zh_TW.md) | [上一部分](c_user_manual_zh_TW_01_quick_start.md) <!-- split-nav -->

@@ -84,7 +84,7 @@ G_PM = sqrt(v) / (sqrt(π) · γ) · exp(v/2) / I0(v/2)
 ## 選擇與參數
 
 - **產品**：V3-2（Musical Noise 最少，C 端同一套演算法）。強度用 strength level 選（Python 稱 preset），
-  見 [parameter_tuning.md](parameter_tuning.md)。
+  見 [parameter_tuning.md](../parameter_tuning.md)。
 - **研究對比**：V3、V3-3 用於比較不同成本函數。
 - 各版本的預設參數在 `python/config/*.yaml`；`g_min_db` 為 audio 振幅 dB（`/20`），
   `alpha_xi`／`xi_min_db` 為 SPP 的 DD 平滑與先驗 SNR 下限。
@@ -114,7 +114,7 @@ G_PM = sqrt(v) / (sqrt(π) · γ) · exp(v/2) / I0(v/2)
 ### Q3: 如何選擇 g_min_db？
 
 `g_min_db` 決定最大噪聲抑制量（audio 振幅 dB，`/20`）。四級 strength level 為
--20 / -23 / -25 / -28 dB（見 [parameter_tuning.md](parameter_tuning.md)）；越小壓得越深，
+-20 / -23 / -25 / -28 dB（見 [parameter_tuning.md](../parameter_tuning.md)）；越小壓得越深，
 語音失真風險越高。
 
 ### Q4: alpha_g 平滑因子怎麼設置？
@@ -129,64 +129,7 @@ C 端 `alpha_g` 不參與增益運算，平滑改調 `alpha_decay`／`alpha_atta
 
 ## 實驗範例
 
-### 對比三個變體
-
-```python
-#!/usr/bin/env python3
-"""
-對比 V3, V3-2, V3-3 降噪效果
-"""
-import numpy as np
-from utils.audio_io import read_audio
-from utils.metrics_loizou import composite_measure
-from denoisers import (
-    SppMmseDenoiser,
-    MmseLsaDenoiser,
-    PmmseDenoiser,
-)
-
-# 讀取音頻
-clean, sr = read_audio('test_wav/wav/clean.wav')
-noisy, sr = read_audio('test_wav/wav/babble_10dB.wav')
-
-# 定義版本
-denoisers = {
-    'V3 (MMSE-STSA)': SppMmseDenoiser(sample_rate=sr),
-    'V3-2 (MMSE-LSA)': MmseLsaDenoiser(sample_rate=sr),
-    'V3-3 (PMMSE)': PmmseDenoiser(sample_rate=sr),
-}
-
-# 評估每個版本
-results = {}
-for name, denoiser in denoisers.items():
-    print(f"\n處理 {name}...")
-    enhanced = denoiser.denoise(noisy)
-    metrics = composite_measure(clean, enhanced, sr)
-    results[name] = metrics
-
-# 打印對比表格
-print("\n" + "="*80)
-print("MMSE 變體降噪效果對比")
-print("="*80)
-print(f"{'版本':<25} {'segSNR':>10} {'fwSegSNR':>10} {'WSS':>10} {'global_SNR':>12}")
-print("-"*80)
-
-for name, metrics in results.items():
-    print(f"{name:<25} "
-          f"{metrics['segSNR']:>9.2f}  "
-          f"{metrics['fwSegSNR']:>9.2f}  "
-          f"{metrics['WSS']:>9.2f}  "
-          f"{metrics['global_SNR']:>11.2f}")
-
-print("="*80)
-
-# 找出最佳版本
-best_segsnr = max(results.items(), key=lambda x: x[1]['segSNR'])
-best_wss = min(results.items(), key=lambda x: x[1]['WSS'])
-
-print(f"\n最佳 segSNR:  {best_segsnr[0]} ({best_segsnr[1]['segSNR']:.2f} dB)")
-print(f"最佳 WSS:     {best_wss[0]} ({best_wss[1]['WSS']:.2f})")
-```
+同一份錄音比較三個 Python 變體的完整程式見[指標指南](metrics.md#52-對比多個版本)。
 
 ## 參考文獻
 
@@ -200,7 +143,6 @@ print(f"最佳 WSS:     {best_wss[0]} ({best_wss[1]['WSS']:.2f})")
 - Loizou, P. C. (2005). "Speech enhancement based on perceptually motivated Bayesian estimators of the magnitude spectrum." *IEEE Transactions on Speech and Audio Processing*, 13(5), 857-869.
 
 ### 相關資源
-- [README.md](../README.md) - 項目主文檔
-- [METRICS_USAGE.md](METRICS_USAGE.md) - 評估指標使用指南
-- [parameter_tuning.md](parameter_tuning.md) - 調參指南
-- [歷史演算法說明](archive/algorithm_history.md) - 舊版本公式與研究背景（非現行 release contract）
+- [README.md](../../README.md) - 項目主文檔
+- [評估指標](metrics.md) - 評估指標使用指南
+- [parameter_tuning.md](../parameter_tuning.md) - 調參指南

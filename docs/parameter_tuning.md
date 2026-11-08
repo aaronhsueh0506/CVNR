@@ -186,8 +186,7 @@ MCRA 的 scene change detector 用「高頻 gamma + spectral flatness」雙重�
 
 ## 🔗 相關文檔
 
-- [NR 參數（外部／內部分類、預設、範圍、耦合）](html/nr_c_api_params.html) — 哪些欄位可開放給第三方、哪些屬內部
+- [NR 參數（外部／內部分類、預設、範圍、耦合）](html/reference/nr_c_api_params.html) — 哪些欄位可開放給第三方、哪些屬內部
 - [README.md](../README.md) — 項目總覽與現行 release contract
-- [歷史演算法說明](archive/algorithm_history.md) — 只供理解早期版本
-- [C 使用說明](../c_impl/README.md) — C 實作使用方法與同等調參指引
+- [C 參數參考](reference/configuration.md) — 組態欄位、取值範圍與生效時機
 - [python/config/](../python/config/) — 各版本配置文件

@@ -27,20 +27,7 @@ pre code{background:none;padding:0}
 </style>
 </head>
 <body>
-<nav>
-<a href="../../../Audio_ALG/docs/html/index.html">index</a>
-<a href="../../../AEC/docs/html/aec.html">aec</a>
-<a href="nr.html">nr</a>
-<a href="../../../audiolib/common/docs/html/audio_common.html">audiolib</a>
-<span class="sep">|</span>
-<a href="../../../AEC/docs/html/aec_c_api.html">AEC API</a>
-<a href="../../../AEC/docs/html/aec_params.html">AEC 參數</a>
-<a href="nr_c_api.html">NR API</a>
-<a href="nr_c_api_params.html"><b>NR 參數</b></a>
-<a href="../../../audiolib/common/docs/html/audio_common_c_api.html">audiolib API</a>
-<a href="../../../audiolib/common/docs/html/audio_common_params.html">audiolib 參數</a><a href="../../../audiolib/docs/html/spatial_chain.html">空間鏈</a>
-<a href="../../../Audio_ALG/docs/html/integration_example.html">串接範例</a>
-</nav>
+<nav aria-label="文件導覽"><a href="../index.html">NR 文件首頁</a></nav>
 
 <h1>NR 參數：外部與內部 — <code>AnrConfig</code></h1>
 <p class="small">本頁是整合者視角的參數清單，呼叫順序與錯誤語意在 <a href="nr_c_api.html">nr_c_api.html</a>，演算法與時序在 <a href="nr.html">nr.html</a>。每一列都可在 <code>NR/c_impl/include/anr_types.h</code>（struct 第 66–120 行、預設值第 174–241 行、level 第 251–283 行、驗證第 319–477 行）查到；預設值欄是 balanced、16k/256 的實際讀回值（<code>anr_config_for_level_grid()</code> 列印），其他 grid 的時間常數依 hop 重定時，請由 config 讀回，不要寫死。</p>
@@ -148,13 +135,5 @@ pre code{background:none;padding:0}
 <tr><td><code>broadband_threshold</code></td><td>1.0＝停用</td><td>&lt;1.0 時寬頻噪聲突然出現後更快追上</td></tr>
 </table></div>
 
-<h2>相關檔案與測試路徑</h2>
-<ul class="small">
-<li><code>NR/c_impl/include/anr_types.h</code> — 欄位、預設值、level、驗證；<code>NR/c_impl/include/anr.h</code> — 公開函式</li>
-<li><code>NR/c_impl/src/anr.c</code>（<code>apply_gain_config_scalars()</code>、<code>anr_reconfigure()</code>）、<code>noise_estimator.c</code>、<code>spp_estimator.c</code> — 欄位實際被誰讀取</li>
-<li>測試：<code>make -C NR/c_impl test-config</code>（驗證規則與 gain-borrow）、<code>test-reconfigure</code>、<code>test-config-parity</code>（5 格點 × 4 強度的 config 傾印，供 Python 端對拍）</li>
-<li><code>NR/docs/c_user_manual_zh_TW_02_config_reference.md</code> §4 — 逐欄位調整方向；<code>NR/docs/parameter_tuning.md</code> — 調校流程</li>
-<li><a href="nr_c_api.html">nr_c_api.html</a>、<a href="nr.html">nr.html</a></li>
-</ul>
 </body>
 </html>

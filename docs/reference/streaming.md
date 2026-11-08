@@ -1,4 +1,5 @@
-[索引](c_user_manual_zh_TW.md) | [下一部分](c_user_manual_zh_TW_02_config_reference.md) <!-- split-nav -->
+[C 使用手冊](../c_user_manual_zh_TW.md)
+
 ## 1. Quick start
 
 ### 1.1 最短的可編譯整合
@@ -181,7 +182,7 @@ C library 只能往前走。初始化期間它會**直接 pass-through**（每�
 它**先天無法**像 offline/batch 實作那樣「回頭用最終的 noise PSD 重算前 N 個 frame」。
 
 - pass-through 的長度就是 `config.num_init_frames` 個**非全零** frame；預設約 200 ms
-  （各 grid 的實際 frame 數見 [4.2 節](c_user_manual_zh_TW_02_config_reference.md#42-依-grid-換算的預設值實測)）。數位靜音 frame（所有 bin 功率恰為 0）回傳 0：初始化前 gain 為 `1.0` 且不計入這個數字；
+  （各 grid 的實際 frame 數見 [4.2 節](configuration.md#42-依-grid-換算的預設值實測)）。數位靜音 frame（所有 bin 功率恰為 0）回傳 0：初始化前 gain 為 `1.0` 且不計入這個數字；
   初始化後仍照常計算 gain（不會被強制為 `1.0`），只是不推進噪聲底追蹤。第 `num_init_frames` 次呼叫完成初始化，但那一次的 gain 仍是 `1.0`，下一個 frame 才開始抑制。
 - 消費端必須預期開頭這段音訊實質上是未處理的；不要把它當成 bug，也不要用縮短
   `num_init_frames` 以外的方式去「修」它。
@@ -209,7 +210,7 @@ C library 只能往前走。初始化期間它會**直接 pass-through**（每�
 - 兩個 buffer 都必須是 `n_freqs` 個 `Complex`。
 
 注意這與 FFT 層的規則**相反**：`fft_forward()` / `fft_inverse()` 的輸入輸出帶 `restrict`，
-**任何重疊都是未定義行為**（見[第 6 節](c_user_manual_zh_TW.md#6-依賴附錄共用-fft-層)）。
+**任何重疊都是未定義行為**（見[第 6 節](../c_user_manual_zh_TW.md#6-依賴附錄共用-fft-層)）。
 
 ### 1.5 static memory 路徑（caller-owned memory）
 
@@ -256,7 +257,7 @@ int create_static_nr(AnrConfig *cfg,
 - 對 static instance 呼叫 `anr_destroy()` 是真正的 no-op，呼叫幾次都安全；pool 的生命
   週期完全由呼叫端管理。
 - window、OLA、PCM ring、application scratch **不包含**在 `anr_get_mem_size()` 裡，要自己算。
-- 上例中 pool 的大小是示範值。實際需求請用 [4.2 節](c_user_manual_zh_TW_02_config_reference.md#42-依-grid-換算的預設值實測)的量測表對照，並**在程式裡用
+- 上例中 pool 的大小是示範值。實際需求請用 [4.2 節](configuration.md#42-依-grid-換算的預設值實測)的量測表對照，並**在程式裡用
   `_get_mem_size()` 的回傳值檢查**，不要把數字寫死。
 
 ### 1.6 只要 gain、不要套用：`anr_process_gain()`
@@ -334,5 +335,3 @@ if (anr_reconfigure(nr, &t) != 0) { /* 幾何不符或 t 無效 */ }
 回歸測試：`make -C c_impl test-reconfigure`（`c_impl/test/test_reconfigure.c`）。
 
 ---
-
-[索引](c_user_manual_zh_TW.md) | [下一部分](c_user_manual_zh_TW_02_config_reference.md) <!-- split-nav -->

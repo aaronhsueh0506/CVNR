@@ -571,9 +571,9 @@ print(f"VAD: {vad_flags.sum()} / {len(vad_flags)} frames are voice")
 - 說明: 本文評估了多種客觀指標與主觀聽覺測試的相關性，推薦 segSNR, fwSegSNR, WSS 等指標
 
 **相關工具**:
-- 完整實現見: [python/utils/metrics_loizou.py](../python/utils/metrics_loizou.py)
-- 降噪器見: [python/denoisers/](../python/denoisers/) 目錄
-- 音頻 I/O: [python/utils/audio_io.py](../python/utils/audio_io.py)
+- 完整實現見: [python/utils/metrics_loizou.py](../../python/utils/metrics_loizou.py)
+- 降噪器見: [python/denoisers/](../../python/denoisers) 目錄
+- 音頻 I/O: [python/utils/audio_io.py](../../python/utils/audio_io.py)
 
 **在線資源**:
 - Loizou's Speech Enhancement Book: http://www.utdallas.edu/~loizou/speech/software.htm

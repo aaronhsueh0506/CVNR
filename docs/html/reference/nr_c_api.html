@@ -27,27 +27,14 @@ pre code{background:none;padding:0}
 </style>
 </head>
 <body>
-<nav>
-<a href="../../../Audio_ALG/docs/html/index.html">index</a>
-<a href="../../../AEC/docs/html/aec.html">aec</a>
-<a href="nr.html">nr</a>
-<a href="../../../audiolib/common/docs/html/audio_common.html">audiolib</a>
-<span class="sep">|</span>
-<a href="../../../AEC/docs/html/aec_c_api.html">AEC API</a>
-<a href="../../../AEC/docs/html/aec_params.html">AEC 參數</a>
-<a href="nr_c_api.html"><b>NR API</b></a>
-<a href="nr_c_api_params.html">NR 參數</a>
-<a href="../../../audiolib/common/docs/html/audio_common_c_api.html">audiolib API</a>
-<a href="../../../audiolib/common/docs/html/audio_common_params.html">audiolib 參數</a><a href="../../../audiolib/docs/html/spatial_chain.html">空間鏈</a>
-<a href="../../../Audio_ALG/docs/html/integration_example.html">串接範例</a>
-</nav>
+<nav aria-label="文件導覽"><a href="../index.html">NR 文件首頁</a></nav>
 
 <h1>NR C API 使用說明 — <code>NR/c_impl</code></h1>
 <p class="small">本頁是<b>整合者視角</b>的 API 說明：init/process 要呼叫什麼、input/output 怎麼給、錯誤與 reset 怎麼處理。演算法內部機制與逐層時序圖見 <a href="nr.html">nr.html</a>;<b>外部／內部參數表與函式分級</b>見 <a href="nr_c_api_params.html">nr_c_api_params.html</a>;完整欄位與錯誤語意的 canonical 出處是 <code>NR/docs/c_user_manual_zh_TW.md</code>。函式內部自行呼叫的子模組不在本頁範圍。</p>
 
 <h2>1. 責任邊界(先看這個)</h2>
 <p>NR 是<b>純頻域</b> MMSE-LSA/OMLSA 降噪核心。它<b>只吃 <code>Complex[n_freqs]</code>、只吐 <code>Complex[n_freqs]</code></b>,不含 window、FFT、IFFT、OLA 或任何 PCM buffer 邏輯——這些全部是呼叫端的責任(<code>NR/c_impl/include/anr.h</code>)。</p>
-<div class="note">如果 application 手上只有 PCM,<b>不要自己補一套 WOLA</b>。照 Audio_ALG 的 <a href="../../../Audio_ALG/docs/html/integration_example.html">串接範例</a> 與 <code>pipelines</code> 下的範例 main 的做法(它們已經把 window/FFT/OLA/gain fusion 做對了)。</div>
+<div class="note">如果 application 手上只有 PCM,<b>不要自己補一套 WOLA</b>。照 Audio_ALG 的 串接範例 與 <code>pipelines</code> 下的範例 main 的做法(它們已經把 window/FFT/OLA/gain fusion 做對了)。</div>
 <p>連結時需要<b>兩個</b> archive:<code>libanr.a</code> 與 <code>libaudio_common.a</code>——NR 自己不含 FFT。</p>
 
 <h3>可以 include 的 header</h3>
@@ -235,7 +222,7 @@ anr_reconfigure(nr, &amp;t);</pre>
 <tr><td><code>mean_spp</code></td><td><code>mean(spp[k])</code>,<code>[0,1]</code></td><td>持續接近 0 = 判定沒有語音 → 檢查電平/噪聲底是否估過高</td></tr>
 <tr><td><code>noise_floor_db</code></td><td><code>10*log10(mean(noise_psd)+1e-10)</code></td><td>噪聲底(<b>功率</b> dB)。若隨語音一起爬升 = 噪聲估計正在吸收語音</td></tr>
 </table></div>
-<p class="small">用途:板上每秒輪詢一次做監看。這是 pull 型結構化快照,在 release build 一樣可用——詳見 <a href="../../../Audio_ALG/docs/html/integration_example.html">串接範例</a> 的 DEBUG 章節。</p>
+<p class="small">用途:板上每秒輪詢一次做監看。這是 pull 型結構化快照,在 release build 一樣可用——詳見 串接範例 的 DEBUG 章節。</p>
 
 <h2>8. 建置與連結</h2>
 <pre>make -C NR/c_impl lib SIMD=1                  # 產品(ARM NEON)
@@ -259,16 +246,5 @@ make -C NR/c_impl lib SIMD=0                  # 純量參考建置</pre>
 <li>沒有 include <code>noise_estimator.h</code>／<code>spp_estimator.h</code>／<code>anr_internal.h</code>；公開／內部函式分級見 <a href="nr_c_api_params.html">參數頁</a> §6。</li>
 </ul>
 
-<h2>相關檔案與測試路徑</h2>
-<ul class="small">
-<li><code>NR/c_impl/include/anr.h</code>、<code>anr_types.h</code> — 公開 API 與 config</li>
-<li><code>NR/c_impl/src/anr.c</code> — 生命週期、process、reconfigure</li>
-<li><code>NR/c_impl/example/main.c</code>、<code>main_mem.c</code> — heap 與 static pool 的完整可編譯範例</li>
-<li><code>NR/docs/c_user_manual_zh_TW.md</code> — canonical 手冊(完整欄位、錯誤語意表)</li>
-<li><code>NR/docs/parameter_tuning.md</code> — 調校指引</li>
-<li>串在 AEC 之後的用法：<code>Audio_ALG/pipelines/4ch_aec_bf_nr_res/mcab_sample_post.h</code>（<code>mcab_sample_anr_gain()</code>）、<code>Audio_ALG/pipelines/mono_aec_nr_res/main.c</code>（<code>mono_nr_gain()</code>、<code>mono_form()</code>）</li>
-<li>測試：<code>make -C NR/c_impl test-config</code>、<code>test-reconfigure</code>、<code>test-noise-restart</code>、<code>test-scene-change</code>、<code>test-shared-startup</code>、<code>test-api-cpp</code>、<code>test-bit-exact</code>；<code>test</code>／<code>test-full</code> 為彙總</li>
-<li><a href="nr.html">nr.html</a>（演算法、時序圖、延遲）、<a href="nr_c_api_params.html">nr_c_api_params.html</a>（外部／內部參數、函式分級）</li>
-</ul>
 </body>
 </html>
