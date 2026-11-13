@@ -13,10 +13,7 @@ int main() {
     if (status == 0) status = anr_set_level(denoiser, ANR_LEVEL_MILD);
     if (status == 0 && (anr_get_n_freqs(denoiser) != 257 ||
                        anr_get_hop_size(denoiser) != 256)) status = -1;
-    // The legacy AnrMode type and ANR_MODE_* names must stay interchangeable with AnrLevel in C++.
-    AnrMode legacy = ANR_MODE_BALANCED;
-    if (status == 0) status = anr_set_level(denoiser, legacy);
-    AnrLevel level = ANR_MODE_AGGRESSIVE;
+    AnrLevel level = ANR_LEVEL_AGGRESSIVE;
     if (status == 0) status = anr_set_level(denoiser, level);
     anr_destroy(denoiser);
     if (status != 0) return 1;

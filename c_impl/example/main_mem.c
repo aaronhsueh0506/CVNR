@@ -10,6 +10,7 @@
 
 #include "anr.h"
 #include "anr_types.h"
+#include "cli_level.h"
 #include "fft_wrapper.h"
 #include "audio_window.h"
 #include "wav_io.h"
@@ -46,7 +47,7 @@ void print_usage(const char* prog) {
     printf("Usage: %s <input.wav> <output.wav> [options]\n\n", prog);
     printf("Options:\n");
     printf("  --bypass       Bypass mode (copy input to output)\n");
-    printf("  --nr-level <l> NR level: 0|1|2|3 or mild|moderate|balanced|aggressive (default: balanced)\n");
+    printf("  --nr-level <l> NR level: 0 mild, 1 moderate, 2 balanced (default), 3 aggressive\n");
     printf("                 (--nr-mode is accepted as an alias)\n");
     printf("  --debug        Print one anr_debug_status() line per second of audio\n\n");
     printf("  --fft-size <n> Select project grid (256/512 @16k; 1024 @48k)\n\n");
@@ -85,9 +86,10 @@ int main(int argc, char* argv[]) {
                 fprintf(stderr, "%s: %s needs a value\n", argv[0], argv[i]);
                 return 2;
             }
-            /* Name or digit 0..3; an unrecognised value keeps the balanced default. */
-            int m = anr_nr_level_from_name(argv[++i]);
-            nr_level = m >= 0 ? (AnrLevel)m : ANR_LEVEL_BALANCED;
+            if (anr_cli_parse_level(argv[++i], &nr_level) != 0) {
+                fprintf(stderr, "%s: unknown NR level '%s' (0 mild, 1 moderate, 2 balanced, 3 aggressive)\n", argv[0], argv[i]);
+                return 2;
+            }
         }
     }
 

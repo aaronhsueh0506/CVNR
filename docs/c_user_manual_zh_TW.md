@@ -53,7 +53,7 @@
 | `denoise_mem` | static memory 路徑（`_get_mem_size` + `_init`）示範 runner |
 | `test_config_validation` | config 驗證與對齊防護的回歸測試（`make test-config`） |
 | `test_config_parity` | 印出各 grid × level 的正規 config（`make test-config-parity`） |
-| 其他 `test_*` | `test-reconfigure`、`test-noise-restart`、`test-scene-change`、`test-shared-startup`、`test-api-cpp`、`test-cli-args`、`test-bit-exact`；`make test`／`make test-full` 為彙總 |
+| 其他 `test_*` | `test-reconfigure`、`test-noise-restart`、`test-gain-api`、`test-scene-change`、`test-shared-startup`、`test-api-cpp`、`test-cli-args`、`test-bit-exact`；`make test`／`make test-full` 為彙總 |
 
 `make publish` 產出的 release 內容為 `libanr.a` 與 `denoise_wav`；header 請直接從
 source tree 取用。
@@ -110,7 +110,7 @@ c++ -std=gnu99 app.c \
 
 ```bash
 ./denoise_wav noisy.wav clean.wav
-./denoise_wav noisy.wav clean.wav --nr-level mild     # 舊旗標 --nr-mode 同義；或數字 0|1|2|3 = mild|moderate|balanced|aggressive
+./denoise_wav noisy.wav clean.wav --nr-level 0        # 舊旗標 --nr-mode 同義；只收數字 0|1|2|3 = mild|moderate|balanced|aggressive，其他值結束碼 2
 ./denoise_wav noisy.wav clean.wav --fft-size 512      # 指定 grid，見 4.1 節
 ./denoise_wav input.wav copy.wav --bypass
 ./denoise_wav noisy.wav clean.wav --debug             # 每秒印一行狀態
@@ -129,14 +129,14 @@ c++ -std=gnu99 app.c \
 | `anr_init(mem, mem_size, config)` | 回傳指向 `mem` 內部的 handle | 回傳 `NULL`：`mem == NULL`、`mem` 未 16-byte 對齊、`mem_size` 不足、config 未通過驗證 |
 | `anr_destroy(self)` | `void` | `self == NULL` 安靜跳過；static instance 為 no-op 且可重複呼叫；**heap instance 只能呼叫一次** |
 | `anr_process(...)` | 回傳 `0` | 回傳 `-1`：`self` / `spectrum_in` / `spectrum_out` 任一為 `NULL` |
-| `anr_process_gain(...)` | 回傳 `0` | 回傳 `-1`：`self` 或 `spectrum_in` 為 `NULL`。`extra_noise_psd` 與 `gain_out` 為 `NULL` 是合法用法，不是錯誤 |
+| `anr_process_gain(...)` / `anr_process_gain_with_residual_psd(...)` | 回傳內部 gain 陣列指標（`n_freqs` 個，借用到下一次 process 呼叫前） | 回傳 `NULL`：`self` 或 `spectrum_in` 為 `NULL`，狀態不動。`residual_echo_psd` 為 `NULL` 是合法用法（等同 `anr_process_gain`），不是錯誤 |
 | `anr_reset(self)` | `void` | `self == NULL` **安靜 no-op**，沒有任何回報 |
 | `anr_set_level(self, level)` | 回傳 `0` | 回傳 `-1`：`self == NULL`、`level` 超出 enum、組出的 config 被 `anr_reconfigure()` 拒絕；`-1` 時什麼都不寫 |
 | `anr_reconfigure(self, target)` | 回傳 `0` | 回傳 `-1`：`self`／`target` 為 `NULL`、`target` 未通過驗證、六個幾何欄位任一與實例不同；`-1` 時什麼都不寫 |
 | `anr_get_hop_size()` / `get_frame_size()` / `get_n_freqs()` | 回傳正整數 | handle 為 `NULL` 時回傳 **`0`** |
 | `anr_is_initialized()` | `true` / `false` | handle 為 `NULL` 時回傳 `false` |
 | `anr_get_speech_protect_frame_threshold()` | 回傳生效的幀級語音閘值 | handle 為 `NULL` 時回傳 `0.0` |
-| `anr_get_noise_psd()` / `get_gain()` | 回傳唯讀陣列指標，並在 `n_freqs != NULL` 時寫入長度 | handle 為 `NULL` 時回傳 `NULL` 並把 `*n_freqs` 設為 `0`。`n_freqs` 本身可以傳 `NULL` |
+| `anr_get_noise_psd()` | 回傳唯讀陣列指標，並在 `n_freqs != NULL` 時寫入長度 | handle 為 `NULL` 時回傳 `NULL` 並把 `*n_freqs` 設為 `0`。`n_freqs` 本身可以傳 `NULL` |
 | `anr_debug_status(self, out)` | `void`，填滿 `*out` | `out == NULL` 時**什麼都不做**；`self == NULL` 時把 `*out` **全部歸零**（不會寫入 NaN） |
 | `anr_validate_config(config)` | 回傳 `true` | 回傳 `false`：`config == NULL`，或任何欄位越界／為 NaN／為 Inf |
 | `anr_default_config()` / `_for_grid()` / `anr_config_for_level()` / `_for_level_grid()` | 以值回傳 `AnrConfig` | **沒有錯誤回傳值**。傳入不支援的 sample rate 時會產生一個 `fft_size == 0` 的無效 config，必須靠 `anr_validate_config()` 才會發現 |
@@ -159,7 +159,7 @@ c++ -std=gnu99 app.c \
 
 ### 5.1 四個 strength level
 
-用 `anr_config_for_level(sample_rate, level)` 取得。與 grid 無關的差異。C 的 level 等於 Python 的 strength preset（C level == Python preset：`AnrLevel` ↔ `NR_STRENGTH_PRESETS`，名稱與數字 0..3 相同）；公開 header 為了與 Python 測試對照，仍保留舊名 `AnrMode` 與 `ANR_MODE_*`（值相同）。
+用 `anr_config_for_level(sample_rate, level)` 取得。與 grid 無關的差異。C 的 level 等於 Python 的 strength preset（C level == Python preset：`AnrLevel` ↔ `NR_STRENGTH_PRESETS`，名稱與數字 0..3 相同）。
 
 | Level | `g_min_db` | `q` | `xi_min_db` | `noise_over_subtraction` | 適用方向 |
 |---|---:|---:|---:|---:|---|

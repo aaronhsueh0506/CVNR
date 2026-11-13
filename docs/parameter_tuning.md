@@ -10,7 +10,7 @@
 
 > **命名好的 4 級強度兩端都有**（C 稱 level，Python 稱 strength preset：C level == Python preset）：
 > - **Python**：`python/process_audio.py` 的 `create_denoiser_from_config(..., strength=...)`（preset 表在 `python/core/nr_strength.py`）或 CLI `python/process_audio.py --nr-mode {mild,moderate,balanced,aggressive}`（亦可寫 0-3）。
-> - **C**：`anr_config_for_level(sample_rate, ANR_LEVEL_MILD|MODERATE|BALANCED|AGGRESSIVE)`（`c_impl/include/anr_types.h`）或 `denoise_wav --nr-level`（舊旗標 `--nr-mode` 仍可用）。
+> - **C**：`anr_config_for_level(sample_rate, ANR_LEVEL_MILD|MODERATE|BALANCED|AGGRESSIVE)`（`c_impl/include/anr_types.h`）或 `denoise_wav --nr-level 0..3`（舊旗標 `--nr-mode` 仍可用；C 只收數字）。
 > 兩端 4 級 std-math **數值對齊，非逐位元相同**。g_min_db 為 **audio 振幅 dB（/20）**。
 > 四級共用同一套 DD、MCRA tracker、gain attack/decay 與低頻語音保護；
 > 每一級只改下表四個「抑噪深度」旋鈕。
@@ -175,7 +175,7 @@ MCRA 的 scene change detector 用「高頻 gamma + spectral flatness」雙重�
 
 ## 📝 調參流程建議
 
-1. 先換強度（Python `--nr-mode`、C `--nr-level`，值皆為 `mild|moderate|balanced|aggressive`）（**80% 的情境止於這一步**）
+1. 先換強度（Python `--nr-mode` 收 `mild|moderate|balanced|aggressive`，C `--nr-level` 收 `0|1|2|3`）（**80% 的情境止於這一步**）
 2. 遇到 symptom 對照「調參決策表」調四大核心旋鈕
 3. 遇到場景切換問題調 `scene_change_*`
 4. 每次只動一個參數，用同一批測試音檔 A/B 比對

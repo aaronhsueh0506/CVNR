@@ -196,7 +196,7 @@ def main():
                         "only 'full' exists")
     d.add_argument('--strength', choices=('mild', 'moderate', 'balanced', 'aggressive'),
                    default='balanced',
-                   help="NR strength preset (must match parity_runner's strength arg)")
+                   help="NR strength preset (parity_runner takes it as its number 0..3, in this order)")
     d.set_defaults(func=cmd_dump)
 
     c = sub.add_parser('compare', help='compare Python vs C gains')

@@ -42,8 +42,8 @@ Every statement below that says "identical" or "bit-exact" carries this exceptio
 
 ## Cost
 
-`make bench-anr` (from `c_impl/`) times `anr_process()` and `anr_process_gain()` with an
-extra noise PSD on three grids and two levels. It uses frozen synthetic spectra, a
+`make bench-anr` (from `c_impl/`) times `anr_process()` and `anr_process_gain_with_residual_psd()` with a
+residual-echo PSD on three grids and two levels. It uses frozen synthetic spectra, a
 fresh instance per pass, five untimed warm-up passes and 30 timed passes of 600 hops, and
 prints median, quartiles and minimum. The figures below are medians in microseconds per
 hop on an Arm64 development host with the NE10 backend and clang -O2 with the strict FP flags, 12
@@ -54,7 +54,7 @@ binaries; they are not target-platform figures.
 source compiled with `EXTRA_CFLAGS=-DANR_REFERENCE_KERNELS` (every kernel runs its scalar
 twin).
 
-| Grid | Level | `anr_process` | `anr_process_gain` + extra PSD |
+| Grid | Level | `anr_process` | `anr_process_gain_with_residual_psd` |
 |---|---|---|---|
 | 16 kHz, FFT 256 | balanced | 1.435 → 0.794 (−44.7 %) | 1.337 → 0.740 (−44.7 %) |
 | 16 kHz, FFT 256 | aggressive | 1.434 → 0.788 (−45.0 %) | 1.337 → 0.740 (−44.7 %) |

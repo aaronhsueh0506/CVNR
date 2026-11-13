@@ -2,6 +2,34 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [Unreleased] · 2026-11-13 · 移除舊名 `AnrMode` / `ANR_MODE_*`
+
+### 移除 (Removed)
+- `AnrMode` typedef 與 `ANR_MODE_*` 四個別名（值與 `AnrLevel` 相同，沒有呼叫端）。C++／config 測試不再檢查它們；`python/tests/test_nr_strength_index.py` 改讀 `anr_types.h` 的 `ANR_LEVEL_*` 行（索引相同）。
+
+## [Unreleased] · 2026-11-13 · level 只收數字：移除 `anr_nr_level_from_name()`
+
+### 變更 (Changed)
+
+- `anr_types.h` 移除 `anr_nr_level_from_name()`：函式庫不再解析 level 名稱（`anr_nr_level_name()` 保留供顯示）。`anr_set_level(nr, level)` 只收 level，NR 沒有 ramp；`anr_reconfigure()` 維持公開（它是執行期換 level 以外調參欄位的唯一入口）。函式庫輸出不變。
+- `denoise_wav`、`denoise_mem`、`parity_runner`、`pyc_gain_driver`、`pyc_e2e_driver` 經 `example/cli_level.h` 的 `anr_cli_parse_level()` 讀 level：整串十進位 0..3（0 mild、1 moderate、2 balanced、3 aggressive），其他值（名稱、`-`、`-1`、`3x`、空字串、前置空白、4）印錯誤並以結束碼 2 結束；以前接受名稱，且未知值退回 balanced。`test_cli_args.sh` 與 `test_config_validation.c` 對應改寫；`pyc_parity_nr.py` 把 Python 的名稱換成數字再交給 C driver。
+
+## [Unreleased] · 2026-11-12 · gain API 改為回傳指標並以名稱標明殘留回音 PSD
+
+### 變更 (Changed)
+
+- 原本的 `anr_process_gain(self, spectrum_in, extra_noise_psd, gain_out)` 加 `anr_get_gain()` 在所有呼叫端都是同一個動作
+  （`gain_out` 一律傳 `NULL`）。改成兩個直接回傳內部 gain 陣列的入口：
+  `const float* anr_process_gain(self, spectrum_in)`、
+  `const float* anr_process_gain_with_residual_psd(self, spectrum_in, residual_echo_psd)`。
+  回傳 `n_freqs` 個 `[g_min, 1]` 的 float，借用到下一次 process 呼叫前；引數為 `NULL` 或該 hop 被拒時回傳 `NULL`、狀態不動。
+  `residual_echo_psd` 是每個 bin 的殘留回音功率（audio 功率尺度，即 AEC 的 `r2 / 32768²`），只墊高 SPP／SNR 的噪聲底，
+  噪聲追蹤器仍只看輸入功率；傳 `NULL` 等同 `anr_process_gain()`。語意與舊的 `extra_noise_psd` 完全相同，只改名與回傳方式。
+- 移除 `anr_get_gain()` 與 `gain_out` 複製；`anr_process()`（就地套用）不變。
+- gain 與舊 API 逐位元相同：新增 `make test-gain-api`（納入 `make test`），以舊程式捕捉的每幀 gain FNV-1a 雜湊比對
+  （16 kHz balanced 無殘留 PSD／每 hop 有殘留 PSD／交替、48 kHz aggressive 有殘留 PSD、48 kHz mild，含數位靜音 hop 與
+  語音式突發；`SIMD=0`、`SIMD=1` 相同）；`test_bit_exact_stream` 的狀態傾印與舊程式逐位元相同。
+
 ## [Unreleased] · 2026-10-24 · 移除沒有呼叫端的查詢函式
 
 ### 移除 (Removed)

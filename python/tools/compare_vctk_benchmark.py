@@ -57,7 +57,7 @@ GATES = {"pesq": -0.005, "stoi": -0.002}
 # not the raw --fft-size CLI arg (which may be None = "library default").
 GRID_KEYS = ("mode", "strength", "sample_rate", "fft_size", "hop_size")
 
-# Strength names in C AnrMode order (index == enum value). Records written by run_vctk_benchmark.py
+# Strength names in C AnrLevel order (index == enum value). Records written by run_vctk_benchmark.py
 # hold the name; a record that holds the index (int or digit string) compares equal to its name.
 STRENGTH_NAMES = ("mild", "moderate", "balanced", "aggressive")
 

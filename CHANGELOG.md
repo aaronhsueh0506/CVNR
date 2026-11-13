@@ -4,6 +4,41 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [Unreleased] — 2026-11-13 — `pyc_parity_nr.sh` reads `-D` flags only as whole tokens
+
+`config.manifest` paths that contain `-D...` (for example a checkout under `.../-Desktop-...`) were read as a define and failed the build-flag check; the pattern now requires a token boundary before `-D`. No library change.
+
+## [Unreleased] — 2026-11-13 — Legacy `AnrMode` / `ANR_MODE_*` names removed
+
+### Removed
+- `typedef AnrMode` and the `ANR_MODE_MILD/MODERATE/BALANCED/AGGRESSIVE` aliases of `AnrLevel` (same values; no caller). The C++ and config tests no longer check them; `python/tests/test_nr_strength_index.py` reads the `ANR_LEVEL_*` lines of `anr_types.h` instead (same indices). Comments that said `AnrMode` now say `AnrLevel`.
+
+## [Unreleased] — 2026-11-13 — Level arguments are numbers: `anr_nr_level_from_name()` removed
+
+**API change; the library's output is unchanged.**
+
+- `anr_nr_level_from_name()` is removed from `anr_types.h`. The library no longer parses level names; `anr_nr_level_name()` stays for display. `anr_set_level(nr, level)` takes only the level (there is no ramp in NR: the new tuning applies from the next hop). `anr_reconfigure()` stays public: it is the only call that changes tuning fields other than the level at run time.
+- `denoise_wav`, `denoise_mem`, `parity_runner`, `pyc_gain_driver` and `pyc_e2e_driver` read the level through `example/cli_level.h` (`anr_cli_parse_level()`): a whole decimal string 0..3 (0 mild, 1 moderate, 2 balanced, 3 aggressive); anything else (a name, `-`, `-1`, `3x`, an empty or padded string, 4) prints an error and exits 2. `--nr-level` and `--nr-mode` used to take names and turned an unknown value into balanced. `python/tools/pyc_parity_nr.py` translates its Python strength names to the number for the C drivers.
+- `test_cli_args.sh` checks the numbers, the refusals above and that `--nr-mode 3` equals `--nr-level 3`; `test_config_validation.c` checks `anr_cli_parse_level()` and the name table. README, `docs/html/index.html`, `docs/c_user_manual_zh_TW.md`, `docs/parameter_tuning.md`, `docs/reference/streaming.md` and the function map follow.
+
+## [Unreleased] — 2026-11-12 — Gain API: `anr_process_gain_with_residual_psd()`, `anr_get_gain()` removed
+
+### Changed
+- `anr_process_gain(self, spectrum_in, extra_noise_psd, gain_out)` followed by `anr_get_gain()` was one operation in every
+  caller (`gain_out` was always NULL). It is now two entry points that return the internal gain vector (`n_freqs` floats in
+  `[g_min, 1]`, borrowed until the next process call, NULL for NULL arguments or a refused hop, state untouched):
+  `const float* anr_process_gain(self, spectrum_in)` and
+  `const float* anr_process_gain_with_residual_psd(self, spectrum_in, residual_echo_psd)`.
+  `residual_echo_psd` is the residual-echo power per bin in audio power scale (the AEC `r2` divided by 32768^2); it raises only
+  the SPP/SNR noise floor and the noise tracker still follows the input power. NULL gives exactly `anr_process_gain()`.
+- Removed: `anr_get_gain()` and the `gain_out` copy. `anr_process()` (apply in place) is unchanged.
+- Gains are bit-identical to the previous API: `make test-gain-api` (new, part of `make test`) compares FNV-1a hashes of every
+  returned gain vector, captured from the previous code, for 16 kHz balanced (no residual PSD, residual PSD every hop,
+  alternating), 48 kHz aggressive with a residual PSD and 48 kHz mild, including digital-silence hops and a speech-like burst
+  (identical with `SIMD=0` and `SIMD=1`); the `test_bit_exact_stream` state dump compared byte-equal with the previous code.
+  `test_config_validation`, `test_noise_restart`, `test_bit_exact_stream`, `bench_anr`, `parity_runner` and `pyc_gain_driver` follow
+  the new calls; `docs/c_python_function_map.md` merges the `anr_get_gain` row into the `anr_process_gain` row.
+
 ## [Unreleased] — 2026-11-02 — Shared NEON kernels now run on 32-bit ARM
 
 ### Changed

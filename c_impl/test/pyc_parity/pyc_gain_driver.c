@@ -5,7 +5,7 @@
  * write the per-bin gains) plus the two things that runner cannot do:
  *   - config overrides given as key=value, so that both sides can run with a non-default feature
  *     (currently makeup_gain), and
- *   - strict argument handling: an unknown level name or a config that fails
+ *   - strict argument handling: an unknown level number or a config that fails
  *     anr_validate_config() is an error, never a silent fallback to balanced.
  * With no overrides the output is byte-identical to parity_runner's; pyc_parity_nr.sh checks this
  * on every run.
@@ -20,6 +20,7 @@
 
 #include "anr.h"
 #include "anr_types.h"
+#include "cli_level.h"
 
 #define PARITY_MAGIC 0x4E525032 /* 'NRP2' */
 
@@ -30,8 +31,8 @@ static int fail(const char* msg) {
 
 int main(int argc, char** argv) {
     if (argc < 4) return fail("usage: pyc_gain_driver <in.nrp2> <out.gains> <level> [makeup_gain=0|1]");
-    int level = anr_nr_level_from_name(argv[3]);
-    if (level < 0) return fail("unknown level (expected mild|moderate|balanced|aggressive)");
+    AnrLevel level;
+    if (anr_cli_parse_level(argv[3], &level) != 0) return fail("unknown level (expected 0 mild, 1 moderate, 2 balanced, 3 aggressive)");
 
     FILE* fin = fopen(argv[1], "rb");
     if (!fin) return fail("cannot open input");
@@ -90,10 +91,12 @@ int main(int argc, char** argv) {
             spec[k].r = re[k];
             spec[k].i = im[k];
         }
-        if (anr_process_gain(dn, spec, NULL, all + (size_t)f * (size_t)n_freqs) < 0) {
+        const float* gain = anr_process_gain(dn, spec);
+        if (!gain) {
             fail("anr_process_gain failed");
             goto done;
         }
+        memcpy(all + (size_t)f * (size_t)n_freqs, gain, (size_t)n_freqs * sizeof(float));
     }
     FILE* fout = fopen(argv[2], "wb");
     if (!fout) {

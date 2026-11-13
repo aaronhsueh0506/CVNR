@@ -24,7 +24,7 @@ struct AnrDenoiser {
     int n_freqs;               /* fft_size/2 + 1 */
 
     float* power;              /* |X[k]|^2  [n_freqs] */
-    float* noise_aug;          /* scaled noise PSD (+ extra PSD) fed to the SPP stage */
+    float* noise_aug;          /* scaled noise PSD (+ residual echo PSD) fed to the SPP stage */
 
     NoiseEstimator* noise_est;
     SppEstimator*       spp_est;
@@ -249,13 +249,13 @@ static void update_noise_estimator(AnrDenoiser* self) {
 
 static const float* prepare_noise_for_spp(AnrDenoiser* self,
                                            const float* noise_psd,
-                                           const float* extra_noise_psd) {
+                                           const float* residual_echo_psd) {
     const float scale = self->config.noise_over_subtraction;
     const int   nf    = self->n_freqs;
-    if (!extra_noise_psd && scale == 1.0f) return noise_psd;
-    if (extra_noise_psd) {
+    if (!residual_echo_psd && scale == 1.0f) return noise_psd;
+    if (residual_echo_psd) {
         for (int k = 0; k < nf; k++)
-            self->noise_aug[k] = scale * (noise_psd[k] + extra_noise_psd[k]);
+            self->noise_aug[k] = scale * (noise_psd[k] + residual_echo_psd[k]);
     } else {
         for (int k = 0; k < nf; k++)
             self->noise_aug[k] = scale * noise_psd[k];
@@ -401,7 +401,7 @@ static void calculate_gain(AnrDenoiser* self,
 }
 
 /* Shared frame stage: SPP/DD -> speech evidence -> gain/floors -> optional make-up -> noise
- * update. Tracker receives clean input power, never the augmented extra-noise floor, and is
+ * update. Tracker receives clean input power, never the augmented residual-echo floor, and is
  * not advanced on digital-silence frames.
  */
 static void run_frame_gain_stage(AnrDenoiser* self,
@@ -610,10 +610,10 @@ static bool frame_is_silent(const float* power, int n_freqs) {
     return true;
 }
 
-/* Shared by anr_process() and anr_process_gain(): until the noise floor is initialized,
- * accumulate startup power and bypass. Extra PSD augments the SPP/SNR noise only; the noise
- * tracker observes raw power. */
-static void process_init_or_gain(AnrDenoiser* self, const float* extra_noise_psd, bool silent) {
+/* Shared by anr_process() and the gain entry points: until the noise floor is initialized,
+ * accumulate startup power and bypass. The residual echo PSD augments the SPP/SNR noise only;
+ * the noise tracker observes raw power. */
+static void process_init_or_gain(AnrDenoiser* self, const float* residual_echo_psd, bool silent) {
     const int nf = self->n_freqs;
     if (!self->is_initialized) {
         if (!silent) {
@@ -639,7 +639,7 @@ static void process_init_or_gain(AnrDenoiser* self, const float* extra_noise_psd
         }
     } else {
         const float* noise_psd = noise_estimator_get_noise_psd(self->noise_est);
-        run_frame_gain_stage(self, prepare_noise_for_spp(self, noise_psd, extra_noise_psd),
+        run_frame_gain_stage(self, prepare_noise_for_spp(self, noise_psd, residual_echo_psd),
                              !silent);
     }
 }
@@ -670,22 +670,23 @@ int anr_process(AnrDenoiser* self,
     return 0;
 }
 
-int anr_process_gain(AnrDenoiser* self,
-                          const Complex*   spectrum_in,
-                          const float*     extra_noise_psd,
-                          float*           gain_out) {
-    if (!self || !spectrum_in) return -1;
+const float* anr_process_gain_with_residual_psd(AnrDenoiser* self,
+                                                const Complex*   spectrum_in,
+                                                const float*     residual_echo_psd) {
+    if (!self || !spectrum_in) return NULL;
     int nf = self->n_freqs;
 
     fft_power(spectrum_in, self->power, nf);
     const bool silent = frame_is_silent(self->power, nf);
 
-    /* Noise initialization is independent of extra noise. */
-    process_init_or_gain(self, extra_noise_psd, silent);
+    /* Noise initialization is independent of the residual echo PSD. */
+    process_init_or_gain(self, residual_echo_psd, silent);
 
-    if (gain_out) memcpy(gain_out, self->gain, nf * sizeof(float));
+    return self->gain;
+}
 
-    return 0;
+const float* anr_process_gain(AnrDenoiser* self, const Complex* spectrum_in) {
+    return anr_process_gain_with_residual_psd(self, spectrum_in, NULL);
 }
 
 int anr_reconfigure(AnrDenoiser* self, const AnrConfig* target) {
@@ -787,12 +788,6 @@ const float* anr_get_noise_psd(const AnrDenoiser* self, int* n_freqs) {
 
 float anr_get_speech_protect_frame_threshold(const AnrDenoiser* self) {
     return self ? self->speech_protect_frame_threshold : 0.0f;
-}
-
-const float* anr_get_gain(const AnrDenoiser* self, int* n_freqs) {
-    if (!self) { if (n_freqs) *n_freqs = 0; return NULL; }
-    if (n_freqs) *n_freqs = self->n_freqs;
-    return self->gain;
 }
 
 /* Read-only reductions over last-frame state. */

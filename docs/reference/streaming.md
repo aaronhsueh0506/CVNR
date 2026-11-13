@@ -168,8 +168,8 @@ int nr_stream_demo(const float *pcm, int n_samples, float *out)
 **延遲**：NR 核心本身 0 延遲（增益同 hop 產出）。1.1 的 sqrt-Hann、50% overlap WOLA 為 1 個 hop：
 以 1.1 的 `nr_stream.c` 送入單一脈衝，16 kHz/256 的輸出峰值比輸入晚 128 樣本（8 ms）。
 
-**時序圖與外部／內部參數分類**：見 `docs/html/nr.html`（逐層時序圖）、
-`docs/html/nr_c_api.html`（呼叫順序與錯誤語意）、`docs/html/nr_c_api_params.html`（外部／內部參數表與函式分級）。
+**時序圖與外部／內部參數分類**：見 `docs/html/reference/nr.html`（逐層時序圖）、
+`docs/html/reference/nr_c_api.html`（呼叫順序與錯誤語意）、`docs/html/reference/nr_c_api_params.html`（外部／內部參數表與函式分級）。
 
 ### 1.3 兩個永久行為契約
 
@@ -260,28 +260,33 @@ int create_static_nr(AnrConfig *cfg,
 - 上例中 pool 的大小是示範值。實際需求請用 [4.2 節](configuration.md#42-依-grid-換算的預設值實測)的量測表對照，並**在程式裡用
   `_get_mem_size()` 的回傳值檢查**，不要把數字寫死。
 
-### 1.6 只要 gain、不要套用：`anr_process_gain()`
+### 1.6 只要 gain、不要套用：`anr_process_gain()`／`anr_process_gain_with_residual_psd()`
 
-當 NR 是串接鏈的一環（例如上游有其他抑制模組、下游還要再合併一次增益）時，用這支 API：
-它照常更新內部狀態並算出 per-bin gain，但**不會**把 gain 套到頻譜上。
+當 NR 是串接鏈的一環（例如上游有其他抑制模組、下游還要再合併一次增益）時，用這兩支 API：
+它們照常更新內部狀態並算出 per-bin gain，但**不會**把 gain 套到頻譜上，而是回傳內部的 gain 陣列。
+上游 AEC 在頻譜裡留有殘留回音時用 `anr_process_gain_with_residual_psd()`，把殘留回音功率交給 NR，
+讓 denoiser 不把殘留回音學成噪聲；沒有殘留回音 PSD 時用 `anr_process_gain()`。
 
 ```c
 #include "fft_wrapper.h"
 #include "anr.h"
 #include "anr_types.h"
 
-/* gain_out 長度必須是 anr_get_n_freqs(nr)；extra_noise_psd 可為 NULL。 */
-int nr_gain_only(AnrDenoiser *nr, const Complex *spectrum_in,
-                 const float *extra_noise_psd, float *gain_out)
+/* 回傳 n_freqs 個 gain（內部緩衝，借用到下一次 process 呼叫前）；引數為 NULL 時回傳 NULL。
+ * residual_echo_psd 可為 NULL，此時等同 anr_process_gain()。 */
+const float *nr_gain_only(AnrDenoiser *nr, const Complex *spectrum_in,
+                          const float *residual_echo_psd)
 {
-    return anr_process_gain(nr, spectrum_in, extra_noise_psd, gain_out);
+    return anr_process_gain_with_residual_psd(nr, spectrum_in, residual_echo_psd);
 }
 ```
 
-- `extra_noise_psd`：長度 `n_freqs` 的額外噪聲 PSD，**必須與 `|spectrum_in|²` 同一個線性尺度**。
-  傳 `NULL` 時行為與純噪聲版本完全相同。
-- `gain_out`：可傳 `NULL` 省掉一次複製，之後用 `anr_get_gain()` 讀同一份結果。
-- 回傳的 gain 是線性值，範圍 `[g_min, 1]`（`g_min` 由 `g_min_db` 決定）。
+- `residual_echo_psd`：長度 `n_freqs` 的殘留回音功率，**必須與 `|spectrum_in|²` 同一個線性尺度**（audio 功率尺度；
+  AEC 的 `r2` 是 int16² 尺度，要先除以 `32768²`）。它只墊高 SPP／SNR 用的噪聲底，噪聲追蹤器仍只看輸入功率。
+  傳 `NULL` 時行為與 `anr_process_gain()` 完全相同。
+- 回傳值：指向 `n_freqs` 個 gain 的內部緩衝，借用到下一次 process／reset／destroy 前有效，不需要也不能 `free`。
+  `self` 或 `spectrum_in` 為 `NULL` 時回傳 `NULL`，狀態不動。
+- gain 是線性值，範圍 `[g_min, 1]`（`g_min` 由 `g_min_db` 決定）。
 - 契約 A／B 同樣適用：初始化期間這支 API 一樣回傳全 `1.0` 的 gain，而且一樣不會自動 reset。
 
 ### 1.7 查詢與診斷 API
@@ -290,7 +295,7 @@ int nr_gain_only(AnrDenoiser *nr, const Complex *spectrum_in,
 |---|---|---|
 | `anr_get_hop_size()` / `anr_get_frame_size()` / `anr_get_n_freqs()` | 取得實際尺寸 | 配置 buffer 時；避免硬編 |
 | `anr_is_initialized()` | 初始化 pass-through 是否結束 | 想知道輸出何時開始真的有降噪時 |
-| `anr_get_noise_psd()` / `anr_get_gain()` | 讀最近一個 frame 的 per-bin 陣列 | 除錯／視覺化 |
+| `anr_get_noise_psd()` | 讀最近一個 frame 的噪聲 PSD（gain 由 `anr_process_gain*()` 直接回傳） | 除錯／視覺化 |
 | `anr_get_speech_protect_frame_threshold()` | 幀級語音閘的生效值（`value + (q − 0.52)`，隨 `anr_reconfigure()` 更新） | 確認 level 切換後的閘門值 |
 | `anr_debug_status()` | 一次取得聚合狀態（見下） | 板上監看，建議每秒一次 |
 
@@ -320,6 +325,7 @@ int anr_set_level(AnrDenoiser *self, AnrLevel level);
 - **`anr_set_level()`** 以實例的 grid 組出 canonical 組態（`L` 為函式庫預設）後交給 `anr_reconfigure()`：
   只適用於組態等於 canonical level 的實例。對疊了覆寫的實例，非 pool 欄位的覆寫會被悄悄還原，
   覆寫 `L` 或 `num_init_frames` 則被拒絕（回 `-1`）。
+- **只收 level，沒有 ramp**：`anr_set_level(self, level)` 的 level 是 enum 數字（`ANR_LEVEL_*` = 0..3），函式庫不解析名稱（`anr_nr_level_name()` 只供顯示），也沒有過渡時間參數：新值從下一個 hop 起生效，噪聲底與增益平滑歷史本身就是平滑。`anr_reconfigure()` 維持公開，因為它是執行期換任何調參欄位（不只 level）的唯一入口。
 - 在兩個 hop 之間呼叫，與處理序列化；**非 thread-safe**。
 - 改 `cross_band_*` 欄位會重置跨頻先驗狀態；改 `speech_aware_noise_tracking`／`noise_gate_*`／`makeup_*` 會重置共用 frame 狀態。
 

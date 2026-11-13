@@ -1,4 +1,4 @@
-"""NR strength index <-> name: the CLI digit "0".."3" must equal the C `AnrMode` value of the same preset."""
+"""NR strength index <-> name: the CLI digit "0".."3" must equal the C `AnrLevel` value of the same preset."""
 import re
 import sys
 from pathlib import Path
@@ -12,10 +12,10 @@ from core.nr_strength import NR_STRENGTH_PRESETS, nr_strength_name  # noqa: E402
 ANR_TYPES_H = ROOT.parent / "c_impl" / "include" / "anr_types.h"
 
 
-def test_index_matches_c_anr_mode_values():
+def test_index_matches_c_anr_level_values():
     text = ANR_TYPES_H.read_text(encoding="utf-8")
     c_modes = {name.lower(): int(value)
-               for name, value in re.findall(r"ANR_MODE_([A-Z]+)\s*=\s*(\d+)", text)}
+               for name, value in re.findall(r"ANR_LEVEL_([A-Z]+)\s*=\s*(\d+)", text)}
     assert set(c_modes) == set(NR_STRENGTH_PRESETS)
     for name, value in c_modes.items():
         assert nr_strength_name(str(value)) == name

@@ -78,9 +78,9 @@ static void run_case(uint32_t grid, int sr, int fft, AnrLevel level,
     int nf = fft / 2 + 1;
     Complex* input = (Complex*)malloc((size_t)nf * sizeof(Complex));
     Complex* output = (Complex*)malloc((size_t)nf * sizeof(Complex));
-    float* extra = (float*)malloc((size_t)nf * sizeof(float));
+    float* residual_echo_psd = (float*)malloc((size_t)nf * sizeof(float));
     float* returned_gain = (float*)malloc((size_t)nf * sizeof(float));
-    if (!input || !output || !extra || !returned_gain) exit(5);
+    if (!input || !output || !residual_echo_psd || !returned_gain) exit(5);
     rng = 918273u + grid * 101u + (uint32_t)level * 17u + feature;
     for (uint32_t frame = 0; frame < FRAMES; ++frame) {
         float scale = frame < 48 ? 0.05f : frame < 112 ? 2.0f
@@ -88,7 +88,7 @@ static void run_case(uint32_t grid, int sr, int fft, AnrLevel level,
         for (int k = 0; k < nf; ++k) {
             input[k].r = random_sample() * scale;
             input[k].i = random_sample() * scale;
-            extra[k] = 0.01f * (1.0f + random_sample());
+            residual_echo_psd[k] = 0.01f * (1.0f + random_sample());
             returned_gain[k] = -123.0f;
         }
         if (frame >= 48 && frame < 176) {
@@ -111,9 +111,10 @@ static void run_case(uint32_t grid, int sr, int fft, AnrLevel level,
         } else if ((frame & 3u) == 1) {
             if (anr_process(s, input, output)) exit(9);
         } else {
-            const float* external = (frame & 4u) ? extra : NULL;
-            float* gain_out = (frame & 8u) ? returned_gain : NULL;
-            if (anr_process_gain(s, input, external, gain_out)) exit(10);
+            const float* gain = (frame & 4u) ? anr_process_gain_with_residual_psd(s, input, residual_echo_psd)
+                                              : anr_process_gain(s, input);
+            if (!gain) exit(10);
+            if (frame & 8u) memcpy(returned_gain, gain, (size_t)nf * sizeof(float));
         }
         uint32_t context[] = {grid, (uint32_t)level,
                               feature + (static_memory ? 4u : 0u), frame};
@@ -121,7 +122,7 @@ static void run_case(uint32_t grid, int sr, int fft, AnrLevel level,
     }
     free(input);
     free(output);
-    free(extra);
+    free(residual_echo_psd);
     free(returned_gain);
     anr_destroy(s);
     free(pool);

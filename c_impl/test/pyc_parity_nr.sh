@@ -132,7 +132,7 @@ build_layer() {
   BD=$(make -s --no-print-directory -C "$C_IMPL" BACKEND=ne10 ${MAKE_EXTRA[@]+"${MAKE_EXTRA[@]}"} "$@" print-bin-dir) \
     || die "cannot locate the $name bin dir"
   [ -f "$BD/config.manifest" ] || die "no config.manifest in $BD"
-  DEFS=$(grep -o -- '-D[A-Za-z0-9_]*' "$BD/config.manifest" | sort -u | tr '\n' ' ')
+  DEFS=$(grep -oE '(^|[[:space:]])-D[A-Za-z0-9_]+' "$BD/config.manifest" | sed 's/^[[:space:]]*//' | sort -u | tr '\n' ' ')
 }
 
 build_layer L1 DEBUG=1 SIMD=0;   BD1=$BD; DEFS1=$DEFS

@@ -30,7 +30,7 @@ NR_STRENGTH_PRESETS = {
 }
 
 
-# CLI index -> preset name, in AnrMode order (mild=0 ... aggressive=3).
+# CLI index -> preset name, in AnrLevel order (mild=0 ... aggressive=3).
 _STRENGTH_BY_INDEX = {str(i): name for i, name in enumerate(NR_STRENGTH_PRESETS)}
 
 

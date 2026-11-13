@@ -18,6 +18,7 @@
 
 #include "anr.h"
 #include "anr_types.h"
+#include "cli_level.h"
 #include "fft_wrapper.h"
 
 #define PARITY_MAGIC_V1 0x4E525031  /* 'NRP1': implicit 16 kHz */
@@ -26,7 +27,7 @@
 int main(int argc, char* argv[]) {
     if (argc < 3) {
         fprintf(stderr, "Usage: %s <in_spectra.bin> <out_c_gains.bin> "
-                        "[full] [0|1|2|3|mild|moderate|balanced|aggressive]\n", argv[0]);
+                        "[full] [0|1|2|3]\n", argv[0]);
         return 1;
     }
     if (argc >= 4 && strcmp(argv[3], "full") != 0) {
@@ -35,9 +36,10 @@ int main(int argc, char* argv[]) {
     }
     AnrLevel nr_level = ANR_LEVEL_BALANCED;
     if (argc >= 5) {
-        /* Name or digit 0..3; an unrecognised value keeps the balanced default. */
-        int m = anr_nr_level_from_name(argv[4]);
-        nr_level = m >= 0 ? (AnrLevel)m : ANR_LEVEL_BALANCED;
+        if (anr_cli_parse_level(argv[4], &nr_level) != 0) {
+            fprintf(stderr, "Error: unknown NR level '%s' (0 mild, 1 moderate, 2 balanced, 3 aggressive)\n", argv[4]);
+            return 2;
+        }
     }
 
     FILE* fin = fopen(argv[1], "rb");
@@ -99,11 +101,11 @@ int main(int argc, char* argv[]) {
     Complex* spec_in = (Complex*)malloc(n_freqs * sizeof(Complex));
     float*   re      = (float*)malloc(n_freqs * sizeof(float));
     float*   im      = (float*)malloc(n_freqs * sizeof(float));
-    float*   gain    = (float*)malloc(n_freqs * sizeof(float));
+    const float* gain = NULL;   /* borrowed from the denoiser */
     float*   all_gains = (float*)malloc((size_t)n_frames * n_freqs * sizeof(float));
-    if (!spec_in || !re || !im || !gain || !all_gains) {
+    if (!spec_in || !re || !im || !all_gains) {
         fprintf(stderr, "Error: malloc failed\n");
-        free(spec_in); free(re); free(im); free(gain); free(all_gains);
+        free(spec_in); free(re); free(im); free(all_gains);
         anr_destroy(denoiser);
         fclose(fin);
         return 1;
@@ -120,7 +122,8 @@ int main(int argc, char* argv[]) {
             spec_in[k].r = re[k];
             spec_in[k].i = im[k];
         }
-        if (anr_process_gain(denoiser, spec_in, NULL, gain) < 0) {
+        gain = anr_process_gain(denoiser, spec_in);
+        if (!gain) {
             fprintf(stderr, "Error: anr_process_gain failed at frame %d\n", f);
             break;
         }
@@ -132,7 +135,7 @@ int main(int argc, char* argv[]) {
     FILE* fout = fopen(argv[2], "wb");
     if (!fout) {
         fprintf(stderr, "Error: cannot open output %s\n", argv[2]);
-        free(spec_in); free(re); free(im); free(gain); free(all_gains);
+        free(spec_in); free(re); free(im); free(all_gains);
         anr_destroy(denoiser);
         return 1;
     }
@@ -144,7 +147,7 @@ int main(int argc, char* argv[]) {
     printf("[parity_runner] frames=%d n_freqs=%d sr=%d fft_size=%d -> %s\n",
            n_frames, n_freqs, sample_rate, fft_size, argv[2]);
 
-    free(spec_in); free(re); free(im); free(gain); free(all_gains);
+    free(spec_in); free(re); free(im); free(all_gains);
     anr_destroy(denoiser);
     return 0;
 }

@@ -11,6 +11,7 @@
 
 #include "anr.h"
 #include "anr_types.h"
+#include "cli_level.h"   /* example/: the strict --nr-level parser */
 #include "fft_wrapper.h"   /* Complex, fft_create/forward/inverse, mem_align.h */
 
 #ifndef M_PI
@@ -298,12 +299,13 @@ int main(void) {
     }
     printf("\n");
 
-    /* ---- 3b. Level names: values, parser, legacy aliases, out-of-range fallback ---- */
+    /* ---- 3b. Level values, name table, CLI digit parser, out-of-range fallback ---- */
     printf("-- level names --\n");
     {
         static const char* const names[] = { "mild", "moderate", "balanced", "aggressive" };
         static const char* const digits[] = { "0", "1", "2", "3" };
-        AnrMode legacy = ANR_MODE_MODERATE;
+        static const char* const bad[] = { "", " 2", "2 ", "2x", "+", "4", "-1", "mild", "balanced", "0x2", "99999999999999999999" };
+        AnrLevel parsed = ANR_LEVEL_BALANCED;
         AnrConfig bal = anr_config_for_level(16000, ANR_LEVEL_BALANCED);
         AnrConfig oob = anr_config_for_level(16000, (AnrLevel)42);
         int ok = 1;
@@ -311,20 +313,19 @@ int main(void) {
         CHECK(ANR_LEVEL_MILD == 0 && ANR_LEVEL_MODERATE == 1 &&
               ANR_LEVEL_BALANCED == 2 && ANR_LEVEL_AGGRESSIVE == 3,
               "ANR_LEVEL_* are 0..3 in depth order");
-        CHECK(ANR_MODE_MILD == ANR_LEVEL_MILD && ANR_MODE_MODERATE == ANR_LEVEL_MODERATE &&
-              ANR_MODE_BALANCED == ANR_LEVEL_BALANCED && ANR_MODE_AGGRESSIVE == ANR_LEVEL_AGGRESSIVE,
-              "legacy ANR_MODE_* names carry the ANR_LEVEL_* values");
-        CHECK((AnrLevel)legacy == ANR_LEVEL_MODERATE, "legacy AnrMode is the AnrLevel type");
         for (int i = 0; i < 4; i++) {
-            ok = ok && anr_nr_level_from_name(names[i]) == i &&
-                 anr_nr_level_from_name(digits[i]) == i &&
+            parsed = (AnrLevel)-1;
+            ok = ok && anr_cli_parse_level(digits[i], &parsed) == 0 && parsed == (AnrLevel)i &&
                  anr_nr_level_is_valid((AnrLevel)i) &&
                  strcmp(anr_nr_level_name((AnrLevel)i), names[i]) == 0;
         }
-        CHECK(ok, "level names and digits parse to the level, and the name round-trips");
-        CHECK(anr_nr_level_from_name("4") == -1 && anr_nr_level_from_name("loud") == -1 &&
-              anr_nr_level_from_name(NULL) == -1,
-              "unknown level name, digit out of range and NULL parse to -1");
+        CHECK(ok, "the digits 0..3 parse to the level, and the level's name is the table entry");
+        ok = anr_cli_parse_level("+2", &parsed) == 0 && parsed == ANR_LEVEL_BALANCED;
+        parsed = ANR_LEVEL_MILD;
+        for (int i = 0; i < (int)(sizeof bad / sizeof bad[0]); i++)
+            ok = ok && anr_cli_parse_level(bad[i], &parsed) == -1 && parsed == ANR_LEVEL_MILD;
+        ok = ok && anr_cli_parse_level(NULL, &parsed) == -1 && parsed == ANR_LEVEL_MILD;
+        CHECK(ok, "the CLI parser takes only a whole decimal 0..3; names, padding, suffixes, 4, negatives, overflow and NULL are -1 and write nothing");
         CHECK(!anr_nr_level_is_valid((AnrLevel)42) && !anr_nr_level_is_valid((AnrLevel)-1),
               "out-of-enum levels are not valid");
         CHECK(memcmp(&bal, &oob, sizeof bal) == 0,
@@ -454,26 +455,23 @@ int main(void) {
     }
     printf("\n");
 
-    /* ---- 6. anr_process_gain(..., NULL) matches a non-NULL call --- */
-    printf("-- gain_out==NULL matches anr_get_gain() (Group 3) --\n");
+    /* ---- 6. anr_process_gain() equals anr_process_gain_with_residual_psd(..., NULL) --- */
+    printf("-- anr_process_gain() matches a NULL residual PSD (Group 3) --\n");
     {
         AnrConfig cfg = anr_default_config(16000);
-        AnrDenoiser* with_copy = anr_create(&cfg);
-        AnrDenoiser* no_copy   = anr_create(&cfg);
-        CHECK(with_copy != NULL && no_copy != NULL,
-              "create() succeeds for both gain-borrow test instances");
+        AnrDenoiser* plain         = anr_create(&cfg);
+        AnrDenoiser* null_residual = anr_create(&cfg);
+        CHECK(plain != NULL && null_residual != NULL,
+              "create() succeeds for both gain test instances");
 
-        if (with_copy && no_copy) {
-            int n_freqs = anr_get_n_freqs(with_copy);
-            Complex* spec  = (Complex*)malloc((size_t)n_freqs * sizeof(Complex));
-            float* extra   = (float*)malloc((size_t)n_freqs * sizeof(float));
-            float* gain_out = (float*)malloc((size_t)n_freqs * sizeof(float));
+        if (plain && null_residual) {
+            int n_freqs = anr_get_n_freqs(plain);
+            Complex* spec = (Complex*)malloc((size_t)n_freqs * sizeof(Complex));
             unsigned seed = 987654321u;
             int gain_ok = 1;
-            int rc_ok = 1;
+            int ptr_ok = 1;
 
-            for (int frame = 0; frame < 40 && spec && extra && gain_out;
-                 ++frame) {
+            for (int frame = 0; frame < 40 && spec; ++frame) {
                 for (int k = 0; k < n_freqs; ++k) {
                     seed = seed * 1103515245u + 12345u;
                     float r = ((float)((seed >> 8) & 0xFFFFu) / 65535.0f);
@@ -481,37 +479,24 @@ int main(void) {
                     seed = seed * 1103515245u + 12345u;
                     float i = ((float)((seed >> 8) & 0xFFFFu) / 65535.0f);
                     spec[k].i = (i - 0.5f) * 0.2f;
-                    extra[k] = r * r * 1e-4f;
                 }
-                /* Exercise both the extra_noise_psd==NULL and non-NULL
-                 * branches across the run, identically on both instances. */
-                const float* extra_arg = (frame % 2 == 0) ? extra : NULL;
-
-                if (anr_process_gain(with_copy, spec, extra_arg,
-                                          gain_out) < 0) rc_ok = 0;
-                if (anr_process_gain(no_copy, spec, extra_arg,
-                                          NULL) < 0) rc_ok = 0;
-                if (!rc_ok) break;
-
-                int nf_check = -1;
-                const float* borrowed = anr_get_gain(no_copy, &nf_check);
-                if (!borrowed || nf_check != n_freqs ||
-                    memcmp(borrowed, gain_out,
-                           (size_t)n_freqs * sizeof(float)) != 0) {
+                const float* g_plain = anr_process_gain(plain, spec);
+                const float* g_null  = anr_process_gain_with_residual_psd(null_residual, spec, NULL);
+                if (!g_plain || !g_null) { ptr_ok = 0; break; }
+                if (memcmp(g_plain, g_null, (size_t)n_freqs * sizeof(float)) != 0) {
                     gain_ok = 0;
                     break;
                 }
             }
-            CHECK(rc_ok, "anr_process_gain(..., NULL) does not fail");
+            CHECK(ptr_ok, "anr_process_gain() and the NULL-residual call return a gain");
             CHECK(gain_ok,
-                  "anr_process_gain(..., NULL)'s internal gain, read "
-                  "via anr_get_gain(), is byte-identical every frame "
-                  "to what a non-NULL call would have copied out");
+                  "anr_process_gain() is byte-identical every frame to "
+                  "anr_process_gain_with_residual_psd(..., NULL)");
 
-            free(spec); free(extra); free(gain_out);
+            free(spec);
         }
-        if (with_copy) anr_destroy(with_copy);
-        if (no_copy) anr_destroy(no_copy);
+        if (plain) anr_destroy(plain);
+        if (null_residual) anr_destroy(null_residual);
     }
     printf("\n");
 

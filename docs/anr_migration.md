@@ -13,7 +13,7 @@ MMSE-LSA/OMLSA gain and MCRA/SPP components for technical accuracy.
 | Archive | `libanr.a`, linked with the matching `libaudio_common.a` |
 | Types | `AnrDenoiser`, `AnrConfig`, `AnrLevel`, `AnrDebugStatus` |
 | Functions | `anr_*` |
-| Strength constants | `ANR_LEVEL_*` (legacy names `ANR_MODE_*`, `AnrMode` stay) |
+| Strength constants | `ANR_LEVEL_*` |
 | Other constants | `ANR_*` |
 
 ```c

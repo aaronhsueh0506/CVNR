@@ -90,7 +90,7 @@ AnrDenoiser *nr_create_static(void)
 
 void nr_end_of_stream(AnrDenoiser *nr)
 {
-    /* ... 每 hop 呼叫 anr_process() 或 anr_process_gain() ... */
+    /* ... 每 hop 呼叫 anr_process()、anr_process_gain() 或 anr_process_gain_with_residual_psd() ... */
     anr_reset(nr);     /* 串流邊界:同時清呼叫端自己的 analysis / OLA buffer */
     anr_destroy(nr);   /* static 實例是真 no-op,可重複呼叫;pool 由呼叫端持有、呼叫端釋放 */
 }</pre>
@@ -124,8 +124,7 @@ anr_destroy(nr);                      /* heap 實例只能呼叫一次,重複呼
      |-- fft_get_mem_size(fft) + fft_init(...) -----------------------------------&gt;|  另一塊 pool
  [每個 hop;呼叫端 sqrt-Hann、50 % overlap]
      |-- 加窗 + fft_forward(h, time, E[n_freqs]) --------------------------------&gt;|
-     |-- anr_process_gain(nr, E, extra | NULL, NULL) ----&gt;|  回 0 | -1(NULL 引數,狀態未動)
-     |-- anr_get_gain(nr, NULL) -------------------------&gt;|  g[n_freqs](借用,到下次 process 前有效)
+     |-- anr_process_gain_with_residual_psd(nr, E, residual_psd | NULL) --&gt;|  g[n_freqs](借用,到下次 process 前有效)| NULL(NULL 引數,狀態未動)
      |-- E × g(或 min(g, G_res))+ fft_inverse + 合成窗 + OLA -------------------&gt;|
  [執行期換強度,hop 之間]
      |-- anr_set_level(nr, level) | anr_reconfigure(nr, &amp;t) -&gt;|  回 0 | -1(幾何不符 / 無效,什麼都不寫)
@@ -142,26 +141,26 @@ anr_destroy(nr);                      /* heap 實例只能呼叫一次,重複呼
 <tr><th>入口</th><th>什麼時候用</th></tr>
 <tr><td><code>anr_process()</code></td><td>NR 是最後一級:直接把 gain 套上頻譜(相位不變)</td></tr>
 <tr><td><code>anr_process_gain()</code></td><td><b>NR 是串接鏈的一環</b>:只要 gain、不要套用,交給上層與 AEC/RES 的 gain 融合</td></tr>
+<tr><td><code>anr_process_gain_with_residual_psd()</code></td><td>同上,而且上游 AEC 在頻譜裡留有殘留回音:把殘留回音功率交給 NR,不讓 denoiser 把它學成噪聲</td></tr>
 </table></div>
 <pre>/* A. 直接套用,可 in-place */
 if (anr_process(nr, spectrum, spectrum) != 0) { /* self / 輸入 / 輸出為 NULL */ }
 
 /* B. 只取 gain(串接鏈都走這條) */
-float gain[257];                                 /* &gt;= anr_get_n_freqs(nr) */
-if (anr_process_gain(nr, error_spec, extra_noise_psd, gain) != 0) { /* self / error_spec 為 NULL */ }
-/* gain_out 傳 NULL 時改讀 anr_get_gain(nr, NULL) */</pre>
+const float* gain = anr_process_gain_with_residual_psd(nr, error_spec, residual_psd_audio);
+if (!gain) { /* self / error_spec 為 NULL */ }
+/* residual_psd_audio 為 NULL 時等同 anr_process_gain(nr, error_spec);gain 是 n_freqs 個 float 的內部緩衝 */</pre>
 <div class="tblwrap"><table>
 <tr><th>項目</th><th>契約</th></tr>
 <tr><td>buffer 長度</td><td>全部 <code>n_freqs = fft_size/2+1</code>;函式<b>沒有長度參數</b>,傳錯不會替你報錯</td></tr>
 <tr><td>FFT 誰做</td><td>呼叫端。NR 不碰時域</td></tr>
 <tr><td>Aliasing</td><td><code>spectrum_out == spectrum_in</code>(<b>完全同一指標</b>)支援;完全不相交也支援;<b>部分重疊不支援</b>(<code>anr.c</code>)</td></tr>
-<tr><td><code>extra_noise_psd</code></td><td>長度 <code>n_freqs</code>,可為 <code>NULL</code>。非 NULL 時做 echo-as-extra-noise:<code>ξ=S²/(N²+R²)</code>,只餵進 SPP／先驗 SNR；MCRA 噪聲估計仍只用輸入功率更新</td></tr>
-<tr><td><code>gain_out</code></td><td>可傳 <code>NULL</code> 省一次 memcpy,之後用 <code>anr_get_gain()</code> 讀同一份</td></tr>
-<tr><td>回傳值</td><td><code>0</code> 成功;<code>-1</code> 表示必要的 <code>self</code>／<code>spectrum_in</code>(<code>anr_process()</code> 另含 <code>spectrum_out</code>)為 NULL,此時狀態未動。<code>extra_noise_psd</code>／<code>gain_out</code> 傳 NULL <b>是合法用法</b></td></tr>
+<tr><td><code>residual_echo_psd</code></td><td>長度 <code>n_freqs</code>,殘留回音功率(audio 功率尺度),可為 <code>NULL</code>。非 NULL 時把它併入噪聲底:<code>ξ=S²/(N²+R²)</code>,只餵進 SPP／先驗 SNR；MCRA 噪聲估計仍只用輸入功率更新</td></tr>
+<tr><td>回傳值</td><td><code>anr_process()</code>:<code>0</code> 成功,<code>-1</code> 表示 <code>self</code>／<code>spectrum_in</code>／<code>spectrum_out</code> 為 NULL,此時狀態未動。<code>anr_process_gain*()</code>:成功回內部 gain 指標(<code>n_freqs</code> 個 float,線性 [g_min,1],借用到下一次 process 呼叫前),<code>self</code>／<code>spectrum_in</code> 為 NULL 時回 <code>NULL</code> 且狀態未動。<code>residual_echo_psd</code> 傳 NULL <b>是合法用法</b></td></tr>
 <tr><td>初始化期</td><td>前 <code>num_init_frames</code> 個<b>非全零</b> frame 是 pass-through(gain 全 1.0),同時累積噪聲統計；第 <code>num_init_frames</code> 次呼叫完成初始化，但那一次的 gain 仍是 1.0，下一個 hop 才開始抑制。<b>數位靜音 frame(所有 bin 功率恰為 0)</b>不是錯誤、回 0：初始化前 gain=1 且不計入暖機；初始化後仍照常算 gain(<b>不會</b>被強制為 1，實測 16k/256 在 40 個以上噪聲 hop 之後的全零 hop 平均 gain 約 0.2)，只是不推進噪聲底追蹤器(<code>anr.c</code> <code>frame_is_silent()</code>、<code>process_init_or_gain()</code>)</td></tr>
 </table></div>
 <div class="warn"><b>Aliasing 規則與 FFT 層相反。</b><code>fft_forward()</code>／<code>fft_inverse()</code> 用 <code>restrict</code>,<b>任何</b>重疊(含完全相同指標)都是 UB;NR 這裡卻明確支援完全同一指標。兩層不要套用同一條直覺。</div>
-<div class="note"><b>接 AEC 的 <code>r2</code> 時要先換算尺度。</b>AEC 的殘留回音 PSD(<code>AecResContext.r2</code>／<code>McabFrame.r2</code>)是 int16² 尺度,而線性誤差頻譜 <code>E</code> 是 audio 尺度,直接當 <code>extra_noise_psd</code> 前必須除以 <code>32768²</code>。範例層已做這件事:4ch 的 <code>mcab_sample_anr_gain()</code>(<code>pipelines/4ch_aec_bf_nr_res/mcab_sample_post.h</code>)與 mono 範例的 <code>mono_nr_gain()</code>(<code>pipelines/mono_aec_nr_res/main.c</code>),都只在 <code>use_r2</code> 開啟、<code>r2</code> 非 NULL 且 <code>usable_linear</code> 為真時才併入;application 不要自己另推一份。</div>
+<div class="note"><b>接 AEC 的 <code>r2</code> 時要先換算尺度。</b>AEC 的殘留回音 PSD(<code>AecResidualView.r2</code>)是 int16² 尺度,而線性誤差頻譜 <code>E</code> 是 audio 尺度,直接當 <code>residual_echo_psd</code> 前必須除以 <code>32768²</code>。範例層已做這件事:4ch 的 <code>array_sample_anr_gain()</code>(<code>pipelines/4ch/array_sample_post.h</code>)與 mono 範例的 <code>mono_nr_gain()</code>(<code>pipelines/mono/aec_nr_res/main.c</code>),都只在 <code>use_r2</code> 開啟、<code>r2</code> 非 NULL 且 <code>usable_linear</code> 為真時才併入;application 不要自己另推一份。</div>
 
 <h2>5. 參數設定：用 level，不要逐欄位手調</h2>
 <p>設定強度的正規做法是選一個 <code>AnrLevel</code>。<code>anr_config_for_level_grid()</code> 的四級只改 <code>g_min_db</code>、<code>q</code>、<code>xi_min_db</code>、<code>noise_over_subtraction</code>；DD、tracker、gain dynamics 與低頻語音 guard 的<b>組態欄位</b>共用。例外是幀級語音閘 <code>speech_protect_frame_threshold</code>:設定值著作於 balanced 的 <code>q = 0.52</code>,生效值為 <code>value + (q − 0.52)</code>,隨 level 位移(mild 0.61 / moderate 0.57 / balanced 0.55 / aggressive 0.48;可用 <code>anr_get_speech_protect_frame_threshold()</code> 讀回)。</p>
@@ -240,7 +239,7 @@ make -C NR/c_impl lib SIMD=0                  # 純量參考建置</pre>
 <li>WOLA 是 periodic sqrt-Hann、50% overlap、<code>frame_size == fft_size</code>、不補零。</li>
 <li>每次 <code>process</code> 恰好給 <code>n_freqs</code> 個 bin,函式不會替你檢查長度。</li>
 <li>pool 基底 16-byte 對齊;<code>get_mem_size()</code> 與 <code>init()</code> 的回傳值都檢查。</li>
-<li>borrowed pointer(<code>anr_get_gain</code>／<code>anr_get_noise_psd</code>)沒有跨下一次 <code>process()</code> 保存。</li>
+<li>borrowed pointer(<code>anr_process_gain*()</code> 回傳的 gain／<code>anr_get_noise_psd</code>)沒有跨下一次 <code>process()</code> 保存。</li>
 <li>stream boundary 同時 reset NR <b>與</b> caller 的 WOLA/ring state。</li>
 <li>要調平滑用 <code>alpha_decay</code>,<b>不是</b> <code>alpha_g</code>。</li>
 <li>沒有 include <code>noise_estimator.h</code>／<code>spp_estimator.h</code>／<code>anr_internal.h</code>；公開／內部函式分級見 <a href="nr_c_api_params.html">參數頁</a> §6。</li>

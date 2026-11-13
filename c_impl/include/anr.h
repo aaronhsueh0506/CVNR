@@ -35,13 +35,20 @@ int anr_process(AnrDenoiser* self,
                      const Complex*   spectrum_in,
                      Complex*         spectrum_out);
 
-/* Computes gain[n_freqs] without applying it. Optional extra_noise_psd[n_freqs] (input power
- * scale) raises only the SPP/SNR noise floor; the tracker still follows the input power. NULL
- * gain_out skips the copy (see anr_get_gain). Returns 0, or -1 for NULL input/handle. */
-int anr_process_gain(AnrDenoiser* self,
-                          const Complex*   spectrum_in,
-                          const float*     extra_noise_psd,
-                          float*           gain_out);
+/* Computes the per-bin gain for spectrum_in[n_freqs] without applying it and returns it:
+ * n_freqs floats, linear in [g_min, 1] (1 while the noise floor initializes), owned by the
+ * instance and borrowed until the next process call. Returns NULL for NULL arguments; the
+ * state is then untouched. */
+const float* anr_process_gain(AnrDenoiser* self, const Complex* spectrum_in);
+
+/* anr_process_gain() for a chain whose AEC leaves residual echo in spectrum_in.
+ * residual_echo_psd[n_freqs] is that residual echo power per bin in audio power scale (the AEC
+ * r2 divided by 32768^2); the denoiser then does not learn it as noise. It raises only the
+ * SPP/SNR noise floor; the noise tracker still follows the input power. NULL gives exactly
+ * anr_process_gain(). */
+const float* anr_process_gain_with_residual_psd(AnrDenoiser* self,
+                                                const Complex*   spectrum_in,
+                                                const float*     residual_echo_psd);
 
 /* Clears all internal state (use when switching audio streams). */
 void anr_reset(AnrDenoiser* self);
@@ -69,10 +76,6 @@ const float* anr_get_noise_psd(const AnrDenoiser* self, int* n_freqs);
 
 /* Frame speech gate in effect (ANR_SPEECH_PROTECT_ANCHOR_Q); follows anr_reconfigure(). */
 float anr_get_speech_protect_frame_threshold(const AnrDenoiser* self);
-
-/* Latest gain[n_freqs], linear in [g_min, 1]; valid after one processed frame and borrowed
- * until the next process call. */
-const float* anr_get_gain(const AnrDenoiser* self, int* n_freqs);
 
 /* Last-frame aggregate diagnostics, computed on request. */
 typedef struct AnrDebugStatus {

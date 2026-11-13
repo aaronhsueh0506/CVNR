@@ -147,7 +147,7 @@ MCRA broadband gate 內部用來計數的 `spp > 0.5` 則是另一個分類門�
 ### 4.8 外部（可開放給第三方）與內部（存在但不建議開放）
 
 `AnrConfig` 的 41 欄 = 外部 A 4 欄（3 個概念）＋ 外部 B 4 欄 ＋ 內部 33 欄。完整表（預設、範圍、耦合、
-為什麼不開放）在 `docs/html/nr_c_api_params.html`；這裡只列歸屬：
+為什麼不開放）在 `docs/html/reference/nr_c_api_params.html`；這裡只列歸屬：
 
 | 類別 | 欄位 | 說明 |
 |---|---|---|

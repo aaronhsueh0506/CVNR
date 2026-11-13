@@ -68,6 +68,8 @@ except ImportError as _exc:  # missing numpy/scipy/pyyaml: infrastructure, not a
 FORMAT = 1
 MAGIC = 0x4E525032  # 'NRP2'
 STRENGTHS = ('mild', 'moderate', 'balanced', 'aggressive')
+# The C drivers take the level as its enum number (0..3, in STRENGTHS order); the Python twin keeps the names.
+C_LEVEL_ARG = {name: str(i) for i, name in enumerate(STRENGTHS)}
 GRIDS = ((8000, 128), (8000, 256), (16000, 256), (16000, 512), (48000, 1024))
 LAYERS = ('L1', 'L2')
 
@@ -369,7 +371,7 @@ def read_gains(path):
 
 def run_gain_driver(binary, nrp2, strength, makeup, tag):
     out = nrp2 + '.' + tag
-    cmd = [binary, nrp2, out, strength] + (['makeup_gain=1'] if makeup else [])
+    cmd = [binary, nrp2, out, C_LEVEL_ARG[strength]] + (['makeup_gain=1'] if makeup else [])
     run_cmd(cmd)
     g = read_gains(out)
     os.remove(out)
@@ -380,7 +382,7 @@ def run_e2e_driver(binary, x32, sr, fft, strength, work, tag):
     inp = os.path.join(work, 'e2e_in.f32')
     out = os.path.join(work, 'e2e_out_%s.f32' % tag)
     x32.astype('<f4').tofile(inp)
-    run_cmd([binary, inp, str(len(x32)), str(sr), str(fft), strength, out])
+    run_cmd([binary, inp, str(len(x32)), str(sr), str(fft), C_LEVEL_ARG[strength], out])
     y = np.fromfile(out, dtype='<f4')
     os.remove(out)
     return y
@@ -469,8 +471,8 @@ def selfcheck(args, bases, work):
         for layer, drv, runner in (('L1', args.gain_l1, args.runner_l1), ('L2', args.gain_l2, args.runner_l2)):
             a = os.path.join(work, 'sc_driver.bin')
             b = os.path.join(work, 'sc_runner.bin')
-            run_cmd([drv, path, a, 'balanced'])
-            run_cmd([runner, path, b, 'full', 'balanced'])
+            run_cmd([drv, path, a, C_LEVEL_ARG['balanced']])
+            run_cmd([runner, path, b, 'full', C_LEVEL_ARG['balanced']])
             with open(a, 'rb') as fa, open(b, 'rb') as fb:
                 same = fa.read() == fb.read()
             rows.append(dict(grid='%dk_%d' % (sr // 1000, fft), layer=layer, byte_identical=same))
@@ -483,7 +485,7 @@ def selfcheck(args, bases, work):
     path = os.path.join(work, 'selfcheck.nrp2')
     write_nrp2(path, re32, im32, np.zeros_like(re32), 16000)
     for drv in (args.gain_l1, args.gain_l2):
-        for extra in (['bogus'], ['balanced', 'nonexistent=1'], ['balanced', 'makeup_gain=2']):
+        for extra in (['bogus'], ['balanced'], ['4'], ['2', 'nonexistent=1'], ['2', 'makeup_gain=2']):
             r = subprocess.run([drv, path, os.path.join(work, 'none.out')] + extra,
                                capture_output=True, text=True, env=ENV)
             strict = strict and r.returncode != 0

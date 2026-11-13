@@ -233,8 +233,8 @@ CFLAGS    += $(FP_POLICY)
 COMMON_FWD = BACKEND=$(BACKEND) SIMD=$(SIMD) WERROR=$(WERROR) CC='$(CC)' CXX='$(CXX)' EXTRA_CFLAGS='$(EXTRA_CFLAGS)' NO_STDIO=$(NO_STDIO) TOOLCHAIN_CHECK=$(TOOLCHAIN_CHECK)
 
 ifeq ($(COMMON_LIB),)
-.PHONY: all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-scene-change test-shared-startup test-api-cpp test-cli-args bench-anr
-all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-scene-change test-shared-startup test-api-cpp test-cli-args bench-anr:
+.PHONY: all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-gain-api test-scene-change test-shared-startup test-api-cpp test-cli-args bench-anr
+all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-gain-api test-scene-change test-shared-startup test-api-cpp test-cli-args bench-anr:
 	+@ac="$$($(MAKE) -s --no-print-directory -C $(COMMON_DIR) $(COMMON_FWD) print-lib-path)"; \
 	 test -n "$$ac" || { echo "FATAL: could not resolve audiolib archive path (COMMON_DIR=$(COMMON_DIR) -- is audiolib present as a sibling of this repo?)" >&2; exit 1; }; \
 	 $(MAKE) --no-print-directory $@ COMMON_LIB="$$ac"
@@ -406,10 +406,11 @@ $(OBJ_DIR)/main_mem.o: $(EXAMPLE_DIR)/main_mem.c | _cfg_guard
 # (test/test_config_validation.c) built against the same objects as denoise_wav; a non-zero exit
 # fails the recipe.
 # =============================================================================
-.PHONY: test-config test-reconfigure test-noise-restart test-scene-change test-shared-startup
+.PHONY: test-config test-reconfigure test-noise-restart test-gain-api test-scene-change test-shared-startup
 TEST_TARGET = $(BIN_DIR)/test_config_validation
 TEST_RECFG_TARGET = $(BIN_DIR)/test_reconfigure
 TEST_RESTART_TARGET = $(BIN_DIR)/test_noise_restart
+TEST_GAIN_API_TARGET = $(BIN_DIR)/test_gain_api
 TEST_SCENE_TARGET = $(BIN_DIR)/test_scene_change_margin
 TEST_SHARED_TARGET = $(BIN_DIR)/test_shared_startup
 test-config: $(TEST_TARGET)
@@ -420,6 +421,9 @@ test-reconfigure: $(TEST_RECFG_TARGET)
 
 test-noise-restart: $(TEST_RESTART_TARGET)
 	"$(abspath $(TEST_RESTART_TARGET))"
+
+test-gain-api: $(TEST_GAIN_API_TARGET)
+	"$(abspath $(TEST_GAIN_API_TARGET))"
 
 test-scene-change: $(TEST_SCENE_TARGET)
 	"$(abspath $(TEST_SCENE_TARGET))"
@@ -448,6 +452,15 @@ $(TEST_RESTART_TARGET): $(OBJS) $(OBJ_DIR)/test_noise_restart.o $(COMMON_LIB) | 
 	@echo "Build complete: $@"
 
 $(OBJ_DIR)/test_noise_restart.o: $(TEST_DIR)/test_noise_restart.c | _cfg_guard
+	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
+
+# anr_process_gain / anr_process_gain_with_residual_psd gains against hashes captured from the
+# previous gain API (see test/test_gain_api.c).
+$(TEST_GAIN_API_TARGET): $(OBJS) $(OBJ_DIR)/test_gain_api.o $(COMMON_LIB) | _cfg_guard
+	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/test_gain_api.o $(COMMON_LIB) $(LDFLAGS)
+	@echo "Build complete: $@"
+
+$(OBJ_DIR)/test_gain_api.o: $(TEST_DIR)/test_gain_api.c | _cfg_guard
 	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
 
 # Scene-change flatness decision just above and below the threshold (see
@@ -503,7 +516,7 @@ $(TEST_CPP_TARGET): $(OBJS) $(OBJ_DIR)/test_api_cpp.o $(COMMON_LIB) | _cfg_guard
 $(OBJ_DIR)/test_api_cpp.o: $(TEST_DIR)/test_api_cpp.cpp | _cfg_guard
 	$(CXX) $(filter-out -std=gnu99,$(CFLAGS)) $(CXXFLAGS) -std=c++17 $(FP_POLICY) -MD -MP -c -o $@ $<
 
-# Per-hop cost of anr_process() and anr_process_gain() on three grids and two levels. Host-only
+# Per-hop cost of anr_process() and anr_process_gain_with_residual_psd() on three grids and two levels. Host-only
 # timing of the build selected by BACKEND/SIMD/CC; run it on an otherwise idle machine.
 .PHONY: bench-anr
 BENCH_TARGET = $(BIN_DIR)/bench_anr
@@ -540,7 +553,7 @@ PYC_PARITY_GATE_ONLY = ^(?!.*/8k_)(?!.*/(scale_1e-3|scale_1e-5|scale_1e-6|int16_
 PYC_PARITY_JSON ?= $(OBJ_ROOT)/pyc_parity_nr.json
 SIMD_OTHER = $(if $(filter 0,$(SIMD)),1,0)
 TEST_BUILD_GOALS = all lib mem parity
-TEST_C_GOALS = test-config test-reconfigure test-noise-restart test-scene-change test-shared-startup test-api-cpp test-cli-args test-bit-exact
+TEST_C_GOALS = test-config test-reconfigure test-noise-restart test-gain-api test-scene-change test-shared-startup test-api-cpp test-cli-args test-bit-exact
 # pytest starts its own `make`; a clean make environment keeps that child's stdout to the CSV the
 # test parses. COMMON_DIR travels explicitly because MAKEFLAGS (which carries command-line
 # variables) is dropped.
@@ -882,6 +895,7 @@ help:
 	@echo "  test-config-parity - Build + run the canonical-configuration dump used by the Python parity test"
 	@echo "  test-reconfigure - Build + run the runtime reconfiguration tests"
 	@echo "  test-noise-restart - Build + run the digital-silence noise tracking tests"
+	@echo "  test-gain-api - Build + run the anr_process_gain / anr_process_gain_with_residual_psd tests"
 	@echo "  test-scene-change - Build + run the scene-change flatness margin test"
 	@echo "  test-shared-startup - Build + run the shared startup/ring storage equivalence test"
 	@echo "  test-api-cpp - Build + run the C++ header compile/link smoke test"

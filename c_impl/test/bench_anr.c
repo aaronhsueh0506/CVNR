@@ -5,7 +5,7 @@
  *
  * Input is a deterministic speech-like signal (stationary coloured noise plus gated harmonic bursts,
  * 16-bit sample scale) transformed to spectra before timing; only anr_process() and
- * anr_process_gain() are timed. Every pass starts from a fresh instance, so each pass processes
+ * anr_process_gain_with_residual_psd() are timed. Every pass starts from a fresh instance, so each pass processes
  * the same state sequence. A row reports the median, quartiles and minimum of the per-pass cost.
  * The numbers describe the machine and compiler that built this binary; they are not a target
  * platform figure.
@@ -94,19 +94,19 @@ static Complex* make_spectra(const AnrConfig* cfg, int hops) {
 
 typedef struct { double median, p25, p75, minimum; } Stats;
 
-/* entry 0: anr_process (out of place); entry 1: anr_process_gain with an extra noise PSD. */
+/* entry 0: anr_process (out of place); entry 1: anr_process_gain_with_residual_psd. */
 static Stats time_cell(const AnrConfig* cfg, const Complex* spectra, int hops, int entry,
                        int passes, int warmup) {
     const int nf = cfg->fft_size / 2 + 1;
     static double per_pass[MAX_PASSES];
     Complex* out = (Complex*)calloc((size_t)nf, sizeof(Complex));
-    float* extra = (float*)malloc((size_t)nf * sizeof(float));
-    float* gain = (float*)calloc((size_t)nf, sizeof(float));
-    if (!out || !extra || !gain) exit(2);
+    float* residual_echo_psd = (float*)malloc((size_t)nf * sizeof(float));
+    const float* gain = NULL;
+    if (!out || !residual_echo_psd) exit(2);
     double mean_power = 0.0;
     for (int k = 0; k < nf; ++k)
         mean_power += (double)spectra[k].r * spectra[k].r + (double)spectra[k].i * spectra[k].i;
-    for (int k = 0; k < nf; ++k) extra[k] = (float)(0.25 * mean_power / nf);
+    for (int k = 0; k < nf; ++k) residual_echo_psd[k] = (float)(0.25 * mean_power / nf);
 
     volatile float sink = 0.0f;
     for (int p = 0; p < passes + warmup; ++p) {
@@ -117,10 +117,11 @@ static Stats time_cell(const AnrConfig* cfg, const Complex* spectra, int hops, i
             for (int k = 0; k < hops; ++k) anr_process(d, spectra + (size_t)k * nf, out);
         } else {
             for (int k = 0; k < hops; ++k)
-                anr_process_gain(d, spectra + (size_t)k * nf, extra, gain);
+                gain = anr_process_gain_with_residual_psd(d, spectra + (size_t)k * nf,
+                                                          residual_echo_psd);
         }
         double t1 = now_seconds();
-        sink += out[nf / 3].r + gain[nf / 3];
+        sink += out[nf / 3].r + (gain ? gain[nf / 3] : 0.0f);
         anr_destroy(d);
         if (p >= warmup) per_pass[p - warmup] = (t1 - t0) / (double)hops * 1e6;
     }
@@ -129,8 +130,7 @@ static Stats time_cell(const AnrConfig* cfg, const Complex* spectra, int hops, i
     Stats s = {quantile(per_pass, passes, 0.5), quantile(per_pass, passes, 0.25),
                quantile(per_pass, passes, 0.75), per_pass[0]};
     free(out);
-    free(extra);
-    free(gain);
+    free(residual_echo_psd);
     return s;
 }
 
@@ -146,7 +146,7 @@ int main(int argc, char** argv) {
     static const int sizes[] = {256, 512, 1024};
     static const AnrLevel levels[] = {ANR_LEVEL_BALANCED, ANR_LEVEL_AGGRESSIVE};
     static const char* const level_names[] = {"balanced", "aggressive"};
-    static const char* const entry_names[] = {"process", "process_gain+extra"};
+    static const char* const entry_names[] = {"process", "gain+residual_psd"};
 
     if (!medians_only) {
         printf("bench-anr: %d timed passes after %d warm-up passes, %d hops per pass; us per hop\n",

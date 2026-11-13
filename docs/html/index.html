@@ -17,7 +17,7 @@ dl,dd { margin: 0; } dt { margin-top: .7rem; } a { color: #165c47; } pre { backg
 <p>將 <code>audiolib/</code> 放在本庫旁邊，從 NR 根目錄執行。</p>
 <pre><code>make -C c_impl
 bin="$(make -s -C c_impl print-bin-dir)"
-"$bin/denoise_wav" input.wav output.wav --nr-level balanced</code></pre>
+"$bin/denoise_wav" input.wav output.wav --nr-level 2</code></pre>
 <section>
 <h2>使用 C 函式庫</h2>
 <dl>
@@ -33,6 +33,6 @@ bin="$(make -s -C c_impl print-bin-dir)"
 <h2>使用 Python 參考實作</h2>
 <pre><code>python3 -m pip install -r python/requirements.txt
 python3 python/process_audio.py input.wav --versions V3-2 --nr-mode balanced --mode full --fft-size 256</code></pre>
-<p>C 的 <code>--nr-level</code> 對應 Python 的 <code>--nr-mode</code>，兩者都支援 mild、moderate、balanced、aggressive。</p>
+<p>C 的 <code>--nr-level</code> 對應 Python 的 <code>--nr-mode</code>；Python 收 mild、moderate、balanced、aggressive，C 只收數字 0..3（mild、moderate、balanced、aggressive），其他值結束碼 2。</p>
 </section>
 </main></body></html>

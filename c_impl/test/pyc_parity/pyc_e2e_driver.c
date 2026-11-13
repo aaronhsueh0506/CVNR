@@ -14,6 +14,7 @@
 
 #include "anr.h"
 #include "anr_types.h"
+#include "cli_level.h"
 #include "fft_wrapper.h"
 #include "audio_window.h"
 
@@ -25,9 +26,9 @@ static int fail(const char* msg) {
 int main(int argc, char** argv) {
     if (argc != 7) return fail("usage: pyc_e2e_driver <in.f32> <n_samples> <sample_rate> <fft_size> <level> <out.f32>");
     const int n_samples = atoi(argv[2]), sr = atoi(argv[3]), fft_size = atoi(argv[4]);
-    const int level = anr_nr_level_from_name(argv[5]);
+    AnrLevel level;
     if (n_samples <= 0 || sr <= 0 || fft_size <= 0) return fail("bad numeric argument");
-    if (level < 0) return fail("unknown level (expected mild|moderate|balanced|aggressive)");
+    if (anr_cli_parse_level(argv[5], &level) != 0) return fail("unknown level (expected 0 mild, 1 moderate, 2 balanced, 3 aggressive)");
 
     AnrConfig cfg = anr_config_for_level_grid(sr, fft_size, (AnrLevel)level);
     if (!anr_validate_config(&cfg)) return fail("config rejected by anr_validate_config");

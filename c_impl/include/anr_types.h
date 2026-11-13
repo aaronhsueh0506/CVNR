@@ -18,34 +18,13 @@ typedef enum {
     ANR_LEVEL_MILD       = 0,   // Gentlest, preserve speech detail (g_min -20)
     ANR_LEVEL_MODERATE   = 1,   // Between mild and balanced (g_min -23)
     ANR_LEVEL_BALANCED   = 2,   // Default (g_min -25)
-    ANR_LEVEL_AGGRESSIVE = 3,   // Deepest noise removal (g_min -28)
-
-    /* Legacy names of the four levels above (same values; the Python twins call this setting a
-     * strength preset and the Python tests read these lines). Keep the literal digits. */
-    ANR_MODE_MILD       = 0,
-    ANR_MODE_MODERATE   = 1,
-    ANR_MODE_BALANCED   = 2,
-    ANR_MODE_AGGRESSIVE = 3
+    ANR_LEVEL_AGGRESSIVE = 3    // Deepest noise removal (g_min -28)
 } AnrLevel;
-
-/* Legacy type name of AnrLevel. */
-typedef AnrLevel AnrMode;
 
 /* True for a defined AnrLevel value. */
 static inline bool anr_nr_level_is_valid(AnrLevel level) {
     return level == ANR_LEVEL_MILD || level == ANR_LEVEL_MODERATE ||
            level == ANR_LEVEL_BALANCED || level == ANR_LEVEL_AGGRESSIVE;
-}
-
-/* Parses a level name ("mild", "moderate", "balanced", "aggressive") or the digit "0".."3";
- * returns the AnrLevel value, or -1 for anything else (including NULL). */
-static inline int anr_nr_level_from_name(const char *name) {
-    if (!name) return -1;
-    if (strcmp(name, "mild") == 0       || strcmp(name, "0") == 0) return ANR_LEVEL_MILD;
-    if (strcmp(name, "moderate") == 0   || strcmp(name, "1") == 0) return ANR_LEVEL_MODERATE;
-    if (strcmp(name, "balanced") == 0   || strcmp(name, "2") == 0) return ANR_LEVEL_BALANCED;
-    if (strcmp(name, "aggressive") == 0 || strcmp(name, "3") == 0) return ANR_LEVEL_AGGRESSIVE;
-    return -1;
 }
 
 static inline const char *anr_nr_level_name(AnrLevel level) {

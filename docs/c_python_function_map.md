@@ -12,7 +12,7 @@
 - 讓對拍腳本（`python/tools/pyc_parity_nr.py`）的 EXPECTED_RED 紅燈能回頭找到函式。
 - 在 Python 或 C 側增刪改符號時，由 pytest 提醒更新本表。
 
-命名橋：C 稱強度 `level`（`AnrLevel`、`anr_set_level`、`anr_config_for_level*`），Python 稱 strength preset（`NR_STRENGTH_PRESETS`、`apply_strength`）；C level == Python preset，值與數字 0..3 相同。Python 檔案內的註解與 docstring 仍寫舊 C 名稱（`anr_config_for_mode`、`AnrMode`），以本表第 1 欄為準。
+命名橋：C 稱強度 `level`（`AnrLevel`、`anr_set_level`、`anr_config_for_level*`），Python 稱 strength preset（`NR_STRENGTH_PRESETS`、`apply_strength`）；C level == Python preset，值與數字 0..3 相同。Python 檔案內的註解與 docstring 仍可能寫舊 C 名稱（`anr_config_for_mode`），以本表第 1 欄為準。
 
 每一列的最後一欄用標籤標出依據（見 §3）；標 `[讀碼]` 的列是逐行對讀 C 與 Python 後的判斷，沒有文件或註解背書。
 
@@ -54,11 +54,11 @@
 ## 5. 涵蓋率與未能判斷
 
 <!-- STATS -->
-**涵蓋率**：C 函式定義 94；mirror 28；partial 42；C-only 24（其中 SIMD twin／dispatcher 3）；未能判斷 0；另有宣告無實作 0；Python-only 18 個符號（9 列）
+**涵蓋率**：C 函式定義 93；mirror 28；partial 41；C-only 24（其中 SIMD twin／dispatcher 3）；未能判斷 0；另有宣告無實作 0；Python-only 19 個符號（10 列）
 
-- 統計來源：測試內的掃描器對 `src/anr.c`、`src/noise_estimator.c`、`src/spp_estimator.c`、`include/anr_types.h` 取頂層函式定義（`extern "C"` 包裝不算函式、條件編譯分支的重複定義只算一次）。分項：`anr.c` 36、`noise_estimator.c` 28、`spp_estimator.c` 14、`anr_types.h` 16，合計 94。`anr.h`、`noise_estimator.h`、`spp_estimator.h`、`anr_internal.h` 沒有函式定義（只有宣告）。
-- 「已對應」= mirror + partial = 70；C-only 中 3 個是 twin（scalar／NEON／dispatcher 變體），其餘 21 個是記憶體管理、執行期重設定、診斷、實驗 overlay 等。
-- **未能判斷：0**。沒有任何 C 函式在嘗試後仍無法決定「有／無 Python 對應」。判斷力度較低、值得複核的是只有 `[讀碼]` 標籤的 37 列（全表 77 列）；這些列的對應是合理的對讀結果，但沒有文件或註解背書。
+- 統計來源：測試內的掃描器對 `src/anr.c`、`src/noise_estimator.c`、`src/spp_estimator.c`、`include/anr_types.h` 取頂層函式定義（`extern "C"` 包裝不算函式、條件編譯分支的重複定義只算一次）。分項：`anr.c` 36、`noise_estimator.c` 28、`spp_estimator.c` 14、`anr_types.h` 15，合計 93。`anr.h`、`noise_estimator.h`、`spp_estimator.h`、`anr_internal.h` 沒有函式定義（只有宣告）。
+- 「已對應」= mirror + partial = 69；C-only 中 3 個是 twin（scalar／NEON／dispatcher 變體），其餘 21 個是記憶體管理、執行期重設定、診斷、實驗 overlay 等。
+- **未能判斷：0**。沒有任何 C 函式在嘗試後仍無法決定「有／無 Python 對應」。判斷力度較低、值得複核的是只有 `[讀碼]` 標籤的 37 列（全表 76 列）；這些列的對應是合理的對讀結果，但沒有文件或註解背書。
 - Python 側：`core/**`、`denoisers/**` 的頂層類別與函式全部出現在表中（對應列或 Python-only 列，由測試守住）；Python-only 以類別／函式為粒度，方法與研究旋鈕不單獨成列（旋鈕寫在所屬列的「已知落差」S-35）。
 
 ## 6. 對照表
@@ -89,7 +89,7 @@
 | `src/anr.c:anr_create`、`src/anr.c:anr_init` | `denoisers/v3_2_mmse_lsa.py:MmseLsaDenoiser.__init__` | partial | D-19、S-34 | `c_impl/test/test_config_validation.c`[C]；`c_impl/test/test_reconfigure.c`[C]；`c_impl/test/test_api_cpp.cpp`[C] | [讀碼] 建構：先 `anr_validate_config` 再配置（heap／靜態池兩條路）。Python ctor 另含參數 retime 與研究旋鈕；C 的 retime 在 config builder（`anr_default_config_for_grid`）。 |
 | `src/anr.c:frame_is_silent` | `denoisers/v3_2_mmse_lsa.py:MmseLsaDenoiser.denoise_spectrum#silent` | mirror | — | `c_impl/test/test_noise_restart.c`[C]；`python/tests/test_noise_tracker_restart.py`[PY] | [CHANGELOG][測試] 數位靜音（全 bin 精確為 0）不計入噪聲初始化、不推進追蹤器（c_impl/CHANGELOG「數位靜音幀不計入噪聲初始化與追蹤」，Python 同步）。Python 判斷用幅度譜、C 用功率譜。 |
 | `src/anr.c:anr_process` | `denoisers/v3_2_mmse_lsa.py:MmseLsaDenoiser.denoise_spectrum` | partial | S-13、D-18 | `c_impl/test/test_noise_restart.c`[C]；`c_impl/test/test_bit_exact_stream.c`[CC] | [README][CHANGELOG] 頻域串流：power → 初始化（前 `num_init_frames` 個非靜音幀，期間 gain = 1）→ 正常處理 → 套 gain。Python 是整段批次，進入時自動 `reset()`（C 的 streaming 由 caller 負責 reset，c_impl/CHANGELOG 已記）。視窗／FFT／OLA 在 C 側屬 caller 與 audiolib，對應 Python `FrameProcessor`／`Reconstructor`（Python-only 區）。`c_impl/README.md` 標示 C 對應 `v3_2_mmse_lsa.py`。 |
-| `src/anr.c:anr_process_gain` | `denoisers/v3_2_mmse_lsa.py:MmseLsaDenoiser.denoise_spectrum#return_gain`；`denoisers/v3_2_mmse_lsa.py:MmseLsaDenoiser.denoise_spectrum#extra_noise_psd` | partial | S-13、D-18 | `python/tools/parity_nr.py`[CP]＋`c_impl/example/parity_runner.c`[CP] | [測試] 與 `anr_process` 同一內部流程，另吃 `extra_noise_psd`（R²）並輸出 gain；`parity_nr.py` 的 C 側（`parity_runner`）就是逐幀呼叫它，Python 側取 `denoise(..., return_gain=True)`。數值對拍由 `pyc_parity_nr` 承擔。 |
+| `src/anr.c:anr_process_gain`、`src/anr.c:anr_process_gain_with_residual_psd` | `denoisers/v3_2_mmse_lsa.py:MmseLsaDenoiser.denoise_spectrum#return_gain`；`denoisers/v3_2_mmse_lsa.py:MmseLsaDenoiser.denoise_spectrum#extra_noise_psd` | partial | S-13、D-18 | `python/tools/parity_nr.py`[CP]＋`c_impl/example/parity_runner.c`[CP]；`c_impl/test/test_gain_api.c`[C] | [測試] 與 `anr_process` 同一內部流程，回傳內部 gain 指標而不套用；`anr_process_gain_with_residual_psd` 另吃殘留回音功率 `residual_echo_psd`（AEC 的 R²，audio 功率尺度），對應 Python `extra_noise_psd`，`anr_process_gain` 等於它傳 NULL。兩側 gain 都含 make-up 縮放（Python `return_gain` 記錄 `gain × applied_scale`）。`parity_nr.py` 的 C 側（`parity_runner`）逐幀呼叫 `anr_process_gain`，Python 側取 `denoise(..., return_gain=True)`。數值對拍由 `pyc_parity_nr` 承擔；`test_gain_api.c` 以舊 API（`anr_process_gain` 加 `anr_get_gain`）捕捉的雜湊釘住 gain 逐位元不變。 |
 | `src/anr.c:process_init_or_gain` | — | C-only | — | `c_impl/test/test_noise_restart.c`[C]；`c_impl/test/test_bit_exact_stream.c`[CC] | [讀碼] `anr_process` 與 `anr_process_gain` 共用的逐幀階段：噪聲底尚未初始化時累積起始功率並旁路（gain = 1），之後呼叫增益階段；Python 在 `denoise_spectrum` 內聯。 |
 | `src/anr.c:anr_reconfigure` | — | C-only | D-19 | `c_impl/test/test_reconfigure.c`[C] | [稽核] 執行期換設定並保留 DSP 狀態（grid／L／num_init_frames 不可變）；Python 沒有。 |
 | `src/anr.c:anr_set_level` | `core/nr_strength.py:apply_strength` | partial | D-19 | `c_impl/test/test_reconfigure.c`[C]；`c_impl/test/test_bit_exact_stream.c`[CC] | [讀碼] C：以 `anr_config_for_level_grid` 產生目標設定後 `anr_reconfigure`（執行期）。Python 只能在建構前以 `apply_strength` 疊 preset，沒有執行期切換。 |
@@ -98,7 +98,6 @@
 | `src/anr.c:anr_is_initialized` | `core/noise_estimators/mcra.py:McraNoiseEstimator.estimate#is_initialized` | partial | — | `c_impl/test/test_noise_restart.c`[C]；`c_impl/test/test_reconfigure.c`[C] | [讀碼] C 回報噪聲初始化完成；Python 對應 `McraNoiseEstimator.is_initialized`（由 `estimate()` 設定）。 |
 | `src/anr.c:anr_get_noise_psd` | `denoisers/v3_2_mmse_lsa.py:MmseLsaDenoiser.denoise_spectrum#return_noise_psd` | partial | — | `c_impl/test/test_reconfigure.c`[C] | [讀碼] 時點不同：C 在 `anr_process*` 之後讀到的是本幀追蹤更新後的值；Python `return_noise_psd` 記錄「算該幀增益前」的估計器內部值（不含 R²）。 |
 | `src/anr.c:anr_get_speech_protect_frame_threshold` | `denoisers/v3_2_mmse_lsa.py:MmseLsaDenoiser.__init__#speech_protect_frame_threshold_effective` | mirror | — | `c_impl/test/test_reconfigure.c`[C] | [註解] = 設定值 + (q − 0.52)；Python 註解寫明以 float32 計算「like the C port」。 |
-| `src/anr.c:anr_get_gain` | `denoisers/v3_2_mmse_lsa.py:MmseLsaDenoiser.denoise_spectrum#return_gain` | partial | — | `c_impl/test/test_config_validation.c`[C] | [讀碼] 最近一幀的最終增益；兩側都含 make-up 縮放（Python `return_gain` 記錄 `gain × applied_scale`）。 |
 | `src/anr.c:anr_debug_status` | — | C-only | D-19 | `c_impl/example/main.c`[C] | [稽核] 診斷用唯讀彙總（mean／min gain dB 等）；Python 沒有，`example/main.c` 使用。 |
 
 `final_blend`／`final_store` 不在本表範圍：它們的 kernel（`skr_final_blend_*`、`skr_final_store_*`）在 `audiolib/common/utility/simd_nr.h`，`anr.c` 只在 `USE_FAST_GAIN_SMOOTHING` 且 `ANR_VECTOR` 時直接呼叫 `skr_*_neon`，函式級條目在 Audio_ALG/docs/c_python_function_map.md 的 AC-SIMD-08。Python 對應如下。
@@ -147,7 +146,6 @@
 | C 檔:函式 | Python 檔:符號 | 關係 | 已知落差 | 對拍／測試 | 依據與說明 |
 | --- | --- | --- | --- | --- | --- |
 | `include/anr_types.h:anr_nr_level_is_valid` | `core/nr_strength.py:apply_strength` | partial | — | `c_impl/test/test_reconfigure.c`[C] | [讀碼] C：enum 白名單（bool）；Python：`strength not in NR_STRENGTH_PRESETS` 時 raise ValueError。測試只經 `anr_set_level` 的無效 enum 案例間接走到，沒有直接呼叫。 |
-| `include/anr_types.h:anr_nr_level_from_name` | `core/nr_strength.py:nr_strength_name` | partial | — | `python/tests/test_nr_strength_index.py`[PY] | [CHANGELOG][測試] C：名稱或 `0`..`3` → enum，未知／NULL 回 −1。Python `nr_strength_name` 只把 `"0"`..`"3"` 換成名稱，其他值原樣通過給 argparse 的 `choices`。`test_nr_strength_index.py` 讀 `anr_types.h` 的 `ANR_MODE_*` 舊名列核對索引（c_impl/CHANGELOG）；這四行（附字面數字）與 `AnrMode` typedef 因此留在 header。 |
 | `include/anr_types.h:anr_nr_level_name` | `core/nr_strength.py:NR_STRENGTH_PRESETS` | partial | — | `python/tests/test_nr_strength_index.py`[PY] | [註解][測試] enum → 名稱。Python `NR_STRENGTH_PRESETS` 的鍵順序即 C `AnrLevel` 值順序（`nr_strength.py` 註解仍寫舊名 `AnrMode`）。 |
 | `include/anr_types.h:anr_default_fft_size` | `core/signal_grid.py:_DEFAULT_FFT`；`core/signal_grid.py:resolve_signal_grid` | mirror | — | `python/tests/test_config_parity.py`[CP]＋`c_impl/test/test_config_parity.c`[CP] | [讀碼] 8 kHz → 128、16 kHz → 256、48 kHz → 1024；`resolve_signal_grid` 另檢查 grid 白名單（對應 C 的 `anr_validate_config`）。 |
 | `include/anr_types.h:anr_retime_alpha_ref`、`include/anr_types.h:anr_retime_alpha` | `core/signal_grid.py:retime_ema_alpha` | mirror | — | `python/tests/test_config_parity.py`[CP]＋`c_impl/test/test_config_parity.c`[CP] | [稽核][測試] `alpha^((hop/sr)/ref_hop)`：C 為 float32 `powf`（參考時長保持 double），Python float64。`test_config_parity` 對拍用它算出的設定欄位。輸入超出 [0, 1] 時 Python raise、C 原值回傳（作者讀碼）。 |
@@ -172,6 +170,7 @@
 | — | `core/spp_estimator.py:compute_spp_batch` | Python-only | — | — | [CHANGELOG] 離線批次 SPP（用簡化 Wiener 增益當 DD 的 gain_prev）；c_impl/CHANGELOG「初始化後第一幀的 a-priori SNR 下界」條目寫明該 Python 路徑與 C 無對應（「C 函式庫只對應 V3-2」）。 |
 | — | `core/spp_estimator.py:_band_slice` | Python-only | — | — | [讀碼] 把可選的 [start, end) bin 範圍夾進頻譜的 helper；C 對應處理在 `_setup`（見該列）。 |
 | — | `core/nr_modes.py:apply_mode` | Python-only | — | — | [讀碼] 只接受 `'full'` 的內容保留模式常數；C 沒有 content mode。 |
+| — | `core/nr_strength.py:nr_strength_name` | Python-only | — | `python/tests/test_nr_strength_index.py`[PY] | [讀碼] 把 CLI 的 `"0"`..`"3"` 換成 strength 名稱再交給 argparse 的 `choices`，其他值原樣通過。C 沒有對應：函式庫不解析名稱（`anr_nr_level_from_name()` 已移除，`anr_nr_level_name()` 只供顯示），C 的 CLI 只收數字（`c_impl/example/cli_level.h`）。 |
 | — | `core/gain_calculators/pmmse.py:PmmseGainCalculator`；`core/gain_calculators/spectral_subtraction.py:SpectralSubtractionGainCalculator`；`core/gain_calculators/spp_mmse.py:SppMmseGainCalculator`；`core/gain_calculators/wiener.py:WienerGainCalculator` | Python-only | D-22 | — | [稽核] 其他增益計算器（V1／V2／V3／V3-3 用）；C 只實作 V3-2 的 MMSE-LSA。 |
 | — | `core/noise_estimators/recursive_average.py:RecursiveAverageNoiseEstimator`；`core/noise_estimators/simple_average.py:SimpleAverageNoiseEstimator` | Python-only | D-22 | — | [稽核] 其他噪聲估計器。`MmseLsaDenoiser` 的 ctor 預設 `noise_method='recursive_average'`，出貨 YAML（`config/v3_2_config.yaml`）用 `mcra`；C 只有 MCRA 式追蹤器。 |
 | — | `denoisers/base_denoiser.py:BaseDenoiser`；`denoisers/v1_spectral_subtraction.py:SpectralSubtractionDenoiser`；`denoisers/v2_wiener.py:WienerDenoiser`；`denoisers/v3_spp_mmse.py:SppMmseDenoiser`；`denoisers/v3_3_pmmse.py:PmmseDenoiser` | Python-only | D-22 | — | [README][稽核] 其餘 denoiser 版本與基底類別；`c_impl/README.md` 標示 C 以 V3-2 為主線、V4 wind handler 不移植。 |

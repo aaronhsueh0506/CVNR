@@ -1,7 +1,8 @@
 #!/bin/sh
 # Argument handling of the example CLIs (denoise_wav and denoise_mem): --nr-level and its alias --nr-mode need a
 # value, a following token that starts with "--" is not one (exit 2, "<prog>: <option> needs a value" on stderr), and
-# a lone "-" or "-1" is a value. Valid runs must not change.
+# a lone "-" or "-1" is a value. The value is the level number 0..3 as a whole decimal string: anything else (a level
+# name, "-", "-1", "3x", an empty or padded string, 4) is exit 2 with "unknown NR level" and no output file.
 # Usage: test_cli_args.sh <denoise_wav> <denoise_mem>   (PYTHON overrides python3; it only writes the input WAV)
 set -u
 PYTHON="${PYTHON:-python3}"
@@ -24,6 +25,14 @@ fail=0
 check() {  # check <description> <condition-exit-status>
     if [ "$2" -eq 0 ]; then echo "  ok   $1"; else echo "  FAIL $1" >&2; fail=1; fi
 }
+# expect_bad_level <bin> <option> <value>: exit 2, "unknown NR level" on stderr, no output file written.
+expect_bad_level() {
+    bin=$1; opt=$2; val=$3
+    rm -f "$d/out.wav"
+    "$bin" "$d/in.wav" "$d/out.wav" "$opt" "$val" >"$d/stdout" 2>"$d/stderr"; rc=$?
+    [ "$rc" -eq 2 ] && grep -q "unknown NR level" "$d/stderr" && [ ! -e "$d/out.wav" ]
+    check "$(basename "$bin") $opt '$val' -> exit 2, unknown NR level" $?
+}
 # expect_reject <bin> <option> [following token...]: exit 2, message names the option, no output file written.
 expect_reject() {
     bin=$1; shift
@@ -42,14 +51,16 @@ run_ok() {  # run_ok <bin> <out> [args...]
 for bin in "$1" "$2"; do
     name=$(basename "$bin")
     run_ok "$bin" "$d/default.wav"; check "$name default run" $?
-    run_ok "$bin" "$d/aggr.wav" --nr-level aggressive; check "$name --nr-level aggressive" $?
+    run_ok "$bin" "$d/aggr.wav" --nr-level 3; check "$name --nr-level 3" $?
     run_ok "$bin" "$d/alias.wav" --nr-mode 3; check "$name --nr-mode 3" $?
-    cmp -s "$d/aggr.wav" "$d/alias.wav"; check "$name --nr-level aggressive == --nr-mode 3" $?
-    cmp -s "$d/aggr.wav" "$d/default.wav"; [ $? -ne 0 ]; check "$name level takes effect (aggressive != default)" $?
-    run_ok "$bin" "$d/dash.wav" --nr-level -; check "$name --nr-level - (value)" $?
-    cmp -s "$d/dash.wav" "$d/default.wav"; check "$name --nr-level - keeps the balanced default" $?
-    run_ok "$bin" "$d/neg.wav" --nr-level -1; check "$name --nr-level -1 (value)" $?
-    cmp -s "$d/neg.wav" "$d/default.wav"; check "$name --nr-level -1 keeps the balanced default" $?
+    cmp -s "$d/aggr.wav" "$d/alias.wav"; check "$name --nr-level 3 == --nr-mode 3" $?
+    cmp -s "$d/aggr.wav" "$d/default.wav"; [ $? -ne 0 ]; check "$name level takes effect (3 != default)" $?
+    run_ok "$bin" "$d/bal.wav" --nr-level 2; check "$name --nr-level 2" $?
+    cmp -s "$d/bal.wav" "$d/default.wav"; check "$name --nr-level 2 is the default" $?
+    for v in aggressive balanced - -1 3x 4 +2x ""; do
+        expect_bad_level "$bin" --nr-level "$v"
+    done
+    expect_bad_level "$bin" --nr-mode " 2"
     expect_reject "$bin" --nr-level
     expect_reject "$bin" --nr-mode
     expect_reject "$bin" --nr-level --debug

@@ -52,7 +52,7 @@ DEFAULT_NR_ROOT = TOOL_DIR.parent.parent
 DENOISER_VERSION = "V3-2"
 PESQ_SR = 16000  # pesq only supports 8000 (nb) / 16000 (wb); spec wants wb.
 VALID_MODES = ("full",)
-VALID_STRENGTHS = ("mild", "moderate", "balanced", "aggressive")   # C AnrMode order: index == enum value
+VALID_STRENGTHS = ("mild", "moderate", "balanced", "aggressive")   # C AnrLevel order: index == enum value
 DEFAULT_CLEAN_SUBDIR = "clean_testset_wav"
 DEFAULT_NOISY_SUBDIR = "noisy_testset_wav"
 

@@ -22,20 +22,20 @@ static int g_fail = 0;
 static double tone_gain(const AnrConfig* cfg, int sr, double silence_s, double tone_s, double onset) {
     AnrDenoiser* d = anr_create(cfg);
     int nf, hop, fft, bin, n_sil, n_tone, last, h;
-    Complex* spec; float* gain; double acc = 0.0;
+    Complex* spec; const float* gain = NULL; double acc = 0.0;
     if (!d) return -1.0;
     nf = anr_get_n_freqs(d); hop = anr_get_hop_size(d); fft = anr_get_frame_size(d);
     bin = (int)lrint(1000.0 * fft / sr);
     n_sil = (int)(silence_s * sr / hop); n_tone = (int)(tone_s * sr / hop); last = sr / hop;
-    spec = (Complex*)calloc((size_t)nf, sizeof(Complex)); gain = (float*)calloc((size_t)nf, sizeof(float));
-    for (h = 0; h < n_sil; ++h) { memset(spec, 0, (size_t)nf * sizeof(Complex)); anr_process_gain(d, spec, NULL, gain); }
+    spec = (Complex*)calloc((size_t)nf, sizeof(Complex));
+    for (h = 0; h < n_sil; ++h) { memset(spec, 0, (size_t)nf * sizeof(Complex)); gain = anr_process_gain(d, spec); }
     for (h = 0; h < n_tone; ++h) {
         memset(spec, 0, (size_t)nf * sizeof(Complex));
         spec[bin].r = (float)(onset > 0.0 && h == 0 ? onset : 1.0) * 0.03f * 32768.0f * (float)(fft / 2);   /* -30 dBFS tone, int16-scale FFT */
-        anr_process_gain(d, spec, NULL, gain);
+        gain = anr_process_gain(d, spec);
         if (h >= n_tone - last) acc += gain[bin];
     }
-    free(spec); free(gain); anr_destroy(d);
+    free(spec); anr_destroy(d);
     return acc / last;
 }
 
@@ -57,15 +57,15 @@ static void run_case(const char* label, AnrConfig cfg, int sr, double onset) {
 static void run_state_case(const char* label, AnrConfig cfg) {
     AnrDenoiser* d = anr_create(&cfg);
     int nf, hop, n_noise, n_sil, h, k, bad;
-    Complex* spec; float* gain; AnrDebugStatus before, after;
+    Complex* spec; const float* gain = NULL; AnrDebugStatus before, after;
     if (!d) { CHECK(0, "%s: create failed", label); return; }
     nf = anr_get_n_freqs(d); hop = anr_get_hop_size(d);
-    spec = (Complex*)calloc((size_t)nf, sizeof(Complex)); gain = (float*)calloc((size_t)nf, sizeof(float));
+    spec = (Complex*)calloc((size_t)nf, sizeof(Complex));
     n_sil = (int)(5.0 * cfg.sample_rate / hop);
 
     for (h = 0; h < n_sil; ++h) {
         memset(spec, 0, (size_t)nf * sizeof(Complex));
-        anr_process_gain(d, spec, NULL, gain);
+        gain = anr_process_gain(d, spec);
     }
     CHECK(!anr_is_initialized(d), "%s: silence counted toward noise initialization", label);
     for (k = 0, bad = 0; k < nf; ++k) bad += gain[k] != 1.0f;
@@ -74,37 +74,37 @@ static void run_state_case(const char* label, AnrConfig cfg) {
     n_noise = 3 * cfg.num_init_frames;
     for (h = 0; h < n_noise; ++h) {
         for (k = 0; k < nf; ++k) { spec[k].r = 400.0f + (float)((k * 7 + h * 3) % 11); spec[k].i = 0.0f; }
-        anr_process_gain(d, spec, NULL, gain);
+        gain = anr_process_gain(d, spec);
     }
     CHECK(anr_is_initialized(d), "%s: not initialized after %d signal frames", label, n_noise);
     anr_debug_status(d, &before);
     for (h = 0; h < n_sil; ++h) {
         memset(spec, 0, (size_t)nf * sizeof(Complex));
-        anr_process_gain(d, spec, NULL, gain);
+        gain = anr_process_gain(d, spec);
     }
     anr_debug_status(d, &after);
     printf("%-40s noise floor %.3f dB -> %.3f dB across 5 s silence\n", label, before.noise_floor_db, after.noise_floor_db);
     CHECK(before.noise_floor_db == after.noise_floor_db,
           "%s: silence moved the noise floor (%.4f -> %.4f dB)", label, before.noise_floor_db, after.noise_floor_db);
-    free(spec); free(gain); anr_destroy(d);
+    free(spec); anr_destroy(d);
 }
 
-/* Posterior SNR below 1 on every bin (the extra residual-echo PSD far above the signal): the first
+/* Posterior SNR below 1 on every bin (the residual-echo PSD far above the signal): the first
  * frame after initialization must not sit at the gain floor while the next frames settle higher.
  * Frames 0..num_init-1 are the unity bypass. */
 static void run_first_frame_case(const char* label, AnrConfig cfg) {
     AnrDenoiser* d = anr_create(&cfg);
     int nf, h, k, n_frames, ni = cfg.num_init_frames;
-    Complex* spec; float* gain; float* extra; double first = 0.0, settled = 0.0; int bad = 0;
+    Complex* spec; const float* gain = NULL; float* residual_echo_psd; double first = 0.0, settled = 0.0; int bad = 0;
     if (!d) { CHECK(0, "%s: create failed", label); return; }
     nf = anr_get_n_freqs(d); n_frames = ni + 20;
-    spec = (Complex*)calloc((size_t)nf, sizeof(Complex)); gain = (float*)calloc((size_t)nf, sizeof(float));
-    extra = (float*)calloc((size_t)nf, sizeof(float));
-    for (k = 0; k < nf; ++k) extra[k] = 1.0e8f;
+    spec = (Complex*)calloc((size_t)nf, sizeof(Complex));
+    residual_echo_psd = (float*)calloc((size_t)nf, sizeof(float));
+    for (k = 0; k < nf; ++k) residual_echo_psd[k] = 1.0e8f;
     for (h = 0; h < n_frames; ++h) {
         double acc = 0.0;
         for (k = 0; k < nf; ++k) { spec[k].r = 400.0f + (float)((k * 7 + h * 3) % 11); spec[k].i = 0.0f; }
-        anr_process_gain(d, spec, extra, gain);
+        gain = anr_process_gain_with_residual_psd(d, spec, residual_echo_psd);
         for (k = 0; k < nf; ++k) { acc += 20.0 * log10((double)gain[k] + 1e-6); if (h < ni) bad += gain[k] != 1.0f; }
         acc /= nf;
         if (h == ni) first = acc;
@@ -113,7 +113,7 @@ static void run_first_frame_case(const char* label, AnrConfig cfg) {
     printf("%-40s first tracked frame %.1f dB, settled %.1f dB\n", label, first, settled);
     CHECK(bad == 0, "%s: initialization frames are not unity", label);
     CHECK(first > settled - 1.0, "%s: first tracked frame %.1f dB lies below the settled %.1f dB", label, first, settled);
-    free(spec); free(gain); free(extra); anr_destroy(d);
+    free(spec); free(residual_echo_psd); anr_destroy(d);
 }
 
 int main(void) {
