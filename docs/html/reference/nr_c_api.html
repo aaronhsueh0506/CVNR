@@ -43,8 +43,8 @@ pre code{background:none;padding:0}
 <tr><td><code>anr.h</code></td><td><b>公開</b></td><td>整合只需要這一個;它已自動含入下面兩個</td></tr>
 <tr><td><code>anr_types.h</code></td><td>公開(自動含入)</td><td><code>AnrConfig</code>／<code>AnrLevel</code>／constructor／<code>validate_config</code></td></tr>
 <tr><td><code>fft_wrapper.h</code>(audiolib)</td><td>公開(自動含入)</td><td><code>Complex</code>／<code>FftHandle</code></td></tr>
-<tr><td><code>src/noise_estimator.h</code></td><td class="dead">內部,勿呼叫、不在 <code>include/</code></td><td>denoiser 自行建立/驅動/釋放;只有 NR 自己的原始碼與測試用 <code>-I src</code> 或 <code>../src/</code> 看得到</td></tr>
-<tr><td><code>src/spp_estimator.h</code></td><td class="dead">內部,勿呼叫、不在 <code>include/</code></td><td>同上</td></tr>
+<tr><td><code>include/internal/noise_estimator.h</code></td><td class="dead">內部,勿呼叫、不在 <code>include/</code> 本層</td><td>denoiser 自行建立/驅動/釋放;只有 NR 自己的原始碼與測試用 <code>-I include/internal</code> 看得到</td></tr>
+<tr><td><code>include/internal/spp_estimator.h</code></td><td class="dead">內部,勿呼叫、不在 <code>include/</code> 本層</td><td>同上</td></tr>
 </table></div>
 <h2>2. 這個 lib 可以設定的 grid(與 AEC 不同,注意)</h2>
 <p><code>anr_validate_config()</code>(<code>anr_types.h</code>)接受<b>五組</b> grid。硬性關係:<code>frame_size == fft_size</code>(不補零)、<code>hop_size == frame_size/2</code>(固定 50% overlap)。</p>

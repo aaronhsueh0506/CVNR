@@ -117,7 +117,8 @@ def main():
         raise RuntimeError(f"producer archive missing: {library}")
     flags = ["-O2", "-std=gnu99", "-Wall", "-Wextra", "-Werror",
              "-ffp-contract=off", "-fno-math-errno",
-             "-I" + str(root / "c_impl/include"), "-I" + str(common / "include"),
+             "-I" + str(root / "c_impl/include"), "-I" + str(root / "c_impl/include/internal"),
+             "-I" + str(common / "include"),
              "-I" + str(common)]
     flags += ["-D" + define for define in DEFINES]
     if not args.simd:

@@ -13,7 +13,6 @@ struct SppEstimator {
     int n_freqs;
 
     float alpha;        // A priori SNR smoothing factor
-    float q;            // Prior speech probability
     float xi_min;       // Minimum a priori SNR (linear)
     float prior_ratio;  // (1-q)/q precomputed
 
@@ -40,7 +39,6 @@ void spp_apply_config_scalars(SppEstimator* self,
         float q_clipped = config->q;
         if (q_clipped < _eps) q_clipped = _eps;
         if (q_clipped > 1.0f - _eps) q_clipped = 1.0f - _eps;
-        self->q = q_clipped;
         self->prior_ratio = (1.0f - q_clipped) / q_clipped;
     }
     self->xi_min = powf(10.0f, config->xi_min_db / 10.0f);

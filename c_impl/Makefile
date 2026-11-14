@@ -82,7 +82,7 @@ endif
 COMMON_DIR ?= $(firstword $(wildcard ../../audiolib/common ../../../../audiolib/common))
 
 CFLAGS = -Wall -Wextra -O2 -std=gnu99
-CFLAGS += -I./include -I./example -I$(COMMON_DIR)/include -I$(COMMON_DIR)
+CFLAGS += -I./include -I./include/internal -I./example -I$(COMMON_DIR)/include -I$(COMMON_DIR)
 CFLAGS += $(EXTRA_CFLAGS)
 CFLAGS += $(SIMD_CFLAGS)
 

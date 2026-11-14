@@ -43,7 +43,7 @@ static void dump_state(const uint32_t* context, const AnrDenoiser* s,
     record(context, 14, output, 2 * nf);
     record(context, 15, returned_gain, nf);
     const float scalars[] = {s->cross_band_prior_state, s->cross_band_prior_lift,
-        s->makeup_prior_state, s->spp_est->alpha, s->spp_est->q,
+        s->makeup_prior_state, s->spp_est->alpha,
         s->spp_est->xi_min, s->spp_est->prior_ratio};
     record(context, 16, scalars, sizeof(scalars) / sizeof(scalars[0]));
     const uint32_t flags[] = {(uint32_t)s->init_frame_count,

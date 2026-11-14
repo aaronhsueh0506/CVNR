@@ -13,6 +13,7 @@
 #include "cli_level.h"
 #include "fft_wrapper.h"
 #include "audio_window.h"
+#define WAV_IO_WRITER_STYLE WAV_IO_WRITER_NR
 #include "wav_io.h"
 
 /* ---- Maximum supported no-padding grid (48 kHz / FFT 1024) -------------- */

@@ -9,7 +9,7 @@ MMSE-LSA/OMLSA gain and MCRA/SPP components for technical accuracy.
 | Item | C name |
 |---|---|
 | Public headers | `include/anr.h`, `include/anr_types.h` |
-| Sources | `src/anr.c`, `src/anr_internal.h` |
+| Sources | `src/anr.c`; internal header `include/internal/anr_internal.h` |
 | Archive | `libanr.a`, linked with the matching `libaudio_common.a` |
 | Types | `AnrDenoiser`, `AnrConfig`, `AnrLevel`, `AnrDebugStatus` |
 | Functions | `anr_*` |

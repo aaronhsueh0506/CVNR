@@ -56,7 +56,7 @@
 <!-- STATS -->
 **涵蓋率**：C 函式定義 91；mirror 28；partial 39；C-only 24（其中 SIMD twin／dispatcher 3）；未能判斷 0；另有宣告無實作 0；Python-only 19 個符號（10 列）
 
-- 統計來源：測試內的掃描器對 `src/anr.c`、`src/noise_estimator.c`、`src/spp_estimator.c`、`include/anr_types.h` 取頂層函式定義（`extern "C"` 包裝不算函式、條件編譯分支的重複定義只算一次）。分項：`anr.c` 36、`noise_estimator.c` 27、`spp_estimator.c` 13、`anr_types.h` 15，合計 91。`anr.h`、`noise_estimator.h`、`spp_estimator.h`、`anr_internal.h` 沒有函式定義（只有宣告）。
+- 統計來源：測試內的掃描器對 `src/anr.c`、`src/noise_estimator.c`、`src/spp_estimator.c`、`include/anr_types.h` 取頂層函式定義（`extern "C"` 包裝不算函式、條件編譯分支的重複定義只算一次）。分項：`anr.c` 36、`noise_estimator.c` 27、`spp_estimator.c` 13、`anr_types.h` 15，合計 91。`anr.h`、`noise_estimator.h`、`spp_estimator.h`、`anr_internal.h` 沒有函式定義（只有宣告；後三者在 `include/internal/`）。
 - 「已對應」= mirror + partial = 67；C-only 中 3 個是 twin（scalar／NEON／dispatcher 變體），其餘 21 個是記憶體管理、執行期重設定、診斷、實驗 overlay 等。
 - **未能判斷：0**。沒有任何 C 函式在嘗試後仍無法決定「有／無 Python 對應」。判斷力度較低、值得複核的是只有 `[讀碼]` 標籤的 36 列（全表 74 列）；這些列的對應是合理的對讀結果，但沒有文件或註解背書。
 - Python 側：`core/**`、`denoisers/**` 的頂層類別與函式全部出現在表中（對應列或 Python-only 列，由測試守住）；Python-only 以類別／函式為粒度，方法與研究旋鈕不單獨成列（旋鈕寫在所屬列的「已知落差」S-35）。

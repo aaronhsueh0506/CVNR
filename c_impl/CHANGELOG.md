@@ -2,6 +2,17 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [Unreleased] · 2026-11-14 · 內部標頭搬到 `include/internal/`、移除 `SppEstimator.q`、`example/wav_io.h` 併入呼叫端
+
+輸出不變：`pyc_parity_nr` JSON（428 個情境）在 SIMD=1／0 都與改動前逐位元組相同，兩個 SIMD 設定的 `make test-full` 全綠；`src/`、`example/`、`test/` 每個 `.c`／`.cpp` 的 `cc -E -P` 在標頭搬移前後相同（SIMD=1、SIMD=0、`DEBUG=1` 三組旗標）；`main.o`、`main_mem.o` 逐位元組相同；`denoise_wav`／`denoise_mem` 在 15 組輸入×level 上輸出的 WAV 相同。
+
+### 變更 (Changed)
+- **標頭配置（整合者請看）。** `include/` 只留公開標頭 `anr.h`、`anr_types.h`；`anr_internal.h`、`noise_estimator.h`、`spp_estimator.h` 從 `src/` 搬到 `include/internal/`。SDK 的 Makefile 若自己編譯 `src/*.c`，除了 `-I include` 還要加 `-I include/internal`；只用公開 API 的整合者仍只需要 `-I include`。`Makefile` 對所有建置（函式庫、範例、測試）加上兩條路徑；`python/tools/test_bit_exact.py` 的編譯旗標加上 `include/internal`；測試改用檔名直接 include 內部標頭，不再寫 `../src/...`。
+- 移除 `SppEstimator.q`（只在 `spp_apply_config_scalars()` 寫一次，函式庫沒有讀者；`prior_ratio` 用的是夾過的區域變數）。`sizeof(SppEstimator)` 在 LP64 由 64 降為 56、ILP32 由 40 降為 36，但 `ALIGN16(sizeof)` 不變（64、48），所以 `anr_get_mem_size()` 不變：16k/256 為 45,344、16k/512 為 56,432、48k/1024 為 144,576 位元組。`test_bit_exact_stream` 的 scalar state 記錄（索引 16）由 7 個 float 變 6 個；reference 與 optimized 兩個建置仍逐位元相同。
+
+### 移除 (Removed)
+- `example/wav_io.h`（24 行轉接標頭，負責選 NR 寫檔樣式並以相對路徑找 audiolib 的 `wav_io.h`）。`example/main.c`、`example/main_mem.c` 在 `#include "wav_io.h"` 前直接 `#define WAV_IO_WRITER_STYLE WAV_IO_WRITER_NR`；標頭由 `-I$(COMMON_DIR)/include` 解析到 audiolib 那份。
+
 ## [Unreleased] · 2026-11-14 · NR 整理：近似 percentile 選項移除、內部標頭搬到 `src/`、重複實作合併
 
 輸出不變，與改動前的樹逐位元比對：`test_bit_exact_stream` 傾印（約 167 MB，SIMD=1／0 × 出貨旗標／標準數學 × 一般／`ANR_REFERENCE_KERNELS`，8 種組合，含 in-place 與 out-of-place `anr_process`）完全相同；`parity_runner` 與 `pyc_gain_driver` 在 4 種建置（SIMD=1／0，出貨與 `DEBUG=1`）× 13 個輸入（8k/128、8k/256、16k/256、16k/512、48k/1024、NRP1、錯誤輸入）× 4 個 level 的輸出、結束碼與訊息相同；428 個 parity 情境的 JSON 與改動前相同；`test-gain-api` 雜湊不變；`make test`（SIMD=1／0）與 `test-full` 通過。出貨建置的 `anr_get_mem_size()` 在 20 個 grid×level 組合上不變；`DEBUG=1` 建置的 pool 少 16 B（`AnrDenoiser` 少一個欄位）。

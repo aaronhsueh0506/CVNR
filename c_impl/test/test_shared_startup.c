@@ -8,9 +8,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "../src/noise_estimator.h"
+#include "noise_estimator.h"
 #include "anr_types.h"
-#include "../src/anr_internal.h"
+#include "anr_internal.h"
 #include "utility/mem_align.h"
 
 static int g_fail = 0;

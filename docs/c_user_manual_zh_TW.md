@@ -61,8 +61,8 @@ source tree 取用。
 
 ### 0.4 內部子模組
 
-`c_impl/src/noise_estimator.h` 與 `c_impl/src/spp_estimator.h`
-是 denoiser 內部擁有的子模組介面（不在 `include/`，公開標頭只有 `anr.h` 與 `anr_types.h`），**整合者不應直接呼叫**（denoiser 會自行建立、驅動與釋放
+`c_impl/include/internal/noise_estimator.h` 與 `c_impl/include/internal/spp_estimator.h`
+是 denoiser 內部擁有的子模組介面（在 `include/internal/`，不在 `include/` 本層；公開標頭只有 `anr.h` 與 `anr_types.h`），**整合者不應直接呼叫**（denoiser 會自行建立、驅動與釋放
 它們）。
 
 ---
@@ -107,7 +107,7 @@ c++ app.o \
    -lm -o app
 ```
 
-只用公開的 `c_impl/include/`（`anr.h`、`anr_types.h`）加 audiolib 的 `fft_wrapper.h` 就能編譯；`noise_estimator.h` 與 `spp_estimator.h` 在 `c_impl/src/`，不在 include 路徑上。
+只用公開的 `c_impl/include/`（`anr.h`、`anr_types.h`）加 audiolib 的 `fft_wrapper.h` 就能編譯；`noise_estimator.h`、`spp_estimator.h` 與 `anr_internal.h` 在 `c_impl/include/internal/`，不在上面的 `-I` 路徑上；只有自己編譯 `c_impl/src/*.c` 的 SDK Makefile 才需要再加 `-Ic_impl/include/internal`。
 
 執行隨附的 wrapper 範例：
 

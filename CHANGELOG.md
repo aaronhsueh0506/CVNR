@@ -4,6 +4,17 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [Unreleased] — 2026-11-14 — Internal headers under `include/internal/`, `SppEstimator.q` removed, `example/wav_io.h` folded
+
+Output unchanged: `pyc_parity_nr` JSON (428 scenarios) byte-identical to the previous tree at SIMD=1 and SIMD=0, `make test-full` green at both, `cc -E -P` of every `.c`/`.cpp` under `src/`, `example/` and `test/` identical before and after the header move (SIMD=1, SIMD=0 and `DEBUG=1` flag sets), `main.o`/`main_mem.o` byte-identical, and `denoise_wav`/`denoise_mem` output WAVs identical on 15 input/level pairs each.
+
+### Changed
+- **Header layout (integrators read this).** `include/` keeps the public headers `anr.h` and `anr_types.h`; `anr_internal.h`, `noise_estimator.h` and `spp_estimator.h` moved from `src/` to `include/internal/`. An SDK Makefile that compiles `src/*.c` needs `-I include/internal` in addition to `-I include`; an integrator that only uses the public API still needs just `-I include`. The `Makefile` adds both paths to every build (library, examples, tests); `python/tools/test_bit_exact.py` adds `include/internal` to its compile flags; tests include the internal headers by bare name instead of `../src/...`.
+- `SppEstimator.q` (written once in `spp_apply_config_scalars()`, never read by the library; `prior_ratio` uses the clipped local) is removed. `sizeof(SppEstimator)` drops 64 to 56 bytes (LP64) and 40 to 36 (ILP32) but `ALIGN16(sizeof)` is unchanged (64 and 48), so `anr_get_mem_size()` is unchanged: 16k/256 45,344, 16k/512 56,432, 48k/1024 144,576 bytes. The `test_bit_exact_stream` scalar-state record (index 16) has 6 floats instead of 7; the reference and optimized builds still compare equal.
+
+### Removed
+- `example/wav_io.h` (a 24-line adapter that selected the NR writer style and located audiolib's `wav_io.h` by relative path). `example/main.c` and `example/main_mem.c` now `#define WAV_IO_WRITER_STYLE WAV_IO_WRITER_NR` before `#include "wav_io.h"`, which resolves to audiolib's header through `-I$(COMMON_DIR)/include`.
+
 ## [Unreleased] — 2026-11-14 — NR tidy-up: approximation option removed, internal headers moved to `src/`, duplicates merged
 
 Output unchanged, checked byte for byte against the pre-change tree: the `test_bit_exact_stream` dump (about 167 MB; SIMD=1/0 x shipping flags/standard math x plain/`ANR_REFERENCE_KERNELS`, 8 combinations, in-place and out-of-place `anr_process`); `parity_runner` and `pyc_gain_driver` outputs, exit codes and messages on 4 builds (SIMD=1/0, shipping and `DEBUG=1`) x 13 inputs (8k/128, 8k/256, 16k/256, 16k/512, 48k/1024, NRP1, malformed files) x 4 levels; the 428-scenario parity JSON; the `test-gain-api` hashes. `make test` (SIMD=1 and 0) and `test-full` pass. `anr_get_mem_size()` is unchanged for the shipping build on 20 grid x level combinations; a `DEBUG=1` build's pool is 16 B smaller (one field fewer in `AnrDenoiser`).
