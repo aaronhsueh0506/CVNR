@@ -25,19 +25,16 @@ static int g_fail = 0;
 static void hi_noise_after_burst(float hi_b, float* min_out, float* max_out) {
     AnrConfig cfg = anr_default_config_for_grid(16000, 512);
     NoiseEstimator* est;
-    float power[N_FREQS], sum[N_FREQS];
+    float power[N_FREQS];
     const float* noise;
     int f, k;
     cfg.scene_change_min_frames = MIN_FRAMES;
     est = noise_estimator_create(N_FREQS, &cfg);
     *min_out = -1.0f; *max_out = -1.0f;
     if (!est) return;
-    for (k = 0; k < N_FREQS; ++k) { power[k] = 1.0f; sum[k] = 0.0f; }
-    for (f = 0; f < N_INIT; ++f) {
-        for (k = 0; k < N_FREQS; ++k) sum[k] += power[k];
-        noise_estimator_accumulate_init_power(est, power, f);
-    }
-    noise_estimator_init_noise(est, sum, N_INIT);
+    for (k = 0; k < N_FREQS; ++k) power[k] = 1.0f;
+    for (f = 0; f < N_INIT; ++f) noise_estimator_accumulate_init_power(est, power, f);
+    noise_estimator_init_noise(est, N_INIT);
     for (k = HI_START; k < HI_START + 64; ++k) power[k] = HI_A;
     for (k = HI_START + 64; k < N_FREQS; ++k) power[k] = hi_b;
     for (f = 0; f < MIN_FRAMES; ++f) noise_estimator_update_ex(est, power, NULL, false, 0, 0.0f);

@@ -264,7 +264,6 @@ static int test_spp_dd(void) {
                   compare_arrays("spp_dd", "xi", xi_ref, xi_neon, n, trial, &stats) ||
                   compare_arrays("spp_dd", "v_scratch", a->v_scratch, b->v_scratch, n, trial, &stats) ||
                   compare_arrays("spp_dd", "term_xi", a->term_xi_scratch, b->term_xi_scratch, n, trial, &stats) ||
-                  compare_arrays("spp_dd", "gamma_prev", a->gamma_prev, b->gamma_prev, n, trial, &stats) ||
                   (with_v && compare_arrays("spp_dd", "v_out", v_ref, v_neon, n, trial, &stats));
         spp_destroy(a);
         spp_destroy(b);

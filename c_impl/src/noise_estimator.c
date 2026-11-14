@@ -363,8 +363,8 @@ static void noise_estimator_seed_bin(NoiseEstimator* self, int k, float init_psd
     self->spp[k] = 0.0f;
 }
 
-void noise_estimator_init_noise(NoiseEstimator* self, const float* power_sum, int n_frames) {
-    if (!self || !power_sum || n_frames <= 0) return;
+void noise_estimator_init_noise(NoiseEstimator* self, int n_frames) {
+    if (!self || n_frames <= 0) return;
     /* The init rows of a shared region were overwritten by the ring. */
     if (self->is_initialized && self->init_power_buffer == self->min_buffer) return;
 

@@ -17,7 +17,6 @@ struct SppEstimator {
     float prior_ratio;  // (1-q)/q precomputed
 
     // State arrays [n_freqs]
-    float* gamma_prev;  // Previous frame a posteriori SNR
     float* noise_psd_prev;  // Previous frame noise PSD (for DD xi_dd_term1)
 
     // Per-call scratch [n_freqs]; v is replaced in place by exp(-v).
@@ -55,7 +54,6 @@ size_t spp_get_mem_size(int n_freqs) {
     /* Checked dimensions and saturating size arithmetic; invalid totals return 0. */
     if (n_freqs <= 0) return 0;
     size_t total = ALIGN16(sizeof(SppEstimator));
-    total = ck_field_size(total, (size_t)n_freqs, sizeof(float));  /* gamma_prev        */
     total = ck_field_size(total, (size_t)n_freqs, sizeof(float));  /* noise_psd_prev    */
     total = ck_field_size(total, (size_t)n_freqs, sizeof(float));  /* v_scratch         */
     total = ck_field_size(total, (size_t)n_freqs, sizeof(float));  /* term_xi_scratch   */
@@ -79,7 +77,6 @@ SppEstimator* spp_init(void* mem, size_t mem_size,
     spp_init_scalars(self, n_freqs, config);
     self->is_static = true;
 
-    self->gamma_prev     = (float*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(float));
     self->noise_psd_prev = (float*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(float));
 
     self->v_scratch         = (float*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(float));
@@ -100,13 +97,12 @@ SppEstimator* spp_create(int n_freqs, const AnrConfig* config) {
     spp_init_scalars(self, n_freqs, config);
     self->is_static = false;
 
-    self->gamma_prev = (float*)calloc(n_freqs, sizeof(float));
     self->noise_psd_prev = (float*)calloc(n_freqs, sizeof(float));
 
     self->v_scratch         = (float*)calloc(n_freqs, sizeof(float));
     self->term_xi_scratch   = (float*)calloc(n_freqs, sizeof(float));
 
-    if (!self->gamma_prev || !self->noise_psd_prev ||
+    if (!self->noise_psd_prev ||
         !self->v_scratch || !self->term_xi_scratch) {
         spp_destroy(self);
         return NULL;
@@ -119,7 +115,6 @@ void spp_destroy(SppEstimator* self) {
     if (!self) return;
     if (self->is_static) return;  /* caller owns the block; nothing to free */
 
-    if (self->gamma_prev) free(self->gamma_prev);
     if (self->noise_psd_prev) free(self->noise_psd_prev);
     if (self->v_scratch) free(self->v_scratch);
     if (self->term_xi_scratch) free(self->term_xi_scratch);
@@ -133,7 +128,7 @@ void spp_destroy(SppEstimator* self) {
 static inline void spp_dd_elem(const SppEstimator* self, float power, float noise,
                                float enhanced_prev, float noise_prev, float* gamma_out,
                                float* xi_out, float* v_out, float* v_scratch,
-                               float* term_xi_scratch, float* gamma_prev) {
+                               float* term_xi_scratch) {
     float gamma = power / (noise + 1e-10f);
     *gamma_out = gamma;
     float term1 = enhanced_prev / (noise_prev + 1e-10f);
@@ -146,7 +141,6 @@ static inline void spp_dd_elem(const SppEstimator* self, float power, float nois
     if (v_out) *v_out = v;
     *term_xi_scratch = term_xi;
     *v_scratch = v;
-    *gamma_prev = gamma;
 }
 
 ANR_TWIN void spp_dd_scalar(SppEstimator* self, const float* power,
@@ -156,7 +150,7 @@ ANR_TWIN void spp_dd_scalar(SppEstimator* self, const float* power,
     for (int k = 0; k < n; k++)
         spp_dd_elem(self, power[k], noise[k], enhanced_prev[k], noise_prev[k], gamma_out + k,
                     xi_out + k, v_out ? v_out + k : NULL, self->v_scratch + k,
-                    self->term_xi_scratch + k, self->gamma_prev + k);
+                    self->term_xi_scratch + k);
 }
 
 #if SK_HAVE_NEON
@@ -185,12 +179,11 @@ ANR_TWIN void spp_dd_neon(SppEstimator* self, const float* power, const float* n
         if (v_out) vst1q_f32(v_out + k, v);
         vst1q_f32(self->term_xi_scratch + k, term_xi);
         vst1q_f32(self->v_scratch + k, v);
-        vst1q_f32(self->gamma_prev + k, gamma);
     }
     for (; k < n; k++)
         spp_dd_elem(self, power[k], noise[k], enhanced_prev[k], noise_prev[k], gamma_out + k,
                     xi_out + k, v_out ? v_out + k : NULL, self->v_scratch + k,
-                    self->term_xi_scratch + k, self->gamma_prev + k);
+                    self->term_xi_scratch + k);
 }
 #endif
 
@@ -235,8 +228,6 @@ static void spp_prepare(SppEstimator* self, const float* Y_psd, const float* noi
         if (v_out) v_out[k] = v;
         term_xi_scratch[k] = term_xi;
         v_scratch[k] = v;
-
-        self->gamma_prev[k] = gamma;
     }
 }
 
@@ -277,7 +268,6 @@ void spp_estimate(
 void spp_reset(SppEstimator* self) {
     if (!self) return;
 
-    memset(self->gamma_prev, 0, self->n_freqs * sizeof(float));
     memset(self->noise_psd_prev, 0, self->n_freqs * sizeof(float));
 
     self->is_initialized = false;

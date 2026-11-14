@@ -31,9 +31,8 @@ void noise_estimator_destroy(NoiseEstimator* self);
 void noise_estimator_accumulate_init_power(NoiseEstimator* self, const float* power,
                                            int frame_idx);
 
-/* Initializes each bin to the 30th percentile of the n_frames stored rows; power_sum must be
- * non-NULL and is otherwise unused. */
-void noise_estimator_init_noise(NoiseEstimator* self, const float* power_sum, int n_frames);
+/* Initializes each bin to the 30th percentile of the n_frames stored rows. */
+void noise_estimator_init_noise(NoiseEstimator* self, int n_frames);
 
 /* Updates with power[n_freqs] and optional external SPP[n_freqs] (NULL: internal SPP). With
  * slow_lf_rise, bins [0, slow_lf_bins) rise no faster than alpha_d_speech. */

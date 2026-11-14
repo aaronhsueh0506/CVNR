@@ -36,24 +36,24 @@ static void dump_state(const uint32_t* context, const AnrDenoiser* s,
     const float* arrays[] = {s->power, s->spp, s->xi, s->gamma, s->gain,
         s->gain_prev, s->enhanced_psd_prev, s->log_gain_prev,
         anr_get_noise_psd(s, NULL), s->noise_est->S, s->noise_est->S_min,
-        s->noise_est->spp, s->spp_est->gamma_prev, s->spp_est->noise_psd_prev};
+        s->noise_est->spp, s->spp_est->noise_psd_prev};
     uint32_t nf = (uint32_t)s->n_freqs;
     for (uint32_t i = 0; i < sizeof(arrays) / sizeof(arrays[0]); ++i)
         record(context, i, arrays[i], nf);
-    record(context, 14, output, 2 * nf);
-    record(context, 15, returned_gain, nf);
+    record(context, 13, output, 2 * nf);
+    record(context, 14, returned_gain, nf);
     const float scalars[] = {s->cross_band_prior_state, s->cross_band_prior_lift,
         s->makeup_prior_state, s->spp_est->alpha,
         s->spp_est->xi_min, s->spp_est->prior_ratio};
-    record(context, 16, scalars, sizeof(scalars) / sizeof(scalars[0]));
+    record(context, 15, scalars, sizeof(scalars) / sizeof(scalars[0]));
     const uint32_t flags[] = {(uint32_t)s->init_frame_count,
         (uint32_t)s->is_initialized, (uint32_t)s->gain_initialized,
         (uint32_t)s->slow_lf_rise, (uint32_t)s->speech_protect_frame_active,
         (uint32_t)s->noise_est->ring_idx, (uint32_t)s->noise_est->scene_change_count,
         (uint32_t)s->noise_est->is_initialized, (uint32_t)s->spp_est->is_initialized};
-    record(context, 17, flags, sizeof(flags) / sizeof(flags[0]));
+    record(context, 16, flags, sizeof(flags) / sizeof(flags[0]));
     if (s->noise_est->ring_idx == 0)
-        record(context, 18, s->noise_est->min_buffer, nf * (uint32_t)s->config.L);
+        record(context, 17, s->noise_est->min_buffer, nf * (uint32_t)s->config.L);
 }
 
 static void run_case(uint32_t grid, int sr, int fft, AnrLevel level,

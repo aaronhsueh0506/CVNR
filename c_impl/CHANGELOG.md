@@ -2,6 +2,21 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [Unreleased] · 2026-11-14 · 移除 `AnrDenoiser.init_power_sum`、`noise_estimator_init_noise()` 的 `power_sum` 參數與 `SppEstimator.gamma_prev`
+
+輸出不變：428 個情境的 `pyc_parity_nr` JSON 在 SIMD=1／0 都與改動前相同；`make test-full` 在 SIMD=1／0（`WERROR=1`）全綠，`DEBUG=1` 的 C 測試目標與 `test-bit-exact` 全綠；`denoise_wav`／`denoise_mem` 在 5 個輸入×4 個 level 上輸出的 WAV 與改動前相同。
+
+### 變更 (Changed)
+- **Pool 大小（整合者請看）。** `anr_get_mem_size()` 在四個 level 都減少相同位元組：8k/128 由 23,328 降為 22,752（-576）、8k/256 由 28,784 降為 27,696（-1,088）、16k/256 由 45,344 降為 44,256（-1,088）、16k/512 由 56,432 降為 54,320（-2,112）、48k/1024 由 144,576 降為 140,416（-4,160）。`DEBUG=1` 建置（沒有 `USE_SHARED_XI_RATIO`）在 16k/256 由 44,800 降為 43,728。`sizeof(AnrDenoiser)` 在 LP64 由 376 降為 368（`ALIGN16` 384 降為 368），`sizeof(SppEstimator)` 由 56 降為 48（`ALIGN16` 64 降為 48）。NR 沒有 layout 版本常數：pool 查詢函式就是契約，用 `anr_get_mem_size()` 配 pool 的呼叫端不用改；把 pool 大小寫死的呼叫端要重讀（文件裡的 byte 表已重新實測）。
+- `noise_estimator_init_noise(NoiseEstimator*, const float* power_sum, int n_frames)` 改為 `noise_estimator_init_noise(NoiseEstimator*, int n_frames)`（內部標頭 `include/internal/noise_estimator.h`）。該參數只檢查是否為 NULL，第 30 百分位取自已存的啟動列。
+- `test_bit_exact_stream` 少一筆 `SPP gamma_prev` 記錄：後面的記錄（spectrum_out、gain_out、scalar state、flags/ring/scene state、完整 min ring）索引由 14–18 變 13–17，`python/tools/test_bit_exact.py` 的 `FIELDS` 同步刪掉標籤。比較的兩個建置來自同一支 runner，沒有任何已存檔的 stream 或 golden 依賴這個編號。
+
+### 移除 (Removed)
+- `AnrDenoiser.init_power_sum`（每個啟動幀累加、沒有讀者）與 `process_init_or_gain()` 中的累加迴圈。
+- `SppEstimator.gamma_prev`（在 `spp_dd_elem`、NEON 儲存與 `spp_prepare()` 的無歷史分支寫入，`spp_reset()` 清零，演算法不讀）；`spp_dd_elem()` 少一個 `gamma_prev` 參數。`test_anr_kernels.c` 的 `test_spp_dd` 刪掉多餘的 `gamma_prev` 比對（`gamma`、`xi`、`v_scratch`、`term_xi`、`v_out` 仍逐 lane 比對）。Python 的 `SppEstimator.gamma_prev` 不動（除錯統計會讀它）。
+- `gain_prev` 保留：`dump_state` 第 5 筆是 make-up 之前增益的唯一逐位元紀錄。
+
+
 ## [Unreleased] · 2026-11-14 · 移除建置旗標 `USE_SINGLE_CLAMP` 與範例 CLI 的 `--bypass`
 
 輸出不變：`src/`、`example/`、`test/` 每個 `.c`／`.cpp` 的 `cc -E -P` 在移除旗標前後相同（出貨、scalar、`DEBUG=1` 三組旗標）；428 個情境的 `pyc_parity_nr` JSON 在 SIMD=1／0 數字相同（只有 L2 的 `defines` 清單與 `desc` 文字不同，因為它們點名旗標）；`make test-full` 在 SIMD=1／0（`WERROR=1`）與 `DEBUG=1` 都全綠；`denoise_wav`／`denoise_mem` 在 3 個輸入×4 個 level 上的 stdout、stderr 與輸出 WAV 相同。

@@ -61,16 +61,14 @@ static int same_noise(const NoiseEstimator* a, const NoiseEstimator* b, int nf) 
 
 static void accumulate_and_init(NoiseEstimator* a, NoiseEstimator* b, int nf, int rows,
                                 int* t) {
-    float p[1100], sum[1100];
-    memset(sum, 0, sizeof sum);
+    float p[1100];
     for (int f = 0; f < rows; ++f) {
         make_power(p, nf, (*t)++, 0);
-        for (int k = 0; k < nf; ++k) sum[k] += p[k];
         noise_estimator_accumulate_init_power(a, p, f);
         noise_estimator_accumulate_init_power(b, p, f);
     }
-    noise_estimator_init_noise(a, sum, rows);
-    noise_estimator_init_noise(b, sum, rows);
+    noise_estimator_init_noise(a, rows);
+    noise_estimator_init_noise(b, rows);
 }
 
 /* Drive a separate-storage tracker and a shared-startup tracker through the same startup / steady
@@ -141,21 +139,19 @@ static void check_sizes(int sr, int fft, int L, int init) {
 static void check_standalone_reinit(int is_static) {
     AnrConfig cfg = anr_default_config_for_grid(16000, 512);
     int nf = 257, n = cfg.num_init_frames, t = 0;
-    float p[300], sum[300], first[300];
+    float p[300], first[300];
     Tracker x = make_tracker(nf, &cfg, 0, is_static);
     Tracker twin = make_tracker(nf, &cfg, 0, is_static);   /* never sees the late accumulate calls */
     CHECK(x.est && twin.est, "standalone trackers created");
     if (!x.est || !twin.est) return;
     g_rng = 99u;
-    memset(sum, 0, sizeof sum);
     for (int f = 0; f < n; ++f) {
         make_power(p, nf, t++, 0);
-        for (int k = 0; k < nf; ++k) sum[k] += p[k];
         noise_estimator_accumulate_init_power(x.est, p, f);
         noise_estimator_accumulate_init_power(twin.est, p, f);
     }
-    noise_estimator_init_noise(x.est, sum, n);
-    noise_estimator_init_noise(twin.est, sum, n);
+    noise_estimator_init_noise(x.est, n);
+    noise_estimator_init_noise(twin.est, n);
     memcpy(first, noise_estimator_get_noise_psd(x.est), (size_t)nf * sizeof(float));
     for (int h = 0; h < 800; ++h, ++t) {
         make_power(p, nf, t, 0);
@@ -173,11 +169,11 @@ static void check_standalone_reinit(int is_static) {
         make_power(p, nf, f, 0);
         noise_estimator_accumulate_init_power(x.est, p, f);
     }
-    noise_estimator_init_noise(x.est, sum, n);
+    noise_estimator_init_noise(x.est, n);
     CHECK(memcmp(first, noise_estimator_get_noise_psd(x.est), (size_t)nf * sizeof(float)) == 0,
           "standalone re-init after steady state reproduces the first initialization");
     noise_estimator_reset(x.est);
-    noise_estimator_init_noise(x.est, sum, n);   /* retained rows survive a reset */
+    noise_estimator_init_noise(x.est, n);   /* retained rows survive a reset */
     CHECK(memcmp(first, noise_estimator_get_noise_psd(x.est), (size_t)nf * sizeof(float)) == 0,
           "standalone init after reset uses the retained rows");
     free_tracker(&x);
@@ -188,20 +184,18 @@ static void check_standalone_reinit(int is_static) {
 static void check_shared_ignores_startup_calls(void) {
     AnrConfig cfg = anr_default_config_for_grid(16000, 512);
     int nf = 257, n = cfg.num_init_frames, t = 0;
-    float p[300], q[300], sum[300];
+    float p[300], q[300];
     Tracker a = make_tracker(nf, &cfg, 1, 1);
     Tracker b = make_tracker(nf, &cfg, 1, 1);
     CHECK(a.est && b.est, "shared trackers created");
     if (!a.est || !b.est) return;
     g_rng = 4242u;
     accumulate_and_init(a.est, b.est, nf, n, &t);
-    memset(sum, 0, sizeof sum);
-    for (int k = 0; k < nf; ++k) sum[k] = 1.0f;
     for (int h = 0; h < 600; ++h, ++t) {
         make_power(p, nf, t, 0);
         for (int k = 0; k < nf; ++k) q[k] = 1000.0f;
         noise_estimator_accumulate_init_power(a.est, q, h % n);
-        if (h % 50 == 7) noise_estimator_init_noise(a.est, sum, n);
+        if (h % 50 == 7) noise_estimator_init_noise(a.est, n);
         noise_estimator_update_ex(a.est, p, NULL, false, 0, 0.0f);
         noise_estimator_update_ex(b.est, p, NULL, false, 0, 0.0f);
         if (!same_noise(a.est, b.est, nf)) {

@@ -58,7 +58,6 @@ struct AnrDenoiser {
     float  makeup_prior_state;
 
     int    init_frame_count;
-    float* init_power_sum;
     bool   is_initialized;
 
     float  g_min;
@@ -455,7 +454,6 @@ size_t anr_get_mem_size(const AnrConfig* config) {
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* gain_xi_ratio_scratch */
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* gain_prev         */
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* enhanced_psd_prev */
-    total = ck_field_size(total, (size_t)nf, sizeof(float));   /* init_power_sum    */
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* log_gain_prev     */
 
     size_t noise_sz = noise_estimator_get_mem_size_shared_startup(nf, config);
@@ -498,7 +496,6 @@ AnrDenoiser* anr_init(void* mem, size_t mem_size,
     self->gain_xi_ratio_scratch = (float*)cursor; cursor += arr;
     self->gain_prev         = (float*)cursor; cursor += arr;
     self->enhanced_psd_prev = (float*)cursor; cursor += arr;
-    self->init_power_sum    = (float*)cursor; cursor += arr;
     self->log_gain_prev     = (float*)cursor; cursor += arr;
 
     /* Sub-modules carved from the same block (no malloc). */
@@ -543,14 +540,13 @@ AnrDenoiser* anr_create(const AnrConfig* config) {
     self->gain_xi_ratio_scratch = (float*)calloc(nf, sizeof(float));
     self->gain_prev         = (float*)calloc(nf, sizeof(float));
     self->enhanced_psd_prev = (float*)calloc(nf, sizeof(float));
-    self->init_power_sum    = (float*)calloc(nf, sizeof(float));
     self->log_gain_prev     = (float*)calloc(nf, sizeof(float));
 
     if (!self->power || !self->noise_aug || !self->noise_est || !self->spp_est ||
         !self->spp || !self->xi || !self->gamma || !self->gain ||
         !self->gain_v_scratch || !self->gain_xi_ratio_scratch ||
         !self->gain_prev || !self->enhanced_psd_prev ||
-        !self->init_power_sum || !self->log_gain_prev
+        !self->log_gain_prev
 #ifdef USE_SHARED_XI_RATIO
         || !self->v
 #endif
@@ -583,7 +579,6 @@ void anr_destroy(AnrDenoiser* self) {
     free(self->gain_xi_ratio_scratch);
     free(self->gain_prev);
     free(self->enhanced_psd_prev);
-    free(self->init_power_sum);
     free(self->log_gain_prev);
     free(self);
 }
@@ -605,16 +600,12 @@ static void process_init_or_gain(AnrDenoiser* self, const float* residual_echo_p
     const int nf = self->n_freqs;
     if (!self->is_initialized) {
         if (!silent) {
-            for (int k = 0; k < nf; k++)
-                self->init_power_sum[k] += self->power[k];
-
             noise_estimator_accumulate_init_power(self->noise_est, self->power,
                                                   self->init_frame_count);
             self->init_frame_count++;
 
             if (self->init_frame_count >= self->config.num_init_frames) {
-                noise_estimator_init_noise(self->noise_est, self->init_power_sum,
-                                           self->init_frame_count);
+                noise_estimator_init_noise(self->noise_est, self->init_frame_count);
                 self->is_initialized = true;
             }
         }
@@ -738,7 +729,6 @@ void anr_reset(AnrDenoiser* self) {
     memset(self->power,             0, self->n_freqs * sizeof(float));
     memset(self->gain_prev,         0, self->n_freqs * sizeof(float));
     memset(self->enhanced_psd_prev, 0, self->n_freqs * sizeof(float));
-    memset(self->init_power_sum,    0, self->n_freqs * sizeof(float));
     self->init_frame_count = 0;
     self->is_initialized   = false;
     reset_frame_evidence_state(self);
