@@ -1,6 +1,6 @@
 /* Gain API: anr_process_gain() and anr_process_gain_with_residual_psd() return the internal gain
- * vector. The golden hashes were captured from the previous API (anr_process_gain with an
- * extra-noise argument and anr_get_gain) on the same inputs, so a mismatch means the gains moved. */
+ * vector. The golden hashes were captured from a reference run on the same inputs, so a mismatch
+ * means the gains moved. */
 
 #include "anr.h"
 #include <math.h>

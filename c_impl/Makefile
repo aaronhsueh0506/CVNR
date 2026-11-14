@@ -38,7 +38,7 @@ DEBUG         ?= 0
 ifneq ($(DEBUG),0)
 ifneq ($(DEBUG),1)
 $(error DEBUG must be exactly 0 or 1 (got DEBUG='$(DEBUG)') -- pass DEBUG=0 \
-  (default: fast-math + the six production optimizations, same as a bare \
+  (default: fast-math + the four production optimizations, same as a bare \
   `make`) or DEBUG=1 (same as `make debug`: standard-math, optimizations \
   off). Any other value is rejected, including one inherited from an exported \
   DEBUG environment variable)
@@ -98,10 +98,8 @@ LINK = $(CXX)
 ifeq ($(DEBUG),0)
 CFLAGS += -DUSE_FAST_GAIN_SMOOTHING
 CFLAGS += -DUSE_SHARED_XI_RATIO
-CFLAGS += -DUSE_OPTIMIZED_MIN_BUFFER
 CFLAGS += -DUSE_OPTIMIZED_E1
 CFLAGS += -DUSE_SINGLE_CLAMP
-CFLAGS += -DUSE_INCREMENTAL_MIN
 else
 CFLAGS += -DUSE_STANDARD_MATH
 endif
@@ -112,24 +110,18 @@ endif
 #
 # USE_STANDARD_MATH         libm expf/logf/sqrtf/log10f/powf instead of the fast LUT/Taylor exp,
 #                           minimax log and target sqrt. Selected by `make debug` (DEBUG=1), which
-#                           also drops the six USE_* optimizations below;
+#                           also drops the four USE_* optimizations below;
 #                           EXTRA_CFLAGS="-DUSE_STANDARD_MATH" keeps them.
 # USE_FAST_GAIN_SMOOTHING   Clamp in the log domain and skip the exp->log round trip.
 #                           Formula-equivalent only: with approximate math it is not bit-exact to
 #                           the disabled path.
 # USE_SHARED_XI_RATIO       SPP outputs v = xi/(1+xi)*gamma and the gain stage reuses it.
-# USE_OPTIMIZED_MIN_BUFFER  Noise-tracker minimum ring laid out [freq_idx * L + frame_idx]
-#                           (contiguous per frequency) instead of [frame_idx * n_freqs + freq_idx].
-#                           Defined together with USE_INCREMENTAL_MIN or not at all (#error otherwise).
 # USE_OPTIMIZED_E1          E1(v): test v > 1.0 first and compute log10 once for v <= 1.0.
 # USE_SINGLE_CLAMP          Skip the final [g_min, 1.0] clamp that the log-domain clamp covers.
-# USE_INCREMENTAL_MIN       Track the noise-tracker minimum incrementally: O(1) on average, a full
-#                           rescan only when the evicted value was the minimum. Requires
-#                           USE_OPTIMIZED_MIN_BUFFER.
 #
 # Common builds:
 #   make debug                                  standard math, no optimizations (closest to Python)
-#   make                                        fast math and the six optimizations
+#   make                                        fast math and the four optimizations
 #
 # =============================================================================
 
@@ -231,8 +223,8 @@ CFLAGS    += $(FP_POLICY)
 COMMON_FWD = BACKEND=$(BACKEND) SIMD=$(SIMD) WERROR=$(WERROR) CC='$(CC)' CXX='$(CXX)' EXTRA_CFLAGS='$(EXTRA_CFLAGS)' NO_STDIO=$(NO_STDIO) TOOLCHAIN_CHECK=$(TOOLCHAIN_CHECK)
 
 ifeq ($(COMMON_LIB),)
-.PHONY: all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-gain-api test-scene-change test-shared-startup test-api-cpp test-cli-args bench-anr
-all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-gain-api test-scene-change test-shared-startup test-api-cpp test-cli-args bench-anr:
+.PHONY: all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-gain-api test-scene-change test-shared-startup test-api-cpp test-cli-args test-parity-runner bench-anr
+all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-gain-api test-scene-change test-shared-startup test-api-cpp test-cli-args test-parity-runner bench-anr:
 	+@ac="$$($(MAKE) -s --no-print-directory -C $(COMMON_DIR) $(COMMON_FWD) print-lib-path)"; \
 	 test -n "$$ac" || { echo "FATAL: could not resolve audiolib archive path (COMMON_DIR=$(COMMON_DIR) -- is audiolib present as a sibling of this repo?)" >&2; exit 1; }; \
 	 $(MAKE) --no-print-directory $@ COMMON_LIB="$$ac"
@@ -502,6 +494,11 @@ $(OBJ_DIR)/test_config_parity.o: $(TEST_DIR)/test_config_parity.c | _cfg_guard
 test-cli-args: $(TARGET) $(MEM_TARGET)
 	PYTHON="$(PYTHON)" sh $(TEST_DIR)/test_cli_args.sh "$(abspath $(TARGET))" "$(abspath $(MEM_TARGET))"
 
+# parity_runner on an NRP2 file shorter than its header says: exit 1 and no output file.
+.PHONY: test-parity-runner
+test-parity-runner: $(PARITY_TARGET)
+	PYTHON="$(PYTHON)" sh $(TEST_DIR)/test_parity_runner_input.sh "$(abspath $(PARITY_TARGET))"
+
 # Verify the public C API through a C++ caller.
 .PHONY: test-api-cpp
 TEST_CPP_TARGET = $(BIN_DIR)/test_api_cpp
@@ -551,7 +548,7 @@ PYC_PARITY_GATE_ONLY = ^(?!.*/8k_)(?!.*/(scale_1e-3|scale_1e-5|scale_1e-6|int16_
 PYC_PARITY_JSON ?= $(OBJ_ROOT)/pyc_parity_nr.json
 SIMD_OTHER = $(if $(filter 0,$(SIMD)),1,0)
 TEST_BUILD_GOALS = all lib mem parity
-TEST_C_GOALS = test-config test-reconfigure test-noise-restart test-gain-api test-scene-change test-shared-startup test-api-cpp test-cli-args test-bit-exact
+TEST_C_GOALS = test-config test-reconfigure test-noise-restart test-gain-api test-scene-change test-shared-startup test-api-cpp test-cli-args test-parity-runner test-bit-exact
 # pytest starts its own `make`; a clean make environment keeps that child's stdout to the CSV the
 # test parses. COMMON_DIR travels explicitly because MAKEFLAGS (which carries command-line
 # variables) is dropped.

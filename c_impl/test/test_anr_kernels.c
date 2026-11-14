@@ -274,7 +274,6 @@ static int test_spp_dd(void) {
     return 0;
 }
 
-#if defined(USE_OPTIMIZED_MIN_BUFFER) && defined(USE_INCREMENTAL_MIN)
 static int test_ring_min(void) {
     static const int lengths[] = {1, 2, 3, 4, 5, 8, 16, 31, 32, 48, 64};
     static float s_s[MAX_N + OFFSETS], smin_ref_s[MAX_N], smin_neon_s[MAX_N];
@@ -308,7 +307,6 @@ static int test_ring_min(void) {
     report("ring_min", &stats);
     return 0;
 }
-#endif
 
 #endif /* SK_HAVE_NEON */
 
@@ -324,9 +322,7 @@ int main(void) {
 #endif
     if (test_restart_inert()) return 1;
     if (test_spp_dd()) return 1;
-#if defined(USE_OPTIMIZED_MIN_BUFFER) && defined(USE_INCREMENTAL_MIN)
     if (test_ring_min()) return 1;
-#endif
 #else
     printf("ANR kernels: scalar build, no vector twin compiled (NEON=0)\n");
 #endif

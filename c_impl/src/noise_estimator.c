@@ -11,13 +11,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <math.h>
-#include <float.h>
 #include "anr_internal.h"
-
-/* The ring layout and its minimum tracking are one build choice: both flags or neither. */
-#if defined(USE_OPTIMIZED_MIN_BUFFER) != defined(USE_INCREMENTAL_MIN)
-#error "USE_OPTIMIZED_MIN_BUFFER and USE_INCREMENTAL_MIN must be defined together"
-#endif
 
 struct NoiseEstimator {
     int n_freqs;
@@ -34,7 +28,7 @@ struct NoiseEstimator {
     float* S_min;       // Minimum tracked values
     float* spp;         // Internal SPP (for min tracking)
 
-    // Minimum-tracking ring [L * n_freqs]; frequency-major with USE_OPTIMIZED_MIN_BUFFER, else frame-major
+    // Minimum-tracking ring [L * n_freqs], frequency-major: bin k holds its L values at [k * L, k * L + L)
     float* min_buffer;
     int ring_idx;       // Current write position in ring buffer
 
@@ -81,16 +75,10 @@ static float spectral_flatness(const float* power, int start, int end, float* sc
 static void noise_estimator_fill_ring(NoiseEstimator* self, const float* value) {
     const int n_freqs = self->n_freqs;
     const int L = self->L;
-#ifdef USE_OPTIMIZED_MIN_BUFFER
     for (int k = 0; k < n_freqs; k++) {
         float* freq_buf = &self->min_buffer[k * L];
         for (int l = 0; l < L; l++) freq_buf[l] = value[k];
     }
-#else
-    for (int l = 0; l < L; l++)
-        for (int k = 0; k < n_freqs; k++)
-            self->min_buffer[l * n_freqs + k] = value[k];
-#endif
 }
 
 /* On confirmed scene change, blend noise toward current power and reseed minima from S. */
@@ -399,7 +387,6 @@ void noise_estimator_init_noise(NoiseEstimator* self, const float* power_sum, in
     self->is_initialized = true;
 }
 
-#ifdef USE_INCREMENTAL_MIN
 static inline void noise_estimator_ring_min(float* s_min, const float* s, float* ring,
                                             int L, int ring_pos, int n) {
 #if ANR_VECTOR
@@ -408,7 +395,6 @@ static inline void noise_estimator_ring_min(float* s_min, const float* s, float*
     skr_ring_min_scalar(s_min, s, ring, L, ring_pos, n);
 #endif
 }
-#endif
 
 static inline void noise_estimator_restart_inert(float* noise, const float* power,
                                                  float alpha_d, int n) {
@@ -439,20 +425,7 @@ void noise_estimator_update_ex(NoiseEstimator* self,
 
     // Ring update and incremental minima.
     int ring_pos = self->ring_idx;
-#ifdef USE_INCREMENTAL_MIN
     noise_estimator_ring_min(self->S_min, self->S, self->min_buffer, L, ring_pos, n_freqs);
-#else
-    /* Frame-major ring; full rescan per bin. */
-    for (int k = 0; k < n_freqs; k++) {
-        self->min_buffer[ring_pos * n_freqs + k] = self->S[k];
-        float min_val = FLT_MAX;
-        for (int l = 0; l < L; l++) {
-            float val = self->min_buffer[l * n_freqs + k];
-            if (val < min_val) min_val = val;
-        }
-        self->S_min[k] = min_val;
-    }
-#endif
 
     self->ring_idx = (self->ring_idx + 1) % L;
 

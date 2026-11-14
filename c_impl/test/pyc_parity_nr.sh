@@ -2,9 +2,9 @@
 # pyc_parity_nr.sh -- Python<->C numeric parity check for the NR library.
 #
 # Compares the C library with the Python reference on fixed inputs, in two layers:
-#   L1  std-math C (SIMD=0, -DUSE_STANDARD_MATH, none of the six USE_* optimizations) vs Python.
+#   L1  std-math C (SIMD=0, -DUSE_STANDARD_MATH, none of the four USE_* optimizations) vs Python.
 #       A deviation is a Python<->C sync bug.
-#   L2  shipping C (Makefile default: SIMD=1, fast math, six USE_* flags) vs the std-math C.
+#   L2  shipping C (Makefile default: SIMD=1, fast math, four USE_* flags) vs the std-math C.
 #       This is the accepted fast-math approximation; its tolerance is fixed.
 # Scenarios: 5 grids (8k/128, 8k/256, 16k/256, 16k/512, 48k/1024) x 4 levels x inputs (speech in
 # noise, scene change, music, synthetic digital-silence gaps, zeroed bins, level scaling, int16

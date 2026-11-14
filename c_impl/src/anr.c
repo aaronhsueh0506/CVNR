@@ -6,7 +6,7 @@
 #include "anr_types.h"
 #include "noise_estimator.h"
 #include "spp_estimator.h"
-#include "fft_wrapper.h"   /* Complex, fft_power, fft_apply_gain */
+#include "fft_wrapper.h"   /* Complex, fft_power */
 #include "utility/mem_align.h"
 #include "utility/fast_math.h"
 #include "utility/simd_kernels.h"  /* Requires -ffp-contract=off. */

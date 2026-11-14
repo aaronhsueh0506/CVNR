@@ -6,9 +6,9 @@ Driven by c_impl/test/pyc_parity_nr.sh, which builds the C side and passes the b
 Run the script, not this file.
 
 What it compares
-  Layer 1 (L1)  std-math C (SIMD=0, -DUSE_STANDARD_MATH, none of the six USE_* optimizations)
+  Layer 1 (L1)  std-math C (SIMD=0, -DUSE_STANDARD_MATH, none of the four USE_* optimizations)
                 against the Python reference.  A deviation here is a Python<->C sync bug.
-  Layer 2 (L2)  shipping C (Makefile default: SIMD=1, fast math, the six USE_* flags) against the
+  Layer 2 (L2)  shipping C (Makefile default: SIMD=1, fast math, the four USE_* flags) against the
                 std-math C.  This measures the accepted fast-math/optimization approximation.
   Python is not compared with the shipping build directly: that number would mix the two layers.
 
@@ -34,7 +34,7 @@ Verdicts per scenario and layer
 Exit code 0 = no failure, 1 = failure, 2 = infrastructure error (inputs, build flags, drivers).
 
 The tolerances (TOLERANCES) are fixed per scenario kind, layer and metric. The gain L2 max_abs
-tolerance covers the fast-math approximation budget and all six USE_* optimization flags together.
+tolerance covers the fast-math approximation budget and all four USE_* optimization flags together.
 The measured numbers are always printed next to the tolerances.
 """
 
@@ -85,8 +85,8 @@ TOLERANCES = {
 # A verdict whose measured/limit ratio lies in (MARGIN_LOW, MARGIN_HIGH) is flagged MARGINAL.
 MARGIN_LOW, MARGIN_HIGH = 0.5, 2.0
 
-USE_FLAGS_SHIP = ('-DUSE_FAST_GAIN_SMOOTHING', '-DUSE_SHARED_XI_RATIO', '-DUSE_OPTIMIZED_MIN_BUFFER',
-                  '-DUSE_OPTIMIZED_E1', '-DUSE_SINGLE_CLAMP', '-DUSE_INCREMENTAL_MIN')
+USE_FLAGS_SHIP = ('-DUSE_FAST_GAIN_SMOOTHING', '-DUSE_SHARED_XI_RATIO', '-DUSE_OPTIMIZED_E1',
+                  '-DUSE_SINGLE_CLAMP')
 DEFINES_REQUIRED = {
     'L1': {'-DUSE_STANDARD_MATH', '-DSIMD_KERNELS_FORCE_SCALAR'},
     'L2': set(USE_FLAGS_SHIP),
@@ -589,7 +589,7 @@ def run_all(args):
         layers=dict(
             L1=dict(desc='std-math C (SIMD=0, -DUSE_STANDARD_MATH, no USE_* optimizations) vs Python',
                     defines=define_info['L1']),
-            L2=dict(desc='shipping C (SIMD=1, Makefile default, six USE_* flags) vs std-math C',
+            L2=dict(desc='shipping C (SIMD=1, Makefile default, four USE_* flags) vs std-math C',
                     defines=define_info['L2'])),
         tolerances=dict(FROZEN=True, margin_flag=[MARGIN_LOW, MARGIN_HIGH], values=TOLERANCES),
         inputs=shas,

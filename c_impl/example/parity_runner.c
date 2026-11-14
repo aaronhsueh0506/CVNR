@@ -102,19 +102,27 @@ int main(int argc, char* argv[]) {
     }
 
     /* Drive frame-by-frame: read X_re/X_im, compute gain (not applied). */
+    int rc = 0;
     for (int f = 0; f < n_frames; f++) {
         if (nrp2_read_frame(fin, n_freqs, re, im, spec_in) != 0) {
             fprintf(stderr, "Error: short spectra at frame %d\n", f);
+            rc = 1;
             break;
         }
         gain = anr_process_gain(denoiser, spec_in);
         if (!gain) {
             fprintf(stderr, "Error: anr_process_gain failed at frame %d\n", f);
+            rc = 1;
             break;
         }
         memcpy(all_gains + (size_t)f * n_freqs, gain, n_freqs * sizeof(float));
     }
     fclose(fin);
+    if (rc != 0) {
+        free(spec_in); free(re); free(im); free(all_gains);
+        anr_destroy(denoiser);
+        return 1;
+    }
 
     /* Write C gains. */
     FILE* fout = fopen(argv[2], "wb");
@@ -124,8 +132,14 @@ int main(int argc, char* argv[]) {
         anr_destroy(denoiser);
         return 1;
     }
-    nrp2_write_gains(fout, n_frames, n_freqs, all_gains);
-    fclose(fout);
+    int write_failed = nrp2_write_gains(fout, n_frames, n_freqs, all_gains) != 0;
+    if (fclose(fout) != 0) write_failed = 1;
+    if (write_failed) {
+        fprintf(stderr, "Error: short write to %s\n", argv[2]);
+        free(spec_in); free(re); free(im); free(all_gains);
+        anr_destroy(denoiser);
+        return 1;
+    }
 
     printf("[parity_runner] frames=%d n_freqs=%d sr=%d fft_size=%d -> %s\n",
            n_frames, n_freqs, sample_rate, fft_size, argv[2]);

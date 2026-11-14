@@ -8,11 +8,12 @@
 
 ### 移除 (Removed)
 - `USE_FAST_PERCENTILE`（mean×0.23 近似）與 `noise_estimator_seed_from_mean()`、`noise_estimator_init_noise()` 內「percentile scratch 不可用」的回退（不可達）。百分位初始化一律走精確 30th percentile；百分位 scratch（`num_init_frames` 個 float）永遠配置。C-only 偏離 D-19 清單與 README／Makefile help／文件的相關說明一併移除。
-- `noise_estimator_min_ordered()` 與 `USE_OPTIMIZED_MIN_BUFFER`／`USE_INCREMENTAL_MIN` 的混合分支：兩個旗標現在必須同時定義（出貨）或同時不定義（標準數學／L1），混用在編譯期 `#error`。`test_min_ordered_special.c` 直接比對 `skr_min_ordered_*` kernel。
+- `noise_estimator_min_ordered()` 與建置旗標 `USE_OPTIMIZED_MIN_BUFFER`／`USE_INCREMENTAL_MIN`（含 frame-major 環與整排重掃分支）：只留頻率為主的環加增量最小值（`skr_ring_min_*`），所有建置（含 `make debug`）都一樣。四種旗標組合（皆無、任一、兩者）在 16k/256、16k/512、48k/1024、SIMD=1／0、出貨與標準數學下，gain、狀態與輸出逐位元相同（`test_bit_exact_stream` 111,301 筆、`pyc_parity_nr` 全部 433 筆 driver 輸出、noise-restart／reconfigure／shared-startup／scene-change 測試）；`anr_reconfigure()` 本來就拒絕改 `L`，沒有狀態在兩種佈局間搬移。仍傳這兩個旗標的建置照常編譯，沒有程式讀它們。`test_min_ordered_special.c` 直接比對 `skr_min_ordered_*` kernel；`test_anr_kernels` 一律執行 `test_ring_min`。
 - `spp_estimate_ex()`：`spp_estimate()` 多一個 `v_out`（可為 NULL）。`spp_prepare()` 內 `gain_prev` 有、`enhanced_psd_prev` 為 NULL 的 `g²·γ_prev` 回退（沒有呼叫路徑）；沒有 DD 歷史時一律走首幀的直接估計。
 - `AnrDenoiser.alpha_g`（私有複本；`AnrConfig.alpha_g` 保留）、`anr.c` 與 `noise_estimator.c` 的兩個空條件區塊、`test_gain_api.c` 的 `GAIN_API_CAPTURE_OLD` 分支、`test_config_validation.c` 第 6 節（`test_gain_api` 的 `test_arguments` 已涵蓋）。
 
 ### 變更 (Changed)
+- `parity_runner` 在 NRP2 輸入比標頭宣稱的短、某個 frame 被拒或寫入不完整時結束碼為 1 且不寫輸出檔（原本結束碼 0、輸出是尾端從未計算的完整大小檔案）。`test_parity_runner_input.sh`（`make test-parity-runner`，列入 `make test`）檢查完整與被截斷的輸入。`anr_types.h` 不再 `#include <string.h>`；兩處註解改成現況。
 - `noise_estimator.h`、`spp_estimator.h` 從 `include/` 搬到 `src/`（沒有外部呼叫端；公開標頭只有 `anr.h`、`anr_types.h`）。測試以 `../src/` 相對路徑引用。
 - `anr_process()` 的 out-of-place 與 in-place 兩條路徑都走 `sk_capply_gain_f32()`。
 - `anr_retime_frames()` 定義為 `anr_retime_frames_ms(..., 10)`；在 sample_rate ≤ 96 kHz（含白名單 grid）、`hop ≤ 4096`、`frames ≤ 20000` 的 6.6 億組合上與舊式整數運算相同。差別只在 sample_rate 約 6e8 Hz 以上且 hop 約 4e6 以上的不可能輸入：新的溢位檢查回 0。
