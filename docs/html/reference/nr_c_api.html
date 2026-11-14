@@ -149,9 +149,9 @@ anr_destroy(nr);                      /* heap 實例只能呼叫一次,重複呼
 if (anr_process(nr, spectrum, spectrum) != 0) { /* self / 輸入 / 輸出為 NULL */ }
 
 /* B. 只取 gain(串接鏈都走這條) */
-const float* gain = anr_process_gain_with_residual_psd(nr, error_spec, residual_psd_audio);
-if (!gain) { /* self / error_spec 為 NULL */ }
-/* residual_psd_audio 為 NULL 時等同 anr_process_gain(nr, error_spec);gain 是 n_freqs 個 float 的內部緩衝 */</pre>
+const float* gain = anr_process_gain_with_residual_psd(nr, spectrum_in, residual_psd_audio);
+if (!gain) { /* self / spectrum_in 為 NULL */ }
+/* residual_psd_audio 為 NULL 時等同 anr_process_gain(nr, spectrum_in);gain 是 n_freqs 個 float 的內部緩衝 */</pre>
 <div class="tblwrap"><table>
 <tr><th>項目</th><th>契約</th></tr>
 <tr><td>buffer 長度</td><td>全部 <code>n_freqs = fft_size/2+1</code>;函式<b>沒有長度參數</b>,傳錯不會替你報錯</td></tr>
@@ -168,7 +168,7 @@ if (!gain) { /* self / error_spec 為 NULL */ }
 <li><code>aec_process_linear()</code>，再 <code>aec_process_residual()</code>（<code>AecConfig.residual = AEC_RESIDUAL_FULL</code>，增益才存在）。一次做完到輸出的 <code>aec_process()</code> 沒有讓 NR 插入增益的位置，串 NR 要用這個兩段式。</li>
 <li><code>aec_get_residual()</code> 取 <code>AecResidualView</code>。<code>aec_post_reset_serial()</code> 的值變了，就在這個 hop 的 NR 與合成之前 <code>ac_istft_reset()</code>。</li>
 <li>有 <code>v.r2</code> 且 <code>v.usable_linear</code>：<code>r2 × AEC_PSD_SCALE_INV_F</code>（<code>aec.h</code>，即 1/32768²，精確）得到 audio 尺度的 <code>residual_echo_psd</code>；否則傳 <code>NULL</code>（純 NR）。<code>r2</code> 在 <code>AEC_RESIDUAL_STATE</code> 是 <code>NULL</code>，從 <code>ESTIMATE</code> 起才有。</li>
-<li><code>anr_process_gain_with_residual_psd(nr, 頻譜, residual_psd)</code> 得到 <code>g_nr</code>。頻譜用 <code>base_spec</code>（<code>pipelines/mono/aec_nr_res/main.c</code> 的 <code>mono_nr_gain()</code>）或 <code>error_spec</code>（4ch 的 <code>array_sample_anr_gain()</code>、板端 <code>alg_audio_aec_nr.c</code>）；輸出守衛沒有觸發時兩者相同。</li>
+<li><code>anr_process_gain_with_residual_psd(nr, 頻譜, residual_psd)</code> 得到 <code>g_nr</code>。頻譜：出貨的單聲道鏈用 <code>base_spec</code>（<code>pipelines/mono/aec_nr_res/main.c</code> 的 <code>mono_nr_gain()</code>）——NR 估計的就是下一步增益要乘上去的那張頻譜；出貨的 4ch 鏈用 <code>error_spec</code>（<code>array_sample_anr_gain()</code>，beamformer 輸出 E）。兩者只在輸出守衛啟動的 hop 上不同。<code>error_spec</code> 是 AI 模型用的分析 seam；Audio_ALG 之外的板端 sample 目前也把 <code>error_spec</code> 交給 NR，這是已知差異，不是建議。</li>
 <li><code>aec_apply_gain(aec, g_nr, spec)</code>：<code>spec = base_spec × min(g_nr, G_res)</code>；再 <code>aec_apply_cng(aec, g_nr, spec)</code>（只有呼叫端決定要舒適噪聲時）：只補被增益切掉的 bin，量由 <code>G_res</code>（不與 <code>g_nr</code> 取小）決定，再乘 <code>max(g_nr, AEC_CNG_NR_GAIN_FLOOR)</code>。<code>spec</code> 與 <code>g_nr</code> 不可重疊。</li>
 <li><code>ac_istft_push(istft, spec, out)</code>。</li>
 </ol>
