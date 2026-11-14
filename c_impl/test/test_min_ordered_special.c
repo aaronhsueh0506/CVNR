@@ -50,11 +50,10 @@ typedef struct { unsigned long arrays, fast, fallback; } Counts;
 
 static int check(const float* values, int n, const char* what, int trial, Counts* c) {
     float reference = scalar_minimum(values, n);
-    float actual = noise_estimator_min_ordered(values, n);
     float twin = skr_min_ordered_scalar(values, n);
-    if (to_bits(reference) != to_bits(actual) || to_bits(reference) != to_bits(twin)) {
-        fprintf(stderr, "ordered minimum FAIL: class=%s n=%d trial=%d reference=%08x dispatch=%08x scalar=%08x\n",
-                what, n, trial, to_bits(reference), to_bits(actual), to_bits(twin));
+    if (to_bits(reference) != to_bits(twin)) {
+        fprintf(stderr, "ordered minimum FAIL: class=%s n=%d trial=%d reference=%08x scalar=%08x\n",
+                what, n, trial, to_bits(reference), to_bits(twin));
         return 1;
     }
 #if SK_HAVE_NEON

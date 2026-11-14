@@ -77,7 +77,7 @@ make BACKEND=ne10 SIMD=1 WERROR=1 test-full
 ```
 
 `test` builds `all lib mem parity`, runs the C test targets (`test-config`, `test-reconfigure`,
-`test-noise-restart`, `test-scene-change`, `test-shared-startup`, `test-api-cpp`, `test-cli-args`, `test-bit-exact`),
+`test-noise-restart`, `test-gain-api`, `test-scene-change`, `test-shared-startup`, `test-api-cpp`, `test-cli-args`, `test-bit-exact`),
 the pytest suite, and the Python/C parity gate (220 of the 428 scenarios: four levels on the
 16 kHz and 48 kHz grids, without the 8 kHz grids, the `scale_1e-3`/`scale_1e-5`/`scale_1e-6`/`int16_pk55`
 rungs and the make-up rows of the 16k/512 and 48k/1024 grids). The Python/C configuration comparison

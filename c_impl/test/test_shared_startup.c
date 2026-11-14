@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "noise_estimator.h"
+#include "../src/noise_estimator.h"
 #include "anr_types.h"
 #include "../src/anr_internal.h"
 #include "utility/mem_align.h"
@@ -129,17 +129,11 @@ static void check_sizes(int sr, int fft, int L, int init) {
     size_t rows_save = cfg.L >= cfg.num_init_frames ? (size_t)cfg.num_init_frames
                                                      : (size_t)cfg.L;
     CHECK(sep && sh, "sr=%d fft=%d: sizes are non-zero", sr, fft);
-#ifdef USE_FAST_PERCENTILE
-    (void)rows_save;
-    CHECK(sh == sep, "sr=%d fft=%d: fast percentile keeps no startup rows (%zu vs %zu)",
-          sr, fft, sh, sep);
-#else
     /* The shared region is the larger of the two row blocks. */
     CHECK(sep - sh == ALIGN16(rows_save * (size_t)nf * sizeof(float)),
           "sr=%d fft=%d L=%d init=%d: saving %zu != smaller row block %zu",
           sr, fft, cfg.L, cfg.num_init_frames, sep - sh,
           (size_t)ALIGN16(rows_save * (size_t)nf * sizeof(float)));
-#endif
 }
 
 /* Public contract: the standalone tracker may be re-initialized from its retained startup rows
@@ -190,9 +184,7 @@ static void check_standalone_reinit(int is_static) {
     free_tracker(&twin);
 }
 
-#ifndef USE_FAST_PERCENTILE
-/* Once initialized, the ring owns the shared region: startup calls must not disturb it. The fast
- * percentile build keeps no startup rows, so there is nothing to protect. */
+/* Once initialized, the ring owns the shared region: startup calls must not disturb it. */
 static void check_shared_ignores_startup_calls(void) {
     AnrConfig cfg = anr_default_config_for_grid(16000, 512);
     int nf = 257, n = cfg.num_init_frames, t = 0;
@@ -220,7 +212,6 @@ static void check_shared_ignores_startup_calls(void) {
     free_tracker(&a);
     free_tracker(&b);
 }
-#endif
 
 /* A tracker cannot be built from a zero-length ring or an empty startup window. */
 static void check_rejects_degenerate_geometry(void) {
@@ -229,13 +220,11 @@ static void check_rejects_degenerate_geometry(void) {
     cfg.L = 0;
     CHECK(!noise_estimator_create(nf, &cfg), "create accepts L=0");
     CHECK(!noise_estimator_create_shared_startup(nf, &cfg), "shared create accepts L=0");
-#ifndef USE_FAST_PERCENTILE
     cfg = anr_default_config_for_grid(16000, 512);
     cfg.num_init_frames = 0;
     CHECK(!noise_estimator_create(nf, &cfg), "create accepts num_init_frames=0");
     CHECK(!noise_estimator_create_shared_startup(nf, &cfg),
           "shared create accepts num_init_frames=0");
-#endif
 }
 
 int main(void) {
@@ -256,9 +245,7 @@ int main(void) {
     check_standalone_reinit(0);
     check_standalone_reinit(1);
     check_rejects_degenerate_geometry();
-#ifndef USE_FAST_PERCENTILE
     check_shared_ignores_startup_calls();
-#endif
     printf(g_fail ? ">>> FAIL\n" : ">>> PASS\n");
     return g_fail;
 }

@@ -27,13 +27,12 @@ NoiseEstimator* noise_estimator_init(void* mem, size_t mem_size,
 /* Free heap state; static memory remains caller-owned. */
 void noise_estimator_destroy(NoiseEstimator* self);
 
-/* Stores power[n_freqs] for init frame frame_idx in [0, num_init_frames); no-op with
- * USE_FAST_PERCENTILE. */
+/* Stores power[n_freqs] for init frame frame_idx in [0, num_init_frames). */
 void noise_estimator_accumulate_init_power(NoiseEstimator* self, const float* power,
                                            int frame_idx);
 
-/* Initializes from power_sum[n_freqs] over n_frames: 30th percentile of the stored rows, or
- * mean * 0.23 with USE_FAST_PERCENTILE. */
+/* Initializes each bin to the 30th percentile of the n_frames stored rows; power_sum must be
+ * non-NULL and is otherwise unused. */
 void noise_estimator_init_noise(NoiseEstimator* self, const float* power_sum, int n_frames);
 
 /* Updates with power[n_freqs] and optional external SPP[n_freqs] (NULL: internal SPP). With

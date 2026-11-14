@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include "noise_estimator.h"
+#include "../src/noise_estimator.h"
 #include "anr_types.h"
 
 static int g_fail = 0;

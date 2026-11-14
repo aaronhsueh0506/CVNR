@@ -143,11 +143,7 @@ static inline int anr_retime_frames_ms(int frames_ref,
 /** Convert a frame count authored at 10 ms without shortening real duration. */
 static inline int anr_retime_frames(int frames_10ms,
                                          int sample_rate, int hop_size) {
-    if (frames_10ms <= 0 || sample_rate <= 0 || hop_size <= 0) return 0;
-    int64_t numerator = (int64_t)frames_10ms * (int64_t)sample_rate;
-    int64_t denominator = (int64_t)100 * (int64_t)hop_size;
-    int64_t frames = (numerator + denominator - 1) / denominator;
-    return frames > INT_MAX ? 0 : (int)frames;
+    return anr_retime_frames_ms(frames_10ms, sample_rate, hop_size, 10);
 }
 
 /** Build the default (balanced) configuration directly on one whitelisted no-padding grid. */

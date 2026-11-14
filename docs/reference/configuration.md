@@ -70,18 +70,18 @@ aggressive −28/0.45/−12/1.3）；上表的時間常數與低頻語音 guard 
 
 記憶體需求（NE10，預設建置參數，實測 byte 數）：
 
-| grid | `anr_get_mem_size()` | 加上 `-DUSE_FAST_PERCENTILE` | `fft_get_mem_size()` |
-|---|---:|---:|---:|
-| 8k/128 | 23 328 | 23 184 | 3 952 |
-| 8k/256 | 28 784 | 28 688 | 7 152 |
-| 16k/256 | 45 344 | 45 200 | 7 152 |
-| 16k/512 | 56 432 | 56 336 | 13 552 |
-| 48k/1024 | 144 576 | 144 464 | 26 352 |
+| grid | `anr_get_mem_size()` | `fft_get_mem_size()` |
+|---|---:|---:|
+| 8k/128 | 23 328 | 3 952 |
+| 8k/256 | 28 784 | 7 152 |
+| 16k/256 | 45 344 | 7 152 |
+| 16k/512 | 56 432 | 13 552 |
+| 48k/1024 | 144 576 | 26 352 |
 
 整合 denoiser 內的噪聲追蹤器把「啟動階段的 power 列」與「最小值 ring」放在同一塊記憶體（取兩者
 較大者）：啟動列在 `noise_estimator_init_noise()` 取完 30th percentile 後就不再被讀，ring 要等
-那之後才第一次被寫。所以預設建置與 `-DUSE_FAST_PERCENTILE` 只差 percentile scratch
-（`num_init_frames` 個 float）。獨立使用 `noise_estimator_*` 的呼叫端不受影響：該元件仍各自配置兩塊，
+那之後才第一次被寫；另有一塊 percentile scratch（`num_init_frames` 個 float）供初始化取第 30 百分位，
+一律配置。獨立使用 `noise_estimator_*` 的呼叫端不受影響：該元件仍各自配置兩塊，
 可隨時重新累積、重新初始化。
 
 需求量同時受 `fft_size`、`L`、`num_init_frames` 與建置參數影響，上表僅供規劃 pool 大小時
@@ -130,7 +130,7 @@ MCRA broadband gate 內部用來計數的 `spp > 0.5` 則是另一個分類門�
 | `alpha_attack` | 增益「上升」方向的平滑係數 | 有限值，`[0, 1]` | 依 grid | **調小**：增益回升快，語音起音更清楚，但較容易讓噪聲短暫漏出。**調大**：起音較鈍但更平順 |
 | `alpha_decay` | 增益「下降」方向的平滑係數 | 有限值，`[0, 1]` | 依 grid | **調大**：增益下降慢，musical noise 明顯減少，語音尾音拖長。**調小**：噪聲收得快但容易產生抖動 |
 
-> **註記（實測）**：`alpha_g` 會被複製進 instance，但目前沒有任何運算使用它；實際的增益平滑
+> **註記**：`alpha_g` 只由 `anr_validate_config()` 檢查範圍（`[0, 1]`），instance 不保存也不讀它；實際的增益平滑
 > 完全由 `alpha_attack` 與 `alpha_decay` 決定。各 level 剛好把 `alpha_g` 與 `alpha_decay`
 > 設成相同的值，所以只調 `alpha_g` 看起來「沒有作用」是正常的。想調平滑度請改
 > `alpha_decay`（必要時連同 `alpha_attack`）。

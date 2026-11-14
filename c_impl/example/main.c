@@ -42,11 +42,6 @@ void print_usage(const char* prog) {
     printf("  %s noisy.wav clean.wav --bypass\n", prog);
 }
 
-/* Periodic sqrt-Hann window. */
-static void build_sqrt_hann(float* w, int N) {
-    ac_window_build(w, N);
-}
-
 /* Read the whole (first-channel) signal into a malloc'd float buffer. */
 static float* read_whole_signal(WavReader* wav_in, int* out_n) {
     int n = wav_in->info.num_samples;
@@ -173,9 +168,8 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    const char *level_names[] = {"mild", "moderate", "balanced", "aggressive"};
     printf("\nDenoiser configuration (freq-domain runner):\n");
-    printf("  NR mode: %s\n", level_names[nr_level]);
+    printf("  NR mode: %s\n", anr_nr_level_name(nr_level));
     printf("  Frame size: %d samples (%.1f ms)\n", frame_size, frame_size * 1000.0f / sample_rate);
     printf("  Hop size: %d samples (%.1f ms)\n", hop, hop * 1000.0f / sample_rate);
     printf("  FFT size: %d  Frequency bins: %d\n", fft_size, n_freqs);
@@ -207,7 +201,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    build_sqrt_hann(win, frame_size);
+    ac_window_build(win, frame_size);   /* periodic sqrt-Hann */
 
     /* 6. Per-frame: window -> rFFT -> anr_process -> iFFT -> window -> OLA. */
     printf("\nProcessing %d frames...\n", n_frames);

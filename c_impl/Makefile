@@ -114,24 +114,22 @@ endif
 #                           minimax log and target sqrt. Selected by `make debug` (DEBUG=1), which
 #                           also drops the six USE_* optimizations below;
 #                           EXTRA_CFLAGS="-DUSE_STANDARD_MATH" keeps them.
-# USE_FAST_PERCENTILE       Initial noise floor from mean * 0.23 instead of the exact 30th
-#                           percentile (saves only the quickselect scratch: the startup rows share
-#                           the minimum ring's storage in the denoiser's tracker).
 # USE_FAST_GAIN_SMOOTHING   Clamp in the log domain and skip the exp->log round trip.
 #                           Formula-equivalent only: with approximate math it is not bit-exact to
 #                           the disabled path.
 # USE_SHARED_XI_RATIO       SPP outputs v = xi/(1+xi)*gamma and the gain stage reuses it.
 # USE_OPTIMIZED_MIN_BUFFER  Noise-tracker minimum ring laid out [freq_idx * L + frame_idx]
 #                           (contiguous per frequency) instead of [frame_idx * n_freqs + freq_idx].
+#                           Defined together with USE_INCREMENTAL_MIN or not at all (#error otherwise).
 # USE_OPTIMIZED_E1          E1(v): test v > 1.0 first and compute log10 once for v <= 1.0.
 # USE_SINGLE_CLAMP          Skip the final [g_min, 1.0] clamp that the log-domain clamp covers.
 # USE_INCREMENTAL_MIN       Track the noise-tracker minimum incrementally: O(1) on average, a full
-#                           rescan only when the evicted value was the minimum.
+#                           rescan only when the evicted value was the minimum. Requires
+#                           USE_OPTIMIZED_MIN_BUFFER.
 #
 # Common builds:
 #   make debug                                  standard math, no optimizations (closest to Python)
 #   make                                        fast math and the six optimizations
-#   make EXTRA_CFLAGS="-DUSE_FAST_PERCENTILE"   additionally the fast percentile approximation
 #
 # =============================================================================
 
@@ -856,6 +854,7 @@ clean:
 ifeq ($(COMMON_LIB),)
 install:
 	+@ac="$$($(MAKE) -s --no-print-directory -C $(COMMON_DIR) $(COMMON_FWD) print-lib-path)"; \
+	 test -n "$$ac" || { echo "FATAL: could not resolve audiolib archive path (COMMON_DIR=$(COMMON_DIR) -- is audiolib present as a sibling of this repo?)" >&2; exit 1; }; \
 	 $(MAKE) --no-print-directory install COMMON_LIB="$$ac"
 else
 install: $(TARGET)
@@ -872,6 +871,7 @@ uninstall:
 ifeq ($(COMMON_LIB),)
 run-sample:
 	+@ac="$$($(MAKE) -s --no-print-directory -C $(COMMON_DIR) $(COMMON_FWD) print-lib-path)"; \
+	 test -n "$$ac" || { echo "FATAL: could not resolve audiolib archive path (COMMON_DIR=$(COMMON_DIR) -- is audiolib present as a sibling of this repo?)" >&2; exit 1; }; \
 	 $(MAKE) --no-print-directory run-sample COMMON_LIB="$$ac"
 else
 run-sample: $(TARGET)
@@ -918,7 +918,6 @@ help:
 	@echo "Build Configurations:"
 	@echo "  make                                          - Standard build (NE10 FFT, ARM NEON, embedded deliverable, fast math - default)"
 	@echo "  make debug                                  - Debug build (DEBUG=1, matches Python output)"
-	@echo "  make EXTRA_CFLAGS=\"-DUSE_FAST_PERCENTILE\"    - Optimized build (all approximations)"
 	@echo "  make WERROR=1                                  - Opt-in: -Werror for this repo's own sources"
 	@echo ""
 	@echo "Objects/binaries live in <OBJ_ROOT>|<BIN_ROOT>/<backend>-<config-hash>/ (default obj/bin) -- switching"
@@ -930,11 +929,9 @@ help:
 	@echo ""
 	@echo "Flags:"
 	@echo "  USE_STANDARD_MATH   - selected via \`make debug\` (DEBUG=1), not EXTRA_CFLAGS"
-	@echo "  USE_FAST_PERCENTILE - Use mean*0.23 approximation instead of exact 30th percentile"
 	@echo ""
 	@echo "Memory usage:"
-	@echo "  Without USE_FAST_PERCENTILE: + num_init_frames floats per instance for the percentile scratch"
-	@echo "  With USE_FAST_PERCENTILE: No extra memory"
+	@echo "  + num_init_frames floats per instance for the percentile scratch"
 	@echo ""
 	@echo "After building:"
 	@echo "  ./<BIN_ROOT>/<backend>-<config-hash>/denoise_wav input.wav output.wav (default bin/)"

@@ -17,12 +17,6 @@ make SIMD=0  # 強制 NR 與 audiolib 的所有可選 SIMD 路徑走 scalar
 make debug
 ```
 
-### 全速版本（啟用近似 percentile）
-
-```bash
-make EXTRA_CFLAGS="-DUSE_FAST_PERCENTILE"
-```
-
 ### 靜態記憶體版本（嵌入式，零 malloc）
 
 ```bash
@@ -59,9 +53,11 @@ external-memory 初始化 `ne10_fft_init_r2c_float32_ext`），沒有 backend-in
 `fft_get_mem_size`/`fft_init`、`noise_estimator_get_mem_size`/`noise_estimator_init`、
 `spp_get_mem_size`/`spp_init`。
 
+`test_wav/` 內只有 `music/` 的兩個 wav 在 git 內；`wav/`、`opus/`、`scene_change/`、`vctk_demand/` 是本機素材，不入版控。`wav/` 的 48 kHz babble／car／street／clean 檔對應 `opus/` 內同名的 `.opus`，沒有 wav 時可用 `ffmpeg -i test_wav/opus/<name>.opus test_wav/wav/<name>.wav` 解出（範例與 `docs/reference/metrics.md` 的路徑都以這個目錄為準）。
+
 **零 malloc 保證**：malloc 路徑編進同一份 object，所以 `nm` 一定看得到
 `malloc`/`calloc`/`free` 符號（來自 `_create()`）。保證的是**靜態路徑在執行期不呼叫任何配置器**：
-`_init()` 只做指標運算 + `memset`，連預設的 exact-percentile 初始化也用預先配好的
+`_init()` 只做指標運算 + `memset`，連 exact-percentile 初始化（唯一的初始化方式，沒有近似選項）也用預先配好的
 `percentile_scratch`（in-place quickselect）。`example/main_mem.c` 呼叫 `_init()` 系列，執行期 0 malloc。
 
 **FFT 與 fast_math 來自共用的 `../audiolib/common`**（`make` 產出 `libaudio_common.a`，
@@ -110,16 +106,10 @@ NaN 取代 NaN payload，因此 ARM32 上 `SIMD=1` 與 `SIMD=0` 對這類值可�
 |------|------|--------|
 | `USE_FAST_GAIN_SMOOTHING` | 在 log 域直接 clamp，省略 exp→log 轉換 | 公式等價；fast-math 下不保證 bit-exact |
 | `USE_SHARED_XI_RATIO` | SPP 和 Gain 共用 v 計算結果，每頻點省 1 次除法 | 公式等價；≤1 ulp，不保證 bit-exact |
-| `USE_OPTIMIZED_MIN_BUFFER` | MCRA 最小值緩衝使用連續記憶體佈局 | 100% |
+| `USE_OPTIMIZED_MIN_BUFFER` | MCRA 最小值緩衝使用連續記憶體佈局（須與 `USE_INCREMENTAL_MIN` 同時定義，否則編譯期 `#error`） | 100% |
 | `USE_OPTIMIZED_E1` | E1(v) 指數積分分支重排 + 共用 log10 | 100% |
 | `USE_SINGLE_CLAMP` | 移除冗餘的 gain clamp；只在 `USE_FAST_GAIN_SMOOTHING` **關閉**時有作用，預設組合下是 no-op | 100% |
-| `USE_INCREMENTAL_MIN` | MCRA 增量最小值追蹤（平均 O(1)） | 100% |
-
-### 手動啟用
-
-| 開關 | 說明 | 相關度 |
-|------|------|--------|
-| `USE_FAST_PERCENTILE` | 使用 mean×0.23 近似目前設定的 30th percentile，只省 `num_init_frames` 個 float 的 percentile scratch（啟動列已與最小值 ring 共用儲存） | 近似模式，需獨立做品質驗證 |
+| `USE_INCREMENTAL_MIN` | MCRA 增量最小值追蹤（平均 O(1)；須與 `USE_OPTIMIZED_MIN_BUFFER` 同時定義） | 100% |
 
 ### 調試用
 
@@ -133,7 +123,6 @@ NaN 取代 NaN payload，因此 ARM32 上 `SIMD=1` 與 `SIMD=0` 對這類值可�
 |------|------|
 | 調試/驗證 | `make debug` |
 | 標準使用 | `make` |
-| 嵌入式/最小記憶體 | `make EXTRA_CFLAGS="-DUSE_FAST_PERCENTILE"` |
 | 嵌入式/零 malloc（呼叫端提供記憶體） | `make mem`（`_get_mem_size`/`_init`，見上「靜態記憶體版本」） |
 
 ## 執行期設定

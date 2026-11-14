@@ -1,14 +1,11 @@
 /* Offline gain runner: reads per-frame complex spectra from a binary file, computes each
  * frame's per-bin gain with anr_process_gain() (the gain is not applied) and writes the gains.
  *
- * Input (little-endian): int32 magic 'NRP2' (0x4e525032; 'NRP1' = implicit 16 kHz), n_frames,
- * n_freqs and, for 'NRP2', sample_rate; then per frame X_re[n_freqs], X_im[n_freqs] (float32).
- * Trailing data is ignored. fft_size = (n_freqs - 1) * 2.
- * Output: int32 n_frames, n_freqs; then per frame gain[n_freqs] (float32).
+ * Input and output layouts: see nrp2_io.h.
  *
  * Usage: parity_runner <in_spectra.bin> <out_c_gains.bin> [full] [<level>]
- *   The optional mode must be 'full'. <level> is 0|1|2|3 or
- *   mild|moderate|balanced|aggressive and defaults to balanced.
+ *   The optional mode must be 'full'. <level> is the number 0 mild, 1 moderate, 2 balanced or
+ *   3 aggressive and defaults to balanced.
  */
 
 #include <stdio.h>
@@ -20,9 +17,7 @@
 #include "anr_types.h"
 #include "cli_level.h"
 #include "fft_wrapper.h"
-
-#define PARITY_MAGIC_V1 0x4E525031  /* 'NRP1': implicit 16 kHz */
-#define PARITY_MAGIC    0x4E525032  /* 'NRP2': carries the signal grid rate */
+#include "nrp2_io.h"
 
 int main(int argc, char* argv[]) {
     if (argc < 3) {
@@ -48,29 +43,24 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    int32_t header[3];
-    if (fread(header, sizeof(int32_t), 3, fin) != 3) {
-        fprintf(stderr, "Error: short header\n");
+    Nrp2Header header;
+    Nrp2Status status = nrp2_read_header(fin, 1, &header);
+    if (status == NRP2_SHORT_HEADER || status == NRP2_SHORT_RATE) {
+        fprintf(stderr, status == NRP2_SHORT_RATE ? "Error: short NRP2 header\n"
+                                                  : "Error: short header\n");
         fclose(fin);
         return 1;
     }
-    if (header[0] != PARITY_MAGIC && header[0] != PARITY_MAGIC_V1) {
+    if (status == NRP2_BAD_MAGIC) {
         fprintf(stderr, "Error: bad magic 0x%08x (expected 0x%08x or 0x%08x)\n",
-                (unsigned)header[0], (unsigned)PARITY_MAGIC,
-                (unsigned)PARITY_MAGIC_V1);
+                (unsigned)header.magic, (unsigned)NRP2_MAGIC, (unsigned)NRP2_MAGIC_V1);
         fclose(fin);
         return 1;
     }
-    int n_frames = header[1];
-    int n_freqs  = header[2];
-    int sample_rate = 16000;
-    if (header[0] == PARITY_MAGIC &&
-        fread(&sample_rate, sizeof(int32_t), 1, fin) != 1) {
-        fprintf(stderr, "Error: short NRP2 header\n");
-        fclose(fin);
-        return 1;
-    }
-    if (n_frames <= 0 || n_freqs <= 1 || sample_rate <= 0) {
+    int n_frames = header.n_frames;
+    int n_freqs  = header.n_freqs;
+    int sample_rate = header.sample_rate;
+    if (status == NRP2_BAD_VALUES) {
         fprintf(stderr, "Error: bad header frames=%d freqs=%d sr=%d\n",
                 n_frames, n_freqs, sample_rate);
         fclose(fin);
@@ -113,14 +103,9 @@ int main(int argc, char* argv[]) {
 
     /* Drive frame-by-frame: read X_re/X_im, compute gain (not applied). */
     for (int f = 0; f < n_frames; f++) {
-        if (fread(re, sizeof(float), n_freqs, fin) != (size_t)n_freqs ||
-            fread(im, sizeof(float), n_freqs, fin) != (size_t)n_freqs) {
+        if (nrp2_read_frame(fin, n_freqs, re, im, spec_in) != 0) {
             fprintf(stderr, "Error: short spectra at frame %d\n", f);
             break;
-        }
-        for (int k = 0; k < n_freqs; k++) {
-            spec_in[k].r = re[k];
-            spec_in[k].i = im[k];
         }
         gain = anr_process_gain(denoiser, spec_in);
         if (!gain) {
@@ -139,9 +124,7 @@ int main(int argc, char* argv[]) {
         anr_destroy(denoiser);
         return 1;
     }
-    int32_t out_header[2] = { n_frames, n_freqs };
-    fwrite(out_header, sizeof(int32_t), 2, fout);
-    fwrite(all_gains, sizeof(float), (size_t)n_frames * n_freqs, fout);
+    nrp2_write_gains(fout, n_frames, n_freqs, all_gains);
     fclose(fout);
 
     printf("[parity_runner] frames=%d n_freqs=%d sr=%d fft_size=%d -> %s\n",

@@ -26,7 +26,7 @@
   }
  },
  "findings": {
-  "S-13": "PY_C_SYNC_AUDIT.md S-13, layer L1: with makeup_gain on, Python defaults to makeup_prior='spp' while C implements only the xi prior (the makeup_xi_ctrl rows, Python prior 'xi', are green). Remove this entry when the two defaults agree."
+  "S-13": "docs/c_python_function_map.md appendix A S-13, layer L1: with makeup_gain on, Python defaults to makeup_prior='spp' while C implements only the xi prior (the makeup_xi_ctrl rows, Python prior 'xi', are green). Remove this entry when the two defaults agree."
  },
  "format": 1
 }

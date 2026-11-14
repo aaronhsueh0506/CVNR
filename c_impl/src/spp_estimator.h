@@ -24,23 +24,10 @@ SppEstimator* spp_init(void* mem, size_t mem_size,
 /* Free heap state; static memory remains caller-owned. */
 void spp_destroy(SppEstimator* self);
 
-/* Estimates SPP, a-priori SNR xi and posterior SNR gamma; all arrays hold n_freqs entries and only
- * gain_prev/enhanced_psd_prev may be NULL (enhanced PSD selects the DD power, else gain^2 * the
- * previous gamma). */
+/* Estimates SPP, a-priori SNR xi and posterior SNR gamma over n_freqs entries; v_out receives
+ * v = xi/(1+xi) * gamma and may be NULL, as may gain_prev/enhanced_psd_prev. The decision-directed
+ * xi needs both previous-hop inputs and a prior call; otherwise xi = max(gamma - 1, xi_min). */
 void spp_estimate(
-    SppEstimator* self,
-    const float* Y_psd,
-    const float* noise_psd,
-    const float* gain_prev,
-    const float* enhanced_psd_prev,
-    float* spp_out,
-    float* xi_out,
-    float* gamma_out
-);
-
-#ifdef USE_SHARED_XI_RATIO
-/* As spp_estimate(); also writes v = xi/(1+xi) * gamma to v_out when it is non-NULL. */
-void spp_estimate_ex(
     SppEstimator* self,
     const float* Y_psd,
     const float* noise_psd,
@@ -51,7 +38,6 @@ void spp_estimate_ex(
     float* gamma_out,
     float* v_out
 );
-#endif
 
 /* Clear estimator history. */
 void spp_reset(SppEstimator* self);

@@ -2,6 +2,25 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [Unreleased] · 2026-11-14 · NR 整理：近似 percentile 選項移除、內部標頭搬到 `src/`、重複實作合併
+
+輸出不變，與改動前的樹逐位元比對：`test_bit_exact_stream` 傾印（約 167 MB，SIMD=1／0 × 出貨旗標／標準數學 × 一般／`ANR_REFERENCE_KERNELS`，8 種組合，含 in-place 與 out-of-place `anr_process`）完全相同；`parity_runner` 與 `pyc_gain_driver` 在 4 種建置（SIMD=1／0，出貨與 `DEBUG=1`）× 13 個輸入（8k/128、8k/256、16k/256、16k/512、48k/1024、NRP1、錯誤輸入）× 4 個 level 的輸出、結束碼與訊息相同；428 個 parity 情境的 JSON 與改動前相同；`test-gain-api` 雜湊不變；`make test`（SIMD=1／0）與 `test-full` 通過。出貨建置的 `anr_get_mem_size()` 在 20 個 grid×level 組合上不變；`DEBUG=1` 建置的 pool 少 16 B（`AnrDenoiser` 少一個欄位）。
+
+### 移除 (Removed)
+- `USE_FAST_PERCENTILE`（mean×0.23 近似）與 `noise_estimator_seed_from_mean()`、`noise_estimator_init_noise()` 內「percentile scratch 不可用」的回退（不可達）。百分位初始化一律走精確 30th percentile；百分位 scratch（`num_init_frames` 個 float）永遠配置。C-only 偏離 D-19 清單與 README／Makefile help／文件的相關說明一併移除。
+- `noise_estimator_min_ordered()` 與 `USE_OPTIMIZED_MIN_BUFFER`／`USE_INCREMENTAL_MIN` 的混合分支：兩個旗標現在必須同時定義（出貨）或同時不定義（標準數學／L1），混用在編譯期 `#error`。`test_min_ordered_special.c` 直接比對 `skr_min_ordered_*` kernel。
+- `spp_estimate_ex()`：`spp_estimate()` 多一個 `v_out`（可為 NULL）。`spp_prepare()` 內 `gain_prev` 有、`enhanced_psd_prev` 為 NULL 的 `g²·γ_prev` 回退（沒有呼叫路徑）；沒有 DD 歷史時一律走首幀的直接估計。
+- `AnrDenoiser.alpha_g`（私有複本；`AnrConfig.alpha_g` 保留）、`anr.c` 與 `noise_estimator.c` 的兩個空條件區塊、`test_gain_api.c` 的 `GAIN_API_CAPTURE_OLD` 分支、`test_config_validation.c` 第 6 節（`test_gain_api` 的 `test_arguments` 已涵蓋）。
+
+### 變更 (Changed)
+- `noise_estimator.h`、`spp_estimator.h` 從 `include/` 搬到 `src/`（沒有外部呼叫端；公開標頭只有 `anr.h`、`anr_types.h`）。測試以 `../src/` 相對路徑引用。
+- `anr_process()` 的 out-of-place 與 in-place 兩條路徑都走 `sk_capply_gain_f32()`。
+- `anr_retime_frames()` 定義為 `anr_retime_frames_ms(..., 10)`；在 sample_rate ≤ 96 kHz（含白名單 grid）、`hop ≤ 4096`、`frames ≤ 20000` 的 6.6 億組合上與舊式整數運算相同。差別只在 sample_rate 約 6e8 Hz 以上且 hop 約 4e6 以上的不可能輸入：新的溢位檢查回 0。
+- `noise_estimator_fill_ring()` 取代重複兩處的最小值環填充；`example/main.c`、`main_mem.c`、`test/bench_anr.c` 改用 `anr_nr_level_name()`／`ac_window_build()`。
+- `example/nrp2_io.h`：`parity_runner` 與 `pyc_gain_driver` 共用 NRP2 讀檔／寫 gain；兩個程式的輸出、結束碼與錯誤訊息逐項與舊版相同（40 個情境）。
+- `make install`／`make run-sample` 的第一階段補上與其他目標相同的 audiolib 解析失敗防護。
+- 文件：`PY_C_SYNC_AUDIT.md` 引用改指 `docs/c_python_function_map.md` 附錄 A、過期的 pipeline 路徑、`numerics.md` 補 `test-gain-api`、素材取得說明（wav 由 `test_wav/opus/*.opus` 解出）。
+
 ## [Unreleased] · 2026-11-13 · 移除舊名 `AnrMode` / `ANR_MODE_*`
 
 ### 移除 (Removed)

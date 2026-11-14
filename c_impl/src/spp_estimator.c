@@ -1,7 +1,6 @@
 /* Decision-directed per-bin speech-presence probability (Cohen and Berdugo). */
 
 #include "spp_estimator.h"
-#include "fft_wrapper.h"
 #include "utility/mem_align.h"
 #include "utility/simd_kernels.h"  /* Requires -ffp-contract=off. */
 #include <stdlib.h>
@@ -213,7 +212,6 @@ static void spp_prepare(SppEstimator* self, const float* Y_psd, const float* noi
                         const float* gain_prev, const float* enhanced_psd_prev, float* xi_out,
                         float* gamma_out, float* v_out) {
     const int n_freqs = self->n_freqs;
-    const float alpha = self->alpha;
     const float xi_min = self->xi_min;
     float* v_scratch = self->v_scratch;
     float* term_xi_scratch = self->term_xi_scratch;
@@ -230,18 +228,8 @@ static void spp_prepare(SppEstimator* self, const float* Y_psd, const float* noi
         float gamma = Y_psd[k] / (noise_psd[k] + 1e-10f);
         gamma_out[k] = gamma;
 
-        float xi;
-        if (!self->is_initialized || gain_prev == NULL) {
-            // First frame: direct estimate with the same floor as the DD path.
-            xi = gamma - 1.0f > xi_min ? gamma - 1.0f : xi_min;
-        } else {
-            // Fallback: use gain^2 * gamma_prev approximation
-            float g2 = gain_prev[k] * gain_prev[k];
-            float xi_dd_term1 = g2 * self->gamma_prev[k];
-            float max_gamma_m1 = gamma > 1.0f ? gamma - 1.0f : 0.0f;
-            float xi_dd = alpha * xi_dd_term1 + (1.0f - alpha) * max_gamma_m1;
-            xi = xi_dd > xi_min ? xi_dd : xi_min;
-        }
+        /* No DD history: direct estimate with the same floor as the DD path. */
+        float xi = gamma - 1.0f > xi_min ? gamma - 1.0f : xi_min;
         xi_out[k] = xi;
 
         float term_xi = 1.0f + xi;
@@ -255,49 +243,6 @@ static void spp_prepare(SppEstimator* self, const float* Y_psd, const float* noi
 }
 
 void spp_estimate(
-    SppEstimator* self,
-    const float* Y_psd,
-    const float* noise_psd,
-    const float* gain_prev,
-    const float* enhanced_psd_prev,
-    float* spp_out,
-    float* xi_out,
-    float* gamma_out
-) {
-    if (!self || !Y_psd || !noise_psd || !spp_out || !xi_out || !gamma_out) return;
-
-    int n_freqs = self->n_freqs;
-    float prior_ratio = self->prior_ratio;
-    float* v_scratch = self->v_scratch;
-    float* term_xi_scratch = self->term_xi_scratch;
-
-    spp_prepare(self, Y_psd, noise_psd, gain_prev, enhanced_psd_prev, xi_out, gamma_out, NULL);
-
-    // exp(-v) in place.
-    sk_fast_exp_neg_f32(v_scratch, v_scratch, n_freqs);
-
-    // spp = 1 / (1 + prior_ratio * (1 + xi) * exp(-v))
-    for (int k = 0; k < n_freqs; k++) {
-        spp_out[k] = 1.0f / (1.0f + prior_ratio * term_xi_scratch[k] * v_scratch[k]);
-    }
-
-    // Save current noise for next-hop DD.
-    memcpy(self->noise_psd_prev, noise_psd, n_freqs * sizeof(float));
-
-    self->is_initialized = true;
-}
-
-void spp_reset(SppEstimator* self) {
-    if (!self) return;
-
-    memset(self->gamma_prev, 0, self->n_freqs * sizeof(float));
-    memset(self->noise_psd_prev, 0, self->n_freqs * sizeof(float));
-
-    self->is_initialized = false;
-}
-
-#ifdef USE_SHARED_XI_RATIO
-void spp_estimate_ex(
     SppEstimator* self,
     const float* Y_psd,
     const float* noise_psd,
@@ -330,4 +275,12 @@ void spp_estimate_ex(
 
     self->is_initialized = true;
 }
-#endif
+
+void spp_reset(SppEstimator* self) {
+    if (!self) return;
+
+    memset(self->gamma_prev, 0, self->n_freqs * sizeof(float));
+    memset(self->noise_psd_prev, 0, self->n_freqs * sizeof(float));
+
+    self->is_initialized = false;
+}

@@ -10,8 +10,9 @@
  * With no overrides the output is byte-identical to parity_runner's; pyc_parity_nr.sh checks this
  * on every run.
  *
- * Usage: pyc_gain_driver <in.nrp2> <out.gains> <mild|moderate|balanced|aggressive> [makeup_gain=0|1]
- * Input/output layouts: see example/parity_runner.c.
+ * Usage: pyc_gain_driver <in.nrp2> <out.gains> <0|1|2|3> [makeup_gain=0|1]
+ *   The level is the number 0 mild, 1 moderate, 2 balanced or 3 aggressive.
+ * Input/output layouts: see example/nrp2_io.h.
  */
 #include <stdint.h>
 #include <stdio.h>
@@ -21,8 +22,7 @@
 #include "anr.h"
 #include "anr_types.h"
 #include "cli_level.h"
-
-#define PARITY_MAGIC 0x4E525032 /* 'NRP2' */
+#include "nrp2_io.h"
 
 static int fail(const char* msg) {
     fprintf(stderr, "pyc_gain_driver: %s\n", msg);
@@ -36,16 +36,17 @@ int main(int argc, char** argv) {
 
     FILE* fin = fopen(argv[1], "rb");
     if (!fin) return fail("cannot open input");
-    int32_t h[4];
-    if (fread(h, sizeof(int32_t), 4, fin) != 4 || h[0] != PARITY_MAGIC) {
+    Nrp2Header h;
+    Nrp2Status status = nrp2_read_header(fin, 0, &h);
+    if (status == NRP2_SHORT_HEADER || status == NRP2_SHORT_RATE || status == NRP2_BAD_MAGIC) {
         fclose(fin);
         return fail("bad NRP2 header");
     }
-    const int n_frames = h[1], n_freqs = h[2], sample_rate = h[3];
-    if (n_frames <= 0 || n_freqs <= 1 || sample_rate <= 0) {
+    if (status == NRP2_BAD_VALUES) {
         fclose(fin);
         return fail("bad NRP2 header values");
     }
+    const int n_frames = h.n_frames, n_freqs = h.n_freqs, sample_rate = h.sample_rate;
     const int fft_size = (n_freqs - 1) * 2;
 
     AnrConfig config = anr_config_for_level_grid(sample_rate, fft_size, (AnrLevel)level);
@@ -82,14 +83,9 @@ int main(int argc, char** argv) {
         goto done;
     }
     for (int f = 0; f < n_frames; f++) {
-        if (fread(re, sizeof(float), (size_t)n_freqs, fin) != (size_t)n_freqs ||
-            fread(im, sizeof(float), (size_t)n_freqs, fin) != (size_t)n_freqs) {
+        if (nrp2_read_frame(fin, n_freqs, re, im, spec) != 0) {
             fail("short spectra");
             goto done;
-        }
-        for (int k = 0; k < n_freqs; k++) {
-            spec[k].r = re[k];
-            spec[k].i = im[k];
         }
         const float* gain = anr_process_gain(dn, spec);
         if (!gain) {
@@ -103,10 +99,7 @@ int main(int argc, char** argv) {
         fail("cannot open output");
         goto done;
     }
-    const int32_t oh[2] = {n_frames, n_freqs};
-    if (fwrite(oh, sizeof(int32_t), 2, fout) != 2 ||
-        fwrite(all, sizeof(float), (size_t)n_frames * (size_t)n_freqs, fout) !=
-            (size_t)n_frames * (size_t)n_freqs) {
+    if (nrp2_write_gains(fout, n_frames, n_freqs, all) != 0) {
         fclose(fout);
         fail("short write");
         goto done;

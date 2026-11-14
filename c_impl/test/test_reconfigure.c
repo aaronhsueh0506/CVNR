@@ -4,8 +4,6 @@
 
 #include "anr.h"
 #include "anr_types.h"
-#include "noise_estimator.h"
-#include "spp_estimator.h"
 #include "fft_wrapper.h"
 
 #include <math.h>
@@ -52,29 +50,9 @@ static int inst_open(Inst* in, const AnrConfig* cfg) {
 
 static void inst_close(Inst* in) { free(in->pool); }
 
-/* Drive enough frames that every history is genuinely populated. */
-static void inst_run(Inst* in, int n_frames, unsigned seed) {
-    int nf = anr_get_n_freqs(in->d);
-    Complex* x = (Complex*)calloc((size_t)nf, sizeof(Complex));
-    Complex* y = (Complex*)calloc((size_t)nf, sizeof(Complex));
-    int f, k;
-    for (f = 0; f < n_frames; ++f) {
-        for (k = 0; k < nf; ++k) {
-            seed = seed * 1664525u + 1013904223u;
-            {
-                float n = ((float)(seed >> 8) / (float)(1u << 24)) - 0.5f;
-                float tone = (k == 12 || k == 25) ? 4.0f : 0.0f;
-                x[k].r = 0.4f * n + tone;
-                x[k].i = 0.4f * n;
-            }
-        }
-        anr_process(in->d, x, y);
-    }
-    free(x); free(y);
-}
-
-/* inst_run() plus the mean gain (dB) averaged over the run's last 20 frames,
- * so a level switch can be judged by its effect on the same input. */
+/* Drives enough frames that every history is genuinely populated; returns the mean gain (dB)
+ * averaged over the last 20 frames, so a level switch can be judged by its effect on the same
+ * input. */
 static float inst_run_mean_gain_db(Inst* in, int n_frames, unsigned seed) {
     int nf = anr_get_n_freqs(in->d);
     Complex* x = (Complex*)calloc((size_t)nf, sizeof(Complex));
@@ -100,6 +78,10 @@ static float inst_run_mean_gain_db(Inst* in, int n_frames, unsigned seed) {
     }
     free(x); free(y);
     return acc / (float)tail;
+}
+
+static void inst_run(Inst* in, int n_frames, unsigned seed) {
+    (void)inst_run_mean_gain_db(in, n_frames, seed);
 }
 
 /* ── 1: reconfiguring to the current config is a total no-op ───────────── */

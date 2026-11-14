@@ -1,7 +1,6 @@
 /* Gain API: anr_process_gain() and anr_process_gain_with_residual_psd() return the internal gain
  * vector. The golden hashes were captured from the previous API (anr_process_gain with an
- * extra-noise argument and anr_get_gain) on the same inputs, so a mismatch means the gains moved.
- * Build with -DGAIN_API_CAPTURE_OLD against the previous header to regenerate them. */
+ * extra-noise argument and anr_get_gain) on the same inputs, so a mismatch means the gains moved. */
 
 #include "anr.h"
 #include <math.h>
@@ -13,21 +12,12 @@
 static int g_fail = 0;
 #define CHECK(cond, ...) do { if (!(cond)) { printf("FAIL: "); printf(__VA_ARGS__); printf("\n"); g_fail = 1; } } while (0)
 
-#ifdef GAIN_API_CAPTURE_OLD
-static const float* gain_plain(AnrDenoiser* d, const Complex* s) {
-    return anr_process_gain(d, s, NULL, NULL) ? NULL : anr_get_gain(d, NULL);
-}
-static const float* gain_with_residual(AnrDenoiser* d, const Complex* s, const float* r) {
-    return anr_process_gain(d, s, r, NULL) ? NULL : anr_get_gain(d, NULL);
-}
-#else
 static const float* gain_plain(AnrDenoiser* d, const Complex* s) {
     return anr_process_gain(d, s);
 }
 static const float* gain_with_residual(AnrDenoiser* d, const Complex* s, const float* r) {
     return anr_process_gain_with_residual_psd(d, s, r);
 }
-#endif
 
 enum { MODE_PLAIN = 0, MODE_RESIDUAL = 1, MODE_ALTERNATE = 2 };
 
@@ -93,7 +83,6 @@ static const Case kCases[] = {
 #define N_CASES ((int)(sizeof(kCases) / sizeof(kCases[0])))
 #define N_FRAMES 120
 
-#ifndef GAIN_API_CAPTURE_OLD
 static void test_arguments(void) {
     AnrConfig cfg = anr_default_config(16000);
     AnrDenoiser* a = anr_create(&cfg);
@@ -136,7 +125,6 @@ static void test_arguments(void) {
     free(spec); free(residual);
     anr_destroy(a); anr_destroy(b);
 }
-#endif
 
 int main(void) {
     uint32_t hashes[N_CASES];
@@ -145,23 +133,17 @@ int main(void) {
         const Case* c = &kCases[i];
         float gmin, gmax;
         hashes[i] = run_case(c->sr, c->level, c->mode, N_FRAMES, &gmin, &gmax);
-#ifdef GAIN_API_CAPTURE_OLD
-        printf("    {\"%s\", %d, %d, %d, 0x%08xu},\n", c->name, c->sr, (int)c->level, c->mode, hashes[i]);
-#else
         printf("%-48s hash 0x%08x  gain [%.5f, %.5f]\n", c->name, hashes[i], gmin, gmax);
 #ifndef USE_STANDARD_MATH      /* the goldens are the default (fast-math) build's; the libm build differs in the last bits */
         CHECK(hashes[i] == c->golden, "%s: gain hash 0x%08x != golden 0x%08x", c->name, hashes[i], c->golden);
 #endif
         CHECK(isfinite(gmin) && isfinite(gmax) && gmin > 0.0f && gmax <= 1.0f,
               "%s: gain outside (0, 1]", c->name);
-#endif
     }
-#ifndef GAIN_API_CAPTURE_OLD
     CHECK(hashes[0] != hashes[1], "a residual PSD did not change the gain (case is vacuous)");
     CHECK(hashes[1] != hashes[2], "alternating residual PSD equals every-hop residual PSD");
     test_arguments();
     if (g_fail) { printf("test_gain_api: FAIL\n"); return 1; }
     printf("test_gain_api: PASS\n");
-#endif
     return 0;
 }

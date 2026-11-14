@@ -22,11 +22,15 @@ bin="$(make -s -C c_impl print-bin-dir)"
 <h2>使用 C 函式庫</h2>
 <dl>
 <dt><a href="reference/nr_c_api.html">初始化與逐 hop 呼叫</a></dt>
-<dd>配置 instance、傳入複數頻譜、取得或套用增益，以及在切流時 reset。</dd>
+<dd>配置 instance、傳入複數頻譜、取得或套用增益，以及在切流時 reset。串在 AEC 之後時，NR 增益交給 <code>aec_apply_gain()</code>／<code>aec_apply_cng()</code> 的順序在 §4.1。</dd>
+<dt><a href="../reference/streaming.md">可編譯的整合範例</a></dt>
+<dd>從 PCM 到 PCM 的整份串流程式（window、FFT、OLA、reset）、static memory 路徑、只取增益與執行期換強度。</dd>
 <dt><a href="reference/nr.html">訊號流程與延遲</a></dt>
-<dd>核對 STFT／OLA、噪音估計初始化和時序。</dd>
+<dd>核對 STFT／OLA、噪音估計初始化、串在 AEC 之後的資料流和時序。</dd>
 <dt><a href="reference/nr_c_api_params.html">強度與參數</a></dt>
 <dd>選擇 level、保留設定覆寫，以及查詢參數限制。</dd>
+<dt><a href="../c_user_manual_zh_TW.md">C 使用手冊</a></dt>
+<dd>每支函式的錯誤語意表、交付檔案與連結方式、依賴的 FFT 層；<a href="../parameter_tuning.md">按症狀調整</a>。</dd>
 </dl>
 </section>
 <section>

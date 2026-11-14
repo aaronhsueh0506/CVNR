@@ -1,4 +1,4 @@
-/* Validate config ranges, overflow guards, pool alignment and gain APIs.
+/* Validate config ranges, overflow guards, pool alignment and the processing path.
  * All shipped levels must pass; invalid inputs must leave pools intact.
  * Returns the failure count. */
 
@@ -452,51 +452,6 @@ int main(void) {
 
         if (d) anr_destroy(d);
         if (fft) fft_destroy(fft);
-    }
-    printf("\n");
-
-    /* ---- 6. anr_process_gain() equals anr_process_gain_with_residual_psd(..., NULL) --- */
-    printf("-- anr_process_gain() matches a NULL residual PSD (Group 3) --\n");
-    {
-        AnrConfig cfg = anr_default_config(16000);
-        AnrDenoiser* plain         = anr_create(&cfg);
-        AnrDenoiser* null_residual = anr_create(&cfg);
-        CHECK(plain != NULL && null_residual != NULL,
-              "create() succeeds for both gain test instances");
-
-        if (plain && null_residual) {
-            int n_freqs = anr_get_n_freqs(plain);
-            Complex* spec = (Complex*)malloc((size_t)n_freqs * sizeof(Complex));
-            unsigned seed = 987654321u;
-            int gain_ok = 1;
-            int ptr_ok = 1;
-
-            for (int frame = 0; frame < 40 && spec; ++frame) {
-                for (int k = 0; k < n_freqs; ++k) {
-                    seed = seed * 1103515245u + 12345u;
-                    float r = ((float)((seed >> 8) & 0xFFFFu) / 65535.0f);
-                    spec[k].r = (r - 0.5f) * 0.2f;
-                    seed = seed * 1103515245u + 12345u;
-                    float i = ((float)((seed >> 8) & 0xFFFFu) / 65535.0f);
-                    spec[k].i = (i - 0.5f) * 0.2f;
-                }
-                const float* g_plain = anr_process_gain(plain, spec);
-                const float* g_null  = anr_process_gain_with_residual_psd(null_residual, spec, NULL);
-                if (!g_plain || !g_null) { ptr_ok = 0; break; }
-                if (memcmp(g_plain, g_null, (size_t)n_freqs * sizeof(float)) != 0) {
-                    gain_ok = 0;
-                    break;
-                }
-            }
-            CHECK(ptr_ok, "anr_process_gain() and the NULL-residual call return a gain");
-            CHECK(gain_ok,
-                  "anr_process_gain() is byte-identical every frame to "
-                  "anr_process_gain_with_residual_psd(..., NULL)");
-
-            free(spec);
-        }
-        if (plain) anr_destroy(plain);
-        if (null_residual) anr_destroy(null_residual);
     }
     printf("\n");
 

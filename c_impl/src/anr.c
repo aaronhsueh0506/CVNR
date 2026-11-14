@@ -63,7 +63,6 @@ struct AnrDenoiser {
 
     float  g_min;
     float  log_g_min;
-    float  alpha_g;
     float  alpha_attack;
     float  alpha_decay;
     float  speech_protect_floor_gain;
@@ -81,7 +80,6 @@ static void apply_gain_config_scalars(AnrDenoiser* self,
     /* g_min is an amplitude floor: 10^(g_min_db/20). SNR and power dB use /10. */
     self->g_min        = powf(10.0f, config->g_min_db / 20.0f);
     self->log_g_min    = logf(self->g_min + 1e-10f);
-    self->alpha_g      = config->alpha_g;
     self->alpha_attack = config->alpha_attack;
     self->alpha_decay  = config->alpha_decay;
     self->speech_protect_floor_gain =
@@ -277,9 +275,6 @@ static inline void gain_prepare(const float* v_in, const float* gamma, const flo
 }
 #endif
 
-#ifdef USE_FAST_GAIN_SMOOTHING
-#endif
-
 static void calculate_gain(AnrDenoiser* self,
                             const float* spp,
                             const float* xi,
@@ -408,20 +403,15 @@ static void run_frame_gain_stage(AnrDenoiser* self,
                                  const float* noise_for_spp,
                                  bool track_noise) {
 #ifdef USE_SHARED_XI_RATIO
-    spp_estimate_ex(self->spp_est, self->power, noise_for_spp,
-                    self->gain_prev, self->enhanced_psd_prev,
-                    self->spp, self->xi, self->gamma, self->v);
-    update_frame_speech_evidence(self);
-    calculate_gain(self, self->spp, self->xi, self->gamma,
-                   self->v, self->gain);
+    float* const v = self->v;
 #else
+    float* const v = NULL;
+#endif
     spp_estimate(self->spp_est, self->power, noise_for_spp,
                  self->gain_prev, self->enhanced_psd_prev,
-                 self->spp, self->xi, self->gamma);
+                 self->spp, self->xi, self->gamma, v);
     update_frame_speech_evidence(self);
-    calculate_gain(self, self->spp, self->xi, self->gamma,
-                   NULL, self->gain);
-#endif
+    calculate_gain(self, self->spp, self->xi, self->gamma, v, self->gain);
     apply_frame_makeup(self);
     if (track_noise) update_noise_estimator(self);
 }
@@ -657,15 +647,7 @@ int anr_process(AnrDenoiser* self,
     process_init_or_gain(self, NULL, silent);
 
     /* In-place and disjoint spectra only; partial overlap is unsupported. */
-    if (spectrum_out != spectrum_in) {
-        for (int k = 0; k < nf; k++) {
-            float g = self->gain[k];
-            spectrum_out[k].r = spectrum_in[k].r * g;
-            spectrum_out[k].i = spectrum_in[k].i * g;
-        }
-    } else {
-        fft_apply_gain(spectrum_out, self->gain, nf);
-    }
+    sk_capply_gain_f32(spectrum_out, spectrum_in, self->gain, nf);
 
     return 0;
 }

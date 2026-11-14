@@ -191,7 +191,7 @@ C library 只能往前走。初始化期間它會**直接 pass-through**（每�
 
 **契約 B — library 永遠不會自動 reset。**
 
-每一次 `anr_process()` / `anr_process_gain()` 都是**接續既有狀態**繼續跑。
+每一次 `anr_process()` / `anr_process_gain()` / `anr_process_gain_with_residual_psd()` 都是**接續既有狀態**繼續跑。
 沒有任何輸入條件會讓它自己清空狀態。`anr_reset()` 的所有權在呼叫端：
 
 - 換一條新的音訊串流、換檔案、換裝置、場景切換、串流中斷後重連 —— 呼叫端**必須**自己呼叫
@@ -266,6 +266,9 @@ int create_static_nr(AnrConfig *cfg,
 它們照常更新內部狀態並算出 per-bin gain，但**不會**把 gain 套到頻譜上，而是回傳內部的 gain 陣列。
 上游 AEC 在頻譜裡留有殘留回音時用 `anr_process_gain_with_residual_psd()`，把殘留回音功率交給 NR，
 讓 denoiser 不把殘留回音學成噪聲；沒有殘留回音 PSD 時用 `anr_process_gain()`。
+串在 AEC 之後時，AEC 的 `aec_get_residual()` 給頻譜與 `r2`，NR 的增益再交給 `aec_apply_gain()`／`aec_apply_cng()` 套用與補舒適噪聲；
+逐步的呼叫順序、尺度換算與拒絕 hop 時的 reset，以及用公開標頭編過的骨架，在
+[NR C API §4.1](../html/reference/nr_c_api.html#with-aec)。
 
 ```c
 #include "fft_wrapper.h"

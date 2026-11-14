@@ -18,6 +18,7 @@
 
 - **不做** acoustic echo cancellation、dereverb、AGC、風切抑制、beamforming、多聲道處理。
 - **不做**取樣率轉換、不讀寫檔案、不配置也不管理 PCM ring / window / OLA buffer。
+- 串在 AEC 之後時，AEC lib 交出殘留回音功率，NR 只算增益、不套用，增益再交給 AEC lib 的 `aec_apply_gain()`／`aec_apply_cng()`；這段呼叫順序與可編譯骨架在 [NR C API §4.1](html/reference/nr_c_api.html#with-aec)。
 - Python tree 裡的其他 variant（`python/denoisers/v1_spectral_subtraction.py`、
   `python/denoisers/v2_wiener.py`、`python/denoisers/v3_spp_mmse.py`、`python/denoisers/v3_3_pmmse.py`）
   **是研究用程式碼，C 端沒有任何對應實作**。不要以為 C library 可以切到那些模式。
@@ -60,8 +61,8 @@ source tree 取用。
 
 ### 0.4 內部子模組
 
-`c_impl/include/noise_estimator.h` 與 `c_impl/include/spp_estimator.h`
-是 denoiser 內部擁有的子模組介面，**整合者不應直接呼叫**（denoiser 會自行建立、驅動與釋放
+`c_impl/src/noise_estimator.h` 與 `c_impl/src/spp_estimator.h`
+是 denoiser 內部擁有的子模組介面（不在 `include/`，公開標頭只有 `anr.h` 與 `anr_types.h`），**整合者不應直接呼叫**（denoiser 會自行建立、驅動與釋放
 它們）。
 
 ---
@@ -76,7 +77,6 @@ make -C c_impl                           # 加建 denoise_wav
 make -C c_impl mem                       # 加建 denoise_mem（static memory 示範）
 make -C c_impl debug                     # standard math、關閉最佳化開關
 make -C c_impl WERROR=1                  # 對本 repo 原始碼開 -Werror
-make -C c_impl EXTRA_CFLAGS="-DUSE_FAST_PERCENTILE"   # 較小的 MCRA 初始化記憶體
 make -C c_impl clean
 ```
 
@@ -96,15 +96,18 @@ make -C c_impl test          # 每次改動的驗證:C 測試、pytest(含 Pytho
 make -C c_impl test-full     # 另加兩種 SIMD 的 bit-exact、獨立 config dump 與全部 parity scenario
 ```
 
-連結你自己的程式（NE10 含 C++ TU，用 C++ driver 連結）：
+連結你自己的程式（NE10 含 C++ TU，所以用 C++ driver 連結；C 原始檔先用 C 編譯器編成 `.o`，因為 `c++ -std=gnu99` 不被接受）：
 
 ```bash
-c++ -std=gnu99 app.c \
-   -Ic_impl/include -I../audiolib/common/include \
+cc -std=gnu99 -Wall -Wextra -c app.c \
+   -Ic_impl/include -I../audiolib/common/include -o app.o
+c++ app.o \
    $(make -s -C c_impl print-lib-path) \
    $(make -s -C ../audiolib/common print-lib-path) \
    -lm -o app
 ```
+
+只用公開的 `c_impl/include/`（`anr.h`、`anr_types.h`）加 audiolib 的 `fft_wrapper.h` 就能編譯；`noise_estimator.h` 與 `spp_estimator.h` 在 `c_impl/src/`，不在 include 路徑上。
 
 執行隨附的 wrapper 範例：
 

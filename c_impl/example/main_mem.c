@@ -55,11 +55,6 @@ void print_usage(const char* prog) {
     printf("Output is byte-identical to denoise_wav (framing 512/256/512, sqrt-Hann).\n");
 }
 
-/* Periodic sqrt-Hann window. */
-static void build_sqrt_hann(float* w, int N) {
-    ac_window_build(w, N);
-}
-
 int main(int argc, char* argv[]) {
     if (argc < 3) {
         print_usage(argv[0]);
@@ -194,8 +189,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    const char* level_names[] = {"mild", "moderate", "balanced", "aggressive"};
-    printf("  NR mode: %s\n", level_names[nr_level]);
+    printf("  NR mode: %s\n", anr_nr_level_name(nr_level));
 
     /* 6. Framing (as in main.c). */
     int n_frames = (n_samples <= frame_size)
@@ -212,7 +206,7 @@ int main(int argc, char* argv[]) {
     }
 
     memset(g_out_ola, 0, (size_t)out_len * sizeof(float));
-    build_sqrt_hann(g_win, frame_size);
+    ac_window_build(g_win, frame_size);   /* periodic sqrt-Hann */
 
     printf("\nProcessing %d frames (static memory, no malloc on audio path)...\n", n_frames);
     int debug_last_sec = -1;

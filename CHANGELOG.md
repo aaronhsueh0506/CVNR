@@ -4,6 +4,20 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [Unreleased] — 2026-11-14 — NR tidy-up: approximation option removed, internal headers moved to `src/`, duplicates merged
+
+Output unchanged, checked byte for byte against the pre-change tree: the `test_bit_exact_stream` dump (about 167 MB; SIMD=1/0 x shipping flags/standard math x plain/`ANR_REFERENCE_KERNELS`, 8 combinations, in-place and out-of-place `anr_process`); `parity_runner` and `pyc_gain_driver` outputs, exit codes and messages on 4 builds (SIMD=1/0, shipping and `DEBUG=1`) x 13 inputs (8k/128, 8k/256, 16k/256, 16k/512, 48k/1024, NRP1, malformed files) x 4 levels; the 428-scenario parity JSON; the `test-gain-api` hashes. `make test` (SIMD=1 and 0) and `test-full` pass. `anr_get_mem_size()` is unchanged for the shipping build on 20 grid x level combinations; a `DEBUG=1` build's pool is 16 B smaller (one field fewer in `AnrDenoiser`).
+
+### Removed
+- `USE_FAST_PERCENTILE` (mean x 0.23 approximation), `noise_estimator_seed_from_mean()` and the unreachable "percentile scratch unavailable" fallback in `noise_estimator_init_noise()`. Initialization always uses the exact 30th percentile; the scratch (`num_init_frames` floats) is always allocated. The C-only deviation D-19 list, README, Makefile help and docs follow.
+- `noise_estimator_min_ordered()` and the mixed `USE_OPTIMIZED_MIN_BUFFER` / `USE_INCREMENTAL_MIN` branches: the two flags are now defined together (shipping) or not at all (standard math / L1); a mix is a compile-time `#error`. `test_min_ordered_special.c` compares the `skr_min_ordered_*` kernels directly.
+- `spp_estimate_ex()`: `spp_estimate()` takes `v_out` (may be NULL). The `gain^2 * gamma_prev` fallback of `spp_prepare()` (no call path); without DD history the direct first-frame estimate is used.
+- `AnrDenoiser.alpha_g` (private copy; `AnrConfig.alpha_g` stays), two empty conditional blocks, the `GAIN_API_CAPTURE_OLD` branches of `test_gain_api.c`, and section 6 of `test_config_validation.c` (covered by `test_gain_api`'s `test_arguments`).
+
+### Changed
+- `noise_estimator.h` and `spp_estimator.h` move from `include/` to `src/` (no outside includer; the public headers are `anr.h` and `anr_types.h`). Tests include them as `../src/...`.
+- `anr_process()` uses `sk_capply_gain_f32()` for both the in-place and the disjoint case; `anr_retime_frames()` is `anr_retime_frames_ms(..., 10)` (equal on 656 million combinations up to 96 kHz, hop 4096, 20000 frames; it differs only for impossible inputs near 6e8 Hz and hop 4e6, where the new overflow guard returns 0); one `noise_estimator_fill_ring()` replaces two copies; examples and bench use `anr_nr_level_name()` / `ac_window_build()`; `example/nrp2_io.h` is shared by `parity_runner` and `pyc_gain_driver` (output, exit code and messages identical on 40 cases); `make install` / `make run-sample` get the audiolib-resolution guard of the other goals.
+
 ## [Unreleased] — 2026-11-13 — `pyc_parity_nr.sh` reads `-D` flags only as whole tokens
 
 `config.manifest` paths that contain `-D...` (for example a checkout under `.../-Desktop-...`) were read as a define and failed the build-flag check; the pattern now requires a token boundary before `-D`. No library change.
