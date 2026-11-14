@@ -38,7 +38,7 @@ DEBUG         ?= 0
 ifneq ($(DEBUG),0)
 ifneq ($(DEBUG),1)
 $(error DEBUG must be exactly 0 or 1 (got DEBUG='$(DEBUG)') -- pass DEBUG=0 \
-  (default: fast-math + the four production optimizations, same as a bare \
+  (default: fast-math + the three production optimizations, same as a bare \
   `make`) or DEBUG=1 (same as `make debug`: standard-math, optimizations \
   off). Any other value is rejected, including one inherited from an exported \
   DEBUG environment variable)
@@ -99,7 +99,6 @@ ifeq ($(DEBUG),0)
 CFLAGS += -DUSE_FAST_GAIN_SMOOTHING
 CFLAGS += -DUSE_SHARED_XI_RATIO
 CFLAGS += -DUSE_OPTIMIZED_E1
-CFLAGS += -DUSE_SINGLE_CLAMP
 else
 CFLAGS += -DUSE_STANDARD_MATH
 endif
@@ -110,18 +109,17 @@ endif
 #
 # USE_STANDARD_MATH         libm expf/logf/sqrtf/log10f/powf instead of the fast LUT/Taylor exp,
 #                           minimax log and target sqrt. Selected by `make debug` (DEBUG=1), which
-#                           also drops the four USE_* optimizations below;
+#                           also drops the three USE_* optimizations below;
 #                           EXTRA_CFLAGS="-DUSE_STANDARD_MATH" keeps them.
 # USE_FAST_GAIN_SMOOTHING   Clamp in the log domain and skip the exp->log round trip.
 #                           Formula-equivalent only: with approximate math it is not bit-exact to
 #                           the disabled path.
 # USE_SHARED_XI_RATIO       SPP outputs v = xi/(1+xi)*gamma and the gain stage reuses it.
 # USE_OPTIMIZED_E1          E1(v): test v > 1.0 first and compute log10 once for v <= 1.0.
-# USE_SINGLE_CLAMP          Skip the final [g_min, 1.0] clamp that the log-domain clamp covers.
 #
 # Common builds:
 #   make debug                                  standard math, no optimizations (closest to Python)
-#   make                                        fast math and the four optimizations
+#   make                                        fast math and the three optimizations
 #
 # =============================================================================
 

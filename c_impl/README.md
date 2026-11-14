@@ -65,7 +65,7 @@ external-memory 初始化 `ne10_fft_init_r2c_float32_ext`），沒有 backend-in
 work buffer、twiddle cfg 都在 pool 內，`fft_init()` 到 `fft_destroy()` 全程零 heap，
 **每幀音訊路徑零 malloc**。
 
-> **Note:** `make` 預設啟用 4 個優化開關（近似數學的誤差依核准預算驗收），不需要手動指定。
+> **Note:** `make` 預設啟用 3 個優化開關（近似數學的誤差依核准預算驗收），不需要手動指定。
 
 這裡的「fast math」指 `fast_math.h` 與 `USE_*` 選項的近似函式，並非編譯器
 `-ffast-math`；後者會被 Makefile 拒絕。std-math C 對 Python 與出貨 C 對
@@ -107,7 +107,6 @@ NaN 取代 NaN payload，因此 ARM32 上 `SIMD=1` 與 `SIMD=0` 對這類值可�
 | `USE_FAST_GAIN_SMOOTHING` | 在 log 域直接 clamp，省略 exp→log 轉換 | 公式等價；fast-math 下不保證 bit-exact |
 | `USE_SHARED_XI_RATIO` | SPP 和 Gain 共用 v 計算結果，每頻點省 1 次除法 | 公式等價；≤1 ulp，不保證 bit-exact |
 | `USE_OPTIMIZED_E1` | E1(v) 指數積分分支重排 + 共用 log10 | 100% |
-| `USE_SINGLE_CLAMP` | 移除冗餘的 gain clamp；只在 `USE_FAST_GAIN_SMOOTHING` **關閉**時有作用，預設組合下是 no-op | 100% |
 
 ### 調試用
 
@@ -212,7 +211,7 @@ NRP2 dump header 會攜帶 `sample_rate`；C 端據此建立完全相同的 sign
 | fast-math (預設) | 7.277e-3 | 1.113e-4 | 2.268e-4 |
 
 上表的 standard-math 使用 `DEBUG=0 EXTRA_CFLAGS=-DUSE_STANDARD_MATH`，
-與上方 `DEBUG=1` 指令不同；DEBUG=1 同時關閉四個 production 優化開關。
+與上方 `DEBUG=1` 指令不同；DEBUG=1 同時關閉三個 production 優化開關。
 上表是該素材的實測殘差，不是所有輸入的通用容差上限。standard-math 仍有
 float32/float64 誤差；fast-math 另外包含 `fast_exp`（LUT +
 Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差 < 1e-4），兩者都是

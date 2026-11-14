@@ -25,7 +25,6 @@ void print_usage(const char* prog) {
     printf("  output.wav   Output denoised WAV file\n");
     printf("\n");
     printf("Options:\n");
-    printf("  --bypass       Bypass mode (no processing, copy input to output)\n");
     printf("  --nr-level <l> NR level: 0 mild, 1 moderate, 2 balanced (default), 3 aggressive\n");
     printf("                 (--nr-mode is accepted as an alias)\n");
     printf("  --debug        Print one anr_debug_status() line per second of audio\n");
@@ -40,7 +39,7 @@ void print_usage(const char* prog) {
     printf("\n");
     printf("Example:\n");
     printf("  %s noisy.wav clean.wav\n", prog);
-    printf("  %s noisy.wav clean.wav --bypass\n", prog);
+    printf("  %s noisy.wav clean.wav --nr-level 3\n", prog);
 }
 
 /* Read the whole (first-channel) signal into a malloc'd float buffer. */
@@ -70,15 +69,12 @@ int main(int argc, char* argv[]) {
 
     const char* input_path = argv[1];
     const char* output_path = argv[2];
-    int bypass = 0;
     int debug = 0;
     int fft_size_override = 0;
     AnrLevel nr_level = ANR_LEVEL_BALANCED;
 
     for (int i = 3; i < argc; i++) {
-        if (strcmp(argv[i], "--bypass") == 0) {
-            bypass = 1;
-        } else if (strcmp(argv[i], "--debug") == 0) {
+        if (strcmp(argv[i], "--debug") == 0) {
             debug = 1;
         } else if (strcmp(argv[i], "--fft-size") == 0 && i + 1 < argc) {
             fft_size_override = atoi(argv[++i]);
@@ -127,17 +123,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    /* 3. Bypass = passthrough, write input straight back. */
-    if (bypass) {
-        printf("\n*** BYPASS MODE - no processing ***\n");
-        wav_write_float(wav_out, signal, n_samples);
-        wav_close_write(wav_out);
-        free(signal);
-        printf("Output: %s\n", output_path);
-        return 0;
-    }
-
-    /* 4. Build config on the no-padding project grid. */
+    /* 3. Build config on the no-padding project grid. */
     int selected_fft = fft_size_override > 0
                      ? fft_size_override : anr_default_fft_size(sample_rate);
     AnrConfig config = anr_config_for_level_grid(
@@ -176,7 +162,7 @@ int main(int argc, char* argv[]) {
     printf("  FFT size: %d  Frequency bins: %d\n", fft_size, n_freqs);
     printf("  Window: sqrt(periodic Hann), sqrt-Hann^2 @ 50%% = COLA\n");
 
-    /* 5. Framing: n_frames = max(1, ceil(max(N - frame, 0) / hop) + 1); the last frame is
+    /* 4. Framing: n_frames = max(1, ceil(max(N - frame, 0) / hop) + 1); the last frame is
      *    zero-padded. */
     int n_frames;
     if (n_samples <= frame_size) {
@@ -204,7 +190,7 @@ int main(int argc, char* argv[]) {
 
     ac_window_build(win, frame_size);   /* periodic sqrt-Hann */
 
-    /* 6. Per-frame: window -> rFFT -> anr_process -> iFFT -> window -> OLA. */
+    /* 5. Per-frame: window -> rFFT -> anr_process -> iFFT -> window -> OLA. */
     printf("\nProcessing %d frames...\n", n_frames);
     int debug_last_sec = -1;
     for (int f = 0; f < n_frames; f++) {
@@ -255,7 +241,7 @@ int main(int argc, char* argv[]) {
     }
     printf("\r  Progress: 100.0%%\n");
 
-    /* 7. Crop to original input length and write. */
+    /* 6. Crop to original input length and write. */
     int write_len = (out_len < n_samples) ? out_len : n_samples;
     wav_write_float(wav_out, out_ola, write_len);
 
@@ -265,7 +251,7 @@ int main(int argc, char* argv[]) {
     printf("  Frames processed: %d\n", n_frames);
     printf("Output: %s\n", output_path);
 
-    /* 8. Cleanup. */
+    /* 7. Cleanup. */
     free(out_ola); free(win); free(frame_buf); free(time_out);
     free(spec_in); free(spec_out);
     free(signal);

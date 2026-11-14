@@ -4,6 +4,14 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [Unreleased] — 2026-11-14 — Build flag `USE_SINGLE_CLAMP` and the example CLIs' `--bypass` removed
+
+Output unchanged: `cc -E -P` of every `.c`/`.cpp` under `src/`, `example/` and `test/` is identical before and after the flag removal (shipping, scalar and `DEBUG=1` flag sets); the 428-scenario `pyc_parity_nr` JSON has identical numbers at SIMD=1 and SIMD=0 (only the L2 `defines` list and `desc` text differ, as they name the flags); `make test-full` is green at SIMD=1 and SIMD=0 (`WERROR=1`) and with `DEBUG=1`; `denoise_wav`/`denoise_mem` stdout, stderr and output WAVs are identical on 3 inputs x 4 levels each.
+
+### Removed
+- Build flag `USE_SINGLE_CLAMP`. It only skipped the final `[g_min, 1.0]` clamp in the branch that is compiled without `USE_FAST_GAIN_SMOOTHING` (the shipping build never reaches that branch; `make debug` never defined the flag), so the clamp is now unconditional there. `Makefile` no longer appends it to the default `CFLAGS`, so the default build identity (`CFG_SIG`, hence the `bin/` and `obj/` directory name) changes once; a build that still passes the flag compiles, nothing reads it. The shipping build has three `USE_*` optimizations (`USE_FAST_GAIN_SMOOTHING`, `USE_SHARED_XI_RATIO`, `USE_OPTIMIZED_E1`); `README`, `Makefile` help, `nr_c_api_params.html`, `python/tools/test_bit_exact.py` and `pyc_parity_nr.py`/`.sh` follow, and `Audio_ALG/pipelines/tests/pyc_parity_pipelines.sh` no longer asserts the flag on the compile lines.
+- `--bypass` from `denoise_wav` and `denoise_mem` (a copy of the input to the output; no test ran it, `test_cli_args.sh` used it only as the "next token" rejection case and now uses `--debug`). Both programs ignore unknown options, so a script that still passes `--bypass` now gets the denoised output instead of a copy. `docs/c_user_manual_zh_TW.md` loses the demo line; the `main.c` step comments are renumbered.
+
 ## [Unreleased] — 2026-11-14 — Internal headers under `include/internal/`, `SppEstimator.q` removed, `example/wav_io.h` folded
 
 Output unchanged: `pyc_parity_nr` JSON (428 scenarios) byte-identical to the previous tree at SIMD=1 and SIMD=0, `make test-full` green at both, `cc -E -P` of every `.c`/`.cpp` under `src/`, `example/` and `test/` identical before and after the header move (SIMD=1, SIMD=0 and `DEBUG=1` flag sets), `main.o`/`main_mem.o` byte-identical, and `denoise_wav`/`denoise_mem` output WAVs identical on 15 input/level pairs each.

@@ -64,7 +64,7 @@ for bin in "$1" "$2"; do
     expect_reject "$bin" --nr-level
     expect_reject "$bin" --nr-mode
     expect_reject "$bin" --nr-level --debug
-    expect_reject "$bin" --nr-mode --bypass
+    expect_reject "$bin" --nr-mode --debug
 done
 
 [ "$fail" -eq 0 ] && echo "test_cli_args: PASS" || { echo "test_cli_args: FAIL" >&2; exit 1; }

@@ -20,7 +20,7 @@ FIELDS = (
     "scalar state", "flags/ring/scene state", "MCRA full min ring",
 )
 DEFINES = (
-    "USE_FAST_GAIN_SMOOTHING", "USE_SHARED_XI_RATIO", "USE_OPTIMIZED_E1", "USE_SINGLE_CLAMP",
+    "USE_FAST_GAIN_SMOOTHING", "USE_SHARED_XI_RATIO", "USE_OPTIMIZED_E1",
 )
 
 

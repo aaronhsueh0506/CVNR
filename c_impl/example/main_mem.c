@@ -47,7 +47,6 @@ void print_usage(const char* prog) {
     printf("ANR (C implementation, static-memory runner)\n\n");
     printf("Usage: %s <input.wav> <output.wav> [options]\n\n", prog);
     printf("Options:\n");
-    printf("  --bypass       Bypass mode (copy input to output)\n");
     printf("  --nr-level <l> NR level: 0 mild, 1 moderate, 2 balanced (default), 3 aggressive\n");
     printf("                 (--nr-mode is accepted as an alias)\n");
     printf("  --debug        Print one anr_debug_status() line per second of audio\n\n");
@@ -64,15 +63,12 @@ int main(int argc, char* argv[]) {
 
     const char* input_path  = argv[1];
     const char* output_path = argv[2];
-    int bypass = 0;
     int debug = 0;
     int fft_size_override = 0;
     AnrLevel nr_level = ANR_LEVEL_BALANCED;
 
     for (int i = 3; i < argc; i++) {
-        if (strcmp(argv[i], "--bypass") == 0) {
-            bypass = 1;
-        } else if (strcmp(argv[i], "--debug") == 0) {
+        if (strcmp(argv[i], "--debug") == 0) {
             debug = 1;
         } else if (strcmp(argv[i], "--fft-size") == 0 && i + 1 < argc) {
             fft_size_override = atoi(argv[++i]);
@@ -133,14 +129,6 @@ int main(int argc, char* argv[]) {
     if (!wav_out) {
         fprintf(stderr, "Error: Cannot open output file: %s\n", output_path);
         return 1;
-    }
-
-    if (bypass) {
-        printf("\n*** BYPASS MODE - no processing ***\n");
-        wav_write_float(wav_out, g_signal, n_samples);
-        wav_close_write(wav_out);
-        printf("Output: %s\n", output_path);
-        return 0;
     }
 
     /* 3. Config — no-padding project grid. */

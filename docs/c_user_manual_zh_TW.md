@@ -115,7 +115,6 @@ c++ app.o \
 ./denoise_wav noisy.wav clean.wav
 ./denoise_wav noisy.wav clean.wav --nr-level 0        # 舊旗標 --nr-mode 同義；只收數字 0|1|2|3 = mild|moderate|balanced|aggressive，其他值結束碼 2
 ./denoise_wav noisy.wav clean.wav --fft-size 512      # 指定 grid，見 4.1 節
-./denoise_wav input.wav copy.wav --bypass
 ./denoise_wav noisy.wav clean.wav --debug             # 每秒印一行狀態
 ```
 

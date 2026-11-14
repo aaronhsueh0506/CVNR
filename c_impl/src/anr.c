@@ -378,10 +378,8 @@ static void calculate_gain(AnrDenoiser* self,
         gain_out[k] = gain;
 #else
         float gain = fast_exp(log_gain);
-#ifndef USE_SINGLE_CLAMP
         if (gain < g_min) gain = g_min;
         if (gain > 1.0f)  gain = 1.0f;
-#endif
         gain_out[k] = gain;
         float log_gain_save = fast_log(gain + 1e-10f);
 #endif

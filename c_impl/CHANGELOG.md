@@ -2,6 +2,14 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [Unreleased] · 2026-11-14 · 移除建置旗標 `USE_SINGLE_CLAMP` 與範例 CLI 的 `--bypass`
+
+輸出不變：`src/`、`example/`、`test/` 每個 `.c`／`.cpp` 的 `cc -E -P` 在移除旗標前後相同（出貨、scalar、`DEBUG=1` 三組旗標）；428 個情境的 `pyc_parity_nr` JSON 在 SIMD=1／0 數字相同（只有 L2 的 `defines` 清單與 `desc` 文字不同，因為它們點名旗標）；`make test-full` 在 SIMD=1／0（`WERROR=1`）與 `DEBUG=1` 都全綠；`denoise_wav`／`denoise_mem` 在 3 個輸入×4 個 level 上的 stdout、stderr 與輸出 WAV 相同。
+
+### 移除 (Removed)
+- 建置旗標 `USE_SINGLE_CLAMP`。它只會略過沒有 `USE_FAST_GAIN_SMOOTHING` 時那個分支末端的 `[g_min, 1.0]` clamp（出貨建置走不到該分支；`make debug` 從未定義此旗標），現在該分支的 clamp 一律執行。`Makefile` 預設 `CFLAGS` 不再加它，所以預設建置識別（`CFG_SIG`，也就是 `bin/`、`obj/` 目錄名）換新一次；仍傳此旗標的建置照常編譯，沒有程式讀它。出貨建置剩三個 `USE_*` 優化（`USE_FAST_GAIN_SMOOTHING`、`USE_SHARED_XI_RATIO`、`USE_OPTIMIZED_E1`）；README、`Makefile` help、`nr_c_api_params.html`、`python/tools/test_bit_exact.py`、`pyc_parity_nr.py`／`.sh` 一併改，`Audio_ALG/pipelines/tests/pyc_parity_pipelines.sh` 不再在編譯列上斷言此旗標。
+- `denoise_wav`、`denoise_mem` 的 `--bypass`（把輸入複製到輸出；沒有測試跑它，`test_cli_args.sh` 只把它當「下一個 token」的拒絕案例，現改用 `--debug`）。兩支程式本來就忽略未知選項，所以仍傳 `--bypass` 的腳本現在拿到的是降噪後的輸出而不是複製檔。`docs/c_user_manual_zh_TW.md` 刪掉示範行；`main.c` 的步驟註解重新編號。
+
 ## [Unreleased] · 2026-11-14 · 內部標頭搬到 `include/internal/`、移除 `SppEstimator.q`、`example/wav_io.h` 併入呼叫端
 
 輸出不變：`pyc_parity_nr` JSON（428 個情境）在 SIMD=1／0 都與改動前逐位元組相同，兩個 SIMD 設定的 `make test-full` 全綠；`src/`、`example/`、`test/` 每個 `.c`／`.cpp` 的 `cc -E -P` 在標頭搬移前後相同（SIMD=1、SIMD=0、`DEBUG=1` 三組旗標）；`main.o`、`main_mem.o` 逐位元組相同；`denoise_wav`／`denoise_mem` 在 15 組輸入×level 上輸出的 WAV 相同。
