@@ -38,8 +38,8 @@ DEBUG         ?= 0
 ifneq ($(DEBUG),0)
 ifneq ($(DEBUG),1)
 $(error DEBUG must be exactly 0 or 1 (got DEBUG='$(DEBUG)') -- pass DEBUG=0 \
-  (default: fast-math + the three production optimizations, same as a bare \
-  `make`) or DEBUG=1 (same as `make debug`: standard-math, optimizations \
+  (default: fast-math + USE_OPTIMIZED_E1, same as a bare \
+  `make`) or DEBUG=1 (same as `make debug`: standard-math, USE_OPTIMIZED_E1 \
   off). Any other value is rejected, including one inherited from an exported \
   DEBUG environment variable)
 endif
@@ -96,8 +96,6 @@ LINK = $(CXX)
 # `make debug` delegates to `$(MAKE) DEBUG=1 all`.
 # =============================================================================
 ifeq ($(DEBUG),0)
-CFLAGS += -DUSE_FAST_GAIN_SMOOTHING
-CFLAGS += -DUSE_SHARED_XI_RATIO
 CFLAGS += -DUSE_OPTIMIZED_E1
 else
 CFLAGS += -DUSE_STANDARD_MATH
@@ -109,17 +107,12 @@ endif
 #
 # USE_STANDARD_MATH         libm expf/logf/sqrtf/log10f/powf instead of the fast LUT/Taylor exp,
 #                           minimax log and target sqrt. Selected by `make debug` (DEBUG=1), which
-#                           also drops the three USE_* optimizations below;
-#                           EXTRA_CFLAGS="-DUSE_STANDARD_MATH" keeps them.
-# USE_FAST_GAIN_SMOOTHING   Clamp in the log domain and skip the exp->log round trip.
-#                           Formula-equivalent only: with approximate math it is not bit-exact to
-#                           the disabled path.
-# USE_SHARED_XI_RATIO       SPP outputs v = xi/(1+xi)*gamma and the gain stage reuses it.
+#                           also drops USE_OPTIMIZED_E1; EXTRA_CFLAGS="-DUSE_STANDARD_MATH" keeps it.
 # USE_OPTIMIZED_E1          E1(v): test v > 1.0 first and compute log10 once for v <= 1.0.
 #
 # Common builds:
-#   make debug                                  standard math, no optimizations (closest to Python)
-#   make                                        fast math and the three optimizations
+#   make debug                                  standard math, no USE_OPTIMIZED_E1 (closest to Python)
+#   make                                        fast math and USE_OPTIMIZED_E1
 #
 # =============================================================================
 
@@ -837,7 +830,7 @@ endif
 # debug delegates to `all` with DEBUG=1 (see "Default optimizations versus DEBUG" above).
 debug:
 	+@$(MAKE) DEBUG=1 all
-	@echo "Debug build complete (standard math, no optimizations)"
+	@echo "Debug build complete (standard math, no USE_OPTIMIZED_E1)"
 
 # Clean
 clean:

@@ -2,6 +2,18 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [Unreleased] · 2026-11-15 · 移除建置旗標 `USE_FAST_GAIN_SMOOTHING` 與 `USE_SHARED_XI_RATIO`
+
+出貨輸出不變：預設建置的 `anr.o`、`spp_estimator.o`、`noise_estimator.o`、`main.o`、`main_mem.o` 在 SIMD=1／0 都與改動前逐位元組相同；`test_bit_exact_stream` 的記錄（出貨旗標、兩支 runner、SIMD=1／0）相同；`denoise_wav`／`denoise_mem` 在 5 組輸入×grid、4 個 level 上的 WAV 相同；`test_gain_api` 雜湊不變。
+
+### 變更 (Changed)
+- **`make debug`（`DEBUG=1`）現在也走出貨建置的 log 域增益夾限與共用 `v`**；仍用 libm 數學、仍不含 `USE_OPTIMIZED_E1`。因此 `pyc_parity_nr` 的 L1（std-math C 對 Python）會動：320 個未標記的 gain 情境中最差 `max_abs` 維持 3.809e-4、最差 p99.9 由 5.190e-6 變 5.245e-6（容差 2e-3／2e-5）；88 個 e2e 情境最差 `max_over_peak` 由 8.439e-6 變 8.447e-6（容差 2e-5）。判定不變（L1 408 GREEN、20 RED_EXPECTED S-13；L2 428 GREEN），容差不動。JSON 的 L1／L2 `defines` 與 `desc` 只列 `USE_OPTIMIZED_E1`。
+- `DEBUG=1` 的 pool 與預設建置相同（多了 `v` 陣列）：8k/128 22,480、8k/256 27,168、16k/256 43,728、16k/512 53,280、48k/1024 138,352 bytes。
+- `python/tools/test_bit_exact.py` 與 `pyc_parity_nr.py` 的出貨 define 只剩 `USE_OPTIMIZED_E1`；`test_anr_kernels.c` 在 NEON 建置一律跑 gain-prepare 與 final-gain kernel 檢查。
+
+### 移除 (Removed)
+- 建置旗標 `USE_FAST_GAIN_SMOOTHING` 與 `USE_SHARED_XI_RATIO`：開啟時選的程式碼改為一律編譯，關閉分支（增益迴圈的 exp、clamp、log 來回；不用 SPP `v` 的增益階段）刪除，`Makefile`、`README`、`nr_c_api_params.html` 與 help 文字同步拿掉。預設建置識別（`CFG_SIG`）換新一次；仍傳這兩個旗標的建置照常編譯，沒有程式讀它們。
+
 ## [Unreleased] · 2026-11-15 · 移除 `AnrDenoiser.gain_prev` 與 `spp_estimate()` 的 `gain_prev` 參數
 
 輸出不變：428 個情境的 `pyc_parity_nr` JSON 與改動前逐位元組相同；`test_bit_exact_stream` 的記錄（reference 與 optimized runner，SIMD=1／0，出貨與 `DEBUG=1` 旗標）去掉改動前的 `gain_prev` 那筆後與改動前相同；`denoise_wav`／`denoise_mem` 在 5 組輸入×grid、4 個 level 上輸出的 WAV 相同（SIMD=1／0）；`test_gain_api` 的雜湊不變。

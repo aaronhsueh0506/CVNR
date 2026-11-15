@@ -34,9 +34,7 @@ struct AnrDenoiser {
     float* gamma;
     float* gain;
 
-#ifdef USE_SHARED_XI_RATIO
     float* v;
-#endif
 
     /* Gain scratch[n_freqs]; both arrays are rewritten in place, pass by pass. */
     float* gain_v_scratch;         /* v -> E1 -> 0.5*E1 -> exp -> log(G_H1 + eps). */
@@ -259,7 +257,6 @@ static const float* prepare_noise_for_spp(AnrDenoiser* self,
 /* Gain inputs from the SPP stage: v clamped to [1e-10, 700] (NaN passes through) and
  * xi/(1+xi) = v/(gamma + 1e-10). Bins whose v underflows below 1e-10 compute xi/(1+xi) from xi
  * directly. Outputs must not overlap inputs. */
-#ifdef USE_SHARED_XI_RATIO
 static inline void gain_prepare(const float* v_in, const float* gamma, const float* xi,
                                 float* v_out, float* ratio_out, int n) {
 #if ANR_VECTOR
@@ -268,7 +265,6 @@ static inline void gain_prepare(const float* v_in, const float* gamma, const flo
     skr_gain_prepare_scalar(v_in, gamma, xi, v_out, ratio_out, n);
 #endif
 }
-#endif
 
 static void calculate_gain(AnrDenoiser* self,
                             const float* spp,
@@ -289,14 +285,9 @@ static void calculate_gain(AnrDenoiser* self,
     float* xi_ratio_scratch = self->gain_xi_ratio_scratch;
 
     /* Clamped v and xi/(1+xi). */
-#ifdef USE_SHARED_XI_RATIO
     if (v_in != NULL) {
         gain_prepare(v_in, gamma, xi, v_scratch, xi_ratio_scratch, n_freqs);
-    } else
-#else
-    (void)v_in;
-#endif
-    {
+    } else {
         for (int k = 0; k < n_freqs; k++) {
             float xi_ratio = xi[k] / (1.0f + xi[k]);
             float v        = xi_ratio * gamma[k];
@@ -331,7 +322,7 @@ static void calculate_gain(AnrDenoiser* self,
 
     sk_fast_log_f32(v_scratch, v_scratch, n_freqs);
 
-#if defined(USE_FAST_GAIN_SMOOTHING) && ANR_VECTOR
+#if ANR_VECTOR
     {
         SkrFinalGainParams params = {log_g_min, g_min, alpha_attack, alpha_decay, prior_lift,
                                      cross_band_prior, self->gain_initialized, dd_from_gmmse};
@@ -361,7 +352,6 @@ static void calculate_gain(AnrDenoiser* self,
             log_gain    = alpha * prev + (1.0f - alpha) * log_gain;
         }
 
-#ifdef USE_FAST_GAIN_SMOOTHING
         float gain, log_gain_save;
         if (log_gain < log_g_min) {
             gain = g_min;  log_gain_save = log_g_min;
@@ -371,13 +361,6 @@ static void calculate_gain(AnrDenoiser* self,
             gain = fast_exp(log_gain);  log_gain_save = log_gain;
         }
         gain_out[k] = gain;
-#else
-        float gain = fast_exp(log_gain);
-        if (gain < g_min) gain = g_min;
-        if (gain > 1.0f)  gain = 1.0f;
-        gain_out[k] = gain;
-        float log_gain_save = fast_log(gain + 1e-10f);
-#endif
 
         store_gain_state(self, k, log_gain_save, dd_from_gmmse ? xi_ratio_scratch[k] : gain);
     }
@@ -394,11 +377,7 @@ static void calculate_gain(AnrDenoiser* self,
 static void run_frame_gain_stage(AnrDenoiser* self,
                                  const float* noise_for_spp,
                                  bool track_noise) {
-#ifdef USE_SHARED_XI_RATIO
     float* const v = self->v;
-#else
-    float* const v = NULL;
-#endif
     spp_estimate(self->spp_est, self->power, noise_for_spp, self->enhanced_psd_prev,
                  self->spp, self->xi, self->gamma, v);
     update_frame_speech_evidence(self);
@@ -441,9 +420,7 @@ size_t anr_get_mem_size(const AnrConfig* config) {
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* xi                */
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* gamma             */
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* gain              */
-#ifdef USE_SHARED_XI_RATIO
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* v                     */
-#endif
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* gain_v_scratch        */
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* gain_xi_ratio_scratch */
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* enhanced_psd_prev */
@@ -482,9 +459,7 @@ AnrDenoiser* anr_init(void* mem, size_t mem_size,
     self->xi                = (float*)cursor; cursor += arr;
     self->gamma             = (float*)cursor; cursor += arr;
     self->gain              = (float*)cursor; cursor += arr;
-#ifdef USE_SHARED_XI_RATIO
     self->v                 = (float*)cursor; cursor += arr;
-#endif
     self->gain_v_scratch        = (float*)cursor; cursor += arr;
     self->gain_xi_ratio_scratch = (float*)cursor; cursor += arr;
     self->enhanced_psd_prev = (float*)cursor; cursor += arr;
@@ -525,9 +500,7 @@ AnrDenoiser* anr_create(const AnrConfig* config) {
     self->xi                = (float*)calloc(nf, sizeof(float));
     self->gamma             = (float*)calloc(nf, sizeof(float));
     self->gain              = (float*)calloc(nf, sizeof(float));
-#ifdef USE_SHARED_XI_RATIO
     self->v                 = (float*)calloc(nf, sizeof(float));
-#endif
     self->gain_v_scratch        = (float*)calloc(nf, sizeof(float));
     self->gain_xi_ratio_scratch = (float*)calloc(nf, sizeof(float));
     self->enhanced_psd_prev = (float*)calloc(nf, sizeof(float));
@@ -536,11 +509,7 @@ AnrDenoiser* anr_create(const AnrConfig* config) {
     if (!self->power || !self->noise_aug || !self->noise_est || !self->spp_est ||
         !self->spp || !self->xi || !self->gamma || !self->gain ||
         !self->gain_v_scratch || !self->gain_xi_ratio_scratch ||
-        !self->enhanced_psd_prev || !self->log_gain_prev
-#ifdef USE_SHARED_XI_RATIO
-        || !self->v
-#endif
-        ) {
+        !self->enhanced_psd_prev || !self->log_gain_prev || !self->v) {
         anr_destroy(self);
         return NULL;
     }
@@ -562,9 +531,7 @@ void anr_destroy(AnrDenoiser* self) {
     free(self->xi);
     free(self->gamma);
     free(self->gain);
-#ifdef USE_SHARED_XI_RATIO
     free(self->v);
-#endif
     free(self->gain_v_scratch);
     free(self->gain_xi_ratio_scratch);
     free(self->enhanced_psd_prev);

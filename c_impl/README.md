@@ -104,8 +104,6 @@ NaN 取代 NaN payload，因此 ARM32 上 `SIMD=1` 與 `SIMD=0` 對這類值可�
 
 | 開關 | 說明 | 相關度 |
 |------|------|--------|
-| `USE_FAST_GAIN_SMOOTHING` | 在 log 域直接 clamp，省略 exp→log 轉換 | 公式等價；fast-math 下不保證 bit-exact |
-| `USE_SHARED_XI_RATIO` | SPP 和 Gain 共用 v 計算結果，每頻點省 1 次除法 | 公式等價；≤1 ulp，不保證 bit-exact |
 | `USE_OPTIMIZED_E1` | E1(v) 指數積分分支重排 + 共用 log10 | 100% |
 
 ### 調試用
@@ -211,7 +209,7 @@ NRP2 dump header 會攜帶 `sample_rate`；C 端據此建立完全相同的 sign
 | fast-math (預設) | 7.277e-3 | 1.113e-4 | 2.268e-4 |
 
 上表的 standard-math 使用 `DEBUG=0 EXTRA_CFLAGS=-DUSE_STANDARD_MATH`，
-與上方 `DEBUG=1` 指令不同；DEBUG=1 同時關閉三個 production 優化開關。
+與上方 `DEBUG=1` 指令不同；DEBUG=1 另外關閉 `USE_OPTIMIZED_E1`。
 上表是該素材的實測殘差，不是所有輸入的通用容差上限。standard-math 仍有
 float32/float64 誤差；fast-math 另外包含 `fast_exp`（LUT +
 Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差 < 1e-4），兩者都是

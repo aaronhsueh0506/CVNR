@@ -6,9 +6,9 @@ Driven by c_impl/test/pyc_parity_nr.sh, which builds the C side and passes the b
 Run the script, not this file.
 
 What it compares
-  Layer 1 (L1)  std-math C (SIMD=0, -DUSE_STANDARD_MATH, none of the USE_* optimizations)
+  Layer 1 (L1)  std-math C (SIMD=0, -DUSE_STANDARD_MATH, without USE_OPTIMIZED_E1)
                 against the Python reference.  A deviation here is a Python<->C sync bug.
-  Layer 2 (L2)  shipping C (Makefile default: SIMD=1, fast math, the USE_* flags) against the
+  Layer 2 (L2)  shipping C (Makefile default: SIMD=1, fast math, USE_OPTIMIZED_E1) against the
                 std-math C.  This measures the accepted fast-math/optimization approximation.
   Python is not compared with the shipping build directly: that number would mix the two layers.
 
@@ -34,7 +34,7 @@ Verdicts per scenario and layer
 Exit code 0 = no failure, 1 = failure, 2 = infrastructure error (inputs, build flags, drivers).
 
 The tolerances (TOLERANCES) are fixed per scenario kind, layer and metric. The gain L2 max_abs
-tolerance covers the fast-math approximation budget and all USE_* optimization flags together.
+tolerance covers the fast-math approximation budget and USE_OPTIMIZED_E1 together.
 The measured numbers are always printed next to the tolerances.
 """
 
@@ -85,7 +85,7 @@ TOLERANCES = {
 # A verdict whose measured/limit ratio lies in (MARGIN_LOW, MARGIN_HIGH) is flagged MARGINAL.
 MARGIN_LOW, MARGIN_HIGH = 0.5, 2.0
 
-USE_FLAGS_SHIP = ('-DUSE_FAST_GAIN_SMOOTHING', '-DUSE_SHARED_XI_RATIO', '-DUSE_OPTIMIZED_E1')
+USE_FLAGS_SHIP = ('-DUSE_OPTIMIZED_E1',)
 DEFINES_REQUIRED = {
     'L1': {'-DUSE_STANDARD_MATH', '-DSIMD_KERNELS_FORCE_SCALAR'},
     'L2': set(USE_FLAGS_SHIP),
@@ -152,7 +152,7 @@ def _zero_band_edit(t0, t1, f0_hz, f1_hz):
 #   srs       sample rates the family exists for (default: all);  kinds  'gain' and/or 'e2e'
 #   exercises {layer: finding} the family can expose.  It validates expected_red.json (an entry must
 #             name a finding its family exercises on that layer) and labels --emit-expected-red.
-#             Findings: S-10 USE_SHARED_XI_RATIO at zero-power bins; S-11/S-12 initial-PSD floor and
+#             Findings: S-10 shared xi/(1+xi) at zero-power bins; S-11/S-12 initial-PSD floor and
 #             hi_gamma epsilon placement; S-13 makeup_prior default.
 FAMILIES = (
     dict(name='speech', role='speech', tf=_ident, kinds=('gain', 'e2e'), exercises={}),
@@ -586,9 +586,9 @@ def run_all(args):
     doc = dict(
         tool='pyc_parity_nr', format=FORMAT,
         layers=dict(
-            L1=dict(desc='std-math C (SIMD=0, -DUSE_STANDARD_MATH, no USE_* optimizations) vs Python',
+            L1=dict(desc='std-math C (SIMD=0, -DUSE_STANDARD_MATH, no USE_OPTIMIZED_E1) vs Python',
                     defines=define_info['L1']),
-            L2=dict(desc='shipping C (SIMD=1, Makefile default, USE_* flags) vs std-math C',
+            L2=dict(desc='shipping C (SIMD=1, Makefile default, USE_OPTIMIZED_E1) vs std-math C',
                     defines=define_info['L2'])),
         tolerances=dict(FROZEN=True, margin_flag=[MARGIN_LOW, MARGIN_HIGH], values=TOLERANCES),
         inputs=shas,

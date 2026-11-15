@@ -18,9 +18,7 @@ FIELDS = (
     "SPP noise_psd_prev", "spectrum_out", "gain_out",
     "scalar state", "flags/ring/scene state", "MCRA full min ring",
 )
-DEFINES = (
-    "USE_FAST_GAIN_SMOOTHING", "USE_SHARED_XI_RATIO", "USE_OPTIMIZED_E1",
-)
+DEFINES = ("USE_OPTIMIZED_E1",)
 
 
 def run(command, **kwargs):

@@ -4,6 +4,18 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [Unreleased] — 2026-11-15 — Build flags `USE_FAST_GAIN_SMOOTHING` and `USE_SHARED_XI_RATIO` removed
+
+Shipping output unchanged: `anr.o`, `spp_estimator.o`, `noise_estimator.o`, `main.o` and `main_mem.o` of the default build are byte-identical to the previous tree at SIMD=1 and SIMD=0; the `test_bit_exact_stream` records (shipping flags, both runners, SIMD=1 and SIMD=0) are identical; `denoise_wav`/`denoise_mem` WAVs are identical on 5 input/grid pairs x 4 levels; `test_gain_api` hashes do not move.
+
+### Changed
+- **`make debug` (`DEBUG=1`) now runs the log-domain gain clamp and the shared `v` of the shipping build**; it still uses libm math and drops `USE_OPTIMIZED_E1`. The `pyc_parity_nr` L1 layer (std-math C vs Python) therefore moves: over the 320 untagged gain scenarios the worst `max_abs` stays 3.809e-4 and the worst p99.9 goes 5.190e-6 to 5.245e-6 (tolerances 2e-3 / 2e-5); over the 88 e2e scenarios the worst `max_over_peak` goes 8.439e-6 to 8.447e-6 (tolerance 2e-5). Verdicts are unchanged (408 GREEN, 20 RED_EXPECTED S-13; L2 428 GREEN) and no tolerance moves. The L1/L2 `defines` and `desc` fields of the JSON name only `USE_OPTIMIZED_E1`.
+- A `DEBUG=1` pool now equals the default one (it gains the `v` array): 8k/128 22,480, 8k/256 27,168, 16k/256 43,728, 16k/512 53,280, 48k/1024 138,352 bytes.
+- `python/tools/test_bit_exact.py` and `pyc_parity_nr.py` list only `USE_OPTIMIZED_E1` as a shipping define; `test_anr_kernels.c` always runs the gain-prepare and final-gain kernel checks on NEON builds.
+
+### Removed
+- Build flags `USE_FAST_GAIN_SMOOTHING` and `USE_SHARED_XI_RATIO`: the code their enabled branches selected is now unconditional, the disabled branches (exp, clamp, log round trip in the gain loop; the gain stage without SPP's `v`) are gone, and the `Makefile`, `README`, `nr_c_api_params.html` and the help text drop them. The default build identity (`CFG_SIG`) changes once; a build that still passes either flag compiles and nothing reads it.
+
 ## [Unreleased] — 2026-11-15 — `AnrDenoiser.gain_prev` and the `gain_prev` argument of `spp_estimate()` removed
 
 Output unchanged: the 428-scenario `pyc_parity_nr` JSON is byte-identical to the previous tree; the `test_bit_exact_stream` records (reference and optimized runner, SIMD=1 and SIMD=0, shipping and `DEBUG=1` flags) are identical to the previous tree once its `gain_prev` record is dropped; `denoise_wav`/`denoise_mem` output WAVs are identical on 5 input/grid pairs x 4 levels (SIMD=1 and SIMD=0); the `test_gain_api` hashes do not move.

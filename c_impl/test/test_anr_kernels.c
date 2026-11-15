@@ -115,7 +115,6 @@ static int test_size(int trial) {
 
 #define TRIALS 6000
 
-#ifdef USE_SHARED_XI_RATIO
 static int test_gain_prepare(void) {
     static float v_in_s[MAX_N + OFFSETS], gamma_s[MAX_N + OFFSETS], xi_s[MAX_N + OFFSETS];
     static float v_ref[MAX_N], ratio_ref[MAX_N], v_neon[MAX_N], ratio_neon[MAX_N];
@@ -142,9 +141,7 @@ static int test_gain_prepare(void) {
     report("gain_prepare", &stats);
     return 0;
 }
-#endif
 
-#ifdef USE_FAST_GAIN_SMOOTHING
 static SkrFinalGainParams random_params(int trial) {
     SkrFinalGainParams g;
     g.log_g_min = uniform(-8.0f, -0.5f);
@@ -200,7 +197,6 @@ static int test_final_gain(void) {
     report("final_store", &store);
     return 0;
 }
-#endif
 
 static int test_restart_inert(void) {
     static float noise_s[MAX_N + OFFSETS], power_s[MAX_N + OFFSETS];
@@ -312,12 +308,8 @@ int main(void) {
 
 #if SK_HAVE_NEON
     SK_MATCH_SCALAR_TO_VECTOR_MODE();   /* both twins in one subnormal/NaN mode on 32-bit ARM */
-#ifdef USE_SHARED_XI_RATIO
     if (test_gain_prepare()) return 1;
-#endif
-#ifdef USE_FAST_GAIN_SMOOTHING
     if (test_final_gain()) return 1;
-#endif
     if (test_restart_inert()) return 1;
     if (test_spp_dd()) return 1;
     if (test_ring_min()) return 1;
