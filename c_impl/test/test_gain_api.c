@@ -74,11 +74,11 @@ static uint32_t run_case(int sample_rate, AnrLevel level, int mode, int n_frames
 typedef struct { const char* name; int sr; AnrLevel level; int mode; uint32_t golden; } Case;
 
 static const Case kCases[] = {
-    {"16k balanced  anr_process_gain",              16000, ANR_LEVEL_BALANCED,   MODE_PLAIN,     0x2f2c946bu},
-    {"16k balanced  residual PSD every hop",        16000, ANR_LEVEL_BALANCED,   MODE_RESIDUAL,  0x00b0a8efu},
-    {"16k balanced  residual PSD / NULL alternating", 16000, ANR_LEVEL_BALANCED, MODE_ALTERNATE, 0x21229ecfu},
-    {"48k aggressive residual PSD every hop",       48000, ANR_LEVEL_AGGRESSIVE, MODE_RESIDUAL,  0x82a898a2u},
-    {"48k mild      anr_process_gain",              48000, ANR_LEVEL_MILD,       MODE_PLAIN,     0x994814d6u},
+    {"16k balanced  anr_process_gain",              16000, ANR_LEVEL_BALANCED,   MODE_PLAIN,     0xec100a06u},
+    {"16k balanced  residual PSD every hop",        16000, ANR_LEVEL_BALANCED,   MODE_RESIDUAL,  0x8310dee5u},
+    {"16k balanced  residual PSD / NULL alternating", 16000, ANR_LEVEL_BALANCED, MODE_ALTERNATE, 0xd0a5741eu},
+    {"48k aggressive residual PSD every hop",       48000, ANR_LEVEL_AGGRESSIVE, MODE_RESIDUAL,  0x67a3a05eu},
+    {"48k mild      anr_process_gain",              48000, ANR_LEVEL_MILD,       MODE_PLAIN,     0x8fc62e8bu},
 };
 #define N_CASES ((int)(sizeof(kCases) / sizeof(kCases[0])))
 #define N_FRAMES 120

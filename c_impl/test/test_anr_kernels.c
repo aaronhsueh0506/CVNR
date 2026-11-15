@@ -115,33 +115,6 @@ static int test_size(int trial) {
 
 #define TRIALS 6000
 
-static int test_gain_prepare(void) {
-    static float v_in_s[MAX_N + OFFSETS], gamma_s[MAX_N + OFFSETS], xi_s[MAX_N + OFFSETS];
-    static float v_ref[MAX_N], ratio_ref[MAX_N], v_neon[MAX_N], ratio_neon[MAX_N];
-    /* 1e-10f/-1e-10f/0.0f exercise the guard branch (v_in < 1e-10) on both twins. */
-    const float edges[] = {1e-10f, 700.0f, 0.0f, -1e-10f, 1.0f};
-    Stats stats = {0};
-    for (int trial = 0; trial < TRIALS; ++trial) {
-        int n = test_size(trial);
-        float* v_in = v_in_s + trial % OFFSETS;
-        float* gamma = gamma_s + (trial / OFFSETS) % OFFSETS;
-        float* xi = xi_s + (trial / (OFFSETS * OFFSETS)) % OFFSETS;
-        for (int i = 0; i < n; ++i) {
-            v_in[i] = draw(0.0f, 900.0f, edges, 5);
-            gamma[i] = draw(-0.5f, 2000.0f, edges, 5);
-            xi[i] = draw(0.0f, 50.0f, edges, 5);
-        }
-        skr_gain_prepare_scalar(v_in, gamma, xi, v_ref, ratio_ref, n);
-        skr_gain_prepare_neon(v_in, gamma, xi, v_neon, ratio_neon, n);
-        stats.calls++;
-        if (compare_arrays("gain_prepare", "v", v_ref, v_neon, n, trial, &stats) ||
-            compare_arrays("gain_prepare", "ratio", ratio_ref, ratio_neon, n, trial, &stats))
-            return 1;
-    }
-    report("gain_prepare", &stats);
-    return 0;
-}
-
 static SkrFinalGainParams random_params(int trial) {
     SkrFinalGainParams g;
     g.log_g_min = uniform(-8.0f, -0.5f);
@@ -226,7 +199,7 @@ static int test_spp_dd(void) {
     static float power_s[MAX_N + OFFSETS], noise_s[MAX_N + OFFSETS], prev_s[MAX_N + OFFSETS];
     static float enh_s[MAX_N + OFFSETS];
     static float gamma_ref[MAX_N], gamma_neon[MAX_N], xi_ref[MAX_N], xi_neon[MAX_N];
-    static float v_ref[MAX_N], v_neon[MAX_N];
+    static float v_ref[MAX_N], v_neon[MAX_N], ratio_ref[MAX_N], ratio_neon[MAX_N];
     const float edges[] = {1e-10f, 1.0f, 0.0f, -1e-10f};
     Stats stats = {0};
     AnrConfig cfg = anr_default_config_for_grid(16000, 512);
@@ -249,17 +222,15 @@ static int test_spp_dd(void) {
             noise_prev[i] = draw(0.0f, 1e5f, edges, 4);
             enhanced[i] = draw(0.0f, 1e6f, edges, 4);
         }
-        int with_v = trial & 1;
-        spp_dd_scalar(a, power, noise, noise_prev, enhanced, gamma_ref, xi_ref,
-                      with_v ? v_ref : NULL, n);
-        spp_dd_neon(b, power, noise, noise_prev, enhanced, gamma_neon, xi_neon,
-                    with_v ? v_neon : NULL, n);
+        spp_dd_scalar(a, power, noise, noise_prev, enhanced, gamma_ref, xi_ref, v_ref, ratio_ref, n);
+        spp_dd_neon(b, power, noise, noise_prev, enhanced, gamma_neon, xi_neon, v_neon, ratio_neon, n);
         stats.calls++;
         int bad = compare_arrays("spp_dd", "gamma", gamma_ref, gamma_neon, n, trial, &stats) ||
                   compare_arrays("spp_dd", "xi", xi_ref, xi_neon, n, trial, &stats) ||
                   compare_arrays("spp_dd", "v_scratch", a->v_scratch, b->v_scratch, n, trial, &stats) ||
                   compare_arrays("spp_dd", "term_xi", a->term_xi_scratch, b->term_xi_scratch, n, trial, &stats) ||
-                  (with_v && compare_arrays("spp_dd", "v_out", v_ref, v_neon, n, trial, &stats));
+                  compare_arrays("spp_dd", "v_out", v_ref, v_neon, n, trial, &stats) ||
+                  compare_arrays("spp_dd", "ratio_out", ratio_ref, ratio_neon, n, trial, &stats);
         spp_destroy(a);
         spp_destroy(b);
         if (bad) return 1;
@@ -308,7 +279,6 @@ int main(void) {
 
 #if SK_HAVE_NEON
     SK_MATCH_SCALAR_TO_VECTOR_MODE();   /* both twins in one subnormal/NaN mode on 32-bit ARM */
-    if (test_gain_prepare()) return 1;
     if (test_final_gain()) return 1;
     if (test_restart_inert()) return 1;
     if (test_spp_dd()) return 1;

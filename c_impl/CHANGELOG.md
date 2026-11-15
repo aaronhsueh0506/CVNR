@@ -2,6 +2,24 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [Unreleased] · 2026-11-15 · 增益階段直接用 SPP 階段算好的 `xi/(1+xi)`（行為改變）
+
+`spp_estimate()` 直接把 `xi/(1+xi)` 與夾限後的 `v` 交給增益階段，算法與 Python 參考（`MmseLsaGainCalculator._mmse_gain_base`）相同；增益階段不再用 `v/(gamma+1e-10)` 反推 `xi/(1+xi)`。出貨輸出每個頻點最多差幾個 ulp。
+
+- **精確性。** 新輸出與「改動前的樹關掉共用比值路徑後編譯」（同一公式）逐位元相同，SIMD=1／0 都是：`test_bit_exact_stream` 全部記錄、`denoise_wav`／`denoise_mem` 在 5 組輸入×grid、4 個 level，以及下列評估集的每一個檔案。
+- **輸出變化**（balanced，SIMD=1；SIMD=0 在 VCTK+DEMAND 集上的最大 |d| 差在 4e-9 內、改變頻點比例差在 0.1 個百分點內）。波形最大 |d|／差值能量相對輸出（最差檔、中位數檔）：VCTK+DEMAND 16k（206 組）16k@512 8.9e-8、-142.2 dB、-143.9 dB；16k@256 1.6e-7、-131.4 dB、-144.8 dB；DNS 2020 synthetic no_reverb 16k（150 組）16k@512 2.2e-7、-127.8 dB、-144.0 dB；16k@256 3.1e-7、-130.6 dB、-144.8 dB；VCTK+DEMAND 48k 原檔（206 組）48k@1024 1.2e-7、-140.2 dB、-144.2 dB。改變的增益頻點佔全部的 6.5／6.1／5.6／5.6／4.4 %（每 hop 約 257 中 17、129 中 8、513 中 22 個），約 90 % 的 hop 有變化，分布在整個頻帶。開迴路（同一狀態、兩種公式）有 9.5–13 % 的頻點不同，其中 86–98 % 只差 1 ulp，這些頻點的 posterior SNR gamma 中位數為 0.5–2.4；差異不限於近靜音頻點。
+- **品質**（VCTK+DEMAND 16k，206 組，balanced；NR 沒有 HPF，參考訊號就是 clean 檔）：PESQ（wb）16k@512 由 2.3990 到 2.3990（配對差 +4.6e-6，95 % CI [-2.2e-6, +1.2e-5]），16k@256 由 2.4043 到 2.4043（-5.0e-7，CI [-3.6e-6, +2.6e-6]）；STOI 差在 ±4e-10 內。兩者 CI 下界都高於不劣性門檻：repo 的 `python/tools/compare_vctk_benchmark.py` 門檻（PESQ -0.005、STOI -0.002）以及更嚴的 STOI -0.001。DNS 2020 16k 的 PESQ CI 為 [-2.1e-6, +1.9e-7] 與 [-5.8e-7, +1.1e-7]。
+- **算量**（`anr_process_gain`，balanced，本機，20 輪交錯量測的每輪最小值取中位數）：SIMD=1 8k/128 0.396 到 0.390 us/hop、8k/256 0.789 到 0.778、16k/256 0.761 到 0.751、16k/512 1.532 到 1.504、48k/1024 2.988 到 2.940（-1.3 % 到 -1.8 %）；SIMD=0 0.830 到 0.819、1.741 到 1.674、1.698 到 1.653、3.448 到 3.390、6.866 到 6.679（-1.3 % 到 -3.9 %）。
+- **Python 對拍。** `pyc_parity_nr` 判定不變、容差不動；L1（std-math C 對 Python）未標記 gain 情境最差 p99.9 由 5.245e-6 變 5.066e-6，e2e `max_over_peak` 由 8.447e-6 變 8.441e-6。README 的 48 kHz `parity_nr.py` 量測中 std-math 平均 |dgain| 由 4.593e-8 變 4.535e-8（與 Python 完全相等的頻點由 474,442 變 486,811）；出貨建置以 fast-math 誤差為主，四位有效數字不變。
+- **Golden。** `test_gain_api.c` 的 5 個雜湊重新產生：新舊增益向量在 1.1–2.0 % 的頻點不同，最大 |dG| 1.2e-7，從第一個增益階段 hop 開始；新雜湊等於改動前的樹關掉共用比值路徑後的雜湊。
+
+### 變更 (Changed)
+- `spp_estimate()`（內部標頭）參數改為 `float* v_out, float* ratio_out`，兩者必填：`v = xi/(1+xi)*gamma` 夾到 [1e-10, 700]（NaN 原樣通過）與 `xi/(1+xi)`。`calculate_gain()` 從增益暫存讀取；SPP 的純量與 NEON pass 負責寫入（夾限由 `spp_gain_v()` 執行）。`test_anr_kernels.c` 逐 lane 比對兩個輸出。
+- **Pool 大小（整合者請看）。** 移除 `AnrDenoiser.v`：LP64 的 `anr_get_mem_size()` 8k/128 由 22,480 降為 22,192（-288）、8k/256 由 27,168 降為 26,624（-544）、16k/256 由 43,728 降為 43,184（-544）、16k/512 由 53,280 降為 52,224（-1,056）、48k/1024 由 138,352 降為 136,272（-2,080）（`sizeof(AnrDenoiser)` 360 降為 352）；ILP32 為 -272／-528／-528／-1,040／-2,064（`sizeof` 296 降為 292，`ALIGN16` 304）。`DEBUG=1` 相同。
+
+### 移除 (Removed)
+- `gain_prepare()` 與 audiolib 的 `skr_gain_prepare_*`（需搭配對應的 audiolib commit），以及 `test_gain_prepare`。
+
 ## [Unreleased] · 2026-11-15 · 移除建置旗標 `USE_FAST_GAIN_SMOOTHING` 與 `USE_SHARED_XI_RATIO`
 
 出貨輸出不變：預設建置的 `anr.o`、`spp_estimator.o`、`noise_estimator.o`、`main.o`、`main_mem.o` 在 SIMD=1／0 都與改動前逐位元組相同；`test_bit_exact_stream` 的記錄（出貨旗標、兩支 runner、SIMD=1／0）相同；`denoise_wav`／`denoise_mem` 在 5 組輸入×grid、4 個 level 上的 WAV 相同；`test_gain_api` 雜湊不變。

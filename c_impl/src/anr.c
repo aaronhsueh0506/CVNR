@@ -34,10 +34,8 @@ struct AnrDenoiser {
     float* gamma;
     float* gain;
 
-    float* v;
-
-    /* Gain scratch[n_freqs]; both arrays are rewritten in place, pass by pass. */
-    float* gain_v_scratch;         /* v -> E1 -> 0.5*E1 -> exp -> log(G_H1 + eps). */
+    /* Gain scratch[n_freqs], filled by the SPP stage and rewritten in place, pass by pass. */
+    float* gain_v_scratch;         /* clamped v -> E1 -> 0.5*E1 -> exp -> log(G_H1 + eps). */
     float* gain_xi_ratio_scratch;  /* xi/(1+xi) -> G_H1 for DD. */
 
     float* enhanced_psd_prev;
@@ -254,23 +252,9 @@ static const float* prepare_noise_for_spp(AnrDenoiser* self,
     return self->noise_aug;
 }
 
-/* Gain inputs from the SPP stage: v clamped to [1e-10, 700] (NaN passes through) and
- * xi/(1+xi) = v/(gamma + 1e-10). Bins whose v underflows below 1e-10 compute xi/(1+xi) from xi
- * directly. Outputs must not overlap inputs. */
-static inline void gain_prepare(const float* v_in, const float* gamma, const float* xi,
-                                float* v_out, float* ratio_out, int n) {
-#if ANR_VECTOR
-    skr_gain_prepare_neon(v_in, gamma, xi, v_out, ratio_out, n);
-#else
-    skr_gain_prepare_scalar(v_in, gamma, xi, v_out, ratio_out, n);
-#endif
-}
-
+/* OM-LSA gain from the SPP stage's clamped v and xi/(1+xi) in the gain scratch. */
 static void calculate_gain(AnrDenoiser* self,
                             const float* spp,
-                            const float* xi,
-                            const float* gamma,
-                            const float* v_in,
                             float* gain_out) {
     int   n_freqs      = self->n_freqs;
     float g_min        = self->g_min;
@@ -283,22 +267,6 @@ static void calculate_gain(AnrDenoiser* self,
 
     float* v_scratch        = self->gain_v_scratch;
     float* xi_ratio_scratch = self->gain_xi_ratio_scratch;
-
-    /* Clamped v and xi/(1+xi). */
-    if (v_in != NULL) {
-        gain_prepare(v_in, gamma, xi, v_scratch, xi_ratio_scratch, n_freqs);
-    } else {
-        for (int k = 0; k < n_freqs; k++) {
-            float xi_ratio = xi[k] / (1.0f + xi[k]);
-            float v        = xi_ratio * gamma[k];
-
-            if (v < 1e-10f) v = 1e-10f;
-            if (v > 700.0f) v = 700.0f;
-
-            v_scratch[k]        = v;
-            xi_ratio_scratch[k] = xi_ratio;
-        }
-    }
 
     /* E1(v) in-place; USE_STANDARD_MATH selects exp1_approx(). */
     sk_exp1_approx_f32(v_scratch, v_scratch, n_freqs);
@@ -377,11 +345,11 @@ static void calculate_gain(AnrDenoiser* self,
 static void run_frame_gain_stage(AnrDenoiser* self,
                                  const float* noise_for_spp,
                                  bool track_noise) {
-    float* const v = self->v;
     spp_estimate(self->spp_est, self->power, noise_for_spp, self->enhanced_psd_prev,
-                 self->spp, self->xi, self->gamma, v);
+                 self->spp, self->xi, self->gamma, self->gain_v_scratch,
+                 self->gain_xi_ratio_scratch);
     update_frame_speech_evidence(self);
-    calculate_gain(self, self->spp, self->xi, self->gamma, v, self->gain);
+    calculate_gain(self, self->spp, self->gain);
     apply_frame_makeup(self);
     if (track_noise) update_noise_estimator(self);
 }
@@ -420,7 +388,6 @@ size_t anr_get_mem_size(const AnrConfig* config) {
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* xi                */
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* gamma             */
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* gain              */
-    total = ck_field_size(total, (size_t)nf, sizeof(float));   /* v                     */
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* gain_v_scratch        */
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* gain_xi_ratio_scratch */
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* enhanced_psd_prev */
@@ -459,7 +426,6 @@ AnrDenoiser* anr_init(void* mem, size_t mem_size,
     self->xi                = (float*)cursor; cursor += arr;
     self->gamma             = (float*)cursor; cursor += arr;
     self->gain              = (float*)cursor; cursor += arr;
-    self->v                 = (float*)cursor; cursor += arr;
     self->gain_v_scratch        = (float*)cursor; cursor += arr;
     self->gain_xi_ratio_scratch = (float*)cursor; cursor += arr;
     self->enhanced_psd_prev = (float*)cursor; cursor += arr;
@@ -500,7 +466,6 @@ AnrDenoiser* anr_create(const AnrConfig* config) {
     self->xi                = (float*)calloc(nf, sizeof(float));
     self->gamma             = (float*)calloc(nf, sizeof(float));
     self->gain              = (float*)calloc(nf, sizeof(float));
-    self->v                 = (float*)calloc(nf, sizeof(float));
     self->gain_v_scratch        = (float*)calloc(nf, sizeof(float));
     self->gain_xi_ratio_scratch = (float*)calloc(nf, sizeof(float));
     self->enhanced_psd_prev = (float*)calloc(nf, sizeof(float));
@@ -509,7 +474,7 @@ AnrDenoiser* anr_create(const AnrConfig* config) {
     if (!self->power || !self->noise_aug || !self->noise_est || !self->spp_est ||
         !self->spp || !self->xi || !self->gamma || !self->gain ||
         !self->gain_v_scratch || !self->gain_xi_ratio_scratch ||
-        !self->enhanced_psd_prev || !self->log_gain_prev || !self->v) {
+        !self->enhanced_psd_prev || !self->log_gain_prev) {
         anr_destroy(self);
         return NULL;
     }
@@ -531,7 +496,6 @@ void anr_destroy(AnrDenoiser* self) {
     free(self->xi);
     free(self->gamma);
     free(self->gain);
-    free(self->v);
     free(self->gain_v_scratch);
     free(self->gain_xi_ratio_scratch);
     free(self->enhanced_psd_prev);

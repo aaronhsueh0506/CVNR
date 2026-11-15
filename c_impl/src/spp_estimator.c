@@ -122,12 +122,19 @@ void spp_destroy(SppEstimator* self) {
     free(self);
 }
 
+/* v for the gain stage: clamped to [1e-10, 700]; NaN passes through. */
+static inline float spp_gain_v(float v) {
+    if (v < 1e-10f) v = 1e-10f;
+    if (v > 700.0f) v = 700.0f;
+    return v;
+}
+
 /* One bin of the decision-directed update: gamma, xi = max(alpha * enhanced_prev / noise_prev +
- * (1 - alpha) * max(gamma - 1, 0), xi_min), and v = xi / (1 + xi) * gamma with 1 + xi. v_out may be
- * NULL. */
+ * (1 - alpha) * max(gamma - 1, 0), xi_min), xi / (1 + xi), v = xi / (1 + xi) * gamma and 1 + xi;
+ * v_out gets the clamped v. */
 static inline void spp_dd_elem(const SppEstimator* self, float power, float noise,
                                float enhanced_prev, float noise_prev, float* gamma_out,
-                               float* xi_out, float* v_out, float* v_scratch,
+                               float* xi_out, float* v_out, float* ratio_out, float* v_scratch,
                                float* term_xi_scratch) {
     float gamma = power / (noise + 1e-10f);
     *gamma_out = gamma;
@@ -137,8 +144,10 @@ static inline void spp_dd_elem(const SppEstimator* self, float power, float nois
     float xi = xi_dd > self->xi_min ? xi_dd : self->xi_min;
     *xi_out = xi;
     float term_xi = 1.0f + xi;
-    float v = (xi / term_xi) * gamma;
-    if (v_out) *v_out = v;
+    float ratio = xi / term_xi;
+    float v = ratio * gamma;
+    *v_out = spp_gain_v(v);
+    *ratio_out = ratio;
     *term_xi_scratch = term_xi;
     *v_scratch = v;
 }
@@ -146,18 +155,20 @@ static inline void spp_dd_elem(const SppEstimator* self, float power, float nois
 ANR_TWIN void spp_dd_scalar(SppEstimator* self, const float* power,
                             const float* noise, const float* noise_prev,
                             const float* enhanced_prev, float* gamma_out,
-                            float* xi_out, float* v_out, int n) {
+                            float* xi_out, float* v_out, float* ratio_out, int n) {
     for (int k = 0; k < n; k++)
         spp_dd_elem(self, power[k], noise[k], enhanced_prev[k], noise_prev[k], gamma_out + k,
-                    xi_out + k, v_out ? v_out + k : NULL, self->v_scratch + k,
+                    xi_out + k, v_out + k, ratio_out + k, self->v_scratch + k,
                     self->term_xi_scratch + k);
 }
 
 #if SK_HAVE_NEON
 ANR_TWIN void spp_dd_neon(SppEstimator* self, const float* power, const float* noise,
                           const float* noise_prev, const float* enhanced_prev,
-                          float* gamma_out, float* xi_out, float* v_out, int n) {
+                          float* gamma_out, float* xi_out, float* v_out, float* ratio_out,
+                          int n) {
     const float32x4_t eps = vdupq_n_f32(1e-10f);
+    const float32x4_t v_max = vdupq_n_f32(700.0f);
     const float32x4_t one = vdupq_n_f32(1.0f);
     const float32x4_t zero = vdupq_n_f32(0.0f);
     const float32x4_t alpha = vdupq_n_f32(self->alpha);
@@ -175,33 +186,38 @@ ANR_TWIN void spp_dd_neon(SppEstimator* self, const float* power, const float* n
         float32x4_t xi = vbslq_f32(vcgtq_f32(xi_dd, xi_min), xi_dd, xi_min);
         vst1q_f32(xi_out + k, xi);
         float32x4_t term_xi = vaddq_f32(one, xi);
-        float32x4_t v = vmulq_f32(vdivq_f32(xi, term_xi), gamma);
-        if (v_out) vst1q_f32(v_out + k, v);
+        float32x4_t ratio = vdivq_f32(xi, term_xi);
+        float32x4_t v = vmulq_f32(ratio, gamma);
+        float32x4_t vc = vbslq_f32(vcltq_f32(v, eps), eps, v);
+        vst1q_f32(v_out + k, vbslq_f32(vcgtq_f32(vc, v_max), v_max, vc));
+        vst1q_f32(ratio_out + k, ratio);
         vst1q_f32(self->term_xi_scratch + k, term_xi);
         vst1q_f32(self->v_scratch + k, v);
     }
     for (; k < n; k++)
         spp_dd_elem(self, power[k], noise[k], enhanced_prev[k], noise_prev[k], gamma_out + k,
-                    xi_out + k, v_out ? v_out + k : NULL, self->v_scratch + k,
+                    xi_out + k, v_out + k, ratio_out + k, self->v_scratch + k,
                     self->term_xi_scratch + k);
 }
 #endif
 
 static inline void spp_dd(SppEstimator* self, const float* power, const float* noise,
                           const float* noise_prev, const float* enhanced_prev, float* gamma_out,
-                          float* xi_out, float* v_out, int n) {
+                          float* xi_out, float* v_out, float* ratio_out, int n) {
 #if ANR_VECTOR
-    spp_dd_neon(self, power, noise, noise_prev, enhanced_prev, gamma_out, xi_out, v_out, n);
+    spp_dd_neon(self, power, noise, noise_prev, enhanced_prev, gamma_out, xi_out, v_out,
+                ratio_out, n);
 #else
-    spp_dd_scalar(self, power, noise, noise_prev, enhanced_prev, gamma_out, xi_out, v_out, n);
+    spp_dd_scalar(self, power, noise, noise_prev, enhanced_prev, gamma_out, xi_out, v_out,
+                  ratio_out, n);
 #endif
 }
 
-/* Pass 1 of the SPP estimate: gamma, xi and the staged v and 1 + xi for the exponential pass.
- * v_out may be NULL. */
+/* Pass 1 of the SPP estimate: gamma, xi, the staged v and 1 + xi for the exponential pass, and the
+ * gain stage's clamped v and xi / (1 + xi). */
 static void spp_prepare(SppEstimator* self, const float* Y_psd, const float* noise_psd,
                         const float* enhanced_psd_prev, float* xi_out, float* gamma_out,
-                        float* v_out) {
+                        float* v_out, float* ratio_out) {
     const int n_freqs = self->n_freqs;
     const float xi_min = self->xi_min;
     float* v_scratch = self->v_scratch;
@@ -212,7 +228,7 @@ static void spp_prepare(SppEstimator* self, const float* Y_psd, const float* noi
 
     if (self->is_initialized && enhanced_psd_prev != NULL) {
         spp_dd(self, Y_psd, noise_psd, noise_for_dd, enhanced_psd_prev, gamma_out, xi_out, v_out,
-               n_freqs);
+               ratio_out, n_freqs);
         return;
     }
     for (int k = 0; k < n_freqs; k++) {
@@ -224,8 +240,10 @@ static void spp_prepare(SppEstimator* self, const float* Y_psd, const float* noi
         xi_out[k] = xi;
 
         float term_xi = 1.0f + xi;
-        float v = xi / term_xi * gamma;
-        if (v_out) v_out[k] = v;
+        float ratio = xi / term_xi;
+        float v = ratio * gamma;
+        v_out[k] = spp_gain_v(v);
+        ratio_out[k] = ratio;
         term_xi_scratch[k] = term_xi;
         v_scratch[k] = v;
     }
@@ -239,16 +257,18 @@ void spp_estimate(
     float* spp_out,
     float* xi_out,
     float* gamma_out,
-    float* v_out
+    float* v_out,
+    float* ratio_out
 ) {
-    if (!self || !Y_psd || !noise_psd || !spp_out || !xi_out || !gamma_out) return;
+    if (!self || !Y_psd || !noise_psd || !spp_out || !xi_out || !gamma_out || !v_out || !ratio_out)
+        return;
 
     int n_freqs = self->n_freqs;
     float prior_ratio = self->prior_ratio;
     float* v_scratch = self->v_scratch;
     float* term_xi_scratch = self->term_xi_scratch;
 
-    spp_prepare(self, Y_psd, noise_psd, enhanced_psd_prev, xi_out, gamma_out, v_out);
+    spp_prepare(self, Y_psd, noise_psd, enhanced_psd_prev, xi_out, gamma_out, v_out, ratio_out);
 
     // exp(-v) in place.
     sk_fast_exp_neg_f32(v_scratch, v_scratch, n_freqs);

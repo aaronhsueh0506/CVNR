@@ -205,7 +205,7 @@ NRP2 dump header 會攜帶 `sample_rate`；C 端據此建立完全相同的 sign
 
 | build | worst &#124;Δgain&#124; | median &#124;Δgain&#124; | mean &#124;Δgain&#124; |
 |-------|--------------|---------------|-------------|
-| standard-math (`-DUSE_STANDARD_MATH`) | 1.192e-5 | 1.490e-8 | 4.593e-8 |
+| standard-math (`-DUSE_STANDARD_MATH`) | 1.192e-5 | 1.490e-8 | 4.535e-8 |
 | fast-math (預設) | 7.277e-3 | 1.113e-4 | 2.268e-4 |
 
 上表的 standard-math 使用 `DEBUG=0 EXTRA_CFLAGS=-DUSE_STANDARD_MATH`，

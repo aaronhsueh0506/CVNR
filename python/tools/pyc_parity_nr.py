@@ -152,7 +152,7 @@ def _zero_band_edit(t0, t1, f0_hz, f1_hz):
 #   srs       sample rates the family exists for (default: all);  kinds  'gain' and/or 'e2e'
 #   exercises {layer: finding} the family can expose.  It validates expected_red.json (an entry must
 #             name a finding its family exercises on that layer) and labels --emit-expected-red.
-#             Findings: S-10 shared xi/(1+xi) at zero-power bins; S-11/S-12 initial-PSD floor and
+#             Findings: S-10 xi/(1+xi) from v at zero-power bins (fixed); S-11/S-12 initial-PSD floor and
 #             hi_gamma epsilon placement; S-13 makeup_prior default.
 FAMILIES = (
     dict(name='speech', role='speech', tf=_ident, kinds=('gain', 'e2e'), exercises={}),

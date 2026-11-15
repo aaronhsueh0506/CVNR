@@ -4,6 +4,24 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [Unreleased] — 2026-11-15 — The gain stage takes `xi/(1+xi)` from the SPP stage (behaviour change)
+
+`spp_estimate()` now hands the gain stage `xi/(1+xi)` and the clamped `v` directly, as the Python reference (`MmseLsaGainCalculator._mmse_gain_base`) computes them; the gain stage no longer recovers `xi/(1+xi)` as `v/(gamma+1e-10)`. Shipping output changes by at most a few ulp per bin.
+
+- **Exactness.** The new output is bit-identical to the previous tree compiled without its shared-ratio path (same formula), at SIMD=1 and SIMD=0: all `test_bit_exact_stream` records, `denoise_wav`/`denoise_mem` on 5 input/grid pairs x 4 levels, and every file of the evaluation sets below.
+- **Output change** (balanced, SIMD=1; SIMD=0 on the VCTK+DEMAND sets agrees within 4e-9 in max |d| and 0.1 percentage point in changed bins). Waveform max |d| / difference energy relative to the output (worst file, median file): VCTK+DEMAND 16k (206 pairs) at 16k@512 8.9e-8, -142.2 dB, -143.9 dB; at 16k@256 1.6e-7, -131.4 dB, -144.8 dB; DNS 2020 synthetic no_reverb 16k (150) at 16k@512 2.2e-7, -127.8 dB, -144.0 dB; at 16k@256 3.1e-7, -130.6 dB, -144.8 dB; VCTK+DEMAND 48k originals (206) at 48k@1024 1.2e-7, -140.2 dB, -144.2 dB. Gain bins that change: 6.5 / 6.1 / 5.6 / 5.6 / 4.4 % of all bins (about 17 of 257, 8 of 129 and 22 of 513 per hop), on about 90 % of the hops, spread over the whole band. Open loop (same state, both formulas) 9.5-13 % of the bins differ, 86-98 % of them by one ulp, at a median posterior SNR gamma of 0.5-2.4; the difference is not confined to near-silent bins.
+- **Quality** (VCTK+DEMAND 16k, 206 pairs, balanced; NR has no HPF, so the reference is the clean file): PESQ (wb) 2.3990 to 2.3990 at 16k@512 (paired difference +4.6e-6, 95 % CI [-2.2e-6, +1.2e-5]) and 2.4043 to 2.4043 at 16k@256 (-5.0e-7, CI [-3.6e-6, +2.6e-6]); STOI differences within +-4e-10. Both CI lower bounds clear the non-inferiority margins: the repo gates of `python/tools/compare_vctk_benchmark.py` (-0.005 PESQ, -0.002 STOI) and the stricter -0.001 STOI. DNS 2020 16k gives PESQ CIs [-2.1e-6, +1.9e-7] and [-5.8e-7, +1.1e-7].
+- **Cost** (`anr_process_gain`, balanced, this host, median of 20 interleaved round minima): SIMD=1 8k/128 0.396 to 0.390 us/hop, 8k/256 0.789 to 0.778, 16k/256 0.761 to 0.751, 16k/512 1.532 to 1.504, 48k/1024 2.988 to 2.940 (-1.3 % to -1.8 %); SIMD=0 0.830 to 0.819, 1.741 to 1.674, 1.698 to 1.653, 3.448 to 3.390, 6.866 to 6.679 (-1.3 % to -3.9 %).
+- **Python parity.** `pyc_parity_nr` verdicts unchanged and no tolerance moves; L1 (std-math C vs Python) worst untagged gain p99.9 5.245e-6 to 5.066e-6, e2e `max_over_peak` 8.447e-6 to 8.441e-6. On the README's 48 kHz `parity_nr.py` run the std-math mean |dgain| goes 4.593e-8 to 4.535e-8 (bins equal to Python 474,442 to 486,811); the shipping build's fast-math error dominates and its figures do not move at four digits.
+- **Goldens.** The five `test_gain_api.c` hashes are regenerated: the old and new gain vectors differ in 1.1-2.0 % of the bins, max |dG| 1.2e-7, from the first gain-stage hop; the new hashes equal those of the previous tree built without the shared-ratio path.
+
+### Changed
+- `spp_estimate()` (internal header) takes `float* v_out, float* ratio_out`, both required: `v = xi/(1+xi)*gamma` clamped to [1e-10, 700] (NaN passes) and `xi/(1+xi)`. `calculate_gain()` reads them from the gain scratch; the scalar and NEON SPP passes write them (`spp_gain_v()` is the clamp). `test_anr_kernels.c` compares both outputs lane for lane.
+- **Pool size (integrators read this).** `AnrDenoiser.v` is gone: `anr_get_mem_size()` 8k/128 22,480 to 22,192 bytes (-288), 8k/256 27,168 to 26,624 (-544), 16k/256 43,728 to 43,184 (-544), 16k/512 53,280 to 52,224 (-1,056), 48k/1024 138,352 to 136,272 (-2,080) on LP64 (`sizeof(AnrDenoiser)` 360 to 352); ILP32 -272/-528/-528/-1,040/-2,064 (`sizeof` 296 to 292, `ALIGN16` 304). `DEBUG=1` matches.
+
+### Removed
+- `gain_prepare()` and audiolib's `skr_gain_prepare_*` (matching audiolib commit), with `test_gain_prepare`.
+
 ## [Unreleased] — 2026-11-15 — Build flags `USE_FAST_GAIN_SMOOTHING` and `USE_SHARED_XI_RATIO` removed
 
 Shipping output unchanged: `anr.o`, `spp_estimator.o`, `noise_estimator.o`, `main.o` and `main_mem.o` of the default build are byte-identical to the previous tree at SIMD=1 and SIMD=0; the `test_bit_exact_stream` records (shipping flags, both runners, SIMD=1 and SIMD=0) are identical; `denoise_wav`/`denoise_mem` WAVs are identical on 5 input/grid pairs x 4 levels; `test_gain_api` hashes do not move.
