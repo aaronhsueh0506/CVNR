@@ -30,9 +30,9 @@ pre code{background:none;padding:0}
 <p>串在 AEC 之後的整合碼(Audio_ALG 的 <code>pipelines/mono/aec_nr_res/main.c</code>,每支範例 main 自己初始化 NR、自己寫一小段串接;單聲道的 <code>mono_nr_gain()</code>、4ch 的 <code>array_sample_anr_gain()</code>(<code>pipelines/4ch/array_sample_post.h</code>)都是呼叫端自己的薄包裝)使用的 seam 是 <b><code>anr_process_gain_with_residual_psd()</code></b>(沒有殘留回音 PSD 時用 <code>anr_process_gain()</code>):算出每 bin 增益但不套用、直接回傳內部增益陣列,並把外部殘留回音 PSD R² 折進噪聲底(ξ = S²/(N²+R²),R² 先乘 <code>noise_over_subtraction</code> 同一倍率);MCRA 追蹤器只吃乾淨功率,R² 不污染噪聲估計。AEC 的 R² 是 int16² 尺度,餵給 NR 前要乘 1/32768²。RES 增益:<code>AecConfig.residual = AEC_RESIDUAL_FULL</code> 時由 AEC 實例自己算(單聲道與 4ch 陣列實例都在 <code>aec_process_residual()</code>;<code>aec_process()</code> 是線性、殘留兩級加合成的一次呼叫,沒有讓 NR 插入增益的位置),以 <code>aec_get_residual()</code> 檢視的 <code>res_gain</code> 取得。NR 的增益交給 <code>aec_apply_gain()</code>,由它取 <code>min(G_nr, G_res)</code> 並乘在渲染底座上,<code>aec_apply_cng()</code> 補被切掉的 bin;逐步呼叫與可編譯的骨架見 <a href="nr_c_api.html#with-aec">NR API §4.1</a>。</p>
 <div class="tblwrap"><table>
 <tr><th>sr</th><th>fft_size(白名單)</th><th>hop</th><th>n_freqs</th><th>L(balanced 實測)</th><th>num_init_frames</th><th>anr_get_mem_size(balanced,預設建置 <code>DEBUG=0</code> 實測)</th></tr>
-<tr><td>8000</td><td>128(預設)/ 256</td><td>64 / 128</td><td>65 / 129</td><td>64 / 32</td><td>25 / 13</td><td>22,752 / 27,696 B</td></tr>
-<tr><td>16000</td><td>256(預設)/ 512</td><td>128 / 256</td><td>129 / 257</td><td>64 / 32</td><td>25 / 13</td><td>44,256 / 54,320 B</td></tr>
-<tr><td>48000</td><td>1024</td><td>512</td><td>513</td><td>48</td><td>19</td><td>140,416 B</td></tr>
+<tr><td>8000</td><td>128(預設)/ 256</td><td>64 / 128</td><td>65 / 129</td><td>64 / 32</td><td>25 / 13</td><td>22,480 / 27,168 B</td></tr>
+<tr><td>16000</td><td>256(預設)/ 512</td><td>128 / 256</td><td>129 / 257</td><td>64 / 32</td><td>25 / 13</td><td>43,728 / 53,280 B</td></tr>
+<tr><td>48000</td><td>1024</td><td>512</td><td>513</td><td>48</td><td>19</td><td>138,352 B</td></tr>
 </table></div>
 <p class="small">格點規則:frame = fft、hop = frame/2、無 zero-padding(<code>anr_validate_config()</code> 強制)。常數重定時:大多數係數以 10 ms hop 為著作基準(<code>anr_retime_alpha/_frames</code>),少數(<code>alpha_xi</code>、<code>alpha_attack</code>、<code>L=32</code> 等)以 16 ms 為基準(<code>anr_retime_alpha_ref(..., 0.016)</code>、<code>anr_retime_frames_ms(32, ..., 16)</code>)——兩個著作格點並存是刻意的,詳見 <code>anr_types.h</code> 各欄註解。<b>pool 大小不要寫死</b>,一律用 <code>anr_get_mem_size()</code>。</p>
 <p><b>Strength levels</b>(<code>AnrLevel</code>;g_min 為振幅 dB,/20 慣例):</p>
@@ -65,11 +65,11 @@ pre code{background:none;padding:0}
      |  (A) 尚未 initialized(暖機,前 num_init_frames 個非全零 hop)
      |                        |--accumulate_init_power(power,idx)--&gt;|  (全零 hop 不累積)
      |                        |--滿 num_init_frames: init_noise()---&gt;|  30th percentile 播種
-     |                        |  gain[k]=1;gain_prev=1;enhanced_psd_prev=power   (直通)
+     |                        |  gain[k]=1;enhanced_psd_prev=power   (直通)
      |  (B) 已 initialized
      |                        |--get_noise_psd()-----------------&gt;|  N[k]
      |                        |  prepare_noise_for_spp: noise_aug=over_sub*(N+residual)
-     |                        |--spp_estimate(power,noise_aug,gain_prev,enh_prev)-----&gt;|
+     |                        |--spp_estimate(power,noise_aug,enh_prev)-----&gt;|
      |                        |&lt;------------------ spp, xi, gamma, v -----------------------|
      |                        |  update_frame_speech_evidence -&gt; calculate_gain
      |                        |  -&gt; apply_low_band_speech_floor -&gt; apply_frame_makeup(預設關)
@@ -122,7 +122,7 @@ pre code{background:none;padding:0}
           N = noise_estimator_get_noise_psd()                 |
           noise_aug = noise_over_subtraction*(N + residual) ←────┘  ξ=S²/(N²+R²)
              |
-          spp_estimate(power, noise_aug, gain_prev, enhanced_psd_prev)
+          spp_estimate(power, noise_aug, enhanced_psd_prev)
              → spp / xi / gamma / v      (decision-directed 先驗 SNR)
              |
           update_frame_speech_evidence()   語音帶(80–4000 Hz)SPP 平均 → 幀級語音閘
@@ -131,7 +131,7 @@ pre code{background:none;padding:0}
              → log 域 spp·log G_H1 + (1−spp)·log g_min
              → 不對稱 attack/decay 平滑 → gain[k] ∈ [g_min, 1]
              → apply_low_band_speech_floor()(預設開:語音幀的低頻 bin 增益 ≥ −15 dB)
-             |  (gain_prev / log_gain_prev / enhanced_psd_prev 於同一迴圈更新)
+             |  (log_gain_prev / enhanced_psd_prev 於同一迴圈更新)
           apply_frame_makeup()             預設關
              |
           noise_estimator_update_ex(power, spp, slow_lf_rise, …)  ← 非全零 hop 才跑;只吃乾淨 power
@@ -150,7 +150,7 @@ caller(FFT)   E(f)(hop t)                E(f)(hop t)              E(f)(hop t)
 C NR          累積噪聲初始化列            init_noise() 完成         SPP→gain→MCRA 更新
  (denoiser)   gain(t)=1(直通)            is_initialized=true      gain(t) 用 hop t 的 E(f)
               (暖機期的全零 hop:gain=1,不計數)   gain(t) 仍=1             ── 同 hop 產出,0 hop lag ──
-              ↑ 吃 t 與 t-1 的 DD state(gain_prev / enhanced_psd_prev 為前一 hop)
+              ↑ 吃 t 與 t-1 的 DD state(enhanced_psd_prev / log_gain_prev 為前一 hop)
 ──────────────────────────────────────────────────────────────────────────────
 caller(合成)  aec_apply_gain: min(gain,G_res)  同左                      同左
               apply → IFFT → OLA:out(t) 含前一 frame 後半 → 框架 1 hop lag(呼叫端負擔)
@@ -170,7 +170,7 @@ caller(合成)  aec_apply_gain: min(gain,G_res)  同左                      同
 <p class="small">存放者一律是 <code>AnrDenoiser</code> struct + 內嵌 <code>NoiseEstimator</code>/<code>SppEstimator</code> 子模組,單一 pool(<code>anr_init</code>)或 heap(<code>anr_create</code>)。無 NPU/host 端 state。</p>
 <div class="tblwrap"><table>
 <tr><th>state</th><th>shape</th><th>大小(16k/512)</th><th>內容</th></tr>
-<tr><td><code>gain_prev</code>、<code>enhanced_psd_prev</code></td><td>float32[n_freqs] ×2</td><td>2×1,028 B</td><td>decision-directed ξ 的前一幀 state(跨 hop 的核心遞迴)</td></tr>
+<tr><td><code>enhanced_psd_prev</code></td><td>float32[n_freqs]</td><td>1,028 B</td><td>decision-directed ξ 的前一幀 state(跨 hop 的核心遞迴)</td></tr>
 <tr><td><code>log_gain_prev</code></td><td>float32[n_freqs]</td><td>1,028 B</td><td>attack/decay 增益平滑的前一幀 log 增益</td></tr>
 <tr><td><code>init_frame_count</code>、<code>is_initialized</code></td><td>純量</td><td>—</td><td>噪聲初始化進度(warm-up);累積的 power 列存在 MCRA 的 <code>init_power_buffer</code>(與 <code>min_buffer</code> 共用儲存)</td></tr>
 <tr><td>MCRA:<code>noise_psd / S / S_min</code></td><td>float32[n_freqs] ×3</td><td>3×1,028 B</td><td>噪聲 PSD、時間平滑功率、追蹤最小值</td></tr>
@@ -179,7 +179,7 @@ caller(合成)  aec_apply_gain: min(gain,G_res)  同左                      同
 <tr><td>SPP:<code>noise_psd_prev</code></td><td>float32[n_freqs]</td><td>1,028 B</td><td>送進 SPP 的前一幀噪聲 PSD</td></tr>
 <tr><td>純量 state</td><td>float / bool</td><td>—</td><td>跨頻先驗與 make-up 的 EMA、<code>gain_initialized</code>、<code>slow_lf_rise</code>、<code>speech_protect_frame_active</code>(<code>anr_reset()</code> 回到初始值)</td></tr>
 <tr><td>本幀 scratch(<code>power/noise_aug/spp/xi/gamma/gain/v/…</code>)</td><td>float32[n_freqs] ×~9</td><td>~9×1,028 B</td><td>每 hop 全覆寫,不跨 hop(列出僅為完整)</td></tr>
-<tr><td><b>合計</b></td><td colspan="3"><code>anr_get_mem_size</code> 實測:見概要表(16k/512 balanced = 54,320 B)</td></tr>
+<tr><td><b>合計</b></td><td colspan="3"><code>anr_get_mem_size</code> 實測:見概要表(16k/512 balanced = 53,280 B)</td></tr>
 </table></div>
 
 <h2>延遲與 warm-up</h2>

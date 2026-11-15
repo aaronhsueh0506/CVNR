@@ -2,6 +2,19 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [Unreleased] · 2026-11-15 · 移除 `AnrDenoiser.gain_prev` 與 `spp_estimate()` 的 `gain_prev` 參數
+
+輸出不變：428 個情境的 `pyc_parity_nr` JSON 與改動前逐位元組相同；`test_bit_exact_stream` 的記錄（reference 與 optimized runner，SIMD=1／0，出貨與 `DEBUG=1` 旗標）去掉改動前的 `gain_prev` 那筆後與改動前相同；`denoise_wav`／`denoise_mem` 在 5 組輸入×grid、4 個 level 上輸出的 WAV 相同（SIMD=1／0）；`test_gain_api` 的雜湊不變。
+
+### 變更 (Changed)
+- **Pool 大小（整合者請看）。** `anr_get_mem_size()` 在每個 level 都少一個 `n_freqs` float 陣列：8k/128 由 22,752 降為 22,480（-272）、8k/256 由 27,696 降為 27,168（-528）、16k/256 由 44,256 降為 43,728（-528）、16k/512 由 54,320 降為 53,280（-1,040）、48k/1024 由 140,416 降為 138,352（-2,064）。`sizeof(AnrDenoiser)` 在 LP64 由 368 降為 360（`ALIGN16` 仍是 368；ILP32 也落在同一個 16-byte 進位內，差值相同）。`DEBUG=1` 建置在 16k/256 由 43,728 降為 43,184。NR 沒有 layout 版本常數：用 `anr_get_mem_size()` 配 pool 的呼叫端不用改，寫死大小的呼叫端要重讀。
+- `spp_estimate()`（內部標頭 `include/internal/spp_estimator.h`）少一個 `gain_prev` 參數；DD 分支只需要 `enhanced_psd_prev` 與先前呼叫過。`spp_prepare()` 同步。
+- audiolib 的 `skr_final_store_scalar()`／`skr_final_store_neon()` 少一個 `previous_gain` 輸出（需搭配對應的 audiolib commit）。
+- `test_bit_exact_stream` 少一筆 `gain_prev` 記錄：後面的記錄索引各減 1（enhanced_psd_prev 變 5、完整 min ring 變 16），`python/tools/test_bit_exact.py` 的 `FIELDS` 同步刪掉標籤。`test_anr_kernels.c` 刪掉 `final_store` 的 `previous_gain` 比對。
+
+### 移除 (Removed)
+- `AnrDenoiser.gain_prev`（由 `store_gain_state()`、NEON final store 與初始化旁路寫入，`anr_reset()` 清零，只被 `spp_prepare()` 當成「有 DD 歷史」的非 NULL 旗標讀）。Python 的 `MmseLsaDenoiser.gain_prev` 不動。
+
 ## [Unreleased] · 2026-11-14 · 移除 `AnrDenoiser.init_power_sum`、`noise_estimator_init_noise()` 的 `power_sum` 參數與 `SppEstimator.gamma_prev`
 
 輸出不變：428 個情境的 `pyc_parity_nr` JSON 在 SIMD=1／0 都與改動前相同；`make test-full` 在 SIMD=1／0（`WERROR=1`）全綠，`DEBUG=1` 的 C 測試目標與 `test-bit-exact` 全綠；`denoise_wav`／`denoise_mem` 在 5 個輸入×4 個 level 上輸出的 WAV 與改動前相同。
@@ -14,7 +27,6 @@
 ### 移除 (Removed)
 - `AnrDenoiser.init_power_sum`（每個啟動幀累加、沒有讀者）與 `process_init_or_gain()` 中的累加迴圈。
 - `SppEstimator.gamma_prev`（在 `spp_dd_elem`、NEON 儲存與 `spp_prepare()` 的無歷史分支寫入，`spp_reset()` 清零，演算法不讀）；`spp_dd_elem()` 少一個 `gamma_prev` 參數。`test_anr_kernels.c` 的 `test_spp_dd` 刪掉多餘的 `gamma_prev` 比對（`gamma`、`xi`、`v_scratch`、`term_xi`、`v_out` 仍逐 lane 比對）。Python 的 `SppEstimator.gamma_prev` 不動（除錯統計會讀它）。
-- `gain_prev` 保留：`dump_state` 第 5 筆是 make-up 之前增益的唯一逐位元紀錄。
 
 
 ## [Unreleased] · 2026-11-14 · 移除建置旗標 `USE_SINGLE_CLAMP` 與範例 CLI 的 `--bypass`

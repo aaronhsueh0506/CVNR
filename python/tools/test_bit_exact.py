@@ -14,8 +14,7 @@ import tempfile
 
 
 FIELDS = (
-    "power", "SPP", "xi", "gamma", "gain", "gain_prev", "enhanced_psd_prev",
-    "log_gain_prev", "noise_psd", "MCRA S", "MCRA S_min", "MCRA internal SPP",
+    "power", "SPP", "xi", "gamma", "gain", "enhanced_psd_prev", "log_gain_prev", "noise_psd", "MCRA S", "MCRA S_min", "MCRA internal SPP",
     "SPP noise_psd_prev", "spectrum_out", "gain_out",
     "scalar state", "flags/ring/scene state", "MCRA full min ring",
 )

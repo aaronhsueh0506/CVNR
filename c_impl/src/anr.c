@@ -42,7 +42,6 @@ struct AnrDenoiser {
     float* gain_v_scratch;         /* v -> E1 -> 0.5*E1 -> exp -> log(G_H1 + eps). */
     float* gain_xi_ratio_scratch;  /* xi/(1+xi) -> G_H1 for DD. */
 
-    float* gain_prev;
     float* enhanced_psd_prev;
 
     /* Frame speech evidence; scalar state only. */
@@ -129,12 +128,10 @@ static inline float lift_spp(float spp_k, float lift) {
     return spp_k + lift * spp_k * (1.0f - spp_k);
 }
 
-/* Stores the next-hop DD state: gain, log gain and enhanced power from dd_gain (the emitted
- * gain, or G_H1 when enabled). */
-static inline void store_gain_state(AnrDenoiser* self, int k, float gain,
-                                    float log_gain, float dd_gain) {
+/* Stores the next-hop DD state: log gain and enhanced power from dd_gain (the emitted gain, or
+ * G_H1 when enabled). */
+static inline void store_gain_state(AnrDenoiser* self, int k, float log_gain, float dd_gain) {
     self->log_gain_prev[k]     = log_gain;
-    self->gain_prev[k]         = gain;
     self->enhanced_psd_prev[k] = dd_gain * dd_gain * self->power[k];
 }
 
@@ -231,8 +228,7 @@ static void apply_low_band_speech_floor(AnrDenoiser* self,
 
         gain_out[k] = floor_gain;
         /* Scratch still holds this frame's G_H1. */
-        store_gain_state(self, k, floor_gain,
-                         self->log_speech_protect_floor_gain,
+        store_gain_state(self, k, self->log_speech_protect_floor_gain,
                          dd_from_gmmse ? self->gain_xi_ratio_scratch[k]
                                        : floor_gain);
     }
@@ -341,7 +337,7 @@ static void calculate_gain(AnrDenoiser* self,
                                      cross_band_prior, self->gain_initialized, dd_from_gmmse};
         skr_final_blend_neon(&params, spp, v_scratch, self->log_gain_prev, gain_out, n_freqs);
         sk_fast_exp_f32(gain_out, gain_out, n_freqs);
-        skr_final_store_neon(&params, v_scratch, gain_out, self->log_gain_prev, self->gain_prev,
+        skr_final_store_neon(&params, v_scratch, gain_out, self->log_gain_prev,
                              self->enhanced_psd_prev, xi_ratio_scratch, self->power, n_freqs);
     }
     apply_low_band_speech_floor(self, gain_out);
@@ -383,8 +379,7 @@ static void calculate_gain(AnrDenoiser* self,
         float log_gain_save = fast_log(gain + 1e-10f);
 #endif
 
-        store_gain_state(self, k, gain, log_gain_save,
-                         dd_from_gmmse ? xi_ratio_scratch[k] : gain);
+        store_gain_state(self, k, log_gain_save, dd_from_gmmse ? xi_ratio_scratch[k] : gain);
     }
 
     apply_low_band_speech_floor(self, gain_out);
@@ -404,8 +399,7 @@ static void run_frame_gain_stage(AnrDenoiser* self,
 #else
     float* const v = NULL;
 #endif
-    spp_estimate(self->spp_est, self->power, noise_for_spp,
-                 self->gain_prev, self->enhanced_psd_prev,
+    spp_estimate(self->spp_est, self->power, noise_for_spp, self->enhanced_psd_prev,
                  self->spp, self->xi, self->gamma, v);
     update_frame_speech_evidence(self);
     calculate_gain(self, self->spp, self->xi, self->gamma, v, self->gain);
@@ -452,7 +446,6 @@ size_t anr_get_mem_size(const AnrConfig* config) {
 #endif
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* gain_v_scratch        */
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* gain_xi_ratio_scratch */
-    total = ck_field_size(total, (size_t)nf, sizeof(float));   /* gain_prev         */
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* enhanced_psd_prev */
     total = ck_field_size(total, (size_t)nf, sizeof(float));   /* log_gain_prev     */
 
@@ -494,7 +487,6 @@ AnrDenoiser* anr_init(void* mem, size_t mem_size,
 #endif
     self->gain_v_scratch        = (float*)cursor; cursor += arr;
     self->gain_xi_ratio_scratch = (float*)cursor; cursor += arr;
-    self->gain_prev         = (float*)cursor; cursor += arr;
     self->enhanced_psd_prev = (float*)cursor; cursor += arr;
     self->log_gain_prev     = (float*)cursor; cursor += arr;
 
@@ -538,15 +530,13 @@ AnrDenoiser* anr_create(const AnrConfig* config) {
 #endif
     self->gain_v_scratch        = (float*)calloc(nf, sizeof(float));
     self->gain_xi_ratio_scratch = (float*)calloc(nf, sizeof(float));
-    self->gain_prev         = (float*)calloc(nf, sizeof(float));
     self->enhanced_psd_prev = (float*)calloc(nf, sizeof(float));
     self->log_gain_prev     = (float*)calloc(nf, sizeof(float));
 
     if (!self->power || !self->noise_aug || !self->noise_est || !self->spp_est ||
         !self->spp || !self->xi || !self->gamma || !self->gain ||
         !self->gain_v_scratch || !self->gain_xi_ratio_scratch ||
-        !self->gain_prev || !self->enhanced_psd_prev ||
-        !self->log_gain_prev
+        !self->enhanced_psd_prev || !self->log_gain_prev
 #ifdef USE_SHARED_XI_RATIO
         || !self->v
 #endif
@@ -577,7 +567,6 @@ void anr_destroy(AnrDenoiser* self) {
 #endif
     free(self->gain_v_scratch);
     free(self->gain_xi_ratio_scratch);
-    free(self->gain_prev);
     free(self->enhanced_psd_prev);
     free(self->log_gain_prev);
     free(self);
@@ -613,7 +602,6 @@ static void process_init_or_gain(AnrDenoiser* self, const float* residual_echo_p
         /* Initialization bypass: gain = 1 and next-hop enhanced power = input power. */
         for (int k = 0; k < nf; k++) {
             self->gain[k]              = 1.0f;
-            self->gain_prev[k]         = 1.0f;
             self->enhanced_psd_prev[k] = self->power[k];
         }
     } else {
@@ -727,7 +715,6 @@ void anr_reset(AnrDenoiser* self) {
     reset_gain_state(self);
 
     memset(self->power,             0, self->n_freqs * sizeof(float));
-    memset(self->gain_prev,         0, self->n_freqs * sizeof(float));
     memset(self->enhanced_psd_prev, 0, self->n_freqs * sizeof(float));
     self->init_frame_count = 0;
     self->is_initialized   = false;

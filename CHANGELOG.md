@@ -4,6 +4,19 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [Unreleased] — 2026-11-15 — `AnrDenoiser.gain_prev` and the `gain_prev` argument of `spp_estimate()` removed
+
+Output unchanged: the 428-scenario `pyc_parity_nr` JSON is byte-identical to the previous tree; the `test_bit_exact_stream` records (reference and optimized runner, SIMD=1 and SIMD=0, shipping and `DEBUG=1` flags) are identical to the previous tree once its `gain_prev` record is dropped; `denoise_wav`/`denoise_mem` output WAVs are identical on 5 input/grid pairs x 4 levels (SIMD=1 and SIMD=0); the `test_gain_api` hashes do not move.
+
+### Changed
+- **Pool size (integrators read this).** `anr_get_mem_size()` drops by one `n_freqs` float array at every level: 8k/128 22,752 to 22,480 bytes (-272), 8k/256 27,696 to 27,168 (-528), 16k/256 44,256 to 43,728 (-528), 16k/512 54,320 to 53,280 (-1,040), 48k/1024 140,416 to 138,352 (-2,064). `sizeof(AnrDenoiser)` 368 to 360 bytes on LP64 (`ALIGN16` stays 368; ILP32 stays inside the same 16-byte rounding, so the deltas are the same). A `DEBUG=1` build at 16k/256 goes 43,728 to 43,184. NR has no layout-version constant: callers that size their pool with `anr_get_mem_size()` need no change; callers that hard-code a size must re-read it.
+- `spp_estimate()` (internal header `include/internal/spp_estimator.h`) loses its `gain_prev` argument; the decision-directed branch needs only `enhanced_psd_prev` and a prior call. `spp_prepare()` follows.
+- audiolib's `skr_final_store_scalar()`/`skr_final_store_neon()` lose their `previous_gain` output (matching audiolib commit required).
+- `test_bit_exact_stream` loses the `gain_prev` record: the records that followed move down by one (enhanced_psd_prev is now 5, the full min ring 16), and `FIELDS` in `python/tools/test_bit_exact.py` drops the label. `test_anr_kernels.c` drops the `previous_gain` compare of `final_store`.
+
+### Removed
+- `AnrDenoiser.gain_prev` (written by `store_gain_state()`, the NEON final store and the initialization bypass, cleared by `anr_reset()`, read only as a non-NULL "has DD history" flag by `spp_prepare()`). The Python `MmseLsaDenoiser.gain_prev` is untouched.
+
 ## [Unreleased] — 2026-11-14 — `AnrDenoiser.init_power_sum`, the `power_sum` argument of `noise_estimator_init_noise()` and `SppEstimator.gamma_prev` removed
 
 Output unchanged: the 428-scenario `pyc_parity_nr` JSON is identical to the previous tree at SIMD=1 and SIMD=0; `make test-full` is green at SIMD=1 and SIMD=0 (`WERROR=1`) and the C goals plus `test-bit-exact` are green with `DEBUG=1`; `denoise_wav` and `denoise_mem` output WAVs are identical to the previous tree on 5 inputs x 4 levels each.
@@ -16,7 +29,6 @@ Output unchanged: the 428-scenario `pyc_parity_nr` JSON is identical to the prev
 ### Removed
 - `AnrDenoiser.init_power_sum` (accumulated each startup frame, never read) and its loop in `process_init_or_gain()`.
 - `SppEstimator.gamma_prev` (stored in `spp_dd_elem`, the NEON store and the no-history branch of `spp_prepare()`, cleared in `spp_reset()`, never read by the algorithm); `spp_dd_elem()` loses its `gamma_prev` parameter. `test_anr_kernels.c` loses the redundant `gamma_prev` compare in `test_spp_dd` (`gamma`, `xi`, `v_scratch`, `term_xi` and `v_out` are still compared lane for lane). The Python `SppEstimator.gamma_prev` is untouched (its debug statistics read it).
-- `gain_prev` stays: `dump_state` record 5 is the only verbatim copy of the pre-make-up gain.
 
 ## [Unreleased] — 2026-11-14 — Build flag `USE_SINGLE_CLAMP` and the example CLIs' `--bypass` removed
 

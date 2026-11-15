@@ -200,8 +200,8 @@ static inline void spp_dd(SppEstimator* self, const float* power, const float* n
 /* Pass 1 of the SPP estimate: gamma, xi and the staged v and 1 + xi for the exponential pass.
  * v_out may be NULL. */
 static void spp_prepare(SppEstimator* self, const float* Y_psd, const float* noise_psd,
-                        const float* gain_prev, const float* enhanced_psd_prev, float* xi_out,
-                        float* gamma_out, float* v_out) {
+                        const float* enhanced_psd_prev, float* xi_out, float* gamma_out,
+                        float* v_out) {
     const int n_freqs = self->n_freqs;
     const float xi_min = self->xi_min;
     float* v_scratch = self->v_scratch;
@@ -210,7 +210,7 @@ static void spp_prepare(SppEstimator* self, const float* Y_psd, const float* noi
     // DD uses previous-hop noise; before initialization, use current noise.
     const float* noise_for_dd = self->is_initialized ? self->noise_psd_prev : noise_psd;
 
-    if (self->is_initialized && gain_prev != NULL && enhanced_psd_prev != NULL) {
+    if (self->is_initialized && enhanced_psd_prev != NULL) {
         spp_dd(self, Y_psd, noise_psd, noise_for_dd, enhanced_psd_prev, gamma_out, xi_out, v_out,
                n_freqs);
         return;
@@ -235,7 +235,6 @@ void spp_estimate(
     SppEstimator* self,
     const float* Y_psd,
     const float* noise_psd,
-    const float* gain_prev,
     const float* enhanced_psd_prev,
     float* spp_out,
     float* xi_out,
@@ -249,7 +248,7 @@ void spp_estimate(
     float* v_scratch = self->v_scratch;
     float* term_xi_scratch = self->term_xi_scratch;
 
-    spp_prepare(self, Y_psd, noise_psd, gain_prev, enhanced_psd_prev, xi_out, gamma_out, v_out);
+    spp_prepare(self, Y_psd, noise_psd, enhanced_psd_prev, xi_out, gamma_out, v_out);
 
     // exp(-v) in place.
     sk_fast_exp_neg_f32(v_scratch, v_scratch, n_freqs);

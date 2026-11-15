@@ -164,7 +164,7 @@ static int test_final_gain(void) {
     static float log_ref[MAX_N], log_neon[MAX_N], em_ref[MAX_N], em_neon[MAX_N];
     static float lg_in_s[MAX_N + OFFSETS], cond[MAX_N], power[MAX_N];
     static float exp_ref[MAX_N], exp_neon[MAX_N], sv_ref[MAX_N], sv_neon[MAX_N];
-    static float pg_ref[MAX_N], pg_neon[MAX_N], pp_ref[MAX_N], pp_neon[MAX_N];
+    static float pp_ref[MAX_N], pp_neon[MAX_N];
     Stats blend = {0}, store = {0};
     for (int trial = 0; trial < TRIALS; ++trial) {
         int n = test_size(trial);
@@ -188,12 +188,11 @@ static int test_final_gain(void) {
         if (compare_arrays("final_blend", "log_gain", log_ref, log_neon, n, trial, &blend) ||
             compare_arrays("final_blend", "emitted", em_ref, em_neon, n, trial, &blend))
             return 1;
-        skr_final_store_scalar(&g, lg_in, exp_ref, sv_ref, pg_ref, pp_ref, cond, power, n);
-        skr_final_store_neon(&g, lg_in, exp_neon, sv_neon, pg_neon, pp_neon, cond, power, n);
+        skr_final_store_scalar(&g, lg_in, exp_ref, sv_ref, pp_ref, cond, power, n);
+        skr_final_store_neon(&g, lg_in, exp_neon, sv_neon, pp_neon, cond, power, n);
         store.calls++;
         if (compare_arrays("final_store", "gain", exp_ref, exp_neon, n, trial, &store) ||
             compare_arrays("final_store", "saved_log", sv_ref, sv_neon, n, trial, &store) ||
-            compare_arrays("final_store", "previous_gain", pg_ref, pg_neon, n, trial, &store) ||
             compare_arrays("final_store", "previous_psd", pp_ref, pp_neon, n, trial, &store))
             return 1;
     }
