@@ -90,7 +90,7 @@ DEFINES_REQUIRED = {
     'L1': {'-DUSE_STANDARD_MATH', '-DSIMD_KERNELS_FORCE_SCALAR'},
     'L2': set(USE_FLAGS_SHIP),
 }
-KNOWN_TAGS = ('S-10', 'S-11/S-12', 'S-13')
+KNOWN_TAGS = ('S-11/S-12', 'S-13')
 
 DATA_FILES = {
     8000: {'babble': 'test_n8_babble_5dB.wav', 'synth': 'test_n8_synth_gaps.wav'},
@@ -152,8 +152,8 @@ def _zero_band_edit(t0, t1, f0_hz, f1_hz):
 #   srs       sample rates the family exists for (default: all);  kinds  'gain' and/or 'e2e'
 #   exercises {layer: finding} the family can expose.  It validates expected_red.json (an entry must
 #             name a finding its family exercises on that layer) and labels --emit-expected-red.
-#             Findings: S-10 xi/(1+xi) from v at zero-power bins (fixed); S-11/S-12 initial-PSD floor and
-#             hi_gamma epsilon placement; S-13 makeup_prior default.
+#             Findings: S-11/S-12 initial-PSD floor and hi_gamma epsilon placement; S-13 makeup_prior
+#             default.
 FAMILIES = (
     dict(name='speech', role='speech', tf=_ident, kinds=('gain', 'e2e'), exercises={}),
     dict(name='babble', role='babble', tf=_ident, kinds=('gain',), srs=(16000, 48000), exercises={}),
@@ -162,11 +162,11 @@ FAMILIES = (
     dict(name='scene_up', role='babble', tf=_step(4.0), kinds=('gain',), exercises={}),
     dict(name='scene_down', role='babble', tf=_step(0.125), kinds=('gain',), exercises={}),
     dict(name='synth_gaps', role='synth', tf=_ident, kinds=('gain', 'e2e'),
-         exercises={'L2': 'S-10', 'L1': 'S-11/S-12'}),
+         exercises={'L1': 'S-11/S-12'}),
     dict(name='gap64_500', role='babble', tf=_zero_spans(((4.0, 0.064), (6.0, 0.5))),
-         kinds=('gain', 'e2e'), exercises={'L2': 'S-10'}),
+         kinds=('gain', 'e2e'), exercises={}),
     dict(name='zerobins', role='babble', tf=_ident, edit=_zero_band_edit(3.0, 4.0, 1250.0, 1875.0),
-         kinds=('gain',), exercises={'L2': 'S-10'}),
+         kinds=('gain',), exercises={}),
     dict(name='scale_1e-3', role='speech', tf=_scale(1e-3), kinds=('gain',),
          exercises={'L1': 'S-11/S-12'}),
     dict(name='scale_1e-4', role='speech', tf=_scale(1e-4), kinds=('gain', 'e2e'),
@@ -176,11 +176,11 @@ FAMILIES = (
     dict(name='scale_1e-6', role='speech', tf=_scale(1e-6), kinds=('gain',),
          exercises={'L1': 'S-11/S-12'}),
     dict(name='int16_pk5', role='speech', tf=_int16_peak(5), kinds=('gain',),
-         exercises={'L1': 'S-11/S-12', 'L2': 'S-10'}),
+         exercises={'L1': 'S-11/S-12'}),
     dict(name='int16_pk12', role='speech', tf=_int16_peak(12), kinds=('gain',),
-         exercises={'L1': 'S-11/S-12', 'L2': 'S-10'}),
+         exercises={'L1': 'S-11/S-12'}),
     dict(name='int16_pk55', role='speech', tf=_int16_peak(55), kinds=('gain',),
-         exercises={'L1': 'S-11/S-12', 'L2': 'S-10'}),
+         exercises={'L1': 'S-11/S-12'}),
     dict(name='babble_1e-4', role='babble', tf=_scale(1e-4), kinds=('gain',), srs=(16000, 48000),
          exercises={'L1': 'S-11/S-12'}),
     dict(name='makeup', role='speech', tf=_ident, makeup=True, py_prior=None, kinds=('gain',),
