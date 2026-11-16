@@ -2,6 +2,19 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [Unreleased] · 2026-11-16 · 噪聲追蹤器的凍結 bin 重設（行為改變）
+
+某個 bin 的功率連續 2.048 s 高於噪聲估計的 64 倍時，估計改為該 hop 的平滑功率。原本，恰為 0 的 bin 在 0.6 s 以上之後回來（估計仍高於 inert 門檻 1e-20）會一直停在 gain 接近 1，直到串流結束，或估計衰減到 1e-20 以下（10 至 12 秒）：後驗恰為 1，更新係數恰為 1.0，估計動不了；對估計設下限無法改變這一點。Python 對應類別 `McraNoiseEstimator` 有同樣的卡死。
+
+- **規則。** 在更新與 inert-bin 重啟之後，逐 bin：`power > SKR_FROZEN_POWER_RATIO * N`（64，audiolib `utility/simd_nr.h`；Python `FROZEN_POWER_RATIO`）時 `uint16_t` 計數加 1，任何其他 hop 清零。計數到 `NR_FROZEN_REF_FRAMES`（16 ms 的 128 個 frame ＝ 2.048 s，`noise_estimator.h`，以 `anr_retime_frames_ms()` 換到各 grid：16k/256 與 8k/128 為 256 hop、16k/512 與 8k/256 為 128、48k/1024 為 192）時，`N` 改為 `S`，計數歸零。不是 `AnrConfig` 欄位。kernel 為 `skr_frozen_run_{elem,scalar,neon}`；Python 為 `frozen_hops`（None 表示關閉；`MmseLsaDenoiser` 傳同一個 2.048 s，其他變體不動）。
+- **Pool 大小（整合者請看）。** 每個 bin 多一個 `uint16_t`（16-byte 對齊），struct 多 16 byte：`anr_get_mem_size()`（LP64）8k/128 由 21,920 增為 22,080（+160）、8k/256 由 26,096 增為 26,384（+288）、16k/256 由 42,656 增為 42,944（+288）、16k/512 由 51,184 增為 51,728（+544）、48k/1024 由 134,208 增為 135,264（+1,056）。以舊數字配置的 static pool 要加上這些量。
+- **間隔後回來。** `test_noise_restart`：上半頻譜 bin 恰為 0 共 1、3、5、8、10 秒後訊號回來，上半頻譜平均增益在訊號回來後 2.248 s（16k/256）、2.240 s（16k/512）、2.251 s（48k/1024）進入對照組 0.02 以內，有／無 `broadband_threshold` 0.8、SIMD=1／0 皆同；Python 對應實作得到相同時間，有 gate 也一樣（2.248、2.240、2.251 s；5 個間隔、3 個 grid、gate 1.0 與 0.8 都量過；`python/tests/test_noise_tracker_restart.py`、`pyc_parity_nr` 的 `zerobins_long` 家族）。這是 2.048 s 的長度加上增益平滑約 0.2 s。0.9 s 的間隔也會被重設。未涵蓋：0.6 至 0.8 s 的間隔（回來的功率只有估計的 20 至 55 倍，低於比值）維持卡死（16k/256、48k/1024 與 16k/512 的 0.8 s，15 秒後 gain 0.89 至 0.97；16k/512 的 0.6 s 在 9 秒後回來）。
+- **比值與長度的取捨。** 1 s 間隔後的比值在各 grid 為 130 至 150，所以比值必須低於這個數，無法設在語音 SNR 之上。長度 0.512 s（最小值視窗）會在有聲語音中觸發：VCTK+DEMAND 206 檔（每四檔取一）、48 kHz/1024、balanced、以 16 kHz 計分：PESQ 2.4014 → 2.3720、STOI 0.8822 → 0.8813、SI-SDR 12.36 → 11.93 dB，個別檔最多掉 0.98 PESQ。1.024 s 時 206 個含噪檔有 2 檔、206 個乾淨檔有 28 檔改變；2.048 s 時這 206 檔（以及 824 個含噪檔）全部不變。
+- **一般訊號（`denoise_wav` SIMD=1 輸出，balanced，新舊樹逐位元組比對；SIMD=0 的檔案清單相同）。** VCTK+DEMAND 含噪 824 檔：0 檔不同；乾淨 824 檔：1 檔不同（`p232_244`，157,789 個樣本中 21,252 個、2.62 s 之後、最大 |d| 0.04）。DNS 2020 synthetic no_reverb 16 kHz 乾淨 150 檔：16k/256、16k/512 都是 0 檔；含噪 150 檔：每個 grid 2 檔（`clnsp263_..._copy_machine_..._fileid_290`、`clnsp487_vacuum_..._fileid_208`；16k/256 為 24,000,000 個樣本中 231,413 個、16k/512 為 181,769 個，最大 |d| 0.054、0.043）。DNS4 dev fullband 含噪 48k/1024：921 檔中 288 檔不同（每六檔取一的 154 檔中 49 檔、23.7 % 的樣本、最大 |d| 0.64、中位數檔的差值能量為舊輸出的 -16 dB；60 個有改變的檔案，91 % 的差值能量在 4 kHz 以下，輸出能量降 0.2 dB，沒有參考訊號可計分）。其他輸入（16、48 kHz，grid 256/512/1024）：`test_n16_music.wav`、`fix_gain_music.wav`、`fix_gain_noise.wav`、opus 與 scene-change 檔、pyc_parity 其他輸入逐位元組相同；`test_n16_synth_gaps.wav`（串流中間有零區段）在 16k/256 變 4 %、16k/512 變 7 % 的樣本，`clean_prepend.wav`、`speexdsp_clean.wav`（48 kHz，37 秒）變 85 % 與 36 %，最大 |d| 0.047、0.040。
+- **有參考訊號的檔案上的方向。** DNS 2020 `fileid_208`（吸塵器）PESQ 1.598 → 1.667（16k/256）、1.596 → 1.786（16k/512），SI-SDR +1.3、+2.9 dB，STOI -0.006、-0.003；`fileid_290`（影印機）PESQ 1.202 → 1.208、1.284 → 1.283，SI-SDR -0.03、+0.4 dB。持續超過 2.048 s、高出底噪 18 dB 以上的穩態單音現在被當成噪聲；上面的音樂與語音檔都沒有這種內容，人工的持續單音沒有計分。`test_gain_api` 的 golden、`test_bit_exact`、scene-change、shared-startup 測試不變。
+- 測試：`test_noise_restart`（3 個 grid × {預設、gate 0.8} 的間隔系列；估計器層級的長度測試：差一 hop、剛好、低於比值、被中斷的長度）、`test_anr_kernels.c` 的 `frozen_run`（scalar 對 NEON；NaN、有號零、無限大、次正規數、比值與長度邊界）、`python/tests/test_noise_tracker_restart.py`、`pyc_parity_nr` 的 `zerobins_long`（2 秒零，20 個情境；448 列 parity 中 35 列的 C 對 Python 數字改變（`synth_gaps` 30 列、`zerobins_long` 在 L2 的 5 列），其餘 413 列與改動前數值相同；L1、L2 皆綠；只把 C 的長度改成 100000 hop，20 個情境的 L1 全部變 RED_UNEXPECTED，最大 |dG| 0.8 至 0.9）。突變：長度 100000 hop、比值 1e12、計數從不清零，各自讓 `test_noise_restart` 在 SIMD=1 與 SIMD=0 失敗；把 NEON 的長度比較翻轉讓 `test_anr_kernels` 失敗。
+- 文件：`docs/maintenance/numerics.md`（新增「Frozen bins」）、`configuration.md`、`python_variants.md`、`nr.html`、`nr_c_api.html`、`c_python_function_map.md`（`noise_estimator_frozen_run`、`noise_estimator_frozen_hops` 兩列）。
+
 ## [Unreleased] · 2026-11-16 · NRP2 header 大小檢查、增益階段整理、移除 `AnrDenoiser.gamma`
 
 ### 變更 (Changed)
@@ -18,7 +31,6 @@
 
 ### 新增 (Added)
 - `test_noise_restart` 新增「死 bin 重啟」的行為測試：收斂後，上半頻譜的 bin 連續 20 秒恰為 0（下半頻譜仍有訊號，不是數位靜音），之後訊號回來，要求這些 bin 的增益和沒有間隔的對照組相同（差 < 0.02），涵蓋 16k/256、16k/512、48k/1024，各跑函式庫預設與 `broadband_threshold` 0.8。把 `SKR_NOISE_PSD_INERT` 改成 0（停用重啟）時，六個案例的增益都停在 1.0 而失敗，SIMD=1／0 都是；原本的案例在停用重啟時仍全數通過，之前只有 `test_anr_kernels` 的 twin 比對碰到這條分支。演算法與輸出不變。
-- 已知範圍：恰為 0 的 bin 只有在估計值低於 1e-20（約 10 至 12 秒，三組 grid 相同）才會重啟；1 至 10 秒的間隔，估計值遠低於回來的功率，後驗恰為 1，更新係數恆為 1，這些 bin 增益維持 1.0。對估計值設下限無法改變這一點。
 
 ## [Unreleased] · 2026-11-15 · 增益階段直接用 SPP 階段算好的 `xi/(1+xi)`（行為改變）
 

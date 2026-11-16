@@ -22,6 +22,7 @@ passes use the per-bin reference loop), so one source tree can be compared with 
 | MCRA minimum ring, rescan | Lane-wise running minima over the row. The result is the ordered minimum whenever the seed vectors hold no NaN and the minimum is not a zero; any other row takes the scalar first-on-tie rule, so NaN, signed zero and ties behave as in the scalar rule. |
 | MCRA minimum ring, update | Compare and select of the incremental minimum on four bins. Bins whose evicted value was the minimum are collected through a lane table without a data-dependent branch and rescanned after each block of 128 bins. |
 | MCRA inert-bin restart | Select between the restart update and the unchanged value. |
+| MCRA frozen-bin reseed | Compare of the power against 64 times the estimate and increment of the 16-bit run counts on four bins; the estimate is selected from the smoothed power where a count reaches its limit. |
 | SPP decision-directed pass | Posterior SNR, a-priori SNR and the exponent argument, with three exact divides. |
 | Gain input preparation | Clamp and divide that produce v and xi/(1+xi). |
 | Final gain | Blend and smoothing of the log gain before the batched exponential, and select and store of the next-hop state after it. |
@@ -78,12 +79,12 @@ make BACKEND=ne10 SIMD=1 WERROR=1 test-full
 
 `test` builds `all lib mem parity`, runs the C test targets (`test-config`, `test-reconfigure`,
 `test-noise-restart`, `test-gain-api`, `test-scene-change`, `test-shared-startup`, `test-api-cpp`, `test-cli-args`, `test-parity-runner`, `test-nrp2-io`, `test-bit-exact`),
-the pytest suite, and the Python/C parity gate (220 of the 428 scenarios: four levels on the
+the pytest suite, and the Python/C parity gate (232 of the 448 scenarios: four levels on the
 16 kHz and 48 kHz grids, without the 8 kHz grids, the `scale_1e-3`/`scale_1e-5`/`scale_1e-6`/`int16_pk55`
 rungs and the make-up rows of the 16k/512 and 48k/1024 grids). The Python/C configuration comparison
 (`python/tests/test_config_parity.py`, five grids x four levels) runs the `test-config-parity`
 dump from inside pytest. `test-full` adds the standalone `test-config-parity`, `test-bit-exact` at the
-other `SIMD` setting, and all 428 parity scenarios.
+other `SIMD` setting, and all 448 parity scenarios.
 
 `make test-bit-exact` builds the library twice from the same sources, once with
 `-DANR_REFERENCE_KERNELS`, and runs three checks:
@@ -129,8 +130,8 @@ Python/C bit-exactness.
 
 `make test` runs the C targets at the current `SIMD` setting, the pytest suite (which includes
 the Python/C configuration comparison for the five grids 8k/128, 8k/256, 16k/256, 16k/512 and
-48k/1024) and a 220-scenario subset of the numerical parity check. `make test-full` also runs
-`test-bit-exact` at the other `SIMD` setting and all 428 parity scenarios, including the 8 kHz
+48k/1024) and a 232-scenario subset of the numerical parity check. `make test-full` also runs
+`test-bit-exact` at the other `SIMD` setting and all 448 parity scenarios, including the 8 kHz
 grids; the 8 kHz grids are covered in `make test` by the configuration comparison only.
 
 ## Digital-silence frames
@@ -153,10 +154,11 @@ do not advance the noise tracker; `make test-noise-restart` covers the behavior.
   stationary signal at 16 kHz/FFT 256, 16 kHz/FFT 512 and 48 kHz/FFT 1024, with and without
   the broadband gate, and requires the upper-half gain to equal the control within 0.02
   (0.125 in both). With the restart disabled the same stream stays at gain 1.0.
-- Gaps of 1, 3, 5, 8 and 10 s are shorter than that and stay at gain 1.0 on all three grids,
-  with and without the gate: the estimate is far below the returning power, the posterior is
-  exactly 1 and the update coefficient stays 1.0. A lower bound on the estimate does not
-  change this.
+- Gaps shorter than that (below the inert floor the estimate is still above 1e-20) are
+  handled by the frozen-bin reseed below: zero for 1, 3, 5, 8 or 10 s, the upper-half gain is
+  back at the control within 2.25 s of the return at all three grids, with and without the
+  gate. A lower bound on the estimate does not help: the posterior is exactly 1, the update
+  coefficient is exactly 1.0 and the estimate cannot move.
 - Streams that contain all-zero frames differ by design: in a speech-like noise stream with
   isolated zero stretches of 20, 60 and 150 ms, the output in the 100 ms blocks after the
   longest stretch is up to 4.4 dB quieter than the same stream without a stretch (deeper
@@ -164,6 +166,38 @@ do not advance the noise tracker; `make test-noise-restart` covers the behavior.
   differ by less than 0.01 dB.
 - Leading digital silence moves the unity-gain initialization window onto the first
   non-zero frames (19 frames, 0.2 s at 48 kHz/FFT 1024).
+
+## Frozen bins
+
+A bin whose power stays far above its noise estimate is not tracked when the posterior has saturated: the update
+coefficient `alpha_d + (1 - alpha_d) * p` rounds to 1.0 and the estimate cannot rise. The tracker keeps such a bin at
+gain near 1 until the stream ends. Zero bins that return after 0.6 s or more are an example (ratio of the returning power
+to the estimate: 20 after 0.6 s, 150 after 1 s, 2e4 after 2 s, 3e6 after 3 s; the same at all three grids).
+
+Per bin, `noise_estimator_update_ex()` counts the consecutive hops with `power > SKR_FROZEN_POWER_RATIO * N`
+(64, after the update and the inert-bin restart; 18 dB). When the count reaches `NR_FROZEN_REF_FRAMES` retimed to the grid
+(128 frames authored at 16 ms = 2.048 s: 128 hops at 16k/512, 256 at 16k/256 and 8k/128, 192 at 48k/1024, 128 at 8k/256) the estimate becomes the smoothed power `S`
+and the count restarts; any hop at or below the ratio clears it. The counts are `uint16_t` per bin in the NR pool
+(`anr_get_mem_size()` grows, see the changelog), the constants are in `simd_nr.h` and `noise_estimator.h`, and the Python
+twin (`McraNoiseEstimator.frozen_hops`, `FROZEN_POWER_RATIO`; set by `MmseLsaDenoiser`) uses the same rule and values.
+It is not a configuration field.
+
+- Return after a gap: the mean upper-half gain of the `make test-noise-restart` stream is within 0.02 of the control
+  2.248 s (16k/256), 2.240 s (16k/512) and 2.251 s (48k/1024) after the signal returns, for gaps of 1, 3, 5, 8 and 10 s,
+  with and without the broadband gate; that is the 2.048 s run plus the 0.2 s the control gain itself needs to fall from 1
+  to its steady value. The Python twin gives the same times. Gaps of 0.9 s (ratio about 90) are reseeded too; gaps of
+  0.6 to 0.8 s (ratio 20 to 55, below 64) are not and stay latched (gain 0.89 to 0.97 after 15 s at 16k/256 and 48k/1024
+  and for 0.8 s at 16k/512; 0.6 s at 16k/512 is back after 9 s); gaps up to 0.5 s recover by themselves in 0.34 to 0.42 s.
+- Why 64: the ratio after a 1 s gap is 130 to 150 on the three grids, and a ratio above about 15 already latches the bin.
+  A ratio that sits beyond any speech-to-floor ratio (1e4 and above) would leave gaps of 1 to 2 s latched.
+- Why 2.048 s: in a run of 0.512 s (the minimum-statistics window) the reseed fires inside sustained voiced speech and
+  lowers VCTK+DEMAND PESQ (206 files, 48 kHz, balanced, scored at 16 kHz) from 2.4014 to 2.3720, with single files down
+  by up to 0.98. At 1.024 s, 2 of 206 noisy and 28 of 206 clean VCTK+DEMAND files change; at 2.048 s none of
+  the 824 noisy files and 1 of the 824 clean files (`p232_244`) change, and none of the 150 DNS 2020 synthetic clean files.
+- Pool: one `uint16_t` per bin, added to the 16-byte aligned carve.
+- Normal signals still change where a bin really is stuck: DNS 2020 synthetic noisy 2 of 150 files per grid (copy
+  machine and vacuum noise), DNS4 dev fullband noisy 288 of 921 files (49 of the 154 files of the every-sixth sample, 23.7 %
+  of the samples, max |d| 0.64). The same file lists at `SIMD=1` and `SIMD=0`.
 
 ## First tracked frame after initialization
 

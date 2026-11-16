@@ -195,6 +195,47 @@ static int test_restart_inert(void) {
     return 0;
 }
 
+static int test_frozen_run(void) {
+    static float noise_s[MAX_N + OFFSETS], power_s[MAX_N + OFFSETS], seed_s[MAX_N + OFFSETS];
+    static float ref[MAX_N], neon[MAX_N];
+    static uint16_t run_ref[MAX_N], run_neon[MAX_N];
+    static const uint16_t hops[] = {1, 2, 3, 5, 32, 64, 65534, 65535};
+    Stats stats = {0};
+    for (int trial = 0; trial < TRIALS; ++trial) {
+        int n = test_size(trial);
+        float* noise = noise_s + trial % OFFSETS;
+        float* power = power_s + (trial / OFFSETS) % OFFSETS;
+        float* seed = seed_s + (trial / 2) % OFFSETS;
+        float ratio = (trial % 5 == 0) ? draw(0.0f, 200.0f, NULL, 0) : SKR_FROZEN_POWER_RATIO;
+        uint16_t run_hops = (trial % 7 == 0) ? (uint16_t)random_bits() : hops[random_bits() % 8u];
+        for (int i = 0; i < n; ++i) {
+            noise[i] = draw(0.0f, 1e5f, NULL, 0);
+            seed[i] = draw(0.0f, 1e6f, NULL, 0);
+            run_ref[i] = run_neon[i] = (random_bits() & 3u) ? (uint16_t)(random_bits() % (run_hops + 1u))
+                                                             : (uint16_t)random_bits();
+            ref[i] = neon[i] = noise[i];
+        }
+        for (int pass = 0; pass < 4; ++pass) {
+            for (int i = 0; i < n; ++i) {
+                float edge = ratio * ref[i];
+                uint32_t r = random_bits() & 7u;
+                power[i] = r < 3 ? draw(0.0f, 1e7f, NULL, 0) : r == 3 ? edge : r < 6 ? next_up(edge) : next_down(edge);
+            }
+            skr_frozen_run_scalar(ref, power, seed, run_ref, ratio, run_hops, n);
+            skr_frozen_run_neon(neon, power, seed, run_neon, ratio, run_hops, n);
+            stats.calls++;
+            if (compare_arrays("frozen_run", "noise", ref, neon, n, trial, &stats)) return 1;
+            if (memcmp(run_ref, run_neon, (size_t)n * sizeof(uint16_t)) != 0) {
+                fprintf(stderr, "frozen_run FAIL: run counts differ n=%d trial=%d pass=%d\n", n, trial, pass);
+                return 1;
+            }
+            for (int i = 0; i < n; ++i) neon[i] = ref[i];
+        }
+    }
+    report("frozen_run", &stats);
+    return 0;
+}
+
 static int test_spp_dd(void) {
     static float power_s[MAX_N + OFFSETS], noise_s[MAX_N + OFFSETS], prev_s[MAX_N + OFFSETS];
     static float enh_s[MAX_N + OFFSETS];
@@ -280,6 +321,7 @@ int main(void) {
     SK_MATCH_SCALAR_TO_VECTOR_MODE();   /* both twins in one subnormal/NaN mode on 32-bit ARM */
     if (test_final_gain()) return 1;
     if (test_restart_inert()) return 1;
+    if (test_frozen_run()) return 1;
     if (test_spp_dd()) return 1;
     if (test_ring_min()) return 1;
 #else

@@ -23,6 +23,10 @@ from core.signal_grid import (
 # Frame speech gate anchor; equals the C ANR_SPEECH_PROTECT_ANCHOR_Q.
 SPEECH_PROTECT_ANCHOR_Q = 0.52
 
+# Frozen-bin reseed run, in frames at the 16 ms anchor (2.048 s, four default minimum-statistics
+# windows); equals NR_FROZEN_REF_FRAMES in the C library.
+_FROZEN_RUN_FRAMES_16MS = 128
+
 def _hz_to_bin_ceil(hz, fft_size, sample_rate):
     """First FFT bin at or above hz."""
     return int(np.ceil(hz * fft_size / sample_rate))
@@ -286,6 +290,9 @@ class MmseLsaDenoiser(BaseDenoiser):
                 scene_change_flatness_threshold=scene_change_flatness_threshold,
                 accept_external_spp=mcra_accept_external_spp,
                 remove_echo_explained_rise=mcra_remove_echo_explained_rise,
+                frozen_hops=retime_frame_count(
+                    _FROZEN_RUN_FRAMES_16MS, sample_rate, frame_shift,
+                    authored_hop_seconds=_SIXTEEN_MS_HOP_SECONDS),
             )
         else:
             if mcra_remove_echo_explained_rise:

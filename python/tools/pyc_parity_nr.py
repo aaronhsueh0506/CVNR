@@ -167,6 +167,8 @@ FAMILIES = (
          kinds=('gain', 'e2e'), exercises={}),
     dict(name='zerobins', role='babble', tf=_ident, edit=_zero_band_edit(3.0, 4.0, 1250.0, 1875.0),
          kinds=('gain',), exercises={}),
+    dict(name='zerobins_long', role='babble', tf=_ident,
+         edit=_zero_band_edit(1.0, 3.0, 1250.0, 1875.0), kinds=('gain',), exercises={}),
     dict(name='scale_1e-3', role='speech', tf=_scale(1e-3), kinds=('gain',),
          exercises={'L1': 'S-11/S-12'}),
     dict(name='scale_1e-4', role='speech', tf=_scale(1e-4), kinds=('gain', 'e2e'),

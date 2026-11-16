@@ -15,6 +15,13 @@ extern "C" {
 
 typedef struct NoiseEstimator NoiseEstimator;
 
+/* Frozen-bin reseed run: NR_FROZEN_REF_FRAMES hops authored at NR_FROZEN_REF_HOP_MS, retimed to the grid and
+ * rounded up (2.048 s, four of the default minimum-statistics windows). */
+#ifndef NR_FROZEN_REF_FRAMES
+#define NR_FROZEN_REF_FRAMES 128
+#endif
+#define NR_FROZEN_REF_HOP_MS 16
+
 /* The standalone get_mem_size/init/create are the test oracle; production uses the *_shared_startup variants. */
 /* Heap instance for n_freqs bins; NULL on invalid dimensions or allocation failure. */
 NoiseEstimator* noise_estimator_create(int n_freqs, const AnrConfig* config);

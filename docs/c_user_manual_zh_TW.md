@@ -192,7 +192,8 @@ moderate 0.57、balanced 0.55、aggressive 0.48）。理由是純噪聲幀的語
 4. **場景切換追不上／誤觸太多** → 依序考慮 `scene_change_threshold_db`、
    `scene_change_min_frames`、`broadband_threshold`。
 5. **最後**才碰 MCRA 核心（`alpha_s` / `alpha_d` / `alpha_p` / `L` / `delta_db`）。
-   改 `L` 或 `num_init_frames` 會改變記憶體需求，static memory 整合要重新查詢 pool 大小。
+   改 `L` 或 `num_init_frames` 會改變記憶體需求，static memory 整合要重新查詢 pool 大小
+   （追蹤器另有每個 bin 2 byte 的凍結 bin 計數，已含在 `anr_get_mem_size()`）。
 
 ### 5.3 常見症狀對照
 
@@ -203,6 +204,7 @@ moderate 0.57、balanced 0.55、aggressive 0.48）。理由是純噪聲幀的語
 | 語音變悶、細節掉光 | level 太強、`g_min_db` 太低 | 改 `mild` / `moderate`，或把 `g_min_db` 調高 |
 | Musical noise（零星水聲） | 增益變動太快 | 提高 `alpha_decay`；必要時提高 `alpha_xi` |
 | 噪聲底改變後追不上 | 場景偵測太保守 | 降低 `scene_change_threshold_db` 或 `scene_change_min_frames`，或啟用 `broadband_threshold < 1.0` |
+| 某些頻點長時間（數秒）完全不降噪，其他頻點正常 | 該頻點之前是否恰為 0（例如輸入被低通或數位歸零），之後才有訊號 | 函式庫內建處理：某頻點的功率連續 2.048 s 高於噪聲估計的 64 倍，估計就改為平滑功率，約 2.25 s 後恢復降噪；不需要也沒有對應的設定欄位 |
 | 輸出有週期性音量起伏 | window／OLA 寫錯 | 確認 periodic sqrt-Hann、50% overlap、analysis 與 synthesis 乘同一個 window |
 | 當機或頻譜越界 | buffer 長度與 `n_freqs` 不一致 | 尺寸一律由 config／query API 取得，不要硬編 |
 

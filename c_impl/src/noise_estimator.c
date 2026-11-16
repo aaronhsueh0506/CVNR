@@ -35,6 +35,10 @@ struct NoiseEstimator {
     // Scratch [n_freqs] for the log pass of spectral_flatness().
     float* flatness_scratch;
 
+    // Per-bin run of consecutive hops with power above SKR_FROZEN_POWER_RATIO * N; frozen_hops is the reseed length.
+    uint16_t* frozen_run;
+    uint16_t frozen_hops;
+
     bool is_initialized;
 
     // Scene change detection (hi-freq gamma + spectral flatness)
@@ -93,6 +97,14 @@ static void noise_estimator_reset_noise_floor(NoiseEstimator* self, const float*
     noise_estimator_fill_ring(self, self->S);
 }
 
+/* Reseed run in hops: NR_FROZEN_REF_FRAMES frames authored at NR_FROZEN_REF_HOP_MS, retimed to this grid. */
+static uint16_t noise_estimator_frozen_hops(const AnrConfig* config) {
+    int hops = anr_retime_frames_ms(NR_FROZEN_REF_FRAMES, config->sample_rate, config->hop_size,
+                                    NR_FROZEN_REF_HOP_MS);
+    if (hops < 1) hops = 1;
+    return hops > UINT16_MAX ? UINT16_MAX : (uint16_t)hops;
+}
+
 /* Update only tuning scalars; preserve tracker state. L and num_init_frames must already match
  * allocated geometry.
  */
@@ -111,6 +123,7 @@ void noise_estimator_apply_config_scalars(NoiseEstimator* self,
     self->scene_change_flatness_threshold = config->scene_change_flatness_threshold;
     self->broadband_threshold = config->broadband_threshold;
     self->num_init_frames = config->num_init_frames;
+    self->frozen_hops = noise_estimator_frozen_hops(config);
 }
 
 static void noise_estimator_init_scalars(NoiseEstimator* self, int n_freqs,
@@ -154,6 +167,7 @@ static size_t noise_estimator_mem_size_impl(int n_freqs, const AnrConfig* config
         total = ck_field_size(total, ck_mul_size((size_t)config->num_init_frames, (size_t)n_freqs),
                               sizeof(float));                        /* init_power_buffer  */
     total = ck_field_size(total, (size_t)config->num_init_frames, sizeof(float)); /* percentile_scratch */
+    total = ck_field_size(total, (size_t)n_freqs, sizeof(uint16_t));              /* frozen_run */
     return MEM_SIZE_INVALID(total) ? 0 : total;
 }
 
@@ -198,6 +212,7 @@ static NoiseEstimator* noise_estimator_init_impl(void* mem, size_t mem_size, int
     }
     self->percentile_scratch = (float*)cursor;
     cursor += ALIGN16((size_t)self->num_init_frames * sizeof(float));
+    self->frozen_run = (uint16_t*)cursor; cursor += ALIGN16((size_t)n_freqs * sizeof(uint16_t));
 
     /* Size query and carve must end at the same byte offset. */
     if ((size_t)(cursor - (uint8_t*)mem) != need) return NULL;
@@ -247,7 +262,8 @@ static NoiseEstimator* noise_estimator_create_impl(int n_freqs, const AnrConfig*
         ? self->min_buffer
         : (float*)calloc(self->num_init_frames * n_freqs, sizeof(float));
     self->percentile_scratch = (float*)calloc(self->num_init_frames, sizeof(float));
-    if (!self->init_power_buffer || !self->percentile_scratch) {
+    self->frozen_run = (uint16_t*)calloc(n_freqs, sizeof(uint16_t));
+    if (!self->init_power_buffer || !self->percentile_scratch || !self->frozen_run) {
         noise_estimator_destroy(self);
         return NULL;
     }
@@ -271,6 +287,7 @@ void noise_estimator_destroy(NoiseEstimator* self) {
     if (self->init_power_buffer && self->init_power_buffer != self->min_buffer)
         free(self->init_power_buffer);
     if (self->percentile_scratch) free(self->percentile_scratch);
+    if (self->frozen_run) free(self->frozen_run);
     if (self->noise_psd) free(self->noise_psd);
     if (self->S) free(self->S);
     if (self->S_min) free(self->S_min);
@@ -361,6 +378,7 @@ static void noise_estimator_seed_bin(NoiseEstimator* self, int k, float init_psd
     self->S[k] = init_psd;
     self->S_min[k] = init_psd;
     self->spp[k] = 0.0f;
+    self->frozen_run[k] = 0;
 }
 
 void noise_estimator_init_noise(NoiseEstimator* self, int n_frames) {
@@ -402,6 +420,15 @@ static inline void noise_estimator_restart_inert(float* noise, const float* powe
     skr_restart_inert_neon(noise, power, alpha_d, n);
 #else
     skr_restart_inert_scalar(noise, power, alpha_d, n);
+#endif
+}
+
+static inline void noise_estimator_frozen_run(float* noise, const float* power, const float* seed,
+                                              uint16_t* run, uint16_t run_hops, int n) {
+#if ANR_VECTOR
+    skr_frozen_run_neon(noise, power, seed, run, SKR_FROZEN_POWER_RATIO, run_hops, n);
+#else
+    skr_frozen_run_scalar(noise, power, seed, run, SKR_FROZEN_POWER_RATIO, run_hops, n);
 #endif
 }
 
@@ -512,6 +539,8 @@ void noise_estimator_update_ex(NoiseEstimator* self,
     }
 
     noise_estimator_restart_inert(self->noise_psd, power, alpha_d, n_freqs);
+    noise_estimator_frozen_run(self->noise_psd, power, self->S, self->frozen_run,
+                               self->frozen_hops, n_freqs);
 }
 
 const float* noise_estimator_get_noise_psd(const NoiseEstimator* self) {
@@ -528,6 +557,7 @@ void noise_estimator_reset(NoiseEstimator* self) {
     memset(self->S_min, 0, n_freqs * sizeof(float));
     memset(self->spp, 0, n_freqs * sizeof(float));
     memset(self->min_buffer, 0, self->L * n_freqs * sizeof(float));
+    memset(self->frozen_run, 0, n_freqs * sizeof(uint16_t));
 
     self->ring_idx = 0;
     self->is_initialized = false;

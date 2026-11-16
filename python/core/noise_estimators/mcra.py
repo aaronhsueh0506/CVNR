@@ -35,6 +35,10 @@ class McraNoiseEstimator:
     # then cannot be updated either (see update()). Equals SKR_NOISE_PSD_INERT in the C library (audiolib utility/simd_nr.h).
     NOISE_PSD_INERT = 1e-20
 
+    # A bin whose power stays above this multiple of its estimate is not being tracked: a saturated
+    # posterior has rounded the update coefficient to 1. Equals SKR_FROZEN_POWER_RATIO in the C library.
+    FROZEN_POWER_RATIO = 64.0
+
     def __init__(
         self,
         alpha_s: float = 0.9,
@@ -65,6 +69,9 @@ class McraNoiseEstimator:
         slow_mask_max_frac: Optional[float] = None,
         # Experimental; keep False. Removes the part of the noise rise explained by extra_noise_psd.
         remove_echo_explained_rise: bool = False,
+        # Frozen-bin reseed: after this many consecutive frames with power above FROZEN_POWER_RATIO
+        # times the estimate, the estimate restarts from the smoothed power. None: off.
+        frozen_hops: Optional[int] = None,
     ):
         self.alpha_s = alpha_s
         self.alpha_d = alpha_d
@@ -86,6 +93,10 @@ class McraNoiseEstimator:
             raise ValueError("slow_mask_max_frac must be None or in (0, 1]")
         self.slow_mask_max_frac = slow_mask_max_frac
         self.remove_echo_explained_rise = remove_echo_explained_rise
+        if frozen_hops is not None and frozen_hops < 1:
+            raise ValueError("frozen_hops must be None or >= 1")
+        self.frozen_hops = frozen_hops
+        self._frozen_run = None     # (n_freqs,) consecutive frames above FROZEN_POWER_RATIO * N
         self.alpha_p = alpha_p
         self.L = L
         self.delta = 10 ** (delta_db / 10)
@@ -133,6 +144,7 @@ class McraNoiseEstimator:
         self.S = self.noise_psd.copy()
         self.S_min = self.noise_psd.copy()
         self.spp = np.zeros(n_freqs)
+        self._frozen_run = np.zeros(n_freqs, dtype=np.int64)
 
         # _buf_ptr starts at the last slot so the first update() writes slot 0.
         self.min_buffer = np.tile(init_psd, (self.L, 1))
@@ -262,6 +274,16 @@ class McraNoiseEstimator:
             self.noise_psd[dead] = (self.alpha_d * self.noise_psd[dead]
                                     + (1 - self.alpha_d) * power[dead])
 
+        # Frozen-bin reseed: the run counts consecutive frames with power far above N (the update
+        # coefficient is 1, so N cannot follow); at frozen_hops N restarts from the smoothed power.
+        if self.frozen_hops is not None:
+            above = power > self.FROZEN_POWER_RATIO * self.noise_psd
+            self._frozen_run = np.where(above, self._frozen_run + 1, 0)
+            fire = self._frozen_run >= self.frozen_hops
+            if np.any(fire):
+                self.noise_psd[fire] = self.S[fire]
+                self._frozen_run[fire] = 0
+
         # remove_echo_explained_rise: for bins that rose this frame, remove the fraction of the
         # rise explainable by extra_noise_psd. This corrects where the extra power landed, not
         # the update rate.
@@ -290,6 +312,7 @@ class McraNoiseEstimator:
         self.min_buffer = None
         self._buf_ptr = 0
         self.spp = None
+        self._frozen_run = None
         self.is_initialized = False
         self.frame_count = 0
         self.scene_change_count = 0

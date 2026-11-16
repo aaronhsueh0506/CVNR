@@ -6,6 +6,11 @@
  *  - bins that are exactly zero for long enough to reach the inert floor, while the rest of the
  *    frame stays live, track the signal again when it returns (three grids, with and without the
  *    broadband gate);
+ *  - bins that were zero for 1 to 10 s (the estimate has decayed but is above the inert floor)
+ *    reach the gain of a stream without the gap within the frozen-bin run length plus the gain
+ *    smoothing, because a bin whose power stays far above its estimate is reseeded;
+ *  - that reseed needs an uninterrupted run, is not triggered below the power ratio, and leaves
+ *    the other bins alone;
  *  - the first frame after initialization is not pushed to the gain floor by an a-priori SNR
  *    estimate that lacks the floor of later frames.
  */
@@ -15,6 +20,8 @@
 #include <string.h>
 #include "anr.h"
 #include "anr_types.h"
+#include "noise_estimator.h"
+#include "utility/simd_nr.h"
 
 static int g_fail = 0;
 #define CHECK(cond, ...) do { if (!(cond)) { printf("FAIL: "); printf(__VA_ARGS__); printf("\n"); g_fail = 1; } } while (0)
@@ -131,6 +138,115 @@ static void run_zero_bins_case(const char* label, AnrConfig cfg) {
     CHECK(fabs(after - control) < 0.02, "%s: zeroed bins return at gain %.3f, control %.3f", label, after, control);
 }
 
+
+/* Seconds after the gap until the mean upper-half gain stays within 0.02 of `control`; -1 on a create failure or if it never does. */
+static double zero_bins_settle_s(const AnrConfig* cfg, double zero_s, double control) {
+    AnrDenoiser* d = anr_create(cfg);
+    int nf, hop, hi, n_conv, n_zero, n_back, h, k, settle = -1;
+    Complex* spec; const float* gain = NULL; double* mean;
+    if (!d) return -1.0;
+    nf = anr_get_n_freqs(d); hop = anr_get_hop_size(d); hi = nf / 2;
+    n_conv = 4 * cfg->num_init_frames; n_zero = (int)(zero_s * cfg->sample_rate / hop);
+    n_back = (int)(15.0 * cfg->sample_rate / hop);
+    spec = (Complex*)calloc((size_t)nf, sizeof(Complex));
+    mean = (double*)calloc((size_t)n_back, sizeof(double));
+    for (h = 0; h < n_conv + n_zero + n_back; ++h) {
+        int zeroed = h >= n_conv && h < n_conv + n_zero;
+        for (k = 0; k < nf; ++k) {
+            spec[k].r = (zeroed && k >= hi) ? 0.0f : (k % 16 == 0 ? 12000.0f : 400.0f) + (float)((k * 7 + h * 3) % 11);
+            spec[k].i = 0.0f;
+        }
+        gain = anr_process_gain(d, spec);
+        if (h >= n_conv + n_zero) {
+            double acc = 0.0;
+            for (k = hi; k < nf; ++k) acc += gain[k];
+            mean[h - n_conv - n_zero] = acc / (nf - hi);
+        }
+    }
+    for (h = n_back - 1; h >= 0; --h)
+        if (fabs(mean[h] - control) >= 0.02) { settle = h + 1; break; }
+    if (settle < 0) settle = 0;
+    if (fabs(mean[n_back - 1] - control) >= 0.02) settle = -1;
+    free(spec); free(mean); anr_destroy(d);
+    return settle < 0 ? -1.0 : (double)settle * hop / cfg->sample_rate;
+}
+
+/* The reseed run is 2.048 s; the control gain itself needs about 0.2 s to fall from 1 to its steady value. */
+#define FROZEN_SETTLE_EXTRA_S 0.3
+
+static void run_frozen_gap_case(const char* label, AnrConfig cfg) {
+    static const double gaps[5] = { 1.0, 3.0, 5.0, 8.0, 10.0 };
+    int g;
+    double control = half_zero_gain(&cfg, 0.0);
+    double run_s = (double)anr_retime_frames_ms(NR_FROZEN_REF_FRAMES, cfg.sample_rate, cfg.hop_size, NR_FROZEN_REF_HOP_MS) * cfg.hop_size / cfg.sample_rate;
+    for (g = 0; g < 5; ++g) {
+        double t = zero_bins_settle_s(&cfg, gaps[g], control);
+        printf("%-40s gap %4.1f s: gain settles %.3f s after return (run %.3f s)\n", label, gaps[g], t, run_s);
+        CHECK(t >= 0.0, "%s: gap %.0f s: zeroed bins never return to the control gain", label, gaps[g]);
+        CHECK(t <= run_s + FROZEN_SETTLE_EXTRA_S, "%s: gap %.0f s: settles after %.3f s, limit %.3f s", label, gaps[g], t, run_s + FROZEN_SETTLE_EXTRA_S);
+    }
+}
+
+/* Estimator level, posterior 1 (the estimate cannot move by itself): after the hops of `pattern`, the estimate of
+ * bin 0 (every 8th bin has `high` times the level in an 'H' hop; 'L' is a hop at the level) and of bin 1 (untouched). */
+#define FZ_N_FREQS 257
+#define FZ_LEVEL 1000.0f
+static void frozen_pattern(float high, const char* pattern, float* spiked, float* other) {
+    AnrConfig cfg = anr_default_config_for_grid(16000, 512);
+    NoiseEstimator* est = noise_estimator_create(FZ_N_FREQS, &cfg);
+    float power[FZ_N_FREQS], spp[FZ_N_FREQS];
+    int f, k;
+    *spiked = *other = -1.0f;
+    if (!est) return;
+    for (k = 0; k < FZ_N_FREQS; ++k) { power[k] = FZ_LEVEL; spp[k] = 1.0f; }
+    for (f = 0; f < cfg.num_init_frames; ++f) noise_estimator_accumulate_init_power(est, power, f);
+    noise_estimator_init_noise(est, cfg.num_init_frames);
+    for (; *pattern; ++pattern) {
+        for (k = 0; k < FZ_N_FREQS; ++k) power[k] = (*pattern == 'H' && k % 8 == 0) ? high * FZ_LEVEL : FZ_LEVEL;
+        noise_estimator_update_ex(est, power, spp, false, 0, 0.0f);
+    }
+    *spiked = noise_estimator_get_noise_psd(est)[0];
+    *other = noise_estimator_get_noise_psd(est)[1];
+    noise_estimator_destroy(est);
+}
+
+static void repeat_into(char* dst, char c, int n) { memset(dst, c, (size_t)n); dst[n] = 0; }
+
+static void run_frozen_run_case(void) {
+    AnrConfig cfg = anr_default_config_for_grid(16000, 512);
+    int run = anr_retime_frames_ms(NR_FROZEN_REF_FRAMES, cfg.sample_rate, cfg.hop_size, NR_FROZEN_REF_HOP_MS);
+    char pat[1024], pat2[1024];
+    float spiked, other, below = SKR_FROZEN_POWER_RATIO * 0.9f, above = SKR_FROZEN_POWER_RATIO * 1.1f;
+    CHECK(run > 2 && run < 400, "run length %d is out of the expected range", run);
+    if (run <= 2 || run >= 400) return;
+
+    repeat_into(pat, 'H', run - 1);
+    frozen_pattern(above, pat, &spiked, &other);
+    printf("%-40s %d hops above the ratio: estimate %.1f (start %.1f)\n", "frozen run, one hop short", run - 1, spiked, FZ_LEVEL);
+    CHECK(spiked == FZ_LEVEL && other == FZ_LEVEL, "estimate moved before the run length (%.3f, %.3f)", spiked, other);
+
+    repeat_into(pat, 'H', run);
+    frozen_pattern(above, pat, &spiked, &other);
+    printf("%-40s %d hops above the ratio: estimate %.1f\n", "frozen run, complete", run, spiked);
+    CHECK(spiked > 10.0f * FZ_LEVEL, "estimate %.3f was not reseeded toward the power after %d hops", spiked, run);
+    CHECK(spiked < above * FZ_LEVEL, "estimate %.3f is above the power", spiked);
+    CHECK(other == FZ_LEVEL, "an untouched bin moved (%.3f)", other);
+
+    repeat_into(pat, 'H', run * 6);
+    frozen_pattern(below, pat, &spiked, &other);
+    printf("%-40s %d hops at 0.9 x the ratio: estimate %.1f\n", "frozen run, below the ratio", run * 6, spiked);
+    CHECK(spiked == FZ_LEVEL, "estimate %.3f was reseeded below the power ratio", spiked);
+
+    /* One quiet hop clears the run: run-1 hops, a quiet hop, run-1 hops must not reseed; one more must. */
+    repeat_into(pat, 'H', run - 1);
+    snprintf(pat2, sizeof(pat2), "%sL%s", pat, pat);
+    frozen_pattern(above, pat2, &spiked, &other);
+    CHECK(spiked == FZ_LEVEL, "an interrupted run reseeded the estimate (%.3f)", spiked);
+    snprintf(pat2, sizeof(pat2), "%sL%sH", pat, pat);
+    frozen_pattern(above, pat2, &spiked, &other);
+    CHECK(spiked > 10.0f * FZ_LEVEL, "a complete run after an interruption did not reseed (%.3f)", spiked);
+}
+
 /* Posterior SNR below 1 on every bin (the residual-echo PSD far above the signal): the first
  * frame after initialization must not sit at the gain floor while the next frames settle higher.
  * Frames 0..num_init-1 are the unity bypass. */
@@ -186,8 +302,13 @@ int main(void) {
             run_zero_bins_case(label, cfg);
             snprintf(label, sizeof(label), "%d Hz %d zero bins, gate 0.8", sr_of[r], fft_of[r]);
             run_zero_bins_case(label, bb);
+            snprintf(label, sizeof(label), "%d Hz %d frozen bins, library", sr_of[r], fft_of[r]);
+            run_frozen_gap_case(label, cfg);
+            snprintf(label, sizeof(label), "%d Hz %d frozen bins, gate 0.8", sr_of[r], fft_of[r]);
+            run_frozen_gap_case(label, bb);
         }
     }
+    run_frozen_run_case();
     run_first_frame_case("16000 Hz 256 first frame", anr_config_for_level_grid(16000, 256, ANR_LEVEL_BALANCED));
     run_first_frame_case("16000 Hz 512 first frame", anr_config_for_level_grid(16000, 512, ANR_LEVEL_BALANCED));
     run_first_frame_case("48000 Hz 1024 first frame", anr_config_for_level_grid(48000, 1024, ANR_LEVEL_BALANCED));
