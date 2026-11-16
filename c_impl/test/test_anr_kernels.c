@@ -198,7 +198,7 @@ static int test_restart_inert(void) {
 static int test_spp_dd(void) {
     static float power_s[MAX_N + OFFSETS], noise_s[MAX_N + OFFSETS], prev_s[MAX_N + OFFSETS];
     static float enh_s[MAX_N + OFFSETS];
-    static float gamma_ref[MAX_N], gamma_neon[MAX_N], xi_ref[MAX_N], xi_neon[MAX_N];
+    static float xi_ref[MAX_N], xi_neon[MAX_N];
     static float v_ref[MAX_N], v_neon[MAX_N], ratio_ref[MAX_N], ratio_neon[MAX_N];
     const float edges[] = {1e-10f, 1.0f, 0.0f, -1e-10f};
     Stats stats = {0};
@@ -222,11 +222,10 @@ static int test_spp_dd(void) {
             noise_prev[i] = draw(0.0f, 1e5f, edges, 4);
             enhanced[i] = draw(0.0f, 1e6f, edges, 4);
         }
-        spp_dd_scalar(a, power, noise, noise_prev, enhanced, gamma_ref, xi_ref, v_ref, ratio_ref, n);
-        spp_dd_neon(b, power, noise, noise_prev, enhanced, gamma_neon, xi_neon, v_neon, ratio_neon, n);
+        spp_dd_scalar(a, power, noise, noise_prev, enhanced, xi_ref, v_ref, ratio_ref, n);
+        spp_dd_neon(b, power, noise, noise_prev, enhanced, xi_neon, v_neon, ratio_neon, n);
         stats.calls++;
-        int bad = compare_arrays("spp_dd", "gamma", gamma_ref, gamma_neon, n, trial, &stats) ||
-                  compare_arrays("spp_dd", "xi", xi_ref, xi_neon, n, trial, &stats) ||
+        int bad = compare_arrays("spp_dd", "xi", xi_ref, xi_neon, n, trial, &stats) ||
                   compare_arrays("spp_dd", "v_scratch", a->v_scratch, b->v_scratch, n, trial, &stats) ||
                   compare_arrays("spp_dd", "term_xi", a->term_xi_scratch, b->term_xi_scratch, n, trial, &stats) ||
                   compare_arrays("spp_dd", "v_out", v_ref, v_neon, n, trial, &stats) ||

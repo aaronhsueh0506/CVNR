@@ -33,7 +33,7 @@ static void record(const uint32_t* context, uint32_t field,
 
 static void dump_state(const uint32_t* context, const AnrDenoiser* s,
                        const Complex* output, const float* returned_gain) {
-    const float* arrays[] = {s->power, s->spp, s->xi, s->gamma, s->gain,
+    const float* arrays[] = {s->power, s->spp, s->xi, s->gain,
         s->enhanced_psd_prev, s->log_gain_prev,
         anr_get_noise_psd(s, NULL), s->noise_est->S, s->noise_est->S_min,
         s->noise_est->spp, s->spp_est->noise_psd_prev};

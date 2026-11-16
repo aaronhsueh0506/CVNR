@@ -2,11 +2,16 @@
 
 所有重要的改動都會記錄在此文件中。
 
-## [Unreleased] · 2026-11-16 · NRP2 header 大小檢查與增益階段整理
+## [Unreleased] · 2026-11-16 · NRP2 header 大小檢查、增益階段整理、移除 `AnrDenoiser.gamma`
 
 ### 變更 (Changed)
 - `nrp2_read_header()` 遇到增益表 `n_frames * n_freqs * sizeof(float)` 超出 `size_t` 的 header 回傳 `NRP2_BAD_VALUES`。`size_t` 為 32 位元時，`parity_runner`、`pyc_gain_driver` 可能把偽造 header（例如 2^30 個 frame × 129 bin）的乘積算成 0 byte，配到很小的 buffer 後被第一個 frame 寫爆；64 位元主機的乘積不會繞回，行為不變。新增 `make test-nrp2-io`（`test/test_nrp2_io.c`），把 `NRP2_SIZE_LIMIT` 定義成 32 位元最大值（`nrp2_io.h` 預設為 `SIZE_MAX`），用 `nrp2_gains_fit()` 與 `nrp2_read_header()` 檢查，所以 2^30 個 frame × 129 bin 的 header 在 64 位元主機上也會被拒絕；已列入 `TEST_C_GOALS`，`make test`、`make test-full` 都會跑。32 位元建置本身未實跑。另外 `n_freqs` 超過 2^30 也回傳 `NRP2_BAD_VALUES`：兩支 runner 計算的 `fft_size = (n_freqs - 1) * 2` 在這種 header 下於 64 位元主機上讓 `int` 溢位（有號溢位，沒有記憶體寫入）。`test_nrp2_io` 檢查 2^30 個 bin（接受）、2^30 + 1 與 INT_MAX 個 bin（拒絕）。
 - `calculate_gain()` 在每個建置都走同一組 blend／exp／store 步驟，各取 scalar 或 NEON 的孿生版本（`skr_final_blend_*`、`skr_final_store_*`）；`ANR_VECTOR` 提早 return 後面那份手寫的 scalar 算式刪除，`anr_internal.h` 的孿生契約對這支 kernel 因此成立。輸出逐位元相同：`denoise_wav`／`denoise_mem` 摘要（5 個輸入×4 個 level）、`test_bit_exact_stream` 的最佳化版與 `ANR_REFERENCE_KERNELS` 版 dump、五個 `test_gain_api` 雜湊，在 SIMD=1／0 都與前一版相同，`DEBUG=1` 的 `test_gain_api` 輸出也不變。SIMD=0 建置現在對頻點跑三趟，不再是一個融合迴圈（未量測；只影響沒有 NEON 的建置）。
+- **Pool 大小（整合者請看）。** 移除 `AnrDenoiser.gamma`，`anr_get_mem_size()` 在每個 level 都少一個 `n_freqs` float 陣列：8k/128 由 22,192 降為 21,920（-272）、8k/256 由 26,624 降為 26,096（-528）、16k/256 由 43,184 降為 42,656（-528）、16k/512 由 52,224 降為 51,184（-1,040）、48k/1024 由 136,272 降為 134,208（-2,064）。`sizeof(AnrDenoiser)` 在 LP64 由 352 降為 344（`ALIGN16` 仍是 352）；32 位元建置少同一個對齊後陣列再加 `AnrDenoiser` 的 16 byte（`sizeof` 292 變 288、`ALIGN16` 304 變 288，依前一則的 32 位元數字推算）：-288／-544／-544／-1,056／-2,080（由計算得出，未實際建置）。`DEBUG=1` 相同。NR 沒有 layout 版本常數：用 `anr_get_mem_size()` 配 pool 的呼叫端不用改，寫死大小的呼叫端要重讀（`docs/reference/configuration.md`、`nr.html`、`nr_c_api.html` 的 byte 表已重新實測）。其他 repo 引用 NR pool 大小的文件（Audio_ALG 的管線記憶體表）仍是舊數字。
+- `test_bit_exact_stream` 少一筆 `gamma` 記錄：後面的記錄（gain 到完整 min ring）索引各減 1，`python/tools/test_bit_exact.py` 的 `FIELDS` 同步刪掉標籤。`test_anr_kernels.c` 的 `test_spp_dd` 不再比對 `gamma`；由它算出的 `xi`、`v_scratch`、`term_xi`、`v_out`、`ratio_out` 仍逐 lane 比對。
+
+### 移除 (Removed)
+- `AnrDenoiser.gamma`（`spp_estimate()` 每個 hop 寫入、函式庫內沒有任何地方讀）與 `spp_estimate`、`spp_prepare`、`spp_dd`、`spp_dd_scalar`、`spp_dd_neon`、`spp_dd_elem` 的 `gamma_out` 參數（內部標頭 `include/internal/spp_estimator.h`）；後驗 SNR 在各 kernel 內只當區域值。輸出逐位元相同：`denoise_wav`／`denoise_mem` 摘要（5 個輸入×4 個 level）、五個 `test_gain_api` 雜湊，以及 `test_bit_exact_stream` dump 其餘每一筆記錄（最佳化版與 `ANR_REFERENCE_KERNELS` 版，92,869 筆），在 SIMD=1／0 都與前一版相同。
 
 ## [Unreleased] · 2026-11-15 · 增益階段直接用 SPP 階段算好的 `xi/(1+xi)`（行為改變）
 

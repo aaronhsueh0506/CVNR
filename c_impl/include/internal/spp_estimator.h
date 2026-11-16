@@ -24,8 +24,8 @@ SppEstimator* spp_init(void* mem, size_t mem_size,
 /* Free heap state; static memory remains caller-owned. */
 void spp_destroy(SppEstimator* self);
 
-/* Estimates SPP, a-priori SNR xi and posterior SNR gamma, plus the gain stage's v = xi/(1+xi)*gamma
- * clamped to [1e-10, 700] (NaN passes) and xi/(1+xi). enhanced_psd_prev may be NULL: DD xi needs it
+/* Estimates SPP and a-priori SNR xi, plus the gain stage's v = xi/(1+xi)*gamma (gamma the posterior
+ * SNR, not returned) clamped to [1e-10, 700] (NaN passes) and xi/(1+xi). enhanced_psd_prev may be NULL: DD xi needs it
  * and a prior call, else xi = max(gamma - 1, xi_min). */
 void spp_estimate(
     SppEstimator* self,
@@ -34,7 +34,6 @@ void spp_estimate(
     const float* enhanced_psd_prev,
     float* spp_out,
     float* xi_out,
-    float* gamma_out,
     float* v_out,
     float* ratio_out
 );
