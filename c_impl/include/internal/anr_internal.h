@@ -7,11 +7,9 @@
 #include "utility/simd_kernels.h"  /* SK_HAVE_NEON */
 #include "spp_estimator.h"
 
-/* ANR_VECTOR selects the NEON twin of every kernel in this library. Each kernel is a static
- * function pair: <name>_scalar defines the arithmetic, <name>_neon reproduces it bit for bit
- * except the payload bits of a NaN result.
- * ANR_REFERENCE_KERNELS forces the scalar path so one build can be compared with another.
- */
+/* ANR_VECTOR selects the NEON twin of every kernel: <name>_scalar defines the arithmetic,
+ * <name>_neon matches it bit for bit except NaN payload bits. ANR_REFERENCE_KERNELS forces the
+ * scalar twins. */
 #if SK_HAVE_NEON && !defined(ANR_REFERENCE_KERNELS)
 #define ANR_VECTOR 1
 #else
@@ -37,11 +35,9 @@ extern "C" {
 void noise_estimator_apply_config_scalars(NoiseEstimator* self,
                                           const AnrConfig* config);
 
-/* Noise-tracker variants whose startup rows share the minimum ring's storage, sized to the larger
- * of the two. Same contract as the public get_mem_size/init/create, except that
- * noise_estimator_accumulate_init_power() and noise_estimator_init_noise() are ignored once the
- * tracker is initialized, because the ring then owns the region. A caller must therefore
- * re-accumulate every startup row after noise_estimator_reset().
+/* Noise-tracker variants whose startup rows share the minimum ring's storage. Same contract as the
+ * public get_mem_size/init/create, but accumulate_init_power() and init_noise() are ignored once
+ * initialized: re-accumulate every startup row after noise_estimator_reset().
  */
 size_t noise_estimator_get_mem_size_shared_startup(int n_freqs, const AnrConfig* config);
 NoiseEstimator* noise_estimator_init_shared_startup(void* mem, size_t mem_size, int n_freqs,

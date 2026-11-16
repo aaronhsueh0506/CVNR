@@ -35,16 +35,13 @@ int anr_process(AnrDenoiser* self,
                      const Complex*   spectrum_in,
                      Complex*         spectrum_out);
 
-/* Computes the per-bin gain for spectrum_in[n_freqs] without applying it and returns it:
- * n_freqs floats, linear in [g_min, 1] (1 while the noise floor initializes), owned by the
- * instance and borrowed until the next process call. Returns NULL for NULL arguments; the
- * state is then untouched. */
+/* Returns the per-bin gain for spectrum_in[n_freqs] without applying it: n_freqs floats in
+ * [g_min, 1] (1 while the noise floor initializes), instance-owned until the next process call.
+ * NULL for NULL arguments, state untouched. */
 const float* anr_process_gain(AnrDenoiser* self, const Complex* spectrum_in);
 
-/* anr_process_gain() for a chain whose AEC leaves residual echo in spectrum_in.
- * residual_echo_psd[n_freqs] is that residual echo power per bin in audio power scale (the AEC
- * r2 divided by 32768^2); the denoiser then does not learn it as noise. It raises only the
- * SPP/SNR noise floor; the noise tracker still follows the input power. NULL gives exactly
+/* anr_process_gain() with residual_echo_psd[n_freqs], in audio power scale, raising only the
+ * SPP/SNR noise floor; the noise tracker still follows the input power. NULL equals
  * anr_process_gain(). */
 const float* anr_process_gain_with_residual_psd(AnrDenoiser* self,
                                                 const Complex*   spectrum_in,
