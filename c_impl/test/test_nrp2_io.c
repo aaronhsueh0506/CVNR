@@ -7,14 +7,13 @@
 #include <stdio.h>
 #include <string.h>
 
-static size_t g_size_limit = 0xFFFFFFFFu;
+#define LIMIT32 0xFFFFFFFFu
+static size_t g_size_limit = LIMIT32;
 #define NRP2_SIZE_LIMIT g_size_limit
 #include "../example/nrp2_io.h"
 
 static int g_fail = 0;
 #define CHECK(cond, ...) do { if (!(cond)) { printf("FAIL: "); printf(__VA_ARGS__); printf("\n"); g_fail = 1; } } while (0)
-
-#define LIMIT32 0xFFFFFFFFu
 
 /* Writes an 'NRP2' header into a temporary file and reads it back. */
 static Nrp2Status read_header(int32_t n_frames, int32_t n_freqs, int32_t sample_rate, Nrp2Header* h) {

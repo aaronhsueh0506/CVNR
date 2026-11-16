@@ -496,8 +496,8 @@ TEST_NRP2_TARGET = $(BIN_DIR)/test_nrp2_io
 test-nrp2-io: $(TEST_NRP2_TARGET)
 	"$(abspath $(TEST_NRP2_TARGET))"
 
-$(TEST_NRP2_TARGET): $(OBJS) $(OBJ_DIR)/test_nrp2_io.o $(COMMON_LIB) | _cfg_guard
-	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/test_nrp2_io.o $(COMMON_LIB) $(LDFLAGS)
+$(TEST_NRP2_TARGET): $(OBJ_DIR)/test_nrp2_io.o | _cfg_guard
+	$(LINK) $(CFLAGS) -o $@ $(OBJ_DIR)/test_nrp2_io.o $(LDFLAGS)
 	@echo "Build complete: $@"
 
 $(OBJ_DIR)/test_nrp2_io.o: $(TEST_DIR)/test_nrp2_io.c | _cfg_guard
