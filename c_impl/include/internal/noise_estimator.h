@@ -15,6 +15,7 @@ extern "C" {
 
 typedef struct NoiseEstimator NoiseEstimator;
 
+/* The standalone get_mem_size/init/create are the test oracle; production uses the *_shared_startup variants. */
 /* Heap instance for n_freqs bins; NULL on invalid dimensions or allocation failure. */
 NoiseEstimator* noise_estimator_create(int n_freqs, const AnrConfig* config);
 

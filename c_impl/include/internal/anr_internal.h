@@ -36,7 +36,7 @@ void noise_estimator_apply_config_scalars(NoiseEstimator* self,
                                           const AnrConfig* config);
 
 /* Noise-tracker variants whose startup rows share the minimum ring's storage. Same contract as the
- * public get_mem_size/init/create, but accumulate_init_power() and init_noise() are ignored once
+ * standalone get_mem_size/init/create, but accumulate_init_power() and init_noise() are ignored once
  * initialized: re-accumulate every startup row after noise_estimator_reset().
  */
 size_t noise_estimator_get_mem_size_shared_startup(int n_freqs, const AnrConfig* config);
