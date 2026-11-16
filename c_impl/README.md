@@ -65,7 +65,7 @@ external-memory 初始化 `ne10_fft_init_r2c_float32_ext`），沒有 backend-in
 work buffer、twiddle cfg 都在 pool 內，`fft_init()` 到 `fft_destroy()` 全程零 heap，
 **每幀音訊路徑零 malloc**。
 
-> **Note:** `make` 預設啟用 3 個優化開關（近似數學的誤差依核准預算驗收），不需要手動指定。
+> **Note:** `make` 預設啟用 1 個優化開關（`USE_OPTIMIZED_E1`；近似數學的誤差依核准預算驗收），不需要手動指定。
 
 這裡的「fast math」指 `fast_math.h` 與 `USE_*` 選項的近似函式，並非編譯器
 `-ffast-math`；後者會被 Makefile 拒絕。std-math C 對 Python 與出貨 C 對
