@@ -12,13 +12,6 @@
 static int g_fail = 0;
 #define CHECK(cond, ...) do { if (!(cond)) { printf("FAIL: "); printf(__VA_ARGS__); printf("\n"); g_fail = 1; } } while (0)
 
-static const float* gain_plain(AnrDenoiser* d, const Complex* s) {
-    return anr_process_gain(d, s);
-}
-static const float* gain_with_residual(AnrDenoiser* d, const Complex* s, const float* r) {
-    return anr_process_gain_with_residual_psd(d, s, r);
-}
-
 enum { MODE_PLAIN = 0, MODE_RESIDUAL = 1, MODE_ALTERNATE = 2 };
 
 static uint32_t fnv1a(uint32_t h, const void* p, size_t n) {
@@ -58,7 +51,7 @@ static uint32_t run_case(int sample_rate, AnrLevel level, int mode, int n_frames
             residual[k] = (re * re + im * im) * (0.1f + 0.4f * (float)(k % 5));
         }
         if (mode == MODE_RESIDUAL || (mode == MODE_ALTERNATE && (frame & 1) == 0)) res = residual;
-        g = (mode == MODE_PLAIN) ? gain_plain(d, spec) : gain_with_residual(d, spec, res);
+        g = (mode == MODE_PLAIN) ? anr_process_gain(d, spec) : anr_process_gain_with_residual_psd(d, spec, res);
         CHECK(g != NULL, "gain returned NULL at frame %d", frame);
         if (!g) break;
         h = fnv1a(h, g, (size_t)nf * sizeof(float));
