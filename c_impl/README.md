@@ -4,7 +4,7 @@
 
 ## 編譯
 
-工作區路徑與 `CFLAGS`、include 路徑不可含空白或引號。
+工作區路徑含空白可以建置，含引號則 `make -s print-lib-path` 會失敗。旗標變數（`EXTRA_CFLAGS`、`EXTRA_LDFLAGS`）只收英數字與 `_ . / = , + -`，以空白分隔；帶引號的 token 或含空白的 `-I` 路徑會被 Makefile 以 FP policy conflict 擋下。
 
 ### 基本編譯
 
