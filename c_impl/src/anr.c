@@ -253,9 +253,9 @@ static const float* prepare_noise_for_spp(AnrDenoiser* self,
 }
 
 /* OM-LSA gain from the SPP stage's clamped v and xi/(1+xi) in the gain scratch. */
-static void calculate_gain(AnrDenoiser* self,
-                            const float* spp,
-                            float* gain_out) {
+static void calculate_gain(AnrDenoiser* self) {
+    const float* spp = self->spp;
+    float* gain_out  = self->gain;
     int   n_freqs      = self->n_freqs;
     float g_min        = self->g_min;
     float log_g_min    = self->log_g_min;
@@ -290,48 +290,22 @@ static void calculate_gain(AnrDenoiser* self,
 
     sk_fast_log_f32(v_scratch, v_scratch, n_freqs);
 
-#if ANR_VECTOR
-    {
-        SkrFinalGainParams params = {log_g_min, g_min, alpha_attack, alpha_decay, prior_lift,
-                                     cross_band_prior, self->gain_initialized, dd_from_gmmse};
-        skr_final_blend_neon(&params, spp, v_scratch, self->log_gain_prev, gain_out, n_freqs);
-        sk_fast_exp_f32(gain_out, gain_out, n_freqs);
-        skr_final_store_neon(&params, v_scratch, gain_out, self->log_gain_prev,
-                             self->enhanced_psd_prev, xi_ratio_scratch, self->power, n_freqs);
-    }
-    apply_low_band_speech_floor(self, gain_out);
-    self->gain_initialized = true;
-    return;
-#endif
-
     /* Blend the OM-LSA log gain, smooth against the previous hop and store DD state. */
-    for (int k = 0; k < n_freqs; k++) {
-        float spp_k   = spp[k];
-
-        if (cross_band_prior) spp_k = lift_spp(spp_k, prior_lift);
-
-        float log_gain_mmse = v_scratch[k];
-        float log_gain      = spp_k * log_gain_mmse +
-                              (1.0f - spp_k) * log_g_min;
-
-        if (self->gain_initialized) {
-            float prev  = self->log_gain_prev[k];
-            float alpha = (log_gain > prev) ? alpha_attack : alpha_decay;
-            log_gain    = alpha * prev + (1.0f - alpha) * log_gain;
-        }
-
-        float gain, log_gain_save;
-        if (log_gain < log_g_min) {
-            gain = g_min;  log_gain_save = log_g_min;
-        } else if (log_gain > 0.0f) {
-            gain = 1.0f;   log_gain_save = 0.0f;
-        } else {
-            gain = fast_exp(log_gain);  log_gain_save = log_gain;
-        }
-        gain_out[k] = gain;
-
-        store_gain_state(self, k, log_gain_save, dd_from_gmmse ? xi_ratio_scratch[k] : gain);
-    }
+    SkrFinalGainParams params = {log_g_min, g_min, alpha_attack, alpha_decay, prior_lift,
+                                 cross_band_prior, self->gain_initialized, dd_from_gmmse};
+#if ANR_VECTOR
+    skr_final_blend_neon(&params, spp, v_scratch, self->log_gain_prev, gain_out, n_freqs);
+#else
+    skr_final_blend_scalar(&params, spp, v_scratch, self->log_gain_prev, gain_out, n_freqs);
+#endif
+    sk_fast_exp_f32(gain_out, gain_out, n_freqs);
+#if ANR_VECTOR
+    skr_final_store_neon(&params, v_scratch, gain_out, self->log_gain_prev,
+                         self->enhanced_psd_prev, xi_ratio_scratch, self->power, n_freqs);
+#else
+    skr_final_store_scalar(&params, v_scratch, gain_out, self->log_gain_prev,
+                           self->enhanced_psd_prev, xi_ratio_scratch, self->power, n_freqs);
+#endif
 
     apply_low_band_speech_floor(self, gain_out);
 
@@ -349,7 +323,7 @@ static void run_frame_gain_stage(AnrDenoiser* self,
                  self->spp, self->xi, self->gamma, self->gain_v_scratch,
                  self->gain_xi_ratio_scratch);
     update_frame_speech_evidence(self);
-    calculate_gain(self, self->spp, self->gain);
+    calculate_gain(self);
     apply_frame_makeup(self);
     if (track_noise) update_noise_estimator(self);
 }
