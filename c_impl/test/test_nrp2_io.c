@@ -1,11 +1,12 @@
 /* NRP2 header limits of the offline gain runners (example/nrp2_io.h): a header whose gain table
  * n_frames * n_freqs * sizeof(float) does not fit in size_t is rejected before any runner
- * allocates it. A 64-bit host cannot wrap that product, so the 32-bit limit is exercised through
- * nrp2_gains_fit(..., 0xFFFFFFFF) and the header path through the host's own size_t. */
+ * allocates it. A 64-bit host cannot wrap that product, so NRP2_SIZE_LIMIT stands in for a 32-bit
+ * size_t: the helper and nrp2_read_header() are both checked against it. */
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
+#define NRP2_SIZE_LIMIT 0xFFFFFFFFu
 #include "../example/nrp2_io.h"
 
 static int g_fail = 0;
@@ -39,18 +40,16 @@ int main(void) {
     CHECK(!nrp2_gains_fit(0, 129, LIMIT32) && !nrp2_gains_fit(5, 0, LIMIT32) && !nrp2_gains_fit(-1, 129, LIMIT32),
           "non-positive sizes never fit");
 
-    /* The header path on this host. */
+    /* The header path, with the same limit. */
     CHECK(read_header(6, 129, 16000, &h) == NRP2_OK && h.n_frames == 6 && h.n_freqs == 129 && h.sample_rate == 16000,
           "an ordinary header is accepted");
     CHECK(read_header(0, 129, 16000, &h) == NRP2_BAD_VALUES, "n_frames 0 is rejected");
     CHECK(read_header(6, 1, 16000, &h) == NRP2_BAD_VALUES, "n_freqs 1 is rejected");
     CHECK(read_header(6, 129, 0, &h) == NRP2_BAD_VALUES, "sample_rate 0 is rejected");
-    if (sizeof(size_t) == 4) {
-        CHECK(read_header(1 << 30, 129, 16000, &h) == NRP2_BAD_VALUES, "2^30 x 129 header is rejected on a 32-bit host");
-        CHECK(read_header(266354561, 129, 16000, &h) == NRP2_BAD_VALUES, "266354561 x 129 header is rejected on a 32-bit host");
-    } else {
-        CHECK(read_header(1 << 30, 129, 16000, &h) == NRP2_OK, "2^30 x 129 header does not wrap on a 64-bit host");
-    }
+    CHECK(read_header(1 << 30, 129, 16000, &h) == NRP2_BAD_VALUES, "2^30 x 129 header is rejected");
+    CHECK(read_header(266354561, 129, 16000, &h) == NRP2_BAD_VALUES, "266354561 x 129 header is rejected");
+    CHECK(read_header(8323580, 129, 16000, &h) == NRP2_OK, "the largest table that fits is accepted");
+    CHECK(read_header(8323581, 129, 16000, &h) == NRP2_BAD_VALUES, "one frame more is rejected");
 
     if (g_fail) { printf("test_nrp2_io: FAIL\n"); return 1; }
     printf("test_nrp2_io: PASS\n");

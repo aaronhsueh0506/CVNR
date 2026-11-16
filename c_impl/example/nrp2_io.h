@@ -31,6 +31,12 @@ typedef enum {
     NRP2_BAD_VALUES    /* n_frames <= 0, n_freqs <= 1, sample_rate <= 0 or a gain table beyond size_t */
 } Nrp2Status;
 
+/* Largest allocation, in bytes, a header may ask for; a test defines it smaller to stand in for a
+ * 32-bit size_t. */
+#ifndef NRP2_SIZE_LIMIT
+#define NRP2_SIZE_LIMIT SIZE_MAX
+#endif
+
 /* Non-zero when n_frames * n_freqs floats (the gain table) fit in size_max bytes; no product wraps. */
 static inline int nrp2_gains_fit(int n_frames, int n_freqs, size_t size_max) {
     if (n_frames <= 0 || n_freqs <= 0) return 0;
@@ -53,7 +59,7 @@ static inline Nrp2Status nrp2_read_header(FILE* f, int accept_v1, Nrp2Header* h)
         h->sample_rate = sample_rate;
     }
     if (h->n_frames <= 0 || h->n_freqs <= 1 || h->sample_rate <= 0) return NRP2_BAD_VALUES;
-    if (!nrp2_gains_fit(h->n_frames, h->n_freqs, SIZE_MAX)) return NRP2_BAD_VALUES;
+    if (!nrp2_gains_fit(h->n_frames, h->n_freqs, NRP2_SIZE_LIMIT)) return NRP2_BAD_VALUES;
     return NRP2_OK;
 }
 
