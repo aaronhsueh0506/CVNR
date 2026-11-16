@@ -547,15 +547,10 @@ int anr_process(AnrDenoiser* self,
                      Complex*         spectrum_out) {
     if (!self || !spectrum_in || !spectrum_out) return -1;
 
-    int nf = self->n_freqs;
-
-    fft_power(spectrum_in, self->power, nf);
-    const bool silent = frame_is_silent(self->power, nf);
-
-    process_init_or_gain(self, NULL, silent);
+    const float* gain = anr_process_gain(self, spectrum_in);
 
     /* In-place and disjoint spectra only; partial overlap is unsupported. */
-    sk_capply_gain_f32(spectrum_out, spectrum_in, self->gain, nf);
+    sk_capply_gain_f32(spectrum_out, spectrum_in, gain, self->n_freqs);
 
     return 0;
 }
