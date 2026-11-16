@@ -214,8 +214,8 @@ CFLAGS    += $(FP_POLICY)
 COMMON_FWD = BACKEND=$(BACKEND) SIMD=$(SIMD) WERROR=$(WERROR) CC='$(CC)' CXX='$(CXX)' EXTRA_CFLAGS='$(EXTRA_CFLAGS)' NO_STDIO=$(NO_STDIO) TOOLCHAIN_CHECK=$(TOOLCHAIN_CHECK)
 
 ifeq ($(COMMON_LIB),)
-.PHONY: all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-gain-api test-scene-change test-shared-startup test-api-cpp test-cli-args test-parity-runner bench-anr
-all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-gain-api test-scene-change test-shared-startup test-api-cpp test-cli-args test-parity-runner bench-anr:
+.PHONY: all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-gain-api test-scene-change test-shared-startup test-api-cpp test-cli-args test-parity-runner test-nrp2-io bench-anr
+all mem parity test-config test-config-parity test-reconfigure test-noise-restart test-gain-api test-scene-change test-shared-startup test-api-cpp test-cli-args test-parity-runner test-nrp2-io bench-anr:
 	+@ac="$$($(MAKE) -s --no-print-directory -C $(COMMON_DIR) $(COMMON_FWD) print-lib-path)"; \
 	 test -n "$$ac" || { echo "FATAL: could not resolve audiolib archive path (COMMON_DIR=$(COMMON_DIR) -- is audiolib present as a sibling of this repo?)" >&2; exit 1; }; \
 	 $(MAKE) --no-print-directory $@ COMMON_LIB="$$ac"
@@ -490,6 +490,19 @@ test-cli-args: $(TARGET) $(MEM_TARGET)
 test-parity-runner: $(PARITY_TARGET)
 	PYTHON="$(PYTHON)" sh $(TEST_DIR)/test_parity_runner_input.sh "$(abspath $(PARITY_TARGET))"
 
+# NRP2 header limits (example/nrp2_io.h): a gain table beyond size_t is rejected (test/test_nrp2_io.c).
+.PHONY: test-nrp2-io
+TEST_NRP2_TARGET = $(BIN_DIR)/test_nrp2_io
+test-nrp2-io: $(TEST_NRP2_TARGET)
+	"$(abspath $(TEST_NRP2_TARGET))"
+
+$(TEST_NRP2_TARGET): $(OBJS) $(OBJ_DIR)/test_nrp2_io.o $(COMMON_LIB) | _cfg_guard
+	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/test_nrp2_io.o $(COMMON_LIB) $(LDFLAGS)
+	@echo "Build complete: $@"
+
+$(OBJ_DIR)/test_nrp2_io.o: $(TEST_DIR)/test_nrp2_io.c | _cfg_guard
+	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
+
 # Verify the public C API through a C++ caller.
 .PHONY: test-api-cpp
 TEST_CPP_TARGET = $(BIN_DIR)/test_api_cpp
@@ -539,7 +552,7 @@ PYC_PARITY_GATE_ONLY = ^(?!.*/8k_)(?!.*/(scale_1e-3|scale_1e-5|scale_1e-6|int16_
 PYC_PARITY_JSON ?= $(OBJ_ROOT)/pyc_parity_nr.json
 SIMD_OTHER = $(if $(filter 0,$(SIMD)),1,0)
 TEST_BUILD_GOALS = all lib mem parity
-TEST_C_GOALS = test-config test-reconfigure test-noise-restart test-gain-api test-scene-change test-shared-startup test-api-cpp test-cli-args test-parity-runner test-bit-exact
+TEST_C_GOALS = test-config test-reconfigure test-noise-restart test-gain-api test-scene-change test-shared-startup test-api-cpp test-cli-args test-parity-runner test-nrp2-io test-bit-exact
 # pytest starts its own `make`; a clean make environment keeps that child's stdout to the CSV the
 # test parses. COMMON_DIR travels explicitly because MAKEFLAGS (which carries command-line
 # variables) is dropped.
@@ -887,6 +900,7 @@ help:
 	@echo "  test-scene-change - Build + run the scene-change flatness margin test"
 	@echo "  test-shared-startup - Build + run the shared startup/ring storage equivalence test"
 	@echo "  test-api-cpp - Build + run the C++ header compile/link smoke test"
+	@echo "  test-nrp2-io - Build + run the NRP2 header limit test (a gain table beyond size_t is rejected)"
 	@echo "  test-cli-args - Build denoise_wav and denoise_mem and run the option-value checks of their --nr-level/--nr-mode"
 	@echo "  test-bit-exact - Compare the optimized kernels with the scalar reference (needs python3); also runs the"
 	@echo "                   kernel-level tests test_anr_kernels and test_min_ordered_special; test_anr_kernels is the only"

@@ -4,6 +4,11 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [Unreleased] — 2026-11-16 — NRP2 header size check, gain-stage cleanups
+
+### Changed
+- `nrp2_read_header()` rejects (`NRP2_BAD_VALUES`) a header whose gain table `n_frames * n_freqs * sizeof(float)` does not fit in `size_t`. On a 32-bit `size_t`, `parity_runner` and `pyc_gain_driver` could multiply a crafted header (for example 2^30 frames x 129 bins) to 0 bytes, allocate a tiny buffer and overflow it with the first frame; 64-bit hosts cannot wrap the product and are unchanged. New `make test-nrp2-io` (`test/test_nrp2_io.c`) checks the limit at the 32-bit boundary through `nrp2_gains_fit()` and the header path on the host's own `size_t`; it is in `TEST_C_GOALS`, so `make test` and `make test-full` run it. The 32-bit build itself was not run.
+
 ## [Unreleased] — 2026-11-15 — The gain stage takes `xi/(1+xi)` from the SPP stage (behaviour change)
 
 `spp_estimate()` now hands the gain stage `xi/(1+xi)` and the clamped `v` directly, as the Python reference (`MmseLsaGainCalculator._mmse_gain_base`) computes them; the gain stage no longer recovers `xi/(1+xi)` as `v/(gamma+1e-10)`. Shipping output changes in a few percent of the gain bins: usually by a few ulp, with a tail of about 150 ulp, and the float waveform moves by about 1e-7.

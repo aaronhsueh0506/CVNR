@@ -2,6 +2,11 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [Unreleased] · 2026-11-16 · NRP2 header 大小檢查與增益階段整理
+
+### 變更 (Changed)
+- `nrp2_read_header()` 遇到增益表 `n_frames * n_freqs * sizeof(float)` 超出 `size_t` 的 header 回傳 `NRP2_BAD_VALUES`。`size_t` 為 32 位元時，`parity_runner`、`pyc_gain_driver` 可能把偽造 header（例如 2^30 個 frame × 129 bin）的乘積算成 0 byte，配到很小的 buffer 後被第一個 frame 寫爆；64 位元主機的乘積不會繞回，行為不變。新增 `make test-nrp2-io`（`test/test_nrp2_io.c`），用 `nrp2_gains_fit()` 檢查 32 位元邊界、用主機自己的 `size_t` 檢查 header 路徑；已列入 `TEST_C_GOALS`，`make test`、`make test-full` 都會跑。32 位元建置本身未實跑。
+
 ## [Unreleased] · 2026-11-15 · 增益階段直接用 SPP 階段算好的 `xi/(1+xi)`（行為改變）
 
 `spp_estimate()` 直接把 `xi/(1+xi)` 與夾限後的 `v` 交給增益階段，算法與 Python 參考（`MmseLsaGainCalculator._mmse_gain_base`）相同；增益階段不再用 `v/(gamma+1e-10)` 反推 `xi/(1+xi)`。出貨輸出有數個百分點的增益頻點不同，多數差幾個 ulp，尾端約 150 ulp；浮點波形差約 1e-7。
