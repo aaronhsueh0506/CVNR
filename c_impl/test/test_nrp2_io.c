@@ -1,12 +1,14 @@
 /* NRP2 header limits of the offline gain runners (example/nrp2_io.h): a header whose gain table
  * n_frames * n_freqs * sizeof(float) does not fit in size_t is rejected before any runner
  * allocates it. A 64-bit host cannot wrap that product, so NRP2_SIZE_LIMIT stands in for a 32-bit
- * size_t: the helper and nrp2_read_header() are both checked against it. */
+ * size_t: the helper and nrp2_read_header() are both checked against it. The last block lifts the
+ * limit to check the int range of fft_size. */
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 
-#define NRP2_SIZE_LIMIT 0xFFFFFFFFu
+static size_t g_size_limit = 0xFFFFFFFFu;
+#define NRP2_SIZE_LIMIT g_size_limit
 #include "../example/nrp2_io.h"
 
 static int g_fail = 0;
@@ -50,6 +52,12 @@ int main(void) {
     CHECK(read_header(266354561, 129, 16000, &h) == NRP2_BAD_VALUES, "266354561 x 129 header is rejected");
     CHECK(read_header(8323580, 129, 16000, &h) == NRP2_OK, "the largest table that fits is accepted");
     CHECK(read_header(8323581, 129, 16000, &h) == NRP2_BAD_VALUES, "one frame more is rejected");
+
+    /* fft_size = (n_freqs - 1) * 2 must fit in int, whatever the size_t: 2^30 bins is the most. */
+    g_size_limit = SIZE_MAX;
+    CHECK(read_header(1, 0x40000000, 16000, &h) == NRP2_OK, "2^30 bins (fft_size 2147483646) is accepted");
+    CHECK(read_header(1, 0x40000001, 16000, &h) == NRP2_BAD_VALUES, "2^30 + 1 bins would overflow fft_size");
+    CHECK(read_header(1, 0x7FFFFFFF, 16000, &h) == NRP2_BAD_VALUES, "INT_MAX bins would overflow fft_size");
 
     if (g_fail) { printf("test_nrp2_io: FAIL\n"); return 1; }
     printf("test_nrp2_io: PASS\n");

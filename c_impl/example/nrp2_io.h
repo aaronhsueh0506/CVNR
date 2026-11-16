@@ -8,6 +8,7 @@
 #ifndef ANR_EXAMPLE_NRP2_IO_H
 #define ANR_EXAMPLE_NRP2_IO_H
 
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 
@@ -28,7 +29,8 @@ typedef enum {
     NRP2_SHORT_HEADER,
     NRP2_SHORT_RATE,   /* 'NRP2' header ends before sample_rate */
     NRP2_BAD_MAGIC,    /* magic not accepted; h->magic holds what was read */
-    NRP2_BAD_VALUES    /* n_frames <= 0, n_freqs <= 1, sample_rate <= 0 or a gain table beyond size_t */
+    NRP2_BAD_VALUES    /* n_frames <= 0, n_freqs outside 2..2^30, sample_rate <= 0 or a gain table
+                          beyond size_t */
 } Nrp2Status;
 
 /* Largest allocation, in bytes, a header may ask for; a test defines it smaller to stand in for a
@@ -59,6 +61,8 @@ static inline Nrp2Status nrp2_read_header(FILE* f, int accept_v1, Nrp2Header* h)
         h->sample_rate = sample_rate;
     }
     if (h->n_frames <= 0 || h->n_freqs <= 1 || h->sample_rate <= 0) return NRP2_BAD_VALUES;
+    /* fft_size = (n_freqs - 1) * 2 must stay an int. */
+    if (h->n_freqs - 1 > INT_MAX / 2) return NRP2_BAD_VALUES;
     if (!nrp2_gains_fit(h->n_frames, h->n_freqs, NRP2_SIZE_LIMIT)) return NRP2_BAD_VALUES;
     return NRP2_OK;
 }
