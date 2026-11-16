@@ -108,11 +108,12 @@ endif
 # USE_STANDARD_MATH         libm expf/logf/sqrtf/log10f/powf instead of the fast LUT/Taylor exp,
 #                           minimax log and target sqrt. Selected by `make debug` (DEBUG=1), which
 #                           also drops USE_OPTIMIZED_E1; EXTRA_CFLAGS="-DUSE_STANDARD_MATH" keeps it.
-# USE_OPTIMIZED_E1          E1(v): test v > 1.0 first and compute log10 once for v <= 1.0.
+# USE_OPTIMIZED_E1          Only the branch order of audiolib's scalar exp1_approx() (same values either way).
+#                           NR calls the sk_exp1_approx_f32 kernels, so no NR object changes with it.
 #
 # Common builds:
-#   make debug                                  standard math, no USE_OPTIMIZED_E1 (closest to Python)
-#   make                                        fast math and USE_OPTIMIZED_E1
+#   make debug                                  standard math (closest to Python)
+#   make                                        fast math (USE_OPTIMIZED_E1 is defined, no NR object depends on it)
 #
 # =============================================================================
 

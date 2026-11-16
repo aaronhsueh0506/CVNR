@@ -65,7 +65,7 @@ external-memory 初始化 `ne10_fft_init_r2c_float32_ext`），沒有 backend-in
 work buffer、twiddle cfg 都在 pool 內，`fft_init()` 到 `fft_destroy()` 全程零 heap，
 **每幀音訊路徑零 malloc**。
 
-> **Note:** `make` 預設啟用 1 個優化開關（`USE_OPTIMIZED_E1`；近似數學的誤差依核准預算驗收），不需要手動指定。
+> **Note:** `make` 預設帶 `-DUSE_OPTIMIZED_E1`，不需要手動指定。它只決定 audiolib 純量 `exp1_approx()` 的分支順序（兩種順序的值相同），NR 走 `sk_exp1_approx_f32`，所以不改變任何 NR 物件。近似數學的誤差依核准預算驗收。
 
 這裡的「fast math」指 `fast_math.h` 與 `USE_*` 選項的近似函式，並非編譯器
 `-ffast-math`；後者會被 Makefile 拒絕。std-math C 對 Python 與出貨 C 對
@@ -100,11 +100,11 @@ NaN 取代 NaN payload，因此 ARM32 上 `SIMD=1` 與 `SIMD=0` 對這類值可�
 具硬體 FMA 的 ARM32 上所有走 NEON 的共用 kernel（含 NR 用到的）都受影響，NEON 與純量版只對有限且
 非次正規的輸入逐位元相同。
 
-### 預設啟用（`make` 即啟用）
+### 預設定義（`make` 即帶）
 
 | 開關 | 說明 | 相關度 |
 |------|------|--------|
-| `USE_OPTIMIZED_E1` | E1(v) 指數積分分支重排 + 共用 log10 | 100% |
+| `USE_OPTIMIZED_E1` | 只選 audiolib 純量 `exp1_approx()` 的分支順序；NR 的物件不因它改變 | 100% |
 
 ### 調試用
 

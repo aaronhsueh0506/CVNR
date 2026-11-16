@@ -82,7 +82,7 @@ pre code{background:none;padding:0}
 </table></div>
 
 <h3>3.1 比內部欄位更深：編譯期選項（不是 runtime 參數）</h3>
-<p>改變的是演算法實作路徑，參與 build 識別（<code>CFG_SIG</code>），不同組合的產物放在不同 <code>bin/</code> 目錄。預設建置（<code>DEBUG=0</code>）啟用 <code>USE_OPTIMIZED_E1</code>（<code>NR/c_impl/Makefile</code>）。<code>USE_STANDARD_MATH</code>（<code>make debug</code>，同時關閉 <code>USE_OPTIMIZED_E1</code>）改走 libm。log 域增益夾限與 SPP→增益階段共用 v 不再是選項，一律編譯。噪聲追蹤器的最小值環（頻率為主的佈局）與增量最小值只有一種實作，沒有旗標。初始化一律用精確的第 30 百分位，沒有近似選項。<code>SIMD=0|1</code> 只選手寫核心，不改演算法。</p>
+<p>改變的是演算法實作路徑，參與 build 識別（<code>CFG_SIG</code>），不同組合的產物放在不同 <code>bin/</code> 目錄。預設建置（<code>DEBUG=0</code>）定義 <code>USE_OPTIMIZED_E1</code>（<code>NR/c_impl/Makefile</code>），它只選 audiolib 純量 <code>exp1_approx()</code> 的分支順序，NR 的物件不因它改變。<code>USE_STANDARD_MATH</code>（<code>make debug</code>，同時不定義 <code>USE_OPTIMIZED_E1</code>）改走 libm。log 域增益夾限與 SPP→增益階段共用 v 不再是選項，一律編譯。噪聲追蹤器的最小值環（頻率為主的佈局）與增量最小值只有一種實作，沒有旗標。初始化一律用精確的第 30 百分位，沒有近似選項。<code>SIMD=0|1</code> 只選手寫核心，不改演算法。</p>
 
 <h2>4. 什麼時候改什麼</h2>
 <div class="tblwrap"><table>
