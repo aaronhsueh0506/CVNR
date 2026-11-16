@@ -435,8 +435,7 @@ $(TEST_RESTART_TARGET): $(OBJS) $(OBJ_DIR)/test_noise_restart.o $(COMMON_LIB) | 
 $(OBJ_DIR)/test_noise_restart.o: $(TEST_DIR)/test_noise_restart.c | _cfg_guard
 	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
 
-# anr_process_gain / anr_process_gain_with_residual_psd gains against hashes captured from the
-# previous gain API (see test/test_gain_api.c).
+# anr_process_gain / anr_process_gain_with_residual_psd gain hashes (test/test_gain_api.c).
 $(TEST_GAIN_API_TARGET): $(OBJS) $(OBJ_DIR)/test_gain_api.o $(COMMON_LIB) | _cfg_guard
 	$(LINK) $(CFLAGS) -o $@ $(OBJS) $(OBJ_DIR)/test_gain_api.o $(COMMON_LIB) $(LDFLAGS)
 	@echo "Build complete: $@"

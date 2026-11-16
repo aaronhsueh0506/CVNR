@@ -487,9 +487,9 @@ static bool frame_is_silent(const float* power, int n_freqs) {
     return true;
 }
 
-/* Shared by anr_process() and the gain entry points: until the noise floor is initialized,
- * accumulate startup power and bypass. The residual echo PSD augments the SPP/SNR noise only;
- * the noise tracker observes raw power. */
+/* Per-frame stage of anr_process_gain_with_residual_psd(), which every entry point goes through:
+ * accumulates startup power and bypasses until the noise floor is initialized. The residual echo
+ * PSD augments the SPP/SNR noise only; the noise tracker observes raw power. */
 static void process_init_or_gain(AnrDenoiser* self, const float* residual_echo_psd, bool silent) {
     const int nf = self->n_freqs;
     if (!self->is_initialized) {
