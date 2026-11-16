@@ -35,8 +35,8 @@ this API. Select build artifacts through the Makefile query targets
 
 Python implementation, tools, tests, YAML configuration and requirements live
 under `python/`, matching the adjacent AEC repository layout. The repository
-root holds `c_impl/`, `docs/` and `test_wav/`; benchmark tools write generated
-outputs to `results/`.
+root holds `c_impl/` and `docs/`; local audio material goes in `test_wav/` (not
+tracked) and benchmark tools write generated outputs to `results/`.
 
 | Path | Content |
 |---|---|
@@ -53,10 +53,10 @@ python3 -m pip install -r python/requirements-dev.txt
 python3 python/process_audio.py input.wav --versions V3-2 --nr-mode balanced
 PYTHONPATH=python python3 -c "from denoisers import MmseLsaDenoiser"
 python3 -m pytest
-python3 python/tools/parity_nr.py --help
+c_impl/test/pyc_parity_nr.sh --help
 ```
 
-The WAV CLI and parity tool resolve default configuration beside the Python
+The WAV CLI and the parity tool (`python/tools/pyc_parity_nr.py`) resolve default configuration beside the Python
 tree independently of the working directory. Benchmark tools distinguish the
 repository root (Git identity, datasets and results) from its Python directory
 (module imports and YAML). `pytest.ini` resolves imports and test discovery

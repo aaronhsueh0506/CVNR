@@ -126,7 +126,7 @@
 
 ## 使用方法
 
-以下範例的 `test_wav/wav/*.wav` 不在 git 內（`test_wav/` 只追蹤 `music/`）：把 `test_wav/opus/<name>.opus` 用 `ffmpeg -i test_wav/opus/<name>.opus test_wav/wav/<name>.wav` 解成 wav，或換成自己的檔案。
+以下範例的 `test_wav/wav/*.wav` 不在 git 內（`test_wav/` 是本機素材，不入版控）：把 `test_wav/opus/<name>.opus` 用 `ffmpeg -i test_wav/opus/<name>.opus test_wav/wav/<name>.wav` 解成 wav，或換成自己的檔案。
 
 ### 3.1 基本用法
 

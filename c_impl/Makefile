@@ -349,7 +349,8 @@ $(TARGET): $(OBJS) $(EXAMPLE_OBJS) $(COMMON_LIB) | _cfg_guard
 # Built separately from denoise_wav (both have their own main()).
 # Honors EXTRA_CFLAGS, so:  make parity            -> fast-math
 #                           make debug parity       -> std-math (or: make parity DEBUG=1)
-# See python/tools/parity_nr.py for the Python side.
+# parity_runner is the self-check reference of test/pyc_parity_nr.sh and the subject of
+# test-parity-runner; the Python comparison itself is pyc_parity_nr (see below).
 # =============================================================================
 .PHONY: parity
 PARITY_TARGET = $(BIN_DIR)/parity_runner

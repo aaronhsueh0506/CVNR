@@ -4,6 +4,12 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [Unreleased] — 2026-11-16 — Manual parity script and music fixtures removed
+
+### Removed
+- `python/tools/parity_nr.py` (the manual `dump` / `compare` flow, statistics only, no pass/fail). The Python<->C numeric gate is `pyc_parity_nr` (`c_impl/test/pyc_parity_nr.sh`, run by `make test` and `make test-full`); `c_impl/README.md` and `docs/anr_migration.md` point to it, and the `[CP]` evidence in `docs/c_python_function_map.md` now cites `python/tools/pyc_parity_nr.py` with `c_impl/test/pyc_parity/pyc_gain_driver.c`. `parity_runner` and `make parity` stay: `pyc_parity_nr.sh` builds `parity_runner` as its self-check reference and `make test-parity-runner` tests it.
+- `test_wav/music/fix_gain_music.wav` and `test_wav/music/fix_gain_noise.wav`: no tracked file remains under `test_wav/`, which is local audio material. The `.gitignore` comment and the README / `docs/reference/metrics.md` sentences about a tracked `test_wav/music/` are reworded, and the `denoise_mem` against `denoise_wav` byte-comparison example in `c_impl/README.md` names only the 48 kHz `babble_0dB.wav` run.
+
 ## [Unreleased] — 2026-11-16 — Frozen-bin reseed in the noise tracker (behaviour change)
 
 A bin whose power stays above 64 times its noise estimate for 2.048 s restarts from the smoothed power. Before, zero bins that returned after 0.6 s or more (the estimate still above the inert floor 1e-20) stayed at gain near 1 until the stream ended or the estimate had decayed below 1e-20 (10 to 12 s): the posterior is exactly 1, the update coefficient is exactly 1.0 and the estimate cannot move; a lower bound on the estimate cannot change that. The same latch is visible in the Python twin (`McraNoiseEstimator`).

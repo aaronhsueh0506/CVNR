@@ -50,12 +50,11 @@ no-op、可重複呼叫：NE10 的 R2C/C2R twiddle cfg 從呼叫端 pool 切出�
 external-memory 初始化 `ne10_fft_init_r2c_float32_ext`），沒有 backend-internal malloc。完整範例見
 [記憶池範例](../docs/reference/streaming.md) §1.5 的 `create_static_nr`。
 
-演算法與 malloc 版使用同一個處理核心（只差配置方式）：實測 `denoise_mem` 輸出與 `denoise_wav` byte-for-byte 一致：`test_wav/wav/babble_0dB.wav`（48 kHz/1024，四個 level）、
-`test_wav/music/fix_gain_noise.wav`（16 kHz，256 與 512 兩個 grid，mild／balanced／aggressive）；其他素材與 grid 未逐一比對。同一機制也覆蓋子模組
+演算法與 malloc 版使用同一個處理核心（只差配置方式）：實測 `denoise_mem` 輸出與 `denoise_wav` byte-for-byte 一致：`test_wav/wav/babble_0dB.wav`（48 kHz/1024，四個 level）；其他素材與 grid 未逐一比對。同一機制也覆蓋子模組
 `fft_get_mem_size`/`fft_init`、`noise_estimator_get_mem_size`/`noise_estimator_init`、
 `spp_get_mem_size`/`spp_init`。
 
-`test_wav/` 內只有 `music/` 的兩個 wav 在 git 內；`wav/`、`opus/`、`scene_change/`、`vctk_demand/` 是本機素材，不入版控。`wav/` 的 48 kHz babble／car／street／clean 檔對應 `opus/` 內同名的 `.opus`，沒有 wav 時可用 `ffmpeg -i test_wav/opus/<name>.opus test_wav/wav/<name>.wav` 解出（範例與 `docs/reference/metrics.md` 的路徑都以這個目錄為準）。
+`test_wav/` 內沒有任何檔案在 git 內；`wav/`、`opus/`、`scene_change/`、`vctk_demand/` 是本機素材，不入版控。`wav/` 的 48 kHz babble／car／street／clean 檔對應 `opus/` 內同名的 `.opus`，沒有 wav 時可用 `ffmpeg -i test_wav/opus/<name>.opus test_wav/wav/<name>.wav` 解出（範例與 `docs/reference/metrics.md` 的路徑都以這個目錄為準）。
 
 **零 malloc 保證**：malloc 路徑編進同一份 object，所以 `nm` 一定看得到
 `malloc`/`calloc`/`free` 符號（來自 `_create()`）。保證的是**靜態路徑在執行期不呼叫任何配置器**：
@@ -171,48 +170,18 @@ if (anr_reconfigure(denoiser, &target) != 0) { /* 幾何不符或 target 無效 
 
 ### Python↔C 數值對齊驗證 (parity harness)
 
-`python/tools/parity_nr.py` + `example/parity_runner.c` 提供可重現的埠正確性驗證，
-**隔離 FFT 差異**：兩端餵入 byte-identical 的逐幀複數頻譜，只比 gain/SPP/MCRA 運算。
-
-Python dump 可用 `--fft-size` 明確選 grid：A＝16k/256/128、
-B＝16k/512/256、C＝48k/1024/512。NRP2 header 記錄輸入 sample rate，
-`n_freqs` 決定 FFT size；C runner 從這兩者重建相同 grid。
-`compare` 回報絕對 gain 差異的 worst／median／mean；Python/C 比較是
-float64／float32 與數學近似的數值容差檢查，不宣稱 bit-exact。
+數值閘門是 `pyc_parity_nr`：`test/pyc_parity_nr.sh` 建出 C 側兩支 driver（`test/pyc_parity/pyc_gain_driver.c`、
+`test/pyc_parity/pyc_e2e_driver.c`），用固定輸入（`test/pyc_parity/data`，以 `SHA256SUMS` 釘住）餵給 C 與
+`python/tools/pyc_parity_nr.py`，分兩層比較：L1 為 std-math C 對 Python（偏差即同步 bug）、L2 為出貨建置對 std-math C
+（已接受的 fast-math 近似）。gain 情境讓兩端吃 byte-identical 的頻譜、只比 gain／SPP／噪聲追蹤運算，e2e 情境比整條波形；
+容差固定，已知落差列在 `test/pyc_parity/expected_red.json`。`make test` 跑閘門子集，`make test-full` 跑全部情境
+（需要 numpy／scipy／pyyaml 與 audiolib 同層 checkout）；單獨執行：
 
 ```bash
-# 0. 輸出夾（repo 根目錄的 results/，benchmark 工具也寫這裡）
-mkdir -p ../results
-
-# 1. Python 端 dump 參考頻譜 + gain
-python3 ../python/tools/parity_nr.py dump --wav ../test_wav/wav/babble_10dB.wav --out ../results/parity_in.bin
-
-# 2a. C 端 fast-math（bin 目錄依 build flags 雜湊）
-ac=$(make -s --no-print-directory -C ../../audiolib/common print-lib-path)
-make DEBUG=0 COMMON_LIB="$ac" parity
-bin_dir=$(make -s DEBUG=0 COMMON_LIB="$ac" print-bin-dir)
-"$bin_dir/parity_runner" ../results/parity_in.bin ../results/g_fast.bin
-python3 ../python/tools/parity_nr.py compare --ref ../results/parity_in.bin --c-gains ../results/g_fast.bin
-
-# 2b. C 端 standard-math（檢查 float32/float64 殘差）
-make DEBUG=1 COMMON_LIB="$ac" parity
-bin_dir=$(make -s DEBUG=1 COMMON_LIB="$ac" print-bin-dir)
-"$bin_dir/parity_runner" ../results/parity_in.bin ../results/g_debug.bin
-python3 ../python/tools/parity_nr.py compare --ref ../results/parity_in.bin --c-gains ../results/g_debug.bin
+test/pyc_parity_nr.sh --brief   # 從 c_impl/ 執行；--help 看全部選項
 ```
 
-NRP2 dump header 會攜帶 `sample_rate`；C 端據此建立完全相同的 signal grid
-與 wall-clock-retimed EMA/count。NRP1 header 視為 16 kHz。實測
-（48 kHz babble_10dB.wav，3480 幀 × 513 bin）：
-
-| build | worst &#124;Δgain&#124; | median &#124;Δgain&#124; | mean &#124;Δgain&#124; |
-|-------|--------------|---------------|-------------|
-| standard-math (`-DUSE_STANDARD_MATH`) | 1.192e-5 | 1.490e-8 | 4.535e-8 |
-| fast-math (預設) | 7.277e-3 | 1.113e-4 | 2.268e-4 |
-
-上表的 standard-math 使用 `DEBUG=0 EXTRA_CFLAGS=-DUSE_STANDARD_MATH`，
-與上方 `DEBUG=1` 指令不同；DEBUG=1 另外關閉 `USE_OPTIMIZED_E1`。
-上表是該素材的實測殘差，不是所有輸入的通用容差上限。standard-math 仍有
-float32/float64 誤差；fast-math 另外包含 `fast_exp`（LUT +
+固定輸入的 wav 不入版控，缺檔時用 `test/pyc_parity/make_pyc_parity_data.py` 重建。float32/float64 與數學近似的
+差異是數值容差檢查，不宣稱 bit-exact。standard-math 仍有 float32/float64 誤差；fast-math 另外包含 `fast_exp`（LUT +
 Taylor，相對誤差 ≤ 0.39%）與 degree-4 minimax `fast_log`（絕對誤差 < 1e-4），兩者都是
 有界的近似（NR 不呼叫 `fast_sqrt`）。

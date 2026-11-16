@@ -15,7 +15,7 @@ python3 -m pytest
 ```
 
 `config/` holds Python-only YAML. C presets are in
-`../c_impl/include/anr_types.h`. Audio fixtures are in `../test_wav/` and
+`../c_impl/include/anr_types.h`. Local audio material is expected in `../test_wav/` (not tracked) and
 benchmark outputs go to `../results/`; repository-aware tools resolve those
 paths independently of this directory.
 
