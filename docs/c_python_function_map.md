@@ -99,7 +99,7 @@
 | `src/anr.c:anr_get_speech_protect_frame_threshold` | `denoisers/v3_2_mmse_lsa.py:MmseLsaDenoiser.__init__#speech_protect_frame_threshold_effective` | mirror | — | `c_impl/test/test_reconfigure.c`[C] | [註解] = 設定值 + (q − 0.52)；Python 註解寫明以 float32 計算「like the C port」。 |
 | `src/anr.c:anr_debug_status` | — | C-only | D-19 | `c_impl/example/main.c`[C] | [稽核] 診斷用唯讀彙總（mean／min gain dB 等）；Python 沒有，`example/main.c` 使用。 |
 
-`final_blend`／`final_store` 不在本表範圍：它們的 kernel（`skr_final_blend_*`、`skr_final_store_*`）在 `audiolib/common/utility/simd_nr.h`，`anr.c` 只在 `ANR_VECTOR` 時直接呼叫 `skr_*_neon`（純量建置在 `calculate_gain` 內走同一公式），函式級條目在 Audio_ALG/docs/c_python_function_map.md 的 AC-SIMD-08。Python 對應如下。
+`final_blend`／`final_store` 不在本表範圍：它們的 kernel（`skr_final_blend_*`、`skr_final_store_*`）在 `audiolib/common/utility/simd_nr.h`，`calculate_gain` 在 `ANR_VECTOR` 時呼叫 `skr_*_neon`，否則呼叫同名 `skr_*_scalar`（兩者逐位元相同），函式級條目在 Audio_ALG/docs/c_python_function_map.md 的 AC-SIMD-08。Python 對應如下。
 
 - `final_blend` ↔ `core/gain_calculators/mmse_lsa.py:MmseLsaGainCalculator.calculate#log_gain_prev`（mirror，已知落差 S-35、D-20、D-18）。[讀碼] log 域 SPP 混合 `p·log G_H1 + (1−p)·log g_min`、非對稱 attack／decay 平滑、log 域夾限。Python 只有 `floor_blend='log'` 是出貨路徑；`'sqrt'`／`'linear'` 混合、per-bin `g_min`、alpha override、`use_asymmetric_smoothing=False`（用 `alpha_g`）是 Python-only（S-35）；C 恆走非對稱，`alpha_g` 惰性（D-20）。
 - `final_store` ↔ `core/gain_calculators/mmse_lsa.py:MmseLsaGainCalculator.calculate#log_gain_prev`＋`denoisers/v3_2_mmse_lsa.py:MmseLsaDenoiser.denoise_spectrum#enhanced_psd_prev`（partial，已知落差 D-18）。[讀碼] log 增益落在 [log g_min, 0] 之外時直接取 g_min／1，並寫回 DD 狀態；Python 為 `np.exp` 後 `np.clip(g_min, 1)`，再以夾限後的 gain 重算 `log_gain_prev`，C 存的是夾限後的 log 值。
