@@ -32,7 +32,7 @@ static int fail(const char* msg) {
 int main(int argc, char** argv) {
     if (argc < 4) return fail("usage: pyc_gain_driver <in.nrp2> <out.gains> <level> [makeup_gain=0|1]");
     AnrLevel level;
-    if (anr_cli_parse_level(argv[3], &level) != 0) return fail("unknown level (expected 0 mild, 1 moderate, 2 balanced, 3 aggressive)");
+    if (anr_cli_parse_level(argv[3], &level) != 0) return fail("unknown level (expected " ANR_CLI_LEVELS ")");
 
     FILE* fin = fopen(argv[1], "rb");
     if (!fin) return fail("cannot open input");

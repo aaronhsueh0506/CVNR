@@ -28,7 +28,7 @@ int main(int argc, char** argv) {
     const int n_samples = atoi(argv[2]), sr = atoi(argv[3]), fft_size = atoi(argv[4]);
     AnrLevel level;
     if (n_samples <= 0 || sr <= 0 || fft_size <= 0) return fail("bad numeric argument");
-    if (anr_cli_parse_level(argv[5], &level) != 0) return fail("unknown level (expected 0 mild, 1 moderate, 2 balanced, 3 aggressive)");
+    if (anr_cli_parse_level(argv[5], &level) != 0) return fail("unknown level (expected " ANR_CLI_LEVELS ")");
 
     AnrConfig cfg = anr_config_for_level_grid(sr, fft_size, (AnrLevel)level);
     if (!anr_validate_config(&cfg)) return fail("config rejected by anr_validate_config");

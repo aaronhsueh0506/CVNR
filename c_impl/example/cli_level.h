@@ -8,6 +8,9 @@
 
 #include "anr_types.h"
 
+/* The accepted level numbers, as the example and test programs print them in a bad-level error. */
+#define ANR_CLI_LEVELS "0 mild, 1 moderate, 2 balanced, 3 aggressive"
+
 /* Parses the whole string as a decimal AnrLevel number (0 mild, 1 moderate, 2 balanced,
  * 3 aggressive). Returns 0 and writes *out, or -1 (nothing written) for NULL, an empty or padded
  * string, trailing characters, or a value outside 0..3. */

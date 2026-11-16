@@ -32,7 +32,7 @@ int main(int argc, char* argv[]) {
     AnrLevel nr_level = ANR_LEVEL_BALANCED;
     if (argc >= 5) {
         if (anr_cli_parse_level(argv[4], &nr_level) != 0) {
-            fprintf(stderr, "Error: unknown NR level '%s' (0 mild, 1 moderate, 2 balanced, 3 aggressive)\n", argv[4]);
+            fprintf(stderr, "Error: unknown NR level '%s' (" ANR_CLI_LEVELS ")\n", argv[4]);
             return 2;
         }
     }

@@ -79,7 +79,7 @@ int main(int argc, char* argv[]) {
                 return 2;
             }
             if (anr_cli_parse_level(argv[++i], &nr_level) != 0) {
-                fprintf(stderr, "%s: unknown NR level '%s' (0 mild, 1 moderate, 2 balanced, 3 aggressive)\n", argv[0], argv[i]);
+                fprintf(stderr, "%s: unknown NR level '%s' (" ANR_CLI_LEVELS ")\n", argv[0], argv[i]);
                 return 2;
             }
         }
