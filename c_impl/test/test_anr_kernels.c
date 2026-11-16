@@ -208,6 +208,7 @@ static int test_frozen_run(void) {
         float* seed = seed_s + (trial / 2) % OFFSETS;
         float ratio = (trial % 5 == 0) ? draw(0.0f, 200.0f, NULL, 0) : SKR_FROZEN_POWER_RATIO;
         uint16_t run_hops = (trial % 7 == 0) ? (uint16_t)random_bits() : hops[random_bits() % 8u];
+        if (trial % 11 == 3) run_hops = 0; /* explicit row: every above-threshold bin fires, the others stay cleared */
         for (int i = 0; i < n; ++i) {
             noise[i] = draw(0.0f, 1e5f, NULL, 0);
             seed[i] = draw(0.0f, 1e6f, NULL, 0);
