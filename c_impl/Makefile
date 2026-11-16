@@ -479,7 +479,7 @@ $(TEST_PARITY_TARGET): $(OBJS) $(OBJ_DIR)/test_config_parity.o $(COMMON_LIB) | _
 $(OBJ_DIR)/test_config_parity.o: $(TEST_DIR)/test_config_parity.c | _cfg_guard
 	$(CC) $(CFLAGS) -MD -MP -c -o $@ $<
 
-# Argument handling of denoise_wav and denoise_mem (--nr-level/--nr-mode need a value).
+# Argument handling of denoise_wav and denoise_mem (unknown options are refused; --fft-size, --nr-level and --nr-mode need a value).
 .PHONY: test-cli-args
 test-cli-args: $(TARGET) $(MEM_TARGET)
 	PYTHON="$(PYTHON)" sh $(TEST_DIR)/test_cli_args.sh "$(abspath $(TARGET))" "$(abspath $(MEM_TARGET))"
@@ -900,7 +900,7 @@ help:
 	@echo "  test-shared-startup - Build + run the shared startup/ring storage equivalence test"
 	@echo "  test-api-cpp - Build + run the C++ header compile/link smoke test"
 	@echo "  test-nrp2-io - Build + run the NRP2 header limit test (a gain table beyond size_t is rejected)"
-	@echo "  test-cli-args - Build denoise_wav and denoise_mem and run the option-value checks of their --nr-level/--nr-mode"
+	@echo "  test-cli-args - Build denoise_wav and denoise_mem and check their options (unknown option, --fft-size/--nr-level/--nr-mode values)"
 	@echo "  test-bit-exact - Compare the optimized kernels with the scalar reference (needs python3); also runs the"
 	@echo "                   kernel-level tests test_anr_kernels and test_min_ordered_special; test_anr_kernels is the only"
 	@echo "                   gate for the ring growth constant and the inert-restart weight; with SIMD=0 it compares scalar with scalar"

@@ -4,6 +4,7 @@
 
 #include <ctype.h>
 #include <errno.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #include "anr_types.h"
@@ -23,6 +24,14 @@ static inline int anr_cli_parse_level(const char* text, AnrLevel* out) {
     if (errno != 0 || *end != '\0' || v < 0 || v > 3) return -1;
     *out = (AnrLevel)v;
     return 0;
+}
+
+/* Option argv[i] takes the next token as its value unless that is missing or starts with "--" (a
+ * lone "-" or "-5" is a value). Returns 1 and prints "<prog>: <option> needs a value" when it has none. */
+static inline int anr_cli_value_missing(int argc, char* argv[], int i) {
+    if (i + 1 < argc && !(argv[i + 1][0] == '-' && argv[i + 1][1] == '-')) return 0;
+    fprintf(stderr, "%s: %s needs a value\n", argv[0], argv[i]);
+    return 1;
 }
 
 #endif

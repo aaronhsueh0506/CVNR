@@ -73,7 +73,10 @@ Output unchanged: `cc -E -P` of every `.c`/`.cpp` under `src/`, `example/` and `
 
 ### Removed
 - Build flag `USE_SINGLE_CLAMP`. It only skipped the final `[g_min, 1.0]` clamp in the branch that is compiled without `USE_FAST_GAIN_SMOOTHING` (the shipping build never reaches that branch; `make debug` never defined the flag), so the clamp is now unconditional there. `Makefile` no longer appends it to the default `CFLAGS`, so the default build identity (`CFG_SIG`, hence the `bin/` and `obj/` directory name) changes once; a build that still passes the flag compiles, nothing reads it. The shipping build has three `USE_*` optimizations (`USE_FAST_GAIN_SMOOTHING`, `USE_SHARED_XI_RATIO`, `USE_OPTIMIZED_E1`); `README`, `Makefile` help, `nr_c_api_params.html`, `python/tools/test_bit_exact.py` and `pyc_parity_nr.py`/`.sh` follow, and `Audio_ALG/pipelines/tests/pyc_parity_pipelines.sh` no longer asserts the flag on the compile lines.
-- `--bypass` from `denoise_wav` and `denoise_mem` (a copy of the input to the output; no test ran it, `test_cli_args.sh` used it only as the "next token" rejection case and now uses `--debug`). Both programs ignore unknown options, so a script that still passes `--bypass` now gets the denoised output instead of a copy. `docs/c_user_manual_zh_TW.md` loses the demo line; the `main.c` step comments are renumbered.
+- `--bypass` from `denoise_wav` and `denoise_mem` (a copy of the input to the output; no test ran it, `test_cli_args.sh` used it only as the "next token" rejection case and now uses `--debug`). Both programs now refuse an unknown option (exit 2, `unknown option '<token>'`, no output file), so a script that still passes `--bypass` fails instead of getting denoised output. `docs/c_user_manual_zh_TW.md` loses the demo line; the `main.c` step comments are renumbered.
+
+### Changed
+- `denoise_wav` and `denoise_mem` exit 2 with `<option> needs a value` when `--fft-size` is the last token or is followed by a `--` token, as `--nr-level` does; `anr_cli_value_missing()` in `example/cli_level.h` is the one check for all three options. `test_cli_args.sh` covers an unknown option, `--bypass`, and `--fft-size` without and with a value.
 
 ## [Unreleased] — 2026-11-14 — Internal headers under `include/internal/`, `SppEstimator.q` removed, `example/wav_io.h` folded
 

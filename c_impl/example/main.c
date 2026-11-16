@@ -76,18 +76,18 @@ int main(int argc, char* argv[]) {
     for (int i = 3; i < argc; i++) {
         if (strcmp(argv[i], "--debug") == 0) {
             debug = 1;
-        } else if (strcmp(argv[i], "--fft-size") == 0 && i + 1 < argc) {
+        } else if (strcmp(argv[i], "--fft-size") == 0) {
+            if (anr_cli_value_missing(argc, argv, i)) return 2;
             fft_size_override = atoi(argv[++i]);
         } else if (strcmp(argv[i], "--nr-level") == 0 || strcmp(argv[i], "--nr-mode") == 0) {
-            /* The value is the next token unless that starts with "--" (a lone "-" or "-5" is a value). */
-            if (i + 1 >= argc || (argv[i + 1][0] == '-' && argv[i + 1][1] == '-')) {
-                fprintf(stderr, "%s: %s needs a value\n", argv[0], argv[i]);
-                return 2;
-            }
+            if (anr_cli_value_missing(argc, argv, i)) return 2;
             if (anr_cli_parse_level(argv[++i], &nr_level) != 0) {
                 fprintf(stderr, "%s: unknown NR level '%s' (" ANR_CLI_LEVELS ")\n", argv[0], argv[i]);
                 return 2;
             }
+        } else {
+            fprintf(stderr, "%s: unknown option '%s'\n", argv[0], argv[i]);
+            return 2;
         }
     }
 

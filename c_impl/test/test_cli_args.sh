@@ -1,7 +1,8 @@
 #!/bin/sh
-# Argument handling of the example CLIs (denoise_wav and denoise_mem): --nr-level and its alias --nr-mode need a
-# value, a following token that starts with "--" is not one (exit 2, "<prog>: <option> needs a value" on stderr), and
-# a lone "-" or "-1" is a value. The value is the level number 0..3 as a whole decimal string: anything else (a level
+# Argument handling of the example CLIs (denoise_wav and denoise_mem). An unknown option (the removed --bypass
+# included) is exit 2 with "unknown option" and no output file. --fft-size, --nr-level and its alias --nr-mode need
+# a value: a following token that starts with "--" is not one (exit 2, "<prog>: <option> needs a value" on stderr),
+# and a lone "-" or "-1" is a value. The level is the number 0..3 as a whole decimal string: anything else (a level
 # name, "-", "-1", "3x", an empty or padded string, 4) is exit 2 with "unknown NR level" and no output file.
 # Usage: test_cli_args.sh <denoise_wav> <denoise_mem>   (PYTHON overrides python3; it only writes the input WAV)
 set -u
@@ -44,6 +45,16 @@ expect_reject() {
     st=$?
     check "$(basename "$bin") $* -> exit 2, '$opt needs a value'" "$st"
 }
+# expect_unknown <bin> <option...>: exit 2, "unknown option '<last token>'" on stderr, no output file written.
+expect_unknown() {
+    bin=$1; shift
+    for bad in "$@"; do :; done
+    rm -f "$d/out.wav"
+    "$bin" "$d/in.wav" "$d/out.wav" "$@" >"$d/stdout" 2>"$d/stderr"; rc=$?
+    [ "$rc" -eq 2 ] && grep -q "unknown option '$bad'" "$d/stderr" && [ ! -e "$d/out.wav" ]
+    st=$?
+    check "$(basename "$bin") $* -> exit 2, unknown option" "$st"
+}
 run_ok() {  # run_ok <bin> <out> [args...]
     bin=$1; out=$2; shift 2
     "$bin" "$d/in.wav" "$out" "$@" >"$d/stdout" 2>"$d/stderr"
@@ -66,6 +77,11 @@ for bin in "$1" "$2"; do
     expect_reject "$bin" --nr-mode
     expect_reject "$bin" --nr-level --debug
     expect_reject "$bin" --nr-mode --debug
+    expect_reject "$bin" --fft-size
+    expect_unknown "$bin" --bypass
+    expect_unknown "$bin" --debug --bypass
+    expect_unknown "$bin" bypass
+    run_ok "$bin" "$d/fft.wav" --fft-size 512; check "$name --fft-size 512" $?
 done
 
 [ "$fail" -eq 0 ] && echo "test_cli_args: PASS" || { echo "test_cli_args: FAIL" >&2; exit 1; }

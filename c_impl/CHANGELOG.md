@@ -72,7 +72,10 @@
 
 ### 移除 (Removed)
 - 建置旗標 `USE_SINGLE_CLAMP`。它只會略過沒有 `USE_FAST_GAIN_SMOOTHING` 時那個分支末端的 `[g_min, 1.0]` clamp（出貨建置走不到該分支；`make debug` 從未定義此旗標），現在該分支的 clamp 一律執行。`Makefile` 預設 `CFLAGS` 不再加它，所以預設建置識別（`CFG_SIG`，也就是 `bin/`、`obj/` 目錄名）換新一次；仍傳此旗標的建置照常編譯，沒有程式讀它。出貨建置剩三個 `USE_*` 優化（`USE_FAST_GAIN_SMOOTHING`、`USE_SHARED_XI_RATIO`、`USE_OPTIMIZED_E1`）；README、`Makefile` help、`nr_c_api_params.html`、`python/tools/test_bit_exact.py`、`pyc_parity_nr.py`／`.sh` 一併改，`Audio_ALG/pipelines/tests/pyc_parity_pipelines.sh` 不再在編譯列上斷言此旗標。
-- `denoise_wav`、`denoise_mem` 的 `--bypass`（把輸入複製到輸出；沒有測試跑它，`test_cli_args.sh` 只把它當「下一個 token」的拒絕案例，現改用 `--debug`）。兩支程式本來就忽略未知選項，所以仍傳 `--bypass` 的腳本現在拿到的是降噪後的輸出而不是複製檔。`docs/c_user_manual_zh_TW.md` 刪掉示範行；`main.c` 的步驟註解重新編號。
+- `denoise_wav`、`denoise_mem` 的 `--bypass`（把輸入複製到輸出；沒有測試跑它，`test_cli_args.sh` 只把它當「下一個 token」的拒絕案例，現改用 `--debug`）。兩支程式現在拒絕不認得的選項（exit 2，印 `unknown option '<token>'`，不產生輸出檔），所以仍傳 `--bypass` 的腳本會失敗，不再拿到降噪輸出。`docs/c_user_manual_zh_TW.md` 刪掉示範行；`main.c` 的步驟註解重新編號。
+
+### 變更 (Changed)
+- `denoise_wav`、`denoise_mem` 的 `--fft-size` 是最後一個 token、或後面接 `--` 開頭的 token 時，以 exit 2 結束並印 `<option> needs a value`，與 `--nr-level` 一致；三個選項共用 `example/cli_level.h` 的 `anr_cli_value_missing()`。`test_cli_args.sh` 檢查未知選項、`--bypass`、沒給值與給值的 `--fft-size`。
 
 ## [Unreleased] · 2026-11-14 · 內部標頭搬到 `include/internal/`、移除 `SppEstimator.q`、`example/wav_io.h` 併入呼叫端
 
