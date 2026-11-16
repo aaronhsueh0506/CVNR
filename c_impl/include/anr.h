@@ -40,9 +40,9 @@ int anr_process(AnrDenoiser* self,
  * NULL for NULL arguments, state untouched. */
 const float* anr_process_gain(AnrDenoiser* self, const Complex* spectrum_in);
 
-/* anr_process_gain() with residual_echo_psd[n_freqs], in audio power scale, raising only the
- * SPP/SNR noise floor; the noise tracker still follows the input power. NULL equals
- * anr_process_gain(). */
+/* anr_process_gain() with residual_echo_psd[n_freqs] (audio power scale: AEC r2 / 32768^2, not
+ * int16^2), raising only the SPP/SNR noise floor; the noise tracker still follows the input
+ * power. NULL equals anr_process_gain(). */
 const float* anr_process_gain_with_residual_psd(AnrDenoiser* self,
                                                 const Complex*   spectrum_in,
                                                 const float*     residual_echo_psd);
