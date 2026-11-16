@@ -146,6 +146,17 @@ do not advance the noise tracker; `make test-noise-restart` covers the behavior.
   below -6 dB from 0.192 s after the noise starts (control without silence: 0.19-0.26 s)
   and is within 3 dB of its converged level from 0.26-0.58 s (control: 0.26-0.45 s).
 - Streams without any all-zero frame are unaffected by the rule.
+- Bins that are exactly zero while the rest of the frame stays live are not silence, so the
+  tracker keeps running. Their noise estimate decays by about 0.96 per hop and is restarted
+  only after it falls below `SKR_NOISE_PSD_INERT` (1e-20), which takes 10 to 12 s at all
+  three grids. `make test-noise-restart` returns 20 s of zeroed upper-half bins to a
+  stationary signal at 16 kHz/FFT 256, 16 kHz/FFT 512 and 48 kHz/FFT 1024, with and without
+  the broadband gate, and requires the upper-half gain to equal the control within 0.02
+  (0.125 in both). With the restart disabled the same stream stays at gain 1.0.
+- Gaps of 1, 3, 5, 8 and 10 s are shorter than that and stay at gain 1.0 on all three grids,
+  with and without the gate: the estimate is far below the returning power, the posterior is
+  exactly 1 and the update coefficient stays 1.0. A lower bound on the estimate does not
+  change this.
 - Streams that contain all-zero frames differ by design: in a speech-like noise stream with
   isolated zero stretches of 20, 60 and 150 ms, the output in the 100 ms blocks after the
   longest stretch is up to 4.4 dB quieter than the same stream without a stretch (deeper

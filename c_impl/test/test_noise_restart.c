@@ -3,6 +3,9 @@
  *    with silence initializes on the signal that follows and a converged floor survives a gap;
  *  - after five seconds of silence a stationary tone whose first frame is a partial onset frame
  *    reaches the same steady gain as the same tone without leading silence;
+ *  - bins that are exactly zero for long enough to reach the inert floor, while the rest of the
+ *    frame stays live, track the signal again when it returns (three grids, with and without the
+ *    broadband gate);
  *  - the first frame after initialization is not pushed to the gain floor by an a-priori SNR
  *    estimate that lacks the floor of later frames.
  */
@@ -89,6 +92,45 @@ static void run_state_case(const char* label, AnrConfig cfg) {
     free(spec); anr_destroy(d);
 }
 
+/* Mean gain of the upper half of the spectrum over the last second of a stationary signal that
+ * follows `zero_s` seconds in which those bins are exactly zero while the lower half stays live
+ * (not digital silence, so the tracker runs). The sparse spikes keep the upper half below the
+ * scene-change flatness threshold, so the scene reset cannot mask the tracker. */
+#define ZERO_GAP_S 20.0
+
+static double half_zero_gain(const AnrConfig* cfg, double zero_s) {
+    AnrDenoiser* d = anr_create(cfg);
+    int nf, hop, hi, n_conv, n_zero, n_back, last, h, k;
+    Complex* spec; const float* gain = NULL; double acc = 0.0;
+    if (!d) return -1.0;
+    nf = anr_get_n_freqs(d); hop = anr_get_hop_size(d); hi = nf / 2;
+    n_conv = 4 * cfg->num_init_frames; n_zero = (int)(zero_s * cfg->sample_rate / hop);
+    n_back = (int)(10.0 * cfg->sample_rate / hop); last = cfg->sample_rate / hop;
+    spec = (Complex*)calloc((size_t)nf, sizeof(Complex));
+    for (h = 0; h < n_conv + n_zero + n_back; ++h) {
+        int zeroed = h >= n_conv && h < n_conv + n_zero;
+        for (k = 0; k < nf; ++k) {
+            spec[k].r = (zeroed && k >= hi) ? 0.0f : (k % 16 == 0 ? 12000.0f : 400.0f) + (float)((k * 7 + h * 3) % 11);
+            spec[k].i = 0.0f;
+        }
+        gain = anr_process_gain(d, spec);
+        if (h >= n_conv + n_zero + n_back - last)
+            for (k = hi; k < nf; ++k) acc += gain[k];
+    }
+    free(spec); anr_destroy(d);
+    return acc / ((double)last * (nf - hi));
+}
+
+/* Zero bins decay by about 0.96 per hop; ZERO_GAP_S puts them below the inert floor on every
+ * grid. They must then track the returning signal with the gain of a stream without the gap. */
+static void run_zero_bins_case(const char* label, AnrConfig cfg) {
+    double control = half_zero_gain(&cfg, 0.0);
+    double after = half_zero_gain(&cfg, ZERO_GAP_S);
+    printf("%-40s control %.4f  after %.0f s zero upper half %.4f\n", label, control, ZERO_GAP_S, after);
+    CHECK(control >= 0.0 && after >= 0.0, "%s: create failed", label);
+    CHECK(fabs(after - control) < 0.02, "%s: zeroed bins return at gain %.3f, control %.3f", label, after, control);
+}
+
 /* Posterior SNR below 1 on every bin (the residual-echo PSD far above the signal): the first
  * frame after initialization must not sit at the gain floor while the next frames settle higher.
  * Frames 0..num_init-1 are the unity bypass. */
@@ -132,6 +174,19 @@ int main(void) {
         }
         snprintf(label, sizeof(label), "%d Hz state", rates[r]);
         run_state_case(label, def);
+    }
+    {
+        static const int sr_of[3] = { 16000, 16000, 48000 };
+        static const int fft_of[3] = { 256, 512, 1024 };
+        for (r = 0; r < 3; ++r) {
+            char label[64];
+            AnrConfig cfg = anr_config_for_level_grid(sr_of[r], fft_of[r], ANR_LEVEL_BALANCED);
+            AnrConfig bb = cfg; bb.broadband_threshold = 0.8f;
+            snprintf(label, sizeof(label), "%d Hz %d zero bins, library", sr_of[r], fft_of[r]);
+            run_zero_bins_case(label, cfg);
+            snprintf(label, sizeof(label), "%d Hz %d zero bins, gate 0.8", sr_of[r], fft_of[r]);
+            run_zero_bins_case(label, bb);
+        }
     }
     run_first_frame_case("16000 Hz 256 first frame", anr_config_for_level_grid(16000, 256, ANR_LEVEL_BALANCED));
     run_first_frame_case("16000 Hz 512 first frame", anr_config_for_level_grid(16000, 512, ANR_LEVEL_BALANCED));

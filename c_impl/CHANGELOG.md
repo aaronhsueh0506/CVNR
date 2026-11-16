@@ -15,6 +15,11 @@
 ### 移除 (Removed)
 - `AnrDenoiser.gamma`（`spp_estimate()` 每個 hop 寫入、函式庫內沒有任何地方讀）與 `spp_estimate`、`spp_prepare`、`spp_dd`、`spp_dd_scalar`、`spp_dd_neon`、`spp_dd_elem` 的 `gamma_out` 參數（內部標頭 `include/internal/spp_estimator.h`）；後驗 SNR 在各 kernel 內只當區域值。輸出逐位元相同：`denoise_wav`／`denoise_mem` 摘要（5 個輸入×4 個 level）、五個 `test_gain_api` 雜湊，以及 `test_bit_exact_stream` dump 其餘每一筆記錄（最佳化版與 `ANR_REFERENCE_KERNELS` 版，92,869 筆），在 SIMD=1／0 都與前一版相同。
 
+
+### 新增 (Added)
+- `test_noise_restart` 新增「死 bin 重啟」的行為測試：收斂後，上半頻譜的 bin 連續 20 秒恰為 0（下半頻譜仍有訊號，不是數位靜音），之後訊號回來，要求這些 bin 的增益和沒有間隔的對照組相同（差 < 0.02），涵蓋 16k/256、16k/512、48k/1024，各跑函式庫預設與 `broadband_threshold` 0.8。把 `SKR_NOISE_PSD_INERT` 改成 0（停用重啟）時，六個案例的增益都停在 1.0 而失敗，SIMD=1／0 都是；原本的案例在停用重啟時仍全數通過，之前只有 `test_anr_kernels` 的 twin 比對碰到這條分支。演算法與輸出不變。
+- 已知範圍：恰為 0 的 bin 只有在估計值低於 1e-20（約 10 至 12 秒，三組 grid 相同）才會重啟；1 至 10 秒的間隔，估計值遠低於回來的功率，後驗恰為 1，更新係數恆為 1，這些 bin 增益維持 1.0。對估計值設下限無法改變這一點。
+
 ## [Unreleased] · 2026-11-15 · 增益階段直接用 SPP 階段算好的 `xi/(1+xi)`（行為改變）
 
 `spp_estimate()` 直接把 `xi/(1+xi)` 與夾限後的 `v` 交給增益階段，算法與 Python 參考（`MmseLsaGainCalculator._mmse_gain_base`）相同；增益階段不再用 `v/(gamma+1e-10)` 反推 `xi/(1+xi)`。出貨輸出有數個百分點的增益頻點不同，多數差幾個 ulp，24 檔樣本中尾端最大約 150 ulp；浮點波形在評估集上最大差約 3e-7。

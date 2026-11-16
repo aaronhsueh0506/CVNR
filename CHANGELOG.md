@@ -17,6 +17,11 @@
 ### Removed
 - `AnrDenoiser.gamma` (written every hop by `spp_estimate()`, read by nothing in the library) and the `gamma_out` argument of `spp_estimate`, `spp_prepare`, `spp_dd`, `spp_dd_scalar`, `spp_dd_neon` and `spp_dd_elem` (internal header `include/internal/spp_estimator.h`); the posterior SNR stays a local value in each kernel. Output is byte-identical: `denoise_wav`/`denoise_mem` digests (5 inputs x 4 levels), the five `test_gain_api` hashes, and every remaining record of the `test_bit_exact_stream` dump (optimized and `ANR_REFERENCE_KERNELS` build, 92,869 records) match the previous tree at SIMD=1 and SIMD=0.
 
+
+### Added
+- `test_noise_restart` covers the dead-bin restart behaviourally: after convergence the upper half of the spectrum is exactly zero for 20 s while the lower half stays live (not digital silence), then the signal returns; the gain of those bins must equal a control without the gap (within 0.02) at 16 kHz/256, 16 kHz/512 and 48 kHz/1024, library default and broadband gate 0.8. With `SKR_NOISE_PSD_INERT` set to 0 (restart disabled) all six cases stay at gain 1.0 and fail, at SIMD=1 and SIMD=0; the existing cases still passed with the restart disabled, so only the `test_anr_kernels` twin comparison reached that branch before. Algorithm and output are unchanged.
+- Known range: exactly-zero bins are restarted only once their estimate is below 1e-20 (10 to 12 s, the same at all three grids). For gaps of 1 to 10 s the estimate is far below the returning power, the posterior is exactly 1, the update coefficient is exactly 1.0 and those bins stay at gain 1.0; a lower bound on the estimate does not change this.
+
 ## [Unreleased] — 2026-11-15 — The gain stage takes `xi/(1+xi)` from the SPP stage (behaviour change)
 
 `spp_estimate()` now hands the gain stage `xi/(1+xi)` and the clamped `v` directly, as the Python reference (`MmseLsaGainCalculator._mmse_gain_base`) computes them; the gain stage no longer recovers `xi/(1+xi)` as `v/(gamma+1e-10)`. Shipping output changes in a few percent of the gain bins: usually by a few ulp, with a tail of up to about 150 ulp on a 24-file sample, and the float waveform moves by up to about 3e-7 on the evaluation sets.
