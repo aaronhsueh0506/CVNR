@@ -131,12 +131,7 @@ static void run_case(uint32_t grid, int sr, int fft, AnrLevel level,
 int main(void) {
     if (sizeof(float) != sizeof(uint32_t) || sizeof(Complex) != 2 * sizeof(float)) return 1;
     setvbuf(stdout, NULL, _IOFBF, 65536);
-#if ANR_VECTOR
-    const uint32_t vector_gain = 1;
-#else
-    const uint32_t vector_gain = 0;
-#endif
-    const uint32_t info[] = {STREAM_MAGIC, SK_HAVE_NEON, vector_gain, FRAMES};
+    const uint32_t info[] = {STREAM_MAGIC, SK_HAVE_NEON, ANR_VECTOR, FRAMES};
     write_words(info, 4);
     const int rates[] = {16000, 16000, 48000};
     const int sizes[] = {256, 512, 1024};
