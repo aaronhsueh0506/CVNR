@@ -31,7 +31,8 @@ expect_bad_level() {
     rm -f "$d/out.wav"
     "$bin" "$d/in.wav" "$d/out.wav" "$opt" "$val" >"$d/stdout" 2>"$d/stderr"; rc=$?
     [ "$rc" -eq 2 ] && grep -q "unknown NR level" "$d/stderr" && [ ! -e "$d/out.wav" ]
-    check "$(basename "$bin") $opt '$val' -> exit 2, unknown NR level" $?
+    st=$?
+    check "$(basename "$bin") $opt '$val' -> exit 2, unknown NR level" "$st"
 }
 # expect_reject <bin> <option> [following token...]: exit 2, message names the option, no output file written.
 expect_reject() {
