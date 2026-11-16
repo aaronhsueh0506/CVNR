@@ -54,7 +54,7 @@
 | `denoise_mem` | static memory 路徑（`_get_mem_size` + `_init`）示範 runner |
 | `test_config_validation` | config 驗證與對齊防護的回歸測試（`make test-config`） |
 | `test_config_parity` | 印出各 grid × level 的正規 config（`make test-config-parity`） |
-| 其他 `test_*` | `test-reconfigure`、`test-noise-restart`、`test-gain-api`、`test-scene-change`、`test-shared-startup`、`test-api-cpp`、`test-cli-args`、`test-bit-exact`；`make test`／`make test-full` 為彙總 |
+| 其他 `test_*` | `test-reconfigure`、`test-noise-restart`、`test-gain-api`、`test-scene-change`、`test-shared-startup`、`test-api-cpp`、`test-cli-args`、`test-parity-runner`、`test-nrp2-io`、`test-bit-exact`；`make test`／`make test-full` 為彙總 |
 
 `make publish` 產出的 release 內容為 `libanr.a` 與 `denoise_wav`；header 請直接從
 source tree 取用。
