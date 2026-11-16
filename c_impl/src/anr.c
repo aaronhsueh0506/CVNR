@@ -206,8 +206,7 @@ static void apply_frame_makeup(AnrDenoiser* self) {
 }
 
 /* Apply the LF speech floor only in protected bins; repair DD state where final gain changes. */
-static void apply_low_band_speech_floor(AnrDenoiser* self,
-                                        float* gain_out) {
+static void apply_low_band_speech_floor(AnrDenoiser* self) {
     if (!self->config.speech_protect_floor ||
         !self->speech_protect_frame_active) return;
 
@@ -220,9 +219,9 @@ static void apply_low_band_speech_floor(AnrDenoiser* self,
         float spp_k = self->spp[k];
         if (cross_band_prior)
             spp_k = lift_spp(spp_k, self->cross_band_prior_lift);
-        if (spp_k <= threshold || gain_out[k] >= floor_gain) continue;
+        if (spp_k <= threshold || self->gain[k] >= floor_gain) continue;
 
-        gain_out[k] = floor_gain;
+        self->gain[k] = floor_gain;
         /* Scratch still holds this frame's G_H1. */
         store_gain_state(self, k, self->log_speech_protect_floor_gain,
                          dd_from_gmmse ? self->gain_xi_ratio_scratch[k]
@@ -254,8 +253,6 @@ static const float* prepare_noise_for_spp(AnrDenoiser* self,
 
 /* OM-LSA gain from the SPP stage's clamped v and xi/(1+xi) in the gain scratch. */
 static void calculate_gain(AnrDenoiser* self) {
-    const float* spp = self->spp;
-    float* gain_out  = self->gain;
     int   n_freqs      = self->n_freqs;
     float g_min        = self->g_min;
     float log_g_min    = self->log_g_min;
@@ -294,20 +291,20 @@ static void calculate_gain(AnrDenoiser* self) {
     SkrFinalGainParams params = {log_g_min, g_min, alpha_attack, alpha_decay, prior_lift,
                                  cross_band_prior, self->gain_initialized, dd_from_gmmse};
 #if ANR_VECTOR
-    skr_final_blend_neon(&params, spp, v_scratch, self->log_gain_prev, gain_out, n_freqs);
+    skr_final_blend_neon(&params, self->spp, v_scratch, self->log_gain_prev, self->gain, n_freqs);
 #else
-    skr_final_blend_scalar(&params, spp, v_scratch, self->log_gain_prev, gain_out, n_freqs);
+    skr_final_blend_scalar(&params, self->spp, v_scratch, self->log_gain_prev, self->gain, n_freqs);
 #endif
-    sk_fast_exp_f32(gain_out, gain_out, n_freqs);
+    sk_fast_exp_f32(self->gain, self->gain, n_freqs);
 #if ANR_VECTOR
-    skr_final_store_neon(&params, v_scratch, gain_out, self->log_gain_prev,
+    skr_final_store_neon(&params, v_scratch, self->gain, self->log_gain_prev,
                          self->enhanced_psd_prev, xi_ratio_scratch, self->power, n_freqs);
 #else
-    skr_final_store_scalar(&params, v_scratch, gain_out, self->log_gain_prev,
+    skr_final_store_scalar(&params, v_scratch, self->gain, self->log_gain_prev,
                            self->enhanced_psd_prev, xi_ratio_scratch, self->power, n_freqs);
 #endif
 
-    apply_low_band_speech_floor(self, gain_out);
+    apply_low_band_speech_floor(self);
 
     self->gain_initialized = true;
 }
