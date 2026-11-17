@@ -4,6 +4,20 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.0.0/)。
 
+## [Unreleased] — 2026-11-17 — One float-to-int16 output rule for the example CLIs and `write_audio` (behaviour change)
+
+The two output writers, the example CLIs (`denoise_wav`, `denoise_mem`) and `write_audio()`, now follow the rule of audiolib's `wav_io.h` writer: a non-finite sample is written as 0, `v = x * 32768` in float32 is clipped to [-32768, 32767] and rounded half away from zero exactly (truncate toward zero, compare the exact remainder with 0.5 and -0.5; no float add of 0.5). Input stays int16 / 32768, so every one of the 65536 int16 values read and written back unchanged is the same int16. No library source (`src/`, `include/`) changed; the `test_gain_api` hashes and `test-bit-exact` pass.
+
+### Changed
+- `example/main.c` and `example/main_mem.c` no longer define `WAV_IO_WRITER_STYLE` (audiolib removed the selector and its NR style). PCM16 output of `denoise_wav` and `denoise_mem` was `trunc(clip(x, -1, 1) * 32767)` and now follows the rule above: about half the samples move by 1 LSB (applied to the same float32 output, 53.4 % of `test_n16_babble_5dB.wav` at 16k/256 and 55.2 % of `test_n48_vctk_p232_003.wav` at 48k/1024, at most 1 LSB).
+- `AEC_OUT_FLOAT=1` in the environment now makes `denoise_wav` and `denoise_mem` write IEEE float32 WAV (not sanitized), as for every other `wav_io.h` user; without it they write PCM16.
+- `python/utils/audio_io.py`: `write_audio()` converts with the new `float_to_int16()` in both branches: the same rule, with the non-finite check and the clip to [-1, 1] before the cast to float32 (so a finite float64 beyond the float32 range still clips) and the rest in float32 like the C writer. The soundfile branch passed float data and left the quantization to libsndfile; it now writes the int16 array with `subtype='PCM_16'`. The scipy fallback replaces `(np.clip(audio, -1, 1) * 32767).astype(np.int16)`, which also turned NaN into an undefined cast.
+
+### Validation
+- Byte parity: a float32 vector of 85,684 samples (ties at k + 0.5 LSB for 38 values of k with the neighbouring float on each side, ±32767.5/32768, ±1 and its neighbours, values beyond ±1 up to ±FLT_MAX, NaN, ±Inf, ±0, subnormals, 20,000 uniform values in ±1.2, all 65,536 int16 / 32768 values) written by `wav_io.h` and by `write_audio()` (soundfile branch, and scipy branch with soundfile blocked) gives identical data chunks. The vector separates the rule from `np.rint` (28 samples differ), `floor(x * 32768)` (8,423), a float add of 0.5 (4), `trunc(x * 32767)` (81,903) and ±Inf clipped instead of zeroed (2); the previous `audio_io.py` fails it in both branches (8,423 and 81,901 samples).
+- The PCM16 output of `denoise_wav` and `denoise_mem` equals `float_to_int16()` of their `AEC_OUT_FLOAT=1` output on the two files above.
+- `make test` (SIMD=1): C tests, `test_cli_args.sh`, `test-bit-exact`, pytest (135 passed) and the `pyc_parity_nr` gate (232 scenarios) pass.
+
 ## [Unreleased] — 2026-11-16 — Manual parity script and music fixtures removed
 
 ### Removed

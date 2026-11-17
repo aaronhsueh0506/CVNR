@@ -2,6 +2,20 @@
 
 所有重要的改動都會記錄在此文件中。
 
+## [Unreleased] · 2026-11-17 · 範例 CLI 與 `write_audio` 的 float 轉 int16 統一為一條規則（行為改變）
+
+兩個輸出寫檔處，範例 CLI（`denoise_wav`、`denoise_mem`）與 `write_audio()`，改照 audiolib `wav_io.h` 寫檔的規則：非有限值寫 0；`v = x * 32768`（float32）夾到 [-32768, 32767]，再精確地四捨五入遠離零（先往零截斷，把精確的餘數和 0.5、-0.5 比較；不做 float 加 0.5）。讀檔仍是 int16 / 32768，所以 65536 個 int16 值讀進來原樣寫回都得到同一個 int16。函式庫原始碼（`src/`、`include/`）沒有改動；`test_gain_api` 雜湊與 `test-bit-exact` 通過。
+
+### 變更 (Changed)
+- `example/main.c`、`example/main_mem.c` 不再定義 `WAV_IO_WRITER_STYLE`（audiolib 已移除這個選擇與 NR 樣式）。`denoise_wav`、`denoise_mem` 的 PCM16 輸出原本是 `trunc(clip(x, -1, 1) * 32767)`，改照上面的規則：約一半樣本差 1 LSB（以同一份 float32 輸出計算，`test_n16_babble_5dB.wav`（16k/256）53.4 %、`test_n48_vctk_p232_003.wav`（48k/1024）55.2 %，最多 1 LSB）。
+- 環境變數 `AEC_OUT_FLOAT=1` 現在讓 `denoise_wav`、`denoise_mem` 寫 IEEE float32 WAV（不做非有限值處理），和其他使用 `wav_io.h` 的程式相同；沒設時寫 PCM16。
+- `python/utils/audio_io.py`：`write_audio()` 的兩個分支都用新增的 `float_to_int16()` 轉換：同一條規則，非有限值處理與夾到 [-1, 1] 在轉 float32 之前（超出 float32 範圍的有限 float64 仍會夾限），其餘與 C 寫檔一樣以 float32 計算。soundfile 分支原本傳 float 資料、由 libsndfile 量化，現在寫 int16 陣列並指定 `subtype='PCM_16'`；scipy 備援分支取代 `(np.clip(audio, -1, 1) * 32767).astype(np.int16)`（NaN 在這裡是未定義的轉型）。
+
+### 驗證
+- 逐位元組比對：85,684 個 float32 樣本（38 個 k 的 k + 0.5 LSB 平手值與兩側相鄰的 float、±32767.5/32768、±1 與相鄰值、超過 ±1 直到 ±FLT_MAX、NaN、±Inf、±0、次正規數、±1.2 內均勻分布 20,000 個、全部 65,536 個 int16 / 32768）分別由 `wav_io.h` 與 `write_audio()`（soundfile 分支，以及擋掉 soundfile 後的 scipy 分支）寫出，data chunk 完全相同。這組向量能區分本規則與 `np.rint`（28 個樣本不同）、`floor(x * 32768)`（8,423）、float 加 0.5（4）、`trunc(x * 32767)`（81,903）、±Inf 夾限而非寫 0（2）；改動前的 `audio_io.py` 兩個分支都不通過（8,423 與 81,901 個樣本不同）。
+- `denoise_wav`、`denoise_mem` 的 PCM16 輸出等於其 `AEC_OUT_FLOAT=1` 輸出經 `float_to_int16()` 的結果（上述兩個檔案）。
+- `make test`（SIMD=1）：C 測試、`test_cli_args.sh`、`test-bit-exact`、pytest（135 passed）與 `pyc_parity_nr` gate（232 個情境）通過。
+
 ## [Unreleased] · 2026-11-16 · 噪聲追蹤器的凍結 bin 重設（行為改變）
 
 某個 bin 的功率連續 2.048 s 高於噪聲估計的 64 倍時，估計改為該 hop 的平滑功率。原本，恰為 0 的 bin 在 0.6 s 以上之後回來（估計仍高於 inert 門檻 1e-20）會一直停在 gain 接近 1，直到串流結束，或估計衰減到 1e-20 以下（10 至 12 秒）：後驗恰為 1，更新係數恰為 1.0，估計動不了；對估計設下限無法改變這一點。Python 對應類別 `McraNoiseEstimator` 有同樣的卡死。

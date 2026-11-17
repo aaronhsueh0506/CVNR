@@ -26,7 +26,7 @@ pre code{background:none;padding:0}
 <h1>NR C library(MMSE-LSA denoiser)— <code>NR/c_impl</code></h1>
 
 <h2>概要</h2>
-<p><code>AnrDenoiser</code>(V3-2)是 OM-LSA 族降噪核心:Ephraim-Malah 1985 MMSE-LSA 增益 + Cohen&amp;Berdugo 2002 MCRA 噪聲估計 + 2001 Bayesian SPP。<b>頻域 I/O</b>:輸入/輸出都是 <code>Complex[n_freqs]</code> 頻譜,window / forward FFT / inverse FFT / OLA 全由呼叫端負責(串在 AEC 之後時,NR 不另做 FFT,直接吃 AEC 已算好的頻譜:mono 範例吃 <code>aec_get_residual()</code> 檢視的 <code>base_spec</code>(守衛未觸發時就是 <code>error_spec</code>),4ch 是同一個檢視的 <code>error_spec</code>)。純 DSP、無 NN/NPU 成分;全部 state 收在 <code>AnrDenoiser</code> C struct(caller pool 或 heap)。</p>
+<p><code>AnrDenoiser</code>(V3-2)是 OM-LSA 族降噪核心:Ephraim-Malah 1985 MMSE-LSA 增益 + Cohen&amp;Berdugo 2002 MCRA 噪聲估計 + 2001 Bayesian SPP。<b>頻域 I/O</b>:輸入/輸出都是 <code>Complex[n_freqs]</code> 頻譜,window / forward FFT / inverse FFT / OLA 全由呼叫端負責(串在 AEC 之後時,NR 不另做 FFT,直接吃 AEC 已算好的頻譜:mono 與 4ch 範例都吃 <code>aec_get_residual()</code> 檢視的 <code>base_spec</code>(守衛未觸發時就是 <code>error_spec</code>))。純 DSP、無 NN/NPU 成分;全部 state 收在 <code>AnrDenoiser</code> C struct(caller pool 或 heap)。</p>
 <p>串在 AEC 之後的整合碼(Audio_ALG 的 <code>pipelines/mono/aec_nr_res/main.c</code>,每支範例 main 自己初始化 NR、自己寫一小段串接;單聲道的 <code>mono_nr_gain()</code>、4ch 的 <code>array_sample_anr_gain()</code>(<code>pipelines/4ch/array_sample_post.h</code>)都是呼叫端自己的薄包裝)使用的 seam 是 <b><code>anr_process_gain_with_residual_psd()</code></b>(沒有殘留回音 PSD 時用 <code>anr_process_gain()</code>):算出每 bin 增益但不套用、直接回傳內部增益陣列,並把外部殘留回音 PSD R² 折進噪聲底(ξ = S²/(N²+R²),R² 先乘 <code>noise_over_subtraction</code> 同一倍率);MCRA 追蹤器只吃乾淨功率,R² 不污染噪聲估計。AEC 的 R² 是 int16² 尺度,餵給 NR 前要乘 1/32768²。RES 增益:<code>AecConfig.residual = AEC_RESIDUAL_FULL</code> 時由 AEC 實例自己算(單聲道與 4ch 陣列實例都在 <code>aec_process_residual()</code>;<code>aec_process()</code> 是線性、殘留兩級加合成的一次呼叫,沒有讓 NR 插入增益的位置),以 <code>aec_get_residual()</code> 檢視的 <code>res_gain</code> 取得。NR 的增益交給 <code>aec_apply_gain()</code>,由它取 <code>min(G_nr, G_res)</code> 並乘在渲染底座上,<code>aec_apply_cng()</code> 補被切掉的 bin;逐步呼叫與可編譯的骨架見 <a href="nr_c_api.html#with-aec">NR API §4.1</a>。</p>
 <div class="tblwrap"><table>
 <tr><th>sr</th><th>fft_size(白名單)</th><th>hop</th><th>n_freqs</th><th>L(balanced 實測)</th><th>num_init_frames</th><th>anr_get_mem_size(balanced,預設建置 <code>DEBUG=0</code> 實測)</th></tr>
@@ -89,7 +89,7 @@ pre code{background:none;padding:0}
      |-anr_destroy(nr)        pool 實例 no-op;heap 實例釋放並只能呼叫一次
 </pre>
 <p class="small">圖 2:串在 AEC 之後的一個 hop(mono 整合範例;箭頭標的都是真實函式名)。</p>
-<p class="small">4ch 的對應序列:Application 先對陣列實例(經 <code>array_sample_beam_process_with_activity()</code> 與 <code>array_sample_beam_fuse()</code>,內部是 <code>aec_process_linear()</code>、<code>aec_process_residual()</code>、<code>aec_get_residual()</code>)取得檢視 <code>v</code>,NR 吃 <code>v.error_spec</code>,之後的取小、CNG、<code>ac_istft_push</code> 與本圖相同,渲染底座是 <code>v.base_spec</code>,serial 用 <code>v.post_reset_serial</code>(<code>array_sample_post_reset_due()</code>)。RES 增益是同一個檢視的 <code>res_gain</code>(圖中 <code>rv.res_gain</code>)。</p>
+<p class="small">4ch 的對應序列:Application 先對陣列實例(經 <code>array_sample_beam_process_with_activity()</code> 與 <code>array_sample_beam_fuse()</code>,內部是 <code>aec_process_linear()</code>、<code>aec_process_residual()</code>、<code>aec_get_residual()</code>)取得檢視 <code>v</code>,NR 吃 <code>v.base_spec</code>(經 <code>array_sample_anr_gain()</code>),之後的取小、CNG、<code>ac_istft_push</code> 與本圖相同,渲染底座是 <code>v.base_spec</code>,serial 用 <code>v.post_reset_serial</code>(<code>array_sample_post_reset_due()</code>)。RES 增益是同一個檢視的 <code>res_gain</code>(圖中 <code>rv.res_gain</code>)。</p>
 <pre>
  Application        Aec                 AnrDenoiser          AcIstft
      |               |                     |                  |
@@ -145,7 +145,7 @@ pre code{background:none;padding:0}
 hop →           第 1 … N-1 個非全零 hop    第 N 個非全零 hop         之後各 hop
 ──────────────────────────────────────────────────────────────────────────────
 caller(FFT)   E(f)(hop t)                E(f)(hop t)              E(f)(hop t)
-              (串 AEC 時由 <code>aec_get_residual()</code> 檢視供給:單聲道 <code>base_spec</code>、4ch <code>error_spec</code>,同 hop)
+              (串 AEC 時由 <code>aec_get_residual()</code> 檢視供給:單聲道與 4ch 都是 <code>base_spec</code>,同 hop)
 ──────────────────────────────────────────────────────────────────────────────
 C NR          累積噪聲初始化列            init_noise() 完成         SPP→gain→MCRA 更新
  (denoiser)   gain(t)=1(直通)            is_initialized=true      gain(t) 用 hop t 的 E(f)

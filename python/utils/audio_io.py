@@ -83,13 +83,27 @@ def write_audio(
         audio = normalize_audio(audio)
 
     if SOUNDFILE_AVAILABLE:
-        sf.write(file_path, audio, sample_rate)
+        sf.write(file_path, float_to_int16(audio), sample_rate, subtype='PCM_16')
     elif SCIPY_AVAILABLE:
-        # 轉換為 int16（先 clip 避免 overflow）
-        audio_int16 = (np.clip(audio, -1.0, 1.0) * 32767).astype(np.int16)
-        wavfile.write(file_path, sample_rate, audio_int16)
+        wavfile.write(file_path, sample_rate, float_to_int16(audio))
     else:
         raise RuntimeError("No audio I/O library available. Install soundfile or scipy.")
+
+
+def float_to_int16(audio: np.ndarray) -> np.ndarray:
+    """
+    float（滿刻度 1.0）轉 int16，與 audiolib wav_io.h 的 PCM16 寫檔相同：
+    非有限值寫 0，clip 到 [-1, 1] 後轉 float32；v = x * 32768 再 clip 到 [-32768, 32767]，
+    取 t = trunc(v)、d = v - t（精確），d >= 0.5 進位、d <= -0.5 退位（四捨五入遠離零）。
+    """
+    x = np.asarray(audio, dtype=np.float64)
+    x = np.where(np.isfinite(x), x, 0.0)
+    x = np.clip(x, -1.0, 1.0).astype(np.float32)
+    v = np.clip(x * np.float32(32768.0), np.float32(-32768.0), np.float32(32767.0))
+    t = np.trunc(v)
+    d = v - t
+    out = t.astype(np.int32) + (d >= 0.5).astype(np.int32) - (d <= -0.5).astype(np.int32)
+    return out.astype(np.int16)
 
 
 def normalize_audio(audio: np.ndarray, target_level: float = 0.95) -> np.ndarray:

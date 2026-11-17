@@ -12,7 +12,6 @@
 #include "cli_level.h"
 #include "fft_wrapper.h"
 #include "audio_window.h"
-#define WAV_IO_WRITER_STYLE WAV_IO_WRITER_NR
 #include "wav_io.h"
 
 void print_usage(const char* prog) {
@@ -115,7 +114,7 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    /* 2. Open output WAV (16-bit PCM mono at input rate). */
+    /* 2. Open output WAV (mono at input rate; 16-bit PCM, or float32 when AEC_OUT_FLOAT=1). */
     WavWriter* wav_out = wav_open_write(output_path, sample_rate, 1);
     if (!wav_out) {
         fprintf(stderr, "Error: Cannot open output file: %s\n", output_path);
